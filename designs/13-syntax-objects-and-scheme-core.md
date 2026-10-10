@@ -159,3 +159,14 @@ Clojure 语义中与 psyntax 冲突、需要专门设计的只有命名空间（
 会露出来的：
 - 美观：CLR 栈里夹着 `IronScheme.Core.*` 的帧（过程分派、展开器），像 Clojure 过滤 `clojure.lang.*` 帧一样过滤。
 - 正确性：Scheme 过程作为**值**流进 Clojure 时是 `Procedure` 不是 `IFn`。要么让 `Procedure` 实现 `IFn`（改 IronScheme），要么规定 Clojure 只拿 `cleat.kernel` 包装过的函数。列入 PoC 第 5 项的判据。
+
+## §8 rnrs 要提供什么（方案 C）
+
+实测 import（IronScheme `src/scheme`）：展开器用 `(rnrs base lists control hashtables conditions exceptions mutable-pairs io simple io ports bytevectors r5rs)`；nanopass 用整个 `(rnrs)` + `mutable-pairs`（`(rnrs eval)` 导入但不调用）；编译器用 `(rnrs)` + `mutable-strings` + `(ironscheme unsafe clr)`。整个元层不用 `call/cc`。
+
+| 层 | 依赖 | 供给 |
+|---|---|---|
+| 元层（psyntax + nanopass + 编译器） | base 数据与多值、syntax-case 一族、记录（语法式与过程式、3-D 语法）、lists / control、哈希表、条件 / 异常、端口、字节向量 | IronScheme boot 源码 14,686 行 + 484 个 C# 原语 + `IronScheme.Core`，已自举，原样引用 |
+| `(clojure syntax)` 库 | base 数据、syntax-case、记录、哈希表（命名空间表）、条件；只在展开期运行 | 同上 |
+| Clojure 用户代码（运行时） | **无**：按 §7 的值边界只对 `Cleat.Core` 编译 | — |
+| 要扩展的 | 语法对象遍历认识 Clojure 集合（`core.sls` 的 `syntax-vector?` 一组，约 200 行）；条件 → `ExceptionInfo` 的诊断映射 | cleat 补丁 |
