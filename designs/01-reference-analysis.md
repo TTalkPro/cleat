@@ -69,7 +69,7 @@
 | ClojureCLR | EPL-1.0（`epl-v10.html`） | C# 运行时类、`core.clj` 等 |
 | Clojure（`core.clj` 原始来源） | EPL-1.0 | 同上 |
 | jank | MPL-2.0 | 只参考，`clojure-test-suite` 作为测试子模块 |
-| jolt | MPL-2.0 | 只参考，`corpus.edn` 作为测试数据（复制时保留 MPL 头） |
+| jolt | EPL-2.0 | 只参考，`corpus.edn` 作为测试数据（复制时保留来源与 EPL-2.0 说明） |
 | nanopass-framework-scheme | MIT | 参照重写 |
 
 决定 00 D11：EPL 代码分区并保留许可；需用户确认。

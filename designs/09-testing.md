@@ -4,7 +4,7 @@
 
 | 套件 | 来源 | 形态 | 用途 |
 |---|---|---|---|
-| **语料** `corpus.edn` | jolt `test/chez/corpus.edn`（MPL-2.0，复制到 `tests/conformance/`，保留许可头）；约 5000 条 `{:suite :label :actual :expected :portability}`，`:expected` 由 JVM Clojure 取证 | 按 `=` 比较值；`:throws` | **主判据**。`:portability :common` 必须全过；`:jvm` 跳过；另加 `:clr` 行（我们自己写的 CLR 互操作用例） |
+| **语料** `corpus.edn` | jolt `test/chez/corpus.edn`（EPL-2.0，复制到 `tests/conformance/`，保留来源说明）；约 5000 条 `{:suite :label :actual :expected :portability}`，`:expected` 由 JVM Clojure 取证 | 按 `=` 比较值；`:throws` | **主判据**。`:portability :common` 必须全过；`:jvm` 跳过；另加 `:clr` 行（我们自己写的 CLR 互操作用例） |
 | clojure-test-suite | jank `jank/clojure-test-suite`（子模块 `tests/clojure-test-suite/`） | `clojure.test`，按命名空间 | 库覆盖；逐命名空间基线（与 jolt 相同：优于基线也要更新基线） |
 | test_clojure | ClojureCLR `Clojure.Tests/clojure/test_clojure/`（EPL） | `clojure.test` | CLR 互操作、reader、打印、数值细节 |
 | 已知偏离表 | `tests/conformance/known-divergences.edn` | 分类白名单（`:legend`） | 门禁只在**新增**或**过期**偏离时失败 |
