@@ -24,35 +24,36 @@
 
 ## 3. Lcore 文法（编译器的固定输入）
 
+实现：`src/Cleat.Core/Expander/Lcore.cs`（cleat-013）。Lcore 是 Clojure 数据：节点为以符号开头的列表，类型名是字符串，Var 以限定符号 + 标志 map 表示。
+
 ```
-e ::= (const d)                              ; 字面量与 quote；d 为任意 Clojure 数据（含集合、正则、符号、关键字、Var）
-    | (local x)                              ; 词法变量（x 为唯一化后的符号：name__N）
-    | (var-ref v) | (the-var v)              ; v = (var ns name {dynamic? macro? redef?})
-    | (if e e e)
-    | (do e ... e)
-    | (let ((x e) ...) e)                    ; let* 规范化；绑定顺序即求值顺序
-    | (loop ((x e) ...) e)                   ; loop*
-    | (recur e ...)                          ; 只在尾位置；展开器已检查
-    | (fn name ((x ...) rest e) ...)         ; fn*；每子句 (固定参数 剩余参数|nil 体)；name 可为 nil；meta: once?
-    | (letfn ((x fn) ...) e)
-    | (def v e) | (def v)                    ; 含 meta 与 doc；v 同 var-ref
-    | (set! target e)                        ; target: (var-ref v) | (host-field …) | (local x)（deftype 可变字段）
+e ::= (const d)                                   ; 字面量 / quote；d 为任意数据（含集合、正则、Type、记录）
+    | (local x)                                   ; 词法变量；x 为唯一化符号 name__N（元数据 :tag）
+    | (var-ref ns/name {:dynamic b :redef b})     ; 读 Var
+    | (the-var ns/name)                           ; #'ns/name
+    | (if e e e) | (do e ... e)
+    | (let [x e ...] e) | (loop [x e ...] e) | (recur e ...)
+    | (fn name|nil once? ((x ...) rest|nil e) ...)  ; 每子句：固定参数、剩余参数、体；name 是自引用的局部
+    | (letfn [x (fn ...) ...] e)
+    | (def ns/name {:dynamic b :init b} meta-e init-e|nil)
+    | (set! target e)                             ; target: (local x)（deftype 可变字段）| (var-ref …)
+    | (host-set-field "T"|nil "name" static? target|nil e)
     | (throw e)
-    | (try e ((T x e) ...) e)                ; catch 子句 (类型 绑定 体)；finally 体可为 nil
+    | (try e ((catch "T" x e) ...) finally-e|nil)
     | (monitor-enter e) | (monitor-exit e)
-    | (case e shift mask low high default ((int|hash → test expr) ...) switch-type test-type skip-check)
-    | (host-call T|nil "member" e args ... {tag})      ; .、Type/member；T 为 nil 时按实例类型
-    | (host-field T|nil "name" e?) | (host-new T args ...) | (host-static-field T "name")
-    | (host-type T)                           ; 类型字面量（Class 对象）
-    | (instance-of T e)                       ; instance?（展开器把 (instance? T e) 识别为节点，T 为字面类型时）
-    | (deftype name T fields ((iface method (params) body) ...) {meta})  ; 含 reify：name 由展开器生成
-    | (import T)
-    | (call e e ...)                          ; 应用；e 为 (var-ref v) 时编译器可直接链接
-    | (vector e ...) | (map e ...) | (set e ...)   ; 含非常量元素的集合字面量；全常量的走 const
-    | (keyword-invoke k e)                    ; (:k x) 的调用站点
+    | (case (local x) shift mask low high default-e ((hash test then-e) ...) switch-type test-type skip-check)
+    | (host-call "T"|nil "member" static? target|nil (args ...))   ; 成员种类（字段 / 属性 / 方法）由发射器按 Clojure 规则决定；元数据 :type-args
+    | (host-field "T"|nil "name" static? target|nil)             ; (.-name x)
+    | (host-new "T" (args ...)) | (host-type "T") | (instance-of "T" e) | (import "T")
+    | (deftype tagname "T" ((field "name" x "T" mutable? volatile?) ...) ("I" ...)
+               ((method "I"|nil "name" this ((x "T") ...) "R" e) ...) opts)   ; reify 同节点，opts 含 :reify true
+    | (call e (args ...))
+    | (vector e ...) | (map k v ...) | (set e ...) | (with-meta e meta-e)
+    | (keyword-invoke :k e)
+    | (tag "T" e)                                 ; 带类型提示的表达式
 ```
 
-- 符号已唯一化、Var 已决议、类型名已是字符串：编译器不再查任何表。
+- 符号已唯一化、Var 已决议、类型名已是字符串：编译器不再查任何表。节点带 `:line` / `:column` 元数据。
 - `case` 的全部预处理在 `case` 宏 + 展开器完成；`deftype` 的接口方法签名是数据；`(tag …)` 是字符串。
 - 文本形式：Lcore 可以写成 EDN（常量用 05 §3 的中立编码），用于快照测试与 Lcore 种子（08 §5）。
 

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Reflection;
 using clojure.lang;
 
-namespace Cleat.Core.Expander;
+namespace Cleat.Core.Expand;
 
 /// <summary>
 /// 展开器（designs/03-language-core.md §2）：一个顶层形式 → Lcore。宏展开、符号决议、特殊形式的语法检查与规范化，
@@ -478,7 +478,8 @@ public sealed class Expander
     {
         if (form is Type t0) return t0;
         if (!(form is Symbol sym) || sym.Namespace != null) return null;
-        if (sym.Name.IndexOf('.') > 0 || sym.Name[sym.Name.Length - 1] == ']') return RT.classForName(sym.Name);
+        if (sym.Name.IndexOf('.') > 0 || sym.Name[sym.Name.Length - 1] == ']' || sym.Name.IndexOfAny(RT._triggerTypeChars) >= 0)
+            return Runtime.TypeResolver.Resolve(sym.Name, Array.Empty<string>());   // 全名、数组、泛型、|…| 语法（cleat-010）
         if (_env.containsKey(sym)) return null;
         if (CurrentNamespace.GetMapping(sym) is Type t) return t;
         try { return RT.classForName(sym.Name); } catch (Exception) { return null; }

@@ -16,3 +16,14 @@
 
 ## 验收标准
 - `core.clj`、`core_deftype.clj`、`core/protocols.clj`、`gvec.clj` 的全部顶层形式能展开为 Lcore。
+
+## 结论（2026-10-10）
+
+完成（见 cleat-013）。
+- `fn*`：名字（自引用是 `IsThis` 的局部）、`^:once`、`&`、≤ 20 固定参数、单一变长、arity 冲突、变长参数个数检查；子句 `((x …) rest body)`。
+- `loop*` / `recur`：尾位置检查、不跨 `try`、参数个数；fn 子句体内 `recur` 以参数为目标。
+- `case*`：校验表达式是局部，整理 `((minhash test then) …)` 按哈希排序，`:int` 测试转为 long，`low` / `high` 由键算出。
+- `deftype*` / `reify*`：接口决议（只许接口）、方法候选 = 接口（含继承）实例方法 + `Object` 的虚方法，按名字与参数个数匹配；多候选必须用提示按参数类型精确匹配（`Must hint overloaded method`）；`Iface.name` 显式实现；字段为 `IsField` 的局部（`^:unsynchronized-mutable` / `^:volatile-mutable` 才可 `set!`）；输出 `(method "I" "name" this ((x "T") …) "R" body)` 全是数据。`reify*` 的类名 `ns$reify__N`，捕获由编译器算。
+- `try`：catch 类型决议与绑定、finally 位置；`throw`、`monitor-*`、`import*`、`var`、`set!`（局部可变字段 / Var / 字段）。
+- 类型提示：`long` / `objects` 等特殊名、`T/1` 数组、import 别名、全名；解析不了的提示忽略（发射器回退运行时决议）。`(type-args T …)` 泛型方法实参记在 `host-call` 节点的元数据 `:type-args`。
+- 未做：`by-ref` 实参（报错）；`*warn-on-reflection*` 的警告（展开器不做成员决议，留给发射器 / 运行时 cleat-026）。

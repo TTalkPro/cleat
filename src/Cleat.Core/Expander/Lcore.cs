@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using clojure.lang;
 
-namespace Cleat.Core.Expander;
+namespace Cleat.Core.Expand;
 
 /// <summary>
 /// Lcore（designs/03-language-core.md §3）：展开器的输出，纯数据（列表、向量、符号、关键字、字符串、Var 对象、Type 对象）。
