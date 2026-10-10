@@ -1,0 +1,60 @@
+# 14 探讨：三层架构（VM / Scheme 元层 / Clojure）会不会有问题
+
+> 状态：探讨。用户提出的分层：
+> 1. 最底层：LLVM、CLR、JVM 等虚拟机；
+> 2. 中间：nanopass 的 Scheme 语法对象、必要的 Scheme 语法与 rnrs 库（可裁剪），并提供 Clojure 语法对象；
+> 3. 最顶层：与 Clojure 完全对齐的语法与库，完全看不到 Scheme。
+>
+> 结论：方向成立（它就是 [13](13-syntax-objects-and-scheme-core.md) 方案 C 的推广），但按字面做会出四个结构性问题，每个都有明确的修正；修正后的分层在 §3。风险集中在两处接缝，见 §4。
+
+## §1 字面分层的四个问题
+
+**问题 1：第 2 层把"编译期"和"运行期"混在一起。** rnrs 库有两种身份：psyntax、nanopass、编译器**运行时需要**的库（它们是 Scheme 程序，跑在 Scheme 运行时上），与 Clojure **代码运行时**可能调用的库。前者必须有，后者必须没有——[13 §7](13-syntax-objects-and-scheme-core.md) 的值边界：Clojure 代码只对 Clojure 运行时（`clojure.lang` + 原语表）编译，Scheme 的 32 位 fixnum、`Cons`、`Unspecified`、可变字符串碰不到 Clojure 的值。如果第 2 层被理解为"Clojure 的运行基底"，就得到 jolt 的偏离表。**修正**：第 2 层只是**编译期元层**；运行期契约单独成层（§3 的 2b）。
+
+**问题 2：第 1 层写成"虚拟机"不够，一个目标 = VM + 运行时契约 + 发射器。** 把 L3 之后的代码生成交给目标时，目标必须提供：(a) 原语表的实现（IronScheme 是 484 个 C# 原语；Clojure 另加 `clojure.lang` 的集合、Var、Reflector），(b) 发射器（Lcil → dll；`.ll` → clang；`.class` 写出器），(c) 机器描述表项（类名、调用约定、是否 `tail.`、异常机制）。"LLVM / CLR / JVM"三个词各代表一整套这样的东西，其中运行时契约是最大的一块（IronScheme 11 D7 "运行时契约 = 原语表"）。**修正**：第 1 层定义为"目标 = VM + 运行时契约实现 + 发射器 + 机器描述"，首个目标是 CLR；JVM / LLVM 先靠交叉编译只做 AOT（11 D8、06 D1）。
+
+**问题 3：第 2 层在运行期也要在场，"完全看不到 Scheme"是纪律不是自动的。** Clojure 的 `eval`、REPL、`macroexpand`、运行时 `require` 源码、宏在编译期执行——这些都要求展开器与编译器**随运行时一起发布**（Clojure 自己也是把编译器装在 `clojure.jar` 里）。所以第 2 层不是"构建工具"，它是 boot 镜像的一部分（IronScheme 的镜像约 2 MB，可接受）。既然它在场，"看不到"就只能靠三道边界（13 §7）：`macroexpand` 在 Clojure 特殊形式处停止、值边界、诊断边界（错误信息、栈、类名）。每一道都要专门做并用测试守住，jolt 的经验是最容易漏的是诊断边界。
+
+**问题 4：两套对象模型在一个进程里。** 元层操作的是 Scheme 符号（驻留、带值槽）、Scheme 列表、`Procedure`；第 3 层操作的是 `clojure.lang.Symbol`（不驻留、带元数据）、持久集合、`IFn`。接缝在两处：(a) 展开器入口 / 出口（reader 数据 → 语法对象 → Lcore → `syntax->datum` 给宏），每次宏调用都要转换；(b) 函数值跨层（Scheme 过程流进 Clojure 不是 `IFn`，Clojure 函数被元层调用要走 `Procedure.InvokeK`）。前者是性能问题（展开 `core.clj` 的耗时，PoC 第 6 项），后者是正确性问题（`ClojureFn : Procedure, IFn`，或让 `Procedure` 实现 `IFn`）。**修正**：把转换集中在展开器的两个入口函数里，禁止其他地方跨层传对象；函数值跨层只允许一种表示。
+
+## §2 几个次要问题
+
+- **"裁剪 rnrs"的下限**：[13 §8](13-syntax-objects-and-scheme-core.md) 的表是下限——psyntax、nanopass、编译器导入的那些库不能裁，否则元层自己跑不起来（它们是自举链的一部分，裁了要重生成种子）；能裁的是 IronScheme 的 `lib/`（std、srfi、clr 包装库），对 Clojure 发行版一律不装。
+- **语法引用有两种**：Clojure 的 `` ` `` 是 **reader 级**的数据变换（`read-string` 就得到已限定的 `(seq (concat …))`），语义必须保留，供 `defmacro`；卫生宏的模板是展开期的 quasisyntax，要另一个拼写（如 `(syntax …)` 或 `#'`？`#'` 已被 `var` 占用，待定）。两者不能合并，否则 `read-string` 的行为变了。
+- **"与 Clojure 完全对齐"受宿主限制**：`deftype` 生成宿主类型、`proxy` / `gen-class`、互操作语法、异常是宿主异常、反射警告——这些本来就按宿主各一份（ClojureCLR 与 JVM 也不同）。分层能做到的是"Clojure 语义的可移植部分完全对齐 + 宿主部分按目标各一份"，语料的 `:common` / `:jvm` 划分就是这条线。
+- **命名空间**：Clojure 的 ns 是运行时可变表，psyntax 的库是静态的；元层要提供"命名的顶层交互环境"（13 §3 第 1 条）。这是第 2 层为 Clojure 加的最大一块，不是语法对象本身。
+- **依赖与演进**：第 2 层在 IronScheme 仓库里，cleat 依赖它的编译器与展开器；两者由同一人维护可以接受，但更合理的形态是把元层抽成独立的包（§3）。
+
+## §3 修正后的分层
+
+```
+ 3  表面语言（各一份，互相看不见）
+    ├─ Clojure：C# reader、(clojure syntax) 特殊形式库、defmacro 垫片 + defsyntax、命名空间模型、core.clj…、clojure.lang 运行时契约实现
+    └─ R6RS：IronScheme 现有的 (rnrs) 表面与 lib/
+ ─────────────────────────────────────────────────────────────────
+ 2a 编译期元层（一份，随镜像发布）：psyntax 语法对象（+ 向量 / map / set 遍历钩子）、
+    nanopass、L0 ~ L3 pass 链、codegen 按机器描述表分派、常量中立编码
+ 2b 运行期契约（接口，一份；实现按目标）：原语表（Scheme 的 484 个 + Clojure 的）、
+    调用约定（Procedure / IFn）、异常、Var、类型描述、加载约定
+ ─────────────────────────────────────────────────────────────────
+ 1  目标（各一份）：VM + 2b 的实现 + 发射器 + 机器描述表项
+    ├─ CLR：IronScheme.Core + Cleat.Core（clojure.lang）、IronScheme.Emit（+ implements / volatile / switch）
+    ├─ LLVM（搁置）：cleat-rt + 用 Clojure 写的集合、clang
+    └─ JVM（未计划）：Java 运行时 + .class 写出器；先交叉编译
+```
+
+与字面分层的差别只有两点：第 2 层拆成 2a / 2b，第 1 层明确包含运行时契约的实现。IronScheme 在这个图里 = 2a + 2b 接口 + CLR 目标 + R6RS 表面；cleat = Clojure 表面 + CLR 目标的 Clojure 部分。因此最自然的仓库形态是：**元层（2a + 2b 接口）独立成包，IronScheme 与 cleat 都依赖它**；短期内可以先让 cleat 以子模块引用 IronScheme。
+
+## §4 剩余风险（PoC 要回答的）
+
+| 风险 | 为什么是风险 | 判据 |
+|---|---|---|
+| 命名空间模型 | psyntax 没有"多个命名的、可变的顶层环境 + 别名 + refer + 重定义" | PoC 第 2 项：`(ns a) (def x 1) (ns b (:require [a :as q])) q/x` 与重定义后 `resolve` |
+| 展开速度 | psyntax 的标记 / rib 比 Clojure 的"查 Var 调函数"重；每次宏调用两次对象转换 | PoC 第 6 项：`core.clj` 前 1000 行的展开耗时，目标秒级 |
+| 函数值跨层 | `Procedure` ≠ `IFn` | PoC 第 5 项：两方向调用都成立且只有一种表示 |
+| 诊断边界 | 最容易漏 | 错误黄金文件（09 §2）覆盖 reader / 展开 / 宏 / 运行时四类 |
+| `macroexpand` 停止点 | 第 2 层里特殊形式是宏 | 对每个特殊形式断言 `macroexpand-1` 返回原形式 |
+
+## §5 结论
+
+三层的方向是对的，它把 [13](13-syntax-objects-and-scheme-core.md) 方案 C 说成了可以同时承载 R6RS 与 Clojure 两个表面语言、多个目标的通用结构。按字面做会在"第 2 层是什么"上出错：它是**编译期元层加一份运行期契约接口**，不是 Clojure 的运行基底；"看不到 Scheme"靠三道边界的纪律。接受这两条修正后，剩下的不确定性与 13 §6 的 PoC 完全重合，所以下一步仍是 cleat-044。
