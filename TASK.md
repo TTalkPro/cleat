@@ -34,7 +34,7 @@
 | [cleat-027](tasks/cleat-027-codegen-cil-types-case-try-interop.md) | codegen-cil：deftype / reify、case、try、互操作 | M4 | cleat-026 | 未开始 |
 | [cleat-028](tasks/cleat-028-compiler-driver.md) | 编译驱动：compile-form / eval、compile、构建脚本 | M4 | cleat-027、cleat-022 | 未开始 |
 | [cleat-029](tasks/cleat-029-phase-a-stage0-build.md) | Phase A：stage0 编译出 cleat.boot.dll | M5 | cleat-028、cleat-018 | 未开始 |
-| [cleat-030](tasks/cleat-030-host-and-repl.md) | 宿主 Cleat.Host 与 REPL | M5 | cleat-022、cleat-012 | 未开始 |
+| [cleat-030](tasks/cleat-030-host-and-repl.md) | 宿主 Cleat.Host 与 REPL | M5 | cleat-022、cleat-012 | 进行中（骨架完成） |
 | [cleat-031](tasks/cleat-031-phase-b-fixpoint.md) | Phase B：自举不动点 | M6 | cleat-029、cleat-030 | 未开始 |
 | [cleat-032](tasks/cleat-032-conformance-baseline.md) | 符合性基线：语料、clojure-test-suite、test_clojure | M6 | cleat-031、cleat-002 | 未开始 |
 | [cleat-033](tasks/cleat-033-aot-and-load-path.md) | 命名空间 AOT（.clj.dll）与加载路径 | M7 | cleat-032 | 未开始 |

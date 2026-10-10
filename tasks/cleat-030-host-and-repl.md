@@ -11,3 +11,11 @@
 
 ## 验收标准
 - 用 stage1 启动 REPL，`(require 'clojure.string)`（源码加载 → 编译）成功。
+
+## 结论（2026-10-10，部分）
+
+骨架完成，等 boot 镜像 / stage0 提供 `eval` 钩子后即可实际运行。
+- `Cleat.Host.Program`：`clojure.main` 风格命令行（`--boot` / `CLEAT_BOOT` / 自动找 `src/boot/cleat.boot.dll`；`-I`；`-e` / `-i` 按顺序；`-m ns args…`；脚本；`-`；`-r`；无动作则 REPL）；启动顺序 登记原语 → `RT.Init` → 加载镜像并设置 `BootInterface.CurrentImageId` → 动作；`*command-line-args*` 绑定。
+- REPL：逐形式读—`RuntimeHooks.Eval`—打印，`*1` `*2` `*3` `*e`，`:repl/quit`，错误打印异常链（`CLEAT_TRACE_ERRORS` 打印栈），`ReportError` 钩子可接管。
+- 测试 `HostTests`（3 项，用假的 eval 钩子）：参数解析、REPL 输出与历史、钩子缺失的错误。
+- 未完成：用 stage1 启动并 `(require 'clojure.string)` 的验收（依赖 cleat-029）；行编辑在 cleat-034。
