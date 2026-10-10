@@ -14,5 +14,6 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（n
 | [07-nanopass-port.md](07-nanopass-port.md) | nanopass 框架移植到 Clojure：表面语法、上下文切换、注册表、运行时表示、验证 |
 | [08-bootstrap.md](08-bootstrap.md) | 自举：stage0 解释器、Phase A / B、可选 Lcore 种子、交叉编译纪律、确定性 |
 | [09-testing.md](09-testing.md) | 符合性判据（jolt 语料、clojure-test-suite、test_clojure）、测试分层、基线 |
+| [13-syntax-objects-and-scheme-core.md](13-syntax-objects-and-scheme-core.md) | **探讨**：语法对象重塑展开流程、驱动 nanopass 的最小 Scheme 元语言、"Clojure on IronScheme"方案 C 与 A / B 的取舍、PoC 计划 |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。

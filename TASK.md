@@ -48,6 +48,7 @@
 | [cleat-041](tasks/cleat-041-native-driver-and-conformance.md) | 交叉编译驱动与原生语料验收 | 后续（LLVM） | cleat-040 | 搁置 |
 | [cleat-042](tasks/cleat-042-performance.md) | 性能：拆箱、协议内联缓存、跨单元直接链接 | 后续 | cleat-032 | 未开始 |
 | [cleat-043](tasks/cleat-043-genclass-proxy-async.md) | gen-class、proxy 全量与异步 | 后续 | cleat-033 | 未开始 |
+| [cleat-044](tasks/cleat-044-spike-clojure-on-ironscheme.md) | PoC：Clojure on IronScheme（语法对象、命名空间、`(clojure syntax)`、卫生宏、接缝） | 决策前 | cleat-017 | 未开始（待用户决定） |
 
 ## 里程碑
 
