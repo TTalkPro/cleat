@@ -1,0 +1,19 @@
+(library (snapshot rec)
+  ((rtd g$rtd
+        (primcall
+          make-record-type-descriptor
+          'p
+          '#f
+          '#f
+          '#f
+          '#f
+          '#((immutable x))))
+   (px g$px
+       (lambda "px"
+         ()
+         (clause (r) #f (primcall $record-field-ref (mref rtd) '0 r))))
+   (p? g$p?
+       (lambda "p?"
+         ()
+         (clause (o) #f (primcall $record-instance? (mref rtd) o)))))
+  (begin (call (mref p?) '1) (call (mref px) '1)))

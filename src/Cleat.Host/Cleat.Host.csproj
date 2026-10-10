@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 命令行宿主与 REPL；GenerateBootImage 目标（cleat-029）在这里加入 -->
+  <!-- 命令行宿主与 REPL；Clojure 镜像的 GenerateBootImage 目标（cleat-053）以后也在这里加入 -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Cleat.Host</RootNamespace>
@@ -9,5 +9,38 @@
     <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
     <ProjectReference Include="..\Cleat.Emit\Cleat.Emit.csproj" />
     <ProjectReference Include="..\Cleat.Stage0\Cleat.Stage0.csproj" />
+    <!-- 只为构建顺序：生成 Scheme 镜像前先由 PrimGen 重生成原语表 src/scheme/boot/primitives.ss（不引用其程序集） -->
+    <ProjectReference Include="..\Cleat.PrimGen\Cleat.PrimGen.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+
+  <!--
+    Scheme 元层的 boot 镜像（cleat-046；designs/15 §1，IronScheme designs/05-bootstrap.md §3 Phase A）：
+    stage0 执行文本种子 src/scheme/boot/boot-seed.core，运行 boot/ironscheme-buildscript-nano.sps，
+    用 Scheme 编译器（nanopass）编译出 src/boot/cleat.scheme.boot.{lcil,dll,ifc}。
+    按输入增量：种子、构建脚本、原语表、boot 源码、lib（编译器、(ironscheme clr)、nanopass 适配库）、nanopass 框架，
+    以及 stage0 / Cleat.Scheme / Cleat.Core / cleat-emit 程序集都没变时跳过（生成一次约 45 秒）。
+    dotnet build -p:BuildBootImage=false 只编译 C#。输出到其他目录（自举比对）用 tools/build.cs scheme-stage1 <目录>。
+  -->
+  <PropertyGroup>
+    <BuildBootImage Condition="'$(BuildBootImage)' == ''">true</BuildBootImage>
+    <SchemeDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\scheme'))</SchemeDir>
+    <SchemeBootDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\boot'))</SchemeBootDir>
+    <SchemeBootImage>$(SchemeBootDir)\cleat.scheme.boot.dll</SchemeBootImage>
+    <Stage0Dir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\Cleat.Stage0\bin\$(Configuration)\$(TargetFramework)'))</Stage0Dir>
+    <DotnetHost Condition="'$(DOTNET_HOST_PATH)' != ''">$(DOTNET_HOST_PATH)</DotnetHost>
+    <DotnetHost Condition="'$(DOTNET_HOST_PATH)' == ''">dotnet</DotnetHost>
+  </PropertyGroup>
+  <ItemGroup>
+    <SchemeBootImageInput Include="$(SchemeDir)\boot\boot-seed.core;$(SchemeDir)\boot\ironscheme-buildscript-nano.sps;$(SchemeDir)\boot\primitives.ss" />
+    <SchemeBootImageInput Include="$(SchemeDir)\boot\**\*.sls" />
+    <SchemeBootImageInput Include="$(SchemeDir)\lib\**\*.sls" />
+    <SchemeBootImageInput Include="$(SchemeDir)\nanopass\nanopass.ss;$(SchemeDir)\nanopass\nanopass\**\*.ss;$(SchemeDir)\nanopass\nanopass\**\*.sls" />
+    <SchemeBootImageInput Include="$(Stage0Dir)\stage0.dll;$(Stage0Dir)\Cleat.Scheme.dll;$(Stage0Dir)\Cleat.Core.dll;$(Stage0Dir)\cleat-emit.dll" />
+  </ItemGroup>
+  <Target Name="GenerateSchemeBootImage" BeforeTargets="CopyFilesToOutputDirectory" Condition="'$(BuildBootImage)' == 'true'"
+          Inputs="@(SchemeBootImageInput)" Outputs="$(SchemeBootImage)">
+    <Message Importance="high" Text="Cleat: generating the Scheme boot image with stage0 (about 45 seconds) -> $(SchemeBootImage)" />
+    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(Stage0Dir)\stage0.dll&quot; -I lib -I nanopass boot/boot-seed.core boot/ironscheme-buildscript-nano.sps &quot;$(SchemeBootDir)&quot;"
+          WorkingDirectory="$(SchemeDir)" />
+  </Target>
 </Project>

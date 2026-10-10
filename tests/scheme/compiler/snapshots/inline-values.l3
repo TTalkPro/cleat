@@ -1,0 +1,15 @@
+(lambda #f
+  ()
+  (clause
+    (p)
+    #f
+    (let ((values%1 (call p)))
+      (if (primcall $fx>=? (primcall $values-count values%1) '2)
+        (let ((a (primcall $values-ref values%1 '0))
+              (b (primcall $values-ref values%1 '1))
+              (r (primcall $values-tail values%1 '2)))
+          (primcall cons a (primcall cons b r)))
+        (primcall
+          call-with-values
+          (lambda #f (values%1) (clause () #f values%1))
+          (lambda #f () (clause (arg%3 arg%4) rest%2 '#f)))))))

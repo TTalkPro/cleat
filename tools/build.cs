@@ -6,9 +6,13 @@
 //   dotnet run tools/build.cs -- <命令> [参数]
 //
 // 命令：
-//   stage1 [输出目录]     编译 C# 项目后，用 stage0 从源码加载 boot 命名空间并运行 src/boot/build-boot.clj，
-//                         把 cleat.boot.lcil 与 cleat.boot.dll 输出到指定目录（默认 src/boot/）       [cleat-029]
-//   seed [--stage0]       重新生成 Lcore 种子 src/boot/boot-seed.edn（designs/08 §5）                  [cleat-036]
+//   scheme-stage1 [输出目录]
+//                         编译 C# 项目后，stage0 执行文本种子 src/scheme/boot/boot-seed.core、运行
+//                         boot/ironscheme-buildscript-nano.sps，把 cleat.scheme.boot.{lcil,dll,ifc} 输出到指定目录
+//                         （默认 src/boot/，此时等同 dotnet build 的 GenerateSchemeBootImage，但总是重新生成）  [cleat-046]
+//   seed [--stage0]       重新生成 Scheme 文本种子 src/scheme/boot/boot-seed.core（IronScheme 05 §5）：默认在新系统上运行
+//                         （stage0 --boot src/boot/cleat.scheme.boot.dll），--stage0 由 stage0 执行现有种子来运行；产物相同 [cleat-046]
+//   stage1 [输出目录]     编译 C# 项目后，用 Scheme 镜像编译 core.clj 等 → cleat.boot.dll（默认 src/boot/）        [cleat-053]
 //   ilverify <dll> …      用 ILVerify 校验发射器生成的程序集（dotnet tool install -g dotnet-ilverify）  [cleat-020]
 //   conformance [选项]    运行 tests/conformance 的语料（designs/09）                                   [cleat-002]
 //   compile-libs          预编译随附命名空间为 .clj.dll                                                [cleat-033]
@@ -18,6 +22,10 @@ string root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName((string)AppCon
 string srcDir = Path.Combine(root, "src");
 string solution = Path.Combine(root, "Cleat.slnx");
 string Bin(string project, string dll) => Path.Combine(srcDir, project, "bin", "Release", "net10.0", dll);
+string schemeDir = Path.Combine(srcDir, "scheme");                       // Scheme 元层源码（boot/、lib/、nanopass/），脚本的工作目录
+string bootDir = Path.Combine(srcDir, "boot");                           // 镜像输出目录
+string schemeBoot = Path.Combine(bootDir, "cleat.scheme.boot.dll");
+string stage0 = Bin("Cleat.Stage0", "stage0.dll");
 
 try
 {
@@ -25,12 +33,16 @@ try
     string[] rest = args.Skip(1).ToArray();
     switch (command)
     {
-        case "stage1":
+        case "scheme-stage1":
             BuildCSharp();
-            NotYet("stage1", "cleat-029");
+            SchemeStage1(rest);
             break;
         case "seed":
-            NotYet("seed", "cleat-036");
+            Seed(rest.Contains("--stage0"));
+            break;
+        case "stage1":
+            BuildCSharp();
+            NotYet("stage1", "cleat-053");
             break;
         case "ilverify":
             if (rest.Length == 0) return Usage();
@@ -55,7 +67,7 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- stage1 [outdir] | seed [--stage0] | ilverify <dll>... | conformance | compile-libs");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance | compile-libs");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }
@@ -86,19 +98,71 @@ void Conformance(string[] a)
 
 void NotYet(string command, string task) => throw new CommandFailed($"{command}: not implemented yet (task {task})");
 
+// 只编译 C# 项目（不经 MSBuild 生成 boot 镜像）
 void BuildCSharp() => Run("dotnet", ["build", solution, "-c", "Release", "-p:BuildBootImage=false", "-v", "quiet", "-nologo"]);
 
+// stage0 执行种子 → 运行 nano 构建脚本 → stage1 Scheme boot 镜像（IronScheme 05 §3 Phase A）。在 src/scheme 目录下运行：
+// 库搜索路径 lib（编译器、(ironscheme clr)、nanopass 的适配库）与 nanopass（框架本身）
+void SchemeStage1(string[] a)
+{
+    string outDir = a.Length > 0 ? Path.GetFullPath(a[0]) : bootDir;
+    Run("dotnet", [stage0, "-I", "lib", "-I", "nanopass", "boot/boot-seed.core", "boot/ironscheme-buildscript-nano.sps", outDir], schemeDir);
+}
+
+// 文本种子再生成（IronScheme 05 §5）：seed-buildscript.sps 只展开 boot 源码、不编译，写回 boot/boot-seed.core
+void Seed(bool onStage0)
+{
+    BuildCSharp();
+    if (onStage0)
+    {
+        // 脚本会覆盖 boot-seed.core，stage0 执行的是它的副本
+        string tmp = Directory.CreateTempSubdirectory("cleat-seed").FullName;
+        try
+        {
+            string copy = Path.Combine(tmp, "boot-seed.core");
+            File.Copy(Path.Combine(schemeDir, "boot", "boot-seed.core"), copy);
+            Run("dotnet", [stage0, "-I", "lib", copy, "boot/seed-buildscript.sps", "./"], schemeDir);
+        }
+        finally
+        {
+            Directory.Delete(tmp, true);
+        }
+    }
+    else
+    {
+        if (!File.Exists(schemeBoot)) throw new CommandFailed($"{schemeBoot} not found: run dotnet build first, or use 'seed --stage0'");
+        Run("dotnet", [stage0, "-I", "lib", "--boot", schemeBoot, "boot/seed-buildscript.sps", "./"], schemeDir);
+    }
+}
+
+// ILVerify（dotnet tool install -g dotnet-ilverify）：全局工具目录为用户目录下的 .dotnet/tools，可用环境变量 ILVERIFY 指定
 void ILVerify(string dll)
 {
-    string coreDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
-    Run("ilverify", [dll, "-r", Path.Combine(coreDir, "*.dll"), "-r", Path.Combine(Path.GetDirectoryName(dll)!, "*.dll")]);
+    string tool = Environment.GetEnvironmentVariable("ILVERIFY")
+      ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "tools",
+                      OperatingSystem.IsWindows() ? "ilverify.exe" : "ilverify");
+    if (!File.Exists(tool)) throw new CommandFailed($"ilverify not found at {tool}: dotnet tool install -g dotnet-ilverify (or set ILVERIFY)");
+    // 本程序运行在 .NET 10 上，其运行时目录就是要引用的框架程序集
+    string runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+    // 编译产物可能直接调用 Scheme boot 镜像中的过程（IronScheme iron-034e）：校验它们时引用镜像；校验镜像自己时不重复
+    string[] bootRef = Path.GetFileName(dll) == Path.GetFileName(schemeBoot) || !File.Exists(schemeBoot) ? [] : ["-r", schemeBoot];
+    Run(tool, [dll,
+             "-r", Path.Combine(runtimeDir, "*.dll"),
+             "-r", Bin("Cleat.Core", "Cleat.Core.dll"),
+             "-r", Bin("Cleat.Scheme", "Cleat.Scheme.dll"),
+             "-r", Bin("Cleat.Emit", "cleat-emit.dll"),
+             "-r", Path.Combine(Path.GetDirectoryName(dll)!, "*.dll"), ..bootRef]);
 }
 
 void Run(string file, string[] arguments, string? workingDirectory = null)
 {
-    var psi = new ProcessStartInfo(file) { WorkingDirectory = workingDirectory ?? root, UseShellExecute = false };
+    // 输出被重定向时（如在测试中运行）不保留 MSBuild 节点进程：它们继承输出管道，调用方会一直等不到输出结束
+    if (file == "dotnet" && arguments.Length > 0 && arguments[0] is "build" or "publish" && Console.IsOutputRedirected)
+        arguments = [.. arguments, "-nodeReuse:false"];
+    var psi = new ProcessStartInfo(file) { WorkingDirectory = workingDirectory ?? root, UseShellExecute = false, RedirectStandardInput = true };
     foreach (var a in arguments) psi.ArgumentList.Add(a);
     using var p = Process.Start(psi) ?? throw new CommandFailed($"cannot start {file}");
+    p.StandardInput.Close();   // 构建脚本不读输入
     p.WaitForExit();
     if (p.ExitCode != 0) throw new CommandFailed($"{file} {string.Join(' ', arguments)} failed with exit code {p.ExitCode}");
 }

@@ -63,3 +63,9 @@ src/boot/*.pdb
 **/*.ifc
 **/*.clj.dll
 artifacts/
+
+# Scheme meta-layer (cleat-046): generated boot image lives in src/boot/ (above); never leave one beside the sources
+src/scheme/boot/*.dll
+src/scheme/boot/*.lcil
+src/scheme/boot/*.pdb
+tests/scheme/compiler/snapshots/*.actual

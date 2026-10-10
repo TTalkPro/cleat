@@ -12,7 +12,7 @@ namespace Cleat.PrimGen;
 /// <summary>
 /// 原语表生成（designs/02 §5、15 §1；从 IronScheme.PrimGen 合并）。两张表、两个文件：
 /// <list type="bullet">
-/// <item><c>src/boot/primitives.ss</c>（Scheme 编译器读）：反射 Cleat.Scheme 的全部 <c>[Primitive]</c> 方法，再附上 Cleat.Core 的
+/// <item><c>src/scheme/boot/primitives.ss</c>（Scheme 编译器读）：反射 Cleat.Scheme 的全部 <c>[Primitive]</c> 方法，再附上 Cleat.Core 的
 ///   <c>Primitives.Table</c>（名字 <c>cleat.kernel/…</c>），格式 <c>(primitive 名字 (overload "类型" "方法" 固定参数个数 剩余参数? (标志 …) 内联模板) …)</c>；</item>
 /// <item><c>src/boot/primitives.edn</c>（工具用）：Cleat.Core 的表，<see cref="Primitives.ToEdn"/>。</item>
 /// </list>
@@ -54,7 +54,7 @@ public static class Program
             }
             string root = FindRoot();
             string edn = args.Length > 0 ? args[0] : Path.Combine(root, "src", "boot", "primitives.edn");
-            string ss = args.Length > 1 ? args[1] : Path.Combine(root, "src", "boot", "primitives.ss");
+            string ss = args.Length > 1 ? args[1] : Path.Combine(root, "src", "scheme", "boot", "primitives.ss");
             WriteIfChanged(edn, Primitives.ToEdn());
             string table = Generate();
             Verify(table);

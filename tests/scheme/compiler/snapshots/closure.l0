@@ -1,0 +1,2 @@
+(lambda #f
+  (clause (x) #f (lambda #f (clause (y) #f (primcall $fx+ x y)))))

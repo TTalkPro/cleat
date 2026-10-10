@@ -8,13 +8,13 @@ namespace Cleat.Scheme;
 
 /// <summary>
 /// 跨单元直接调用 boot 导出的已知过程（iron-034e，designs/03-compiler.md §4.1 D5）。
-/// nano 构建脚本在 boot 镜像旁写出 ironscheme.boot.ifc：镜像的编译实例 id（MVID，由内容哈希得出）与每个导出的已知过程的类名、子句形状。
+/// nano 构建脚本在 boot 镜像旁写出 cleat.scheme.boot.ifc：镜像的编译实例 id（MVID，由内容哈希得出）与每个导出的已知过程的类名、子句形状。
 /// 编译器编译其它单元时，接口文件的 id 与正在运行的 boot 镜像一致才用它；用了它的单元在入口一开始调用 <see cref="Check"/>，
 /// boot 镜像换了（重新构建）时报错，库的 .fasl / dll 由加载方退回源码，程序报"需要重新编译"。
 /// </summary>
 public static class BootInterface
 {
-    public const string BootAssemblyName = "ironscheme.boot";
+    public const string BootAssemblyName = "cleat.scheme.boot";
 
     private static Assembly s_boot;
 

@@ -10,7 +10,7 @@ public class PrimitiveTableTests
     {
         for (var dir = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); dir != null; dir = dir.Parent)
         {
-            var p = Path.Combine(dir.FullName, "src", "boot", "primitives.ss");
+            var p = Path.Combine(dir.FullName, "src", "scheme", "boot", "primitives.ss");
             if (File.Exists(p)) return p;
         }
         return null;
@@ -22,7 +22,7 @@ public class PrimitiveTableTests
         var path = FindTable();
         Assert.That(path, Is.Not.Null, "primitives.ss not found");
         Assert.That(File.ReadAllText(path), Is.EqualTo(Cleat.PrimGen.Program.Generate()),
-          "src/boot/primitives.ss 已过期：运行 primgen（dotnet build 会自动生成）");
+          "src/scheme/boot/primitives.ss 已过期：运行 primgen（dotnet build 会自动生成）");
     }
 }
 

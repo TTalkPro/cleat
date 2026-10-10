@@ -17,4 +17,13 @@ This repository also contains code derived from other projects, kept in separate
                                   Copyright (c) 2007-2024 Llewellyn Pritchard and (c) 2026 the IronScheme contributors.
                                   BSD 3-Clause License (LICENSE-BSD.txt in src/Cleat.Scheme/; origin and changes in src/Cleat.Scheme/README.md).
 
-The nanopass framework for Scheme (MIT) served as the reference for the Clojure port in src/cleat/nanopass/; no code is copied.
+- src/scheme/boot/, src/scheme/lib/, tests/scheme/
+                                — the Scheme meta-layer sources (boot libraries, the psyntax-derived macro expander in boot/expander/,
+                                  the nanopass compiler in lib/ironscheme/compiler/, the text seed, build scripts and compiler tests),
+                                  vendored from IronScheme src/scheme/ (same commit and working tree as above). BSD 3-Clause (IronScheme);
+                                  boot/expander/ and the build scripts carry the MIT-style notice of psyntax, Copyright (c) 2006, 2007
+                                  Abdulaziz Ghuloum and Kent Dybvig. Origin and changes in src/scheme/README.md.
+- src/scheme/nanopass/          — the nanopass framework for Scheme (https://github.com/nanopass/nanopass-framework-scheme, commit
+                                  c14d392487886df9275c1d4a3f0f61e1b6c4f2ef, the submodule IronScheme used), Copyright (c) 2000-2015
+                                  Dipanwita Sarkar, Andrew W. Keep, R. Kent Dybvig, Oscar Waddell. MIT License (Copyright file in that directory).
+                                  It also served as the reference for the Clojure port in src/cleat/nanopass/.

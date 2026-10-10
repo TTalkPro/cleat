@@ -50,7 +50,7 @@
 | [cleat-043](tasks/cleat-043-genclass-proxy-async.md) | gen-class、proxy 全量与异步 | 后续 | cleat-033 | 未开始 |
 | [cleat-044](tasks/cleat-044-spike-clojure-on-ironscheme.md) | PoC：Clojure on IronScheme | 决策前 | cleat-017 | 并入 cleat-049 |
 | [cleat-045](tasks/cleat-045-vendor-scheme-runtime.md) | 纳入并更名 C# 元层：Cleat.Scheme、Cleat.Stage0、Emit / PrimGen 合并 | M2′ | cleat-017 | 完成 |
-| [cleat-046](tasks/cleat-046-vendor-scheme-boot.md) | 纳入 Scheme 元层：boot、展开器、编译器、nanopass、种子；本仓库自举不动点 | M2′ | cleat-045 | 未开始 |
+| [cleat-046](tasks/cleat-046-vendor-scheme-boot.md) | 纳入 Scheme 元层：boot、展开器、编译器、nanopass、种子；本仓库自举不动点 | M2′ | cleat-045 | 完成 |
 | [cleat-047](tasks/cleat-047-try-catch-model.md) | 异常模型简化：删 call/cc 与处理器栈，加 `$try/catch`，重生成种子 | M2′ | cleat-046 | 未开始 |
 | [cleat-048](tasks/cleat-048-extensible-syntax-objects.md) | 可扩展语法对象：三张扩展表、8 处改造、Clojure 集合注册 | M2′ | cleat-047 | 未开始 |
 | [cleat-049](tasks/cleat-049-psyntax-clojure-extensions.md) | psyntax 的 Clojure 扩展：命名空间模型、rib 索引、macroexpand-1、错误钩子（含原 PoC 判据） | M4′ | cleat-048 | 未开始 |

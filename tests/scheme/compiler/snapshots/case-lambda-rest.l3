@@ -1,0 +1,6 @@
+(lambda #f
+  ()
+  (clause (a) #f a)
+  (clause (a b) #f (primcall cons a b))
+  (clause (a b c d e) #f (primcall vector a b c d e))
+  (clause (a) r r))

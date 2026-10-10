@@ -1,0 +1,19 @@
+(lambda #f
+  ()
+  (clause
+    (n xs)
+    #f
+    (begin
+      (label
+        loop
+        (i acc ys)
+        (jump loop '0 '0.0 xs)
+        (if (primcall $fx=? i n)
+          (primcall cons acc ys)
+          (jump
+            loop
+            (primcall $fx+ i '1)
+            (call (gref g$fl+$1$%b) acc '1.5)
+            (primcall cons i ys))))
+      (let ((j (primcall $fx+ n '1)))
+        (lambda #f (j) (clause () #f j))))))

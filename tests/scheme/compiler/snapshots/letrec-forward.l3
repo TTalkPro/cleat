@@ -1,0 +1,32 @@
+(lambda #f
+  ()
+  (clause
+    (n)
+    #f
+    (begin
+      (set! n (box n))
+      (let ((total (box (primcall $uninitialized))))
+        (letrec ((f (lambda "f" (g) (clause (x) #f (call g x))))
+                 (g (lambda "g"
+                      (total f)
+                      (clause
+                        (y)
+                        #f
+                        (if (primcall null? y)
+                          (primcall
+                            $check-initialized
+                            (unbox total)
+                            'total)
+                          (call f (primcall cdr y)))))))
+          (begin
+            (set-box! total (primcall $fx+ (unbox n) '1))
+            (letrec ((bump
+                       (lambda "bump"
+                         (n)
+                         (clause
+                           ()
+                           #f
+                           (begin
+                             (set-box! n (primcall $fx+ (unbox n) '1))
+                             (unbox n))))))
+              (begin (call bump) (call f '(1 2))))))))))
