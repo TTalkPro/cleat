@@ -20,6 +20,8 @@
 | 程序集属性 `[Cleat.Core.CleatModule]`；入口 `Initialize` 返回 `object` | 加载约定 |
 | 类型的 `[Serializable]` 不加；`deftype` 类加 `IType`，`defrecord` 加 `IRecord` | 与 Clojure 一致 |
 
+cleat-003 实测（2026-10-10）：以上扩展在内存与持久化两条路径都可行；`CreateType` 的耗时随同一模块内的类型数平方增长（1 万个类型单模块 7.6 s，每 1000 个一个程序集 0.9 s），所以内存模式按 1000 个类型分块（继承 IronScheme 的做法）；跨动态程序集引用的类型必须是 public；全部动态程序集统一用 `RunAndCollect`（`Run` 程序集引用 `RunAndCollect` 类型会在 `Emit` 时抛 `NotSupportedException`）。
+
 ## 3. 常量编码
 
 编译器 `cleat.compiler.constants/encode` 输出中立编码，发射器 `FaslEncoder` 转二进制并嵌入 `$Constants` 的 RVA 数据（与 IronScheme 相同），运行时 `Cleat.Core.Runtime.Fasl` 读回：

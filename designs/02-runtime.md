@@ -29,7 +29,7 @@
 
 ## 3. Var 与 Namespace
 
-- `Var`、`Namespace` 整体提取。`Var` 字段：`root`、`ns`、`sym`、`dynamic`、`threadBound`、`meta`；线程绑定用 `ThreadLocal`（ClojureCLR 现状），后续评估 `AsyncLocal`（IronScheme 10 的做法）。
+- `Var`、`Namespace` 整体提取。`Var` 字段：`root`、`ns`、`sym`、`dynamic`、`threadBound`、`meta`；线程绑定用 `ThreadLocal`（ClojureCLR 现状）。cleat-003 实测：`AsyncLocal` 写入 25 ns 且分配 72 字节、读取 4.5 ns，`ThreadLocal` 写 1.3 ns 无分配、读 2.6 ns；且 `AsyncLocal` 会流入 `Task.Run` / 新线程，与 Clojure `binding` 的线程语义不符。**决定：用 `ThreadLocal`，不用 `AsyncLocal`。**
 - **编译后代码访问 Var**：常量表持有 `Var` 对象（05 §3 编码 `(var ns name)`，加载时 `Var.intern`），读 `getRawRoot()`（非 dynamic，编译器按 Lcore 中的元数据判断）或 `deref()`；`def` 调 `bindRoot`。
 - **直接链接**（00 D13）：同一编译单元内对非 `^:dynamic`、非 `^:redef`、已定义为 `fn*` 的 Var 的调用直接 `call` 该函数类的 `invokeStatic`；跨单元按接口文件（04 §6），boot 镜像自带接口文件。`*compiler-options*` 的 `:direct-linking` 第一版恒为开，可按 Var 关掉。
 - 宏：`Var` 的 `:macro` 元数据；展开器（03）查它。

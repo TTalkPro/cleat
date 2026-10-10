@@ -58,6 +58,8 @@ Phase A 第 4 步的"编译的同时解释执行"对应 Clojure `compile` 的语
 | 命令行 | `stage0 [--time] [-I dir] <script.clj> args…`；`stage0 --core <file.edn>`；在 512 MB 栈的线程上运行 |
 | 规模 | 1500 ~ 2500 行 C#（IronScheme 1000 行 + `deftype` 生成 + `case`/`try`/`letfn`）；只求正确 |
 
+cleat-003 实测：方法表转发每次调用比直接 `callvirt` 多约 4 ns（2.4 → 6.2 ns），stage0 可以接受；方法表在 `CreateType` 之后再填、运行时可替换。
+
 **速度要求**：IronScheme 实测种子 0.3 s、nanopass 4.5 s。cleat 的 stage0 多了从源码展开 `core.clj`（8500 行，宏展开本身是解释执行的宏函数）；预计 Phase A 总耗时 1 ~ 3 分钟，可接受（只在 core / 编译器源码变化时重跑）。若超过 5 分钟：启用 Lcore 种子（§5）。
 
 ## 5. Lcore 种子（可选缓存）
