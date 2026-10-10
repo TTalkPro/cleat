@@ -699,6 +699,7 @@ See docs/license.txt. |#
       [(clj-invoke ,e ,e* ...) (Expr e) (for-each Expr e*)]
       [(clj-keyword-invoke ,d ,e ,e* ...) (Expr e) (for-each Expr e*)]
       [(clj-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
+      [(clj-static-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
       [(clj-case ,d ,e0 ,e1 ,e* ...) (Expr e0) (Expr e1) (for-each Expr e*)]
       [(clj-deftype ,d (,x* ...) ,le* ...) (for-each exclude! x*) (for-each Expr le*)]
       [else (void)])
@@ -855,7 +856,8 @@ See docs/license.txt. |#
         ((self) (cond
                   ((pair? (cdr loc)) (emit! mc `(ldsfld ,(cadr loc) ,(cddr loc))))   ; 034d：共享持有类中的过程
                   ((mctx-static? mc) (emit! mc `(ldsfld ,(mctx-class mc) "Instance")))
-                  (else (emit! mc '(ldarg 0))))))))
+                  (else (emit! mc '(ldarg 0)))))
+        (else (error 'codegen "unbound variable location" x)))))
 
   (define (store-var! mc x)
     (let ((loc (var-location mc x)))
@@ -1186,6 +1188,28 @@ See docs/license.txt. |#
          (operands! mc (map (lambda (x) (lambda () (cg x mc 'value))) e*))
          (when d1 (pack-array! mc (- argc d1)))
          (emit! mc `(call ,clojure-ops-type ,d0 ,(if d1 (append (objs d1) (list obj-array)) (objs argc)) ,obj))
+         (finish-value! mc ctx))]
+      [(clj-static-call ,d0 ,d1 ,e* ...)
+       ;; 受保护的直接链接（cleat-033，designs/04 §6）：e0 取 Var 的当前根。实参先存入临时变量，根还是函数类 d0 时
+       ;; newobj 一个实例作 self、直接 call d0::invokeStatic；被 with-redefs / 重定义换掉的根（别的类）走普通
+       ;; IFn.invoke（d1 为 Clojure 层的参数个数，fast 慢两条路的返回值在终点汇合）
+       (let* ((argc (length e*))                       ; 实参个数：e0 是 Var 读，e1 起才是实参
+              (n (- argc 1))
+              (root (new-local! mc obj))
+              (defs (map (lambda (x) (new-local! mc obj)) (cdr e*)))
+              (slow (new-label! mc))
+              (end (new-label! mc)))
+         (cg (car e*) mc 'value)
+         (emit! mc `(stloc ,root))
+         (for-each (lambda (x l) (cg x mc 'value) (emit! mc `(stloc ,l))) (cdr e*) defs)
+         (emit! mc `(ldloc ,root) `(isinst ,d0) `(brfalse ,slow))
+         (emit! mc `(newobj ,d0 ()))
+         (for-each (lambda (l) (emit! mc `(ldloc ,l))) defs)
+         (emit! mc `(call ,d0 "invokeStatic" ,(objs (+ n 1)) ,obj) `(br ,end))
+         (emit! mc `(label ,slow) `(ldloc ,root) `(castclass ,ifn-type))
+         (for-each (lambda (l) (emit! mc `(ldloc ,l))) defs)
+         (emit! mc `(callvirt ,ifn-type "invoke" ,(objs n) ,obj))
+         (emit! mc `(label ,end))
          (finish-value! mc ctx))]
       [(clj-case ,d ,e0 ,e1 ,e* ...)
        ;; CaseExpr（ClojureCLR 的语义）：键 = :int 时 ConvertToInt（非数字直接 default），否则 Util.hash；有 mask 时 (键 >> shift) & mask；
@@ -1737,10 +1761,20 @@ See docs/license.txt. |#
            (fixed (if variadic (list-head arities (- n 1)) arities))
            (methods '()))
       (define (add-method! m) (set! methods (cons m methods)))
+      ;; invokeStatic（cleat-033，designs/04 §4/§6）：没有自由字段的 fn 把固定子句的体编成静态方法，供接口文件
+      ;; 登记（HasStatic）与跨单元直接链接的调用点（$clj-static-call → newobj + call 类::invokeStatic）使用。
+      ;; 体只编这一份，实例 invoke 转发到它并传 this 作 self（(fn* me [] me) 的 self 就是实例本身）；体里的 self
+      ;; 是第 0 个参数。直接链接的调用点没有实例：现场 newobj 一个（fn 每次求值本就是新对象，cleat-032）。
+      ;; 变长子句保留实例体（RestFn 的 doInvoke 语义）
+      (when (null? fields)
+        (for-each (lambda (cl) (add-method! (clj-static-clause-method u name cl self)))
+                  (if variadic (list-head cl* (- n 1)) cl*)))
       (let loop ((cls cl*) (i 0))
         (unless (null? cls)
-          (add-method! (clj-clause-method u name (car cls) fields field-names self
-                                          (if (and variadic (= i (- n 1))) "doInvoke" "invoke")))
+          (if (and (null? fields) (not (and variadic (= i (- n 1)))))
+              (add-method! (clj-forward-method u name (car cls)))
+              (add-method! (clj-clause-method u name (car cls) fields field-names self
+                                              (if (and variadic (= i (- n 1))) "doInvoke" "invoke"))))
           (loop (cdr cls) (+ i 1))))
       (when variadic
         (add-method! `(method "getRequiredArity" (attrs override) (params) (ret ,int32-type)
@@ -1781,6 +1815,32 @@ See docs/license.txt. |#
          (mctx-big?-set! mc (bigger-than? body big-body-nodes))
          (cg body mc 'tail)
          (finish-method mc mname '(override) (objs (length x*))))]))
+
+  ;; Clojure 函数类的固定子句的静态变体（cleat-033）：第 0 个参数是 self（实例 invoke 转发时传 this，
+  ;; 直接链接的调用点传新建实例），形参从 1 开始；尾位置照常发 (tail)
+  (define (clj-static-clause-method u class cl self)
+    (nanopass-case (L3 Clause) cl
+      [(clause (,x* ...) ,x ,body)
+       (when x (error 'codegen "Clojure fn clauses have fixed parameters" x))
+       (let ((mc (make-method-ctx u class #t #f #f #f)))
+         (when self (hashtable-set! (mctx-vars mc) self (cons 'arg 0)))
+         (let loop ((ps x*) (j 1))
+           (unless (null? ps)
+             (hashtable-set! (mctx-vars mc) (car ps) (cons 'arg j))
+             (loop (cdr ps) (+ j 1))))
+         (mctx-big?-set! mc (bigger-than? body big-body-nodes))
+         (cg body mc 'tail)
+         (finish-method mc "invokeStatic" '(static) (objs (+ (length x*) 1))))]))
+
+  ;; 实例 invoke 的转发变体（cleat-033）：this 作 self，形参原样传给静态 invokeStatic，返回它的值
+  (define (clj-forward-method u class cl)
+    (nanopass-case (L3 Clause) cl
+      [(clause (,x* ...) ,x ,body)
+       `(method "invoke" (attrs override) (params ,@(objs (length x*))) (ret ,obj)
+          (body (ldarg 0)
+                ,@(let loop ((j 1)) (if (> j (length x*)) '() (cons `(ldarg ,j) (loop (+ j 1)))))
+                (call ,class "invokeStatic" ,(objs (+ (length x*) 1)) ,obj)
+                (ret)))]))
 
   ;; ———————————————— deftype* / reify* → CLR 类型（cleat-051）————————————————
   ;;

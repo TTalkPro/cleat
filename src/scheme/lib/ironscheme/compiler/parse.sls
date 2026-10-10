@@ -11,7 +11,8 @@ See docs/license.txt. |#
 ;;; - case-lambda 各变体统一为 (lambda 名字 (clause (形参 …) 剩余形参 体) …)，类型说明忽略；
 ;;;   async-lambda 不支持（cleat-046）；特殊原语 $try/catch → (try-catch e (d* e*) …)（designs/15 §3）；
 ;;; - 注解（annotated-*）剥离。第一版不保留源位置。
-;;; - Clojure 节点（cleat-051）：$clj-var-ref $clj-var-set! $clj-def $clj-invoke $clj-keyword-invoke $clj-call $clj-fn $clj-deftype
+;;; - Clojure 节点（cleat-051）：$clj-var-ref $clj-var-set! $clj-def $clj-invoke $clj-keyword-invoke $clj-call
+;;;   $clj-static-call（cleat-033 直接链接）$clj-fn $clj-deftype
 ;;;   （头部是这些名字且未被词法绑定时；只由 (clojure syntax) 产生）→ L0 的 clj-… 节点。
 (library (ironscheme compiler parse)
   (export parse-core typed-clauses-made)
@@ -256,6 +257,15 @@ See docs/license.txt. |#
                    (n (quoted (caddr x) "$clj-call fixed count" x)))
                (unless (and (string? m) (or (not n) (and (fixnum? n) (<= 0 n (length (cdddr x)))))) (bad-form "$clj-call" x))
                `(clj-call ,m ,n ,(Args (cdddr x) x) ...)))
+            (($clj-static-call)
+             ;; ($clj-static-call '类名 '参数个数 Var读 实参 …)（cleat-033 直接链接）：类名是接口文件登记的
+             ;; "类, 程序集"；Var读 取当前根供守卫比较，根还是这个类就直接调 invokeStatic，否则普通 invoke；
+             ;; 实参个数与参数个数必须一致（全部 object，返回 object）
+             (unless (and (list? x) (>= (length x) 4)) (bad-form "$clj-static-call" x))
+             (let ((cls (quoted (cadr x) "$clj-static-call class" x))
+                   (n (quoted (caddr x) "$clj-static-call arity" x)))
+               (unless (and (string? cls) (fixnum? n) (= n (length (cddddr x)))) (bad-form "$clj-static-call" x))
+               `(clj-static-call ,cls ,n ,(Expr (cadddr x)) ,(Args (cddddr x) x) ...)))
             (($clj-case)
              ;; ($clj-case '描述 x default then …)
              (unless (and (list? x) (>= (length x) 4)) (bad-form "$clj-case" x))

@@ -107,11 +107,26 @@ public static class Driver
     {
         var r = new List<object>();
         object p = list;
-        for (; p is Cons c; p = c.cdr) r.Add(c.car);
+        while (PairOf(p, out var car, out var cdr)) { r.Add(car); p = cdr; }
         return p == null ? r : null;   // 非真列表：null
     }
 
-    private static object Quoted(object x) => x is Cons c && ReferenceEquals(c.car, s_quote) && c.cdr is Cons d ? d.car : NotSimple;
+    /// <summary>Lcore 的序对：模板节点是 clojure.lang 的列表，展开器生成的子结构是 Scheme 的 Cons（字段 car / cdr）</summary>
+    private static bool PairOf(object x, out object car, out object cdr)
+    {
+        switch (x)
+        {
+            case clojure.lang.ISeq s when s != null: car = s.first(); cdr = s.next(); return true;
+            case Cleat.Scheme.Cons c: car = c.car; cdr = c.cdr; return true;
+            default: car = cdr = null; return false;
+        }
+    }
+
+    /// <summary>Lcore 里的符号：两种表示都有，按名字比较（节点头与特殊形式名）</summary>
+    private static bool HeadIs(object x, string name) =>
+      x != null && x.ToString() == name && (x is clojure.lang.Symbol || x.GetType().Name == "Symbol");
+
+    private static object Quoted(object x) => PairOf(x, out var car, out var cdr) && HeadIs(car, "quote") && PairOf(cdr, out var v, out _) ? v : NotSimple;
 
     private static bool AllSimple(List<object> xs, int from, Scope sc)
     {
@@ -601,6 +616,22 @@ public static class Driver
     /// <summary>编译时正在运行的 Clojure boot 镜像（cleat.boot.dll）的 id；没有时 #f。产物入口据此生成 BootInterface.Check。</summary>
     public static object ClojureImageId() => CoreBoot.CurrentImageId?.ToString() ?? s_false;
 
+    /// <summary>
+    /// (direct-link-target var argc)：Var 在接口文件里的条目有静态 <c>invokeStatic</c>（:static）且 arity 恰为 argc 时
+    /// 返回类名（"类, 程序集"），否则 #f。展开器对 Var 调用据此生成 <c>$clj-static-call</c>（跨单元直接链接，cleat-033，
+    /// designs/04 §6）；其余调用照常走 IFn.invoke。
+    /// </summary>
+    public static object DirectLinkTarget(object var, object argc)
+    {
+        if (var is not Var v) return s_false;
+        int n;
+        try { n = Convert.ToInt32(argc); }
+        catch (Exception) { return s_false; }   // Scheme 的 fixnum 是 Int64，其余不是参数个数的直接放弃直连
+        // IFn.invoke 只有 1 ~ 20 个固定参数的签名：更多参数的调用不做直连
+        var e = InterfaceFile.FindKnown(clojure.lang.Symbol.intern(v.Namespace.Name.Name, v.Symbol.Name));
+        return e is { HasStatic: true } && n is >= 1 and <= 20 && Array.IndexOf(e.Arities, n) >= 0 ? e.ClassName : s_false;
+    }
+
     private static readonly Symbol s_type = Symbol.Intern("type");
     private static readonly Symbol s_cljFn = Symbol.Intern("$clj-fn");
 
@@ -608,7 +639,8 @@ public static class Driver
     /// 写接口文件（designs/05 §6，cleat-022 的 EDN 格式）：dll 旁的 <c>名字.ifc</c>，镜像 id 为 dll 的 MVID（发射器按内容哈希）。
     /// 条目：本单元顶层 <c>(def v (fn* …))</c> 定义的已知函数——Var 不是 ^:dynamic / ^:redef、只定义一次、fn 类名在单元内唯一
     /// （codegen 对重名加 __N，唯一时类名即 <c>ns$name</c>）、无自由变量（顶层 fn*）；记 Var → 类、各 arity（变长为 -(必需个数+1)）。
-    /// 直接链接（invokeStatic）尚未生成，:static 为假。返回条目数。
+    /// 这类 fn 类同时生成了静态 <c>invokeStatic</c>（cleat-033，designs/04 §6）：编译器对参数个数恰为某固定 arity 的调用
+    /// 直接 <c>call 类::invokeStatic</c>（跨单元直接链接），:static 据此为真。返回条目数。
     /// </summary>
     public static int WriteInterfaceFile(string dllPath, object cores, object lcil)
     {
@@ -631,7 +663,7 @@ public static class Driver
                 Var = clojure.lang.Symbol.intern(v.Namespace.Name.Name, v.Symbol.Name),
                 ClassName = cls + ", " + asm,
                 Arities = arities,
-                HasStatic = false,
+                HasStatic = true,
             });
         }
         string ifc = InterfaceFile.PathFor(dllPath);
@@ -649,28 +681,29 @@ public static class Driver
 
     private static void CollectTypes(object x, HashSet<string> types)
     {
-        for (object p = x; p is Cons c; p = c.cdr)
+        for (object p = x; PairOf(p, out var c, out var pd); p = pd)
         {
-            if (c.car is Cons item && ReferenceEquals(item.car, s_type) && item.cdr is Cons n && n.car != null && n.car is not Cons)
-                types.Add(n.car.ToString());
-            if (c.car is Cons sub) CollectTypes(sub, types);
+            if (PairOf(c, out var item, out var pn) && PairOf(pn, out var tn, out _)
+                && HeadIs(item, "type") && tn != null && !PairOf(tn, out _, out _))
+                types.Add(tn.ToString());
+            if (PairOf(c, out var sub, out _)) CollectTypes(sub, types);
         }
     }
 
     /// <summary>顶层形式里的 $clj-def / $clj-fn：数 fn 类名与 Var 的定义次数，记下 (def v (fn* …)) 的候选。</summary>
     private static void Walk(object x, Dictionary<string, int> fnNames, Dictionary<Var, int> defs, List<(Var, string, int[])> candidates)
     {
-        if (x is not Cons c) return;
-        if (ReferenceEquals(c.car, s_quote)) return;
+        if (!PairOf(x, out var head0, out var tail0)) return;
+        if (HeadIs(head0, "quote")) return;
         var xs = Items(x);
         if (xs != null && xs.Count >= 1)
         {
-            if (ReferenceEquals(xs[0], s_cljFn) && xs.Count == 4 && Quoted(xs[1]) is object nm && nm != NotSimple)
+            if (HeadIs(xs[0], "$clj-fn") && xs.Count == 4 && Quoted(xs[1]) is object nm && nm != NotSimple)
             {
                 string name = nm.ToString();
                 fnNames[name] = fnNames.TryGetValue(name, out int k) ? k + 1 : 1;
             }
-            if (ReferenceEquals(xs[0], s_def) && xs.Count == 6 && Quoted(xs[1]) is Var v)
+            if (HeadIs(xs[0], "$clj-def") && xs.Count == 6 && Quoted(xs[1]) is Var v)
             {
                 defs[v] = defs.TryGetValue(v, out int k) ? k + 1 : 1;
                 if (FnNode(xs[4]) is { } fn && Quoted(fn[1]) is object cls && cls != NotSimple)
@@ -680,19 +713,25 @@ public static class Driver
                 }
             }
         }
-        for (object p = x; p is Cons pc; p = pc.cdr) Walk(pc.car, fnNames, defs, candidates);
+        for (object p = x; PairOf(p, out var pc, out var pd); p = pd) Walk(pc, fnNames, defs, candidates);
     }
 
     private static readonly Symbol s_letrec = Symbol.Intern("letrec");
 
-    /// <summary>def 的初值是 fn*：<c>($clj-fn …)</c>，或命名 fn* 的 <c>(letrec ((f ($clj-fn …))) f)</c>（自引用在类里是 this，没有自由变量）。</summary>
+    /// <summary>
+    /// def 的初值是 fn*：<c>($clj-fn …)</c>；带元数据（defn 的 :arglists）时外面套一层
+    /// <c>($clj-call '("WithMetaOf" #f) fn '元数据)</c>；命名 fn* 是 <c>(letrec ((f ($clj-fn …))) f)</c>
+    /// （自引用在类里是 this，没有自由变量）。
+    /// </summary>
     private static List<object> FnNode(object init)
     {
         var xs = Items(init);
         if (xs == null) return null;
-        if (xs.Count == 4 && ReferenceEquals(xs[0], s_cljFn)) return xs;
-        if (xs.Count == 3 && ReferenceEquals(xs[0], s_letrec) && Items(xs[1]) is { Count: 1 } bs && Items(bs[0]) is { Count: 2 } b
-            && b[0] is Symbol name && ReferenceEquals(xs[2], name))
+        if (xs.Count == 4 && HeadIs(xs[0], "$clj-fn")) return xs;
+        if (xs.Count == 5 && HeadIs(xs[0], "$clj-call") && Quoted(xs[1]) is string m && m == "WithMetaOf")
+            return FnNode(xs[3]);
+        if (xs.Count == 3 && HeadIs(xs[0], "letrec") && Items(xs[1]) is { Count: 1 } bs && Items(bs[0]) is { Count: 2 } b
+            && b[0]?.ToString() is string name && xs[2]?.ToString() == name)
             return FnNode(b[1]);
         return null;
     }
@@ -701,7 +740,7 @@ public static class Driver
     private static int[] FnArities(object variadic, object lambda)
     {
         var l = Items(lambda);
-        if (l == null || l.Count < 2 || !ReferenceEquals(l[0], s_caseLambda)) return null;
+        if (l == null || l.Count < 2 || !HeadIs(l[0], "case-lambda")) return null;
         object req = Quoted(variadic);
         var r = new List<int>();
         for (int i = 1; i < l.Count; i++)

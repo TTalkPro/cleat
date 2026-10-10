@@ -64,6 +64,7 @@ See docs/license.txt. |#
           [(clj-invoke ,e ,e* ...) (union* (map Expr (cons e e*)))]
           [(clj-keyword-invoke ,d ,e ,e* ...) (union* (map Expr (cons e e*)))]
           [(clj-call ,d0 ,d1 ,e* ...) (union* (map Expr e*))]
+          [(clj-static-call ,d0 ,d1 ,e* ...) (union* (map Expr e*))]
           [(clj-case ,d ,e0 ,e1 ,e* ...) (union* (map Expr (cons* e0 e1 e*)))]
           [(clj-deftype ,d (,x* ...) ,le* ...) (set-minus (union* (map Expr le*)) x*)]
           [(box ,e) (Expr e)]

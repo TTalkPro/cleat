@@ -46,7 +46,7 @@
           namespace-for namespace-environment eval-in-ns expand-in-ns macroexpand-1-in-ns macroexpand-in-ns
           symbol-label register-clj-special! register-clj-form! register-hidden-clj-form! var-label type-label make-label
           set-unresolved-lookup! set-macro-env-provider! set-var-call-handler!
-          clojure-expanding? clojure-form? clj-op var-reference macro-transformer
+          clojure-expanding? clojure-form? clj-op var-reference macro-transformer direct-link-target
           clojure-error-hook expander-exception syntax-position source-path
           macro-var-head call-macro)
   (import
@@ -285,6 +285,10 @@
   (define op-meta (clj-op Meta))
   (define op-get (clj-op Get))
 
+  ;;; 接口文件里的已知函数类（cleat-033）：Var 的条目有 invokeStatic 且 arity 相符时返回 "类, 程序集"，否则 #f
+  (define (direct-link-target v argc)
+    (clr-static-call Cleat.Scheme.Clojure.Driver DirectLinkTarget v argc))
+
   ;;; Var 的读（核心形式）：:const 的 Var 为常量，否则编译器的 Var 节点（cleat-051）：动态 Var 为 Var.get，否则 getRawRoot
   ;;; （与 C# 展开器的 var-ref 相同）。Var 在 Lcore 里是常量：进程内求值为对象本身，保存到 dll 时编码为 (var ns name)，加载时 intern
   (define (var-reference v)
@@ -292,13 +296,19 @@
         (list 'quote (op-var-get v))
         (list '$clj-var-ref (list 'quote v) (list 'quote (and (var-dynamic? v) #t)))))
 
-  ;;; 以 Var 开头的调用：(clojure syntax) 登记（:inline、instance?、IFn.invoke）；没有登记时按 IFn 调用
+  ;;; 以 Var 开头的调用：(clojure syntax) 登记（:inline、instance?、IFn.invoke）；没有登记时按 IFn 调用，
+  ;;; 但 Var 是接口文件里的已知函数（:static 条目，参数个数恰为某固定 arity）时直接 call 类::invokeStatic
+  ;;; （$clj-static-call，跨单元直接链接，cleat-033，designs/04 §6）
   (define var-call-handler #f)
   (define (set-var-call-handler! proc) (set! var-call-handler proc))
   (define (default-var-call e v expand)
     (syntax-case e ()
       ((_ arg ...)
-       (cons* '$clj-invoke (var-reference v) (map expand #'(arg ...))))))
+       (let* ((n (length #'(arg ...)))
+              (cls (direct-link-target v n)))
+         (if cls
+             (cons* '$clj-static-call (list 'quote cls) (list 'quote n) (map expand #'(arg ...)))
+             (cons* '$clj-invoke (var-reference v) (map expand #'(arg ...))))))))
 
   ;;; 当前展开中的标识符 e（语法对象）对应的 Clojure 符号
   (define (form-symbol e) (syntax->clj e))

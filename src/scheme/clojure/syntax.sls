@@ -13,8 +13,10 @@
 ;;;              都是 $clj-call（ClojureOps 的静态方法）
 ;;;   case*      $clj-case：编译器按 CaseExpr 的规则算键、IL switch 分派
 ;;;   deftype* reify*   $clj-deftype：编译为真实 CLR 类型（字段、接口方法、getBasis；reify 捕获局部、实现 IObj）
-;;; 调用一律经 $clj-invoke（IFn.invoke(k)），(:k x) 为 $clj-keyword-invoke；字面量：关键字、nil、正则等为常量，
-;;; 集合元素全为常量时整个是常量，否则运行时构造（RT.vector / map / set，元数据经 withMeta）。
+;;;   调用一般经 $clj-invoke（IFn.invoke(k)）；接口文件里的已知函数（cleat-033）在参数个数恰为固定 arity 时经
+;;;   $clj-static-call 直接 call 类::invokeStatic（namespaces.sls 的 default-var-call 决定）；(:k x) 为 $clj-keyword-invoke；
+;;;   字面量：关键字、nil、正则等为常量，
+;;;   集合元素全为常量时整个是常量，否则运行时构造（RT.vector / map / set，元数据经 withMeta）。
 ;;; 模板（转换器式的特殊形式）里的节点经隐藏形式 %node：(%node 头 (数据 …) 子形式 …) → (头 '数据 … 子形式的展开 …)。
 ;;;
 ;;; 上下文（尾位置、recur 目标、词法局部、fn 的类名、def 给 fn 的名字）放在参数 current-ctx 里：展开子形式时参数化。
@@ -1008,7 +1010,14 @@
             => (lambda (t)
                  (clj-call "IsInstanceOf" #f (list 'quote t) (expand-in nt (cadr args) expand))))
            (else
-            (invoke-core (var-reference v) (map (lambda (a) (expand-in nt a expand)) args))))))))
+            ;; 接口文件里的已知函数（cleat-033，designs/04 §6）：参数个数恰为某固定 arity 时生成受保护直接调用
+            ;; （$clj-static-call 类名 参数个数 Var读 实参…）：编译器先取 Var 的当前根，还是这个函数类就直接
+            ;; call 类::invokeStatic，被 with-redefs / 重定义换掉时退回普通 IFn.invoke
+            (let ((cls (direct-link-target v n)))
+              (if cls
+                  (cons* '$clj-static-call (list 'quote cls) (list 'quote n) (var-reference v)
+                         (map (lambda (a) (expand-in nt a expand)) args))
+                  (invoke-core (var-reference v) (map (lambda (a) (expand-in nt a expand)) args))))))))))
 
   ;;; ———————————————— 宿主语法糖：.method、Type.、Type/member（解析不到的符号的后备）————————————————
 

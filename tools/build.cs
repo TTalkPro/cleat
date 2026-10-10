@@ -24,7 +24,10 @@
 //   cts cts|test-clojure [--write] [--only 正则]
 //                         逐命名空间跑 clojure-test-suite / test_clojure，与 tests/cts-baseline.edn /
 //                         tests/test-clojure-baseline.edn 比较（--write 重写基线）（tools/cts.clj）                 [cleat-032]
-//   compile-libs          预编译随附命名空间为 .clj.dll                                                [cleat-033]
+//   compile-libs [命名空间…]
+//                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为 .clj.dll，写在其
+//                         源码旁边（*compile-path* 未设时驱动就写在那里）；加载器的同目录新旧比较让 require 在 dll
+//                         不旧于源码时用 dll，否则回退源码                                          [cleat-033]
 using System.Diagnostics;
 
 string root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName((string)AppContext.GetData("EntryPointFilePath")!)!, ".."));
@@ -64,7 +67,8 @@ try
             Run("dotnet", new[] { Bin("Cleat.Host", "cleat.dll"), Path.Combine(root, "tools", "cts.clj") }.Concat(rest).ToArray(), root);
             break;
         case "compile-libs":
-            NotYet("compile-libs", "cleat-033");
+            BuildCSharp();
+            CompileLibs(rest);
             break;
         default:
             return Usage();
@@ -79,9 +83,36 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...]");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
+}
+
+// 预编译随附命名空间（cleat-033）：boot-order.edn 里 :boot false 且没有 :loaded-by 的条目（也可在命令行点名）。
+// 每个命名空间一次宿主进程：(compile 'ns) 在 *compile-files* 下从源码加载并把顶层形式写成源码旁边的 .clj.dll；
+// 命名空间之间按 boot-order 顺序，前面的先编译（后面的若 require 了它们就用上 dll）。运行 -c Release 的宿主。
+void CompileLibs(string[] a)
+{
+    string[] nses = a;
+    if (nses.Length == 0)
+    {
+        var order = File.ReadAllText(Path.Combine(bootDir, "boot-order.edn"));
+        nses = System.Text.RegularExpressions.Regex.Matches(order, @"\{:ns ([^\s]+)\s+:path [^}]*:boot false\}")
+            .Select(m => (ns: m.Groups[1].Value.Trim(), text: m.Value))
+            .Where(x => !x.text.Contains(":loaded-by"))
+            .Select(x => x.ns)
+            .ToArray();
+    }
+    if (nses.Length == 0) throw new CommandFailed("compile-libs: no namespaces found in boot-order.edn");
+    string host = Bin("Cleat.Host", "cleat.dll");
+    foreach (string ns in nses)
+    {
+        Console.WriteLine($"compile-libs: {ns}");
+        var args = new List<string> { host, "-I", Path.Combine(srcDir, "clojure"),
+            "-e", $"(binding [*compile-files* true] (compile '{ns}))" };
+        Run("dotnet", args.ToArray(), root);
+    }
+    Console.WriteLine($"compile-libs: {nses.Length} namespace(s) compiled");
 }
 
 // 语料（tests/conformance/corpus.edn，designs/09）。现在只做解析与统计（cleat-002）；对宿主求值在 cleat-018 / cleat-032 接入
@@ -125,8 +156,6 @@ void Stage1(string[] a)
                           "--boot-order", Path.Combine(bootDir, "boot-order.edn") });
     Run("dotnet", args.ToArray(), root);
 }
-
-void NotYet(string command, string task) => throw new CommandFailed($"{command}: not implemented yet (task {task})");
 
 // 只编译 C# 项目（不经 MSBuild 生成 boot 镜像）
 void BuildCSharp() => Run("dotnet", ["build", solution, "-c", "Release", "-p:BuildBootImage=false", "-v", "quiet", "-nologo"]);
@@ -176,12 +205,15 @@ void ILVerify(string dll)
     string runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
     // 编译产物可能直接调用 Scheme boot 镜像中的过程（IronScheme iron-034e）：校验它们时引用镜像；校验镜像自己时不重复
     string[] bootRef = Path.GetFileName(dll) == Path.GetFileName(schemeBoot) || !File.Exists(schemeBoot) ? [] : ["-r", schemeBoot];
+    // Clojure 产物直接链接 cleat.boot.dll 的已知函数（cleat-033）：校验它们时也引用 Clojure 镜像
+    string clojureBoot = Path.Combine(bootDir, "cleat.boot.dll");
+    string[] clojureRef = Path.GetFileName(dll) == "cleat.boot.dll" || !File.Exists(clojureBoot) ? [] : ["-r", clojureBoot];
     Run(tool, [dll,
              "-r", Path.Combine(runtimeDir, "*.dll"),
              "-r", Bin("Cleat.Core", "Cleat.Core.dll"),
              "-r", Bin("Cleat.Scheme", "Cleat.Scheme.dll"),
              "-r", Bin("Cleat.Emit", "cleat-emit.dll"),
-             "-r", Path.Combine(Path.GetDirectoryName(dll)!, "*.dll"), ..bootRef]);
+             "-r", Path.Combine(Path.GetDirectoryName(dll)!, "*.dll"), ..bootRef, ..clojureRef]);
 }
 
 void Run(string file, string[] arguments, string? workingDirectory = null)

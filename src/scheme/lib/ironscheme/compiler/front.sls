@@ -98,6 +98,7 @@ See docs/license.txt. |#
           [(clj-invoke ,e ,e* ...) (union* (map Expr (cons e e*)))]
           [(clj-keyword-invoke ,d ,e ,e* ...) (union* (map Expr (cons e e*)))]
           [(clj-call ,d0 ,d1 ,e* ...) (union* (map Expr e*))]
+          [(clj-static-call ,d0 ,d1 ,e* ...) (union* (map Expr e*))]
           [(clj-case ,d ,e0 ,e1 ,e* ...) (union* (map Expr (cons* e0 e1 e*)))]
           [(clj-deftype ,d (,x* ...) ,le* ...)
            ;; 字段是对象的字段：方法里的 set! 直接写字段，不装箱

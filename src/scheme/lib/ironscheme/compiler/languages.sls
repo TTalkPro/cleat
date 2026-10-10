@@ -89,6 +89,7 @@ See docs/license.txt. |#
       (clj-invoke e e* ...)              ; IFn.invoke(k)
       (clj-keyword-invoke d e e* ...)    ; d 为关键字；ILookup.valAt 快速路径，否则 RT.get；e* 为可选的缺省值
       (clj-call d0 d1 e* ...)            ; ClojureOps 的静态方法 d0；d1 为 #f（全部是 object 参数）或固定参数个数 n（其余打包成 object[]）
+      (clj-static-call d0 d1 e* ...)     ; 受保护的直接链接（cleat-033，designs/04 §6）：d0 为接口文件登记的已知函数类（"类, 程序集"），d1 为参数个数；e0 取 Var 当前根，还是这个类就直接调 invokeStatic，否则普通 invoke
       (clj-case d e0 e1 e* ...)          ; case*：d 为 (shift mask 种类 ((哈希 测试值 跳过检查?) …))，e0 为被测值，e1 为 default，e* 与条目对齐
       (clj-deftype d (x* ...) le* ...))  ; d 为类型描述；x* 为字段（方法体里可读、可变字段可 set!），le* 为方法（this 参数 …）
     (LambdaExpr (le)

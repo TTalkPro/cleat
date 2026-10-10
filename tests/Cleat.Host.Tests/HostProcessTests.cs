@@ -258,8 +258,8 @@ public class HostProcessTests
         Assert.That(File.Exists(ifc), Is.True, "no " + ifc);
         string ifcText = File.ReadAllText(ifc);
         Assert.That(ifcText, Does.Contain(":assembly \"my.lib.clj\""));
-        Assert.That(ifcText, Does.Contain("{:var my.lib/add2, :class \"my.lib$add2, my.lib.clj\", :arities [2], :static false}"));
-        Assert.That(ifcText, Does.Contain("{:var my.lib/multi, :class \"my.lib$multi, my.lib.clj\", :arities [0 1 -2], :static false}"));
+        Assert.That(ifcText, Does.Contain("{:var my.lib/add2, :class \"my.lib$add2, my.lib.clj\", :arities [2], :static true}"));
+        Assert.That(ifcText, Does.Contain("{:var my.lib/multi, :class \"my.lib$multi, my.lib.clj\", :arities [0 1 -2], :static true}"));
         Assert.That(ifcText, Does.Not.Contain("my.lib/*level*"), "dynamic Vars are not known functions");
 
         // 新进程：加载器选 dll（不比源码旧），入口执行全部顶层形式（含副作用），接口文件按 MVID 登记
@@ -319,6 +319,39 @@ public class HostProcessTests
         var r = Cleat("(def a 2)\n(. System.Console (WriteLine (cleat.kernel/add a 3)))\n", "-");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         Assert.That(r.Out, Is.EqualTo("5\n"));
+    }
+
+    [Test]
+    public void DirectLinkingAcrossUnitsAndWithRedefs()
+    {
+        // cleat-033：A 先编译成 dll；B 在 A 的接口文件已登记后编译，对 A 的已知函数直接 call invokeStatic
+        // （boot 镜像的函数同样如此）。直接调用带守卫：with-redefs / 重定义把根换成别的函数类时退回普通
+        // IFn.invoke，重定义的语义不丢。
+        Write("lp2/link/a.clj", "(ns link.a)\n(. System.Console (WriteLine \"loading link.a\"))\n(defn inc2 [x] (clojure.core/inc x))\n");
+        var ca = Cleat(null, "-I", "lp2", "-e", "(binding [*compile-files* true] (compile 'link.a))");
+        Assert.That(ca.ExitCode, Is.EqualTo(0), ca.ToString());
+        Assert.That(File.ReadAllText(Path.Combine(_dir, "lp2", "link.a.clj.ifc")), Does.Contain(":static true"), "接口文件登记 invokeStatic");
+
+        Write("lp2/link/b.clj", "(ns link.b\n  (:require [link.a]))\n(defn twice [x] (link.a/inc2 (link.a/inc2 x)))\n");
+        var cb = Cleat(null, "-I", "lp2", "-e", "(require 'link.a)", "-e", "(binding [*compile-files* true] (compile 'link.b))");
+        Assert.That(cb.ExitCode, Is.EqualTo(0), cb.ToString());
+        byte[] bDll = File.ReadAllBytes(Path.Combine(_dir, "lp2", "link.b.clj.dll"));
+        Assert.That(Encoding.ASCII.GetString(bDll), Does.Contain("invokeStatic"), "B 的 IL 里有直接调用");
+
+        var r = Cleat(null, "-I", "lp2", "-e", "(require 'link.b)", "-e", "[(link.b/twice 1)]");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out.TrimEnd('\n').Split('\n')[^1], Is.EqualTo("[3]"), r.ToString());
+
+        // with-redefs 换掉 link.a/inc2 的根：受保护的直接调用退回普通调用，看到新根
+        var w = Cleat(null, "-I", "lp2", "-e", "(require 'link.b)",
+            "-e", "(with-redefs [link.a/inc2 (fn* [x] (clojure.core/* 10 x))] (link.b/twice 1))");
+        Assert.That(w.ExitCode, Is.EqualTo(0), w.ToString());
+        Assert.That(w.Out.TrimEnd('\n').Split('\n')[^1], Is.EqualTo("100"), w.ToString());
+
+        // :reload 重新执行 dll 的入口（副作用再发生一次）
+        var rl = Cleat(null, "-I", "lp2", "-e", "(require 'link.a)", "-e", "(require 'link.a :reload)");
+        Assert.That(rl.ExitCode, Is.EqualTo(0), rl.ToString());
+        Assert.That(Regex.Matches(rl.Out, "loading link.a").Count, Is.EqualTo(2), rl.ToString());
     }
 
     [Test]
