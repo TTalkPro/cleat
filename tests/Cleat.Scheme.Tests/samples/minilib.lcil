@@ -1,0 +1,33 @@
+;; 迷你库 dll（iron-021 验收样例）：入口返回 13 元素的库描述列表
+;; (id name version imp* vis* inv* subst env visit-proc invoke-proc guard-proc guard-req* visible?)
+(lcil 1
+  (assembly "mini.lib" (references "Cleat.Scheme") (runtime scheme) (entry "mini$lib" "Initialize"))
+  (constants
+    (0 (sym "g$mini$1$%top"))
+    (1 (list (sym "mini") (sym "lib")))
+    (2 (nil)) (3 (nil)) (4 (nil)) (5 (nil))
+    (6 (list (pair (sym "f") (sym "g$f$2$%top"))))
+    (7 (nil)))
+  (type "mini$thunk" (base "Cleat.Scheme.Procedure") (attrs sealed)
+    (method ".ctor" (attrs ctor) (params)
+      (body (ldarg 0) (call "Cleat.Scheme.Procedure" ".ctor" () "System.Void") (ret)))
+    (method "Invoke0" (attrs override) (params) (ret "System.Object")
+      (body (ldsfld "Cleat.Scheme.Unspecified" "Instance") (ret))))
+  (type "mini$lib" (attrs abstract sealed)
+    (method "Initialize" (attrs static) (params) (ret "System.Object")
+      (locals "System.Object")
+      (body
+        (ldsfld "Cleat.Scheme.RT" "True") (ldnull) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)   ; (visible?)
+        (ldnull) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)                               ; guard-req*
+        (newobj "mini$thunk" ()) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)               ; guard-proc
+        (newobj "mini$thunk" ()) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)               ; invoke-proc
+        (newobj "mini$thunk" ()) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)               ; visit-proc
+        (ldconst 7) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldconst 6) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldconst 5) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldconst 4) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldconst 3) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldconst 2) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldconst 1) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldconst 0) (ldloc 0) (newobj "Cleat.Scheme.Cons" ("System.Object" "System.Object")) (stloc 0)
+        (ldloc 0) (ret)))))

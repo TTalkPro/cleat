@@ -28,6 +28,8 @@ public enum EmitMode
 public sealed partial class LcilEmitter
 {
     public const string CoreAssemblyName = "Cleat.Core";
+    /// <summary>Scheme 元层运行时（designs/15 §1）：(runtime scheme) 的互操作、常量表的 fasl 读回都在这里。</summary>
+    public const string SchemeAssemblyName = "Cleat.Scheme";
 
     /// <summary>额外的程序集查找目录（命令行 -r）；默认含发射器所在目录。</summary>
     public static readonly List<string> ProbeDirectories = new List<string> { AppContext.BaseDirectory };
@@ -53,12 +55,17 @@ public sealed partial class LcilEmitter
 
     public static Assembly EmitInMemory(LcilAssembly a) => EmitInMemory(a, null);
 
-    /// <summary>eval 的快速路径：直接发射编译器产出的 Lcil S 表达式（Scheme 数据），不经文本（iron-033）。</summary>
-    public static Assembly EmitInMemoryData(object lcil, string file, object[] constants)
+    /// <summary>eval 的快速路径：直接发射编译器产出的 Lcil S 表达式（Scheme 或 Clojure 数据），不经文本（iron-033）。</summary>
+    public static Assembly EmitInMemoryData(object lcil, string file, object[] constants) =>
+      EmitInMemory(LcilParser.FromTree(DataToTree(lcil, file), file), constants);
+
+    /// <summary>编译器产出的 Lcil 数据 → SNode 树：按顶层对象所属的程序集选 Scheme（Cons / Symbol）或 Clojure（ISeq / Symbol）的转换。</summary>
+    private static SList DataToTree(object lcil, string file)
     {
-        if (!(ClojureData.Convert(lcil, LoadReference(CoreAssemblyName)) is SList top) || top.Head != "lcil")
-            throw new LcilException($"{file}: expected a (lcil 1 ...) form");
-        return EmitInMemory(LcilParser.FromTree(top, file), constants);
+        var asm = lcil?.GetType().Assembly;
+        var tree = asm != null && asm.GetName().Name == SchemeAssemblyName ? SchemeData.Convert(lcil, asm) : ClojureData.Convert(lcil, LoadReference(CoreAssemblyName));
+        if (!(tree is SList top) || top.Head != "lcil") throw new LcilException($"{file}: expected a (lcil 1 ...) form");
+        return top;
     }
 
     public static Assembly EmitInMemory(LcilAssembly a, object[] liveConstants)
@@ -75,12 +82,8 @@ public sealed partial class LcilEmitter
     public static void Save(string lcil, string file, string outPath, bool pdb = false) => Save(LcilParser.Parse(lcil, file), outPath, pdb);
 
     /// <summary>直接保存编译器产出的 Lcil S 表达式（不经文本，iron-033）；compile-library 使用。</summary>
-    public static void SaveData(object lcil, string file, string outPath, bool pdb)
-    {
-        if (!(ClojureData.Convert(lcil, LoadReference(CoreAssemblyName)) is SList top) || top.Head != "lcil")
-            throw new LcilException($"{file}: expected a (lcil 1 ...) form");
-        Save(LcilParser.FromTree(top, file), outPath, pdb);
-    }
+    public static void SaveData(object lcil, string file, string outPath, bool pdb) =>
+      Save(LcilParser.FromTree(DataToTree(lcil, file), file), outPath, pdb);
 
     public static void Save(LcilAssembly a, string outPath, bool pdb = false)
     {
@@ -136,8 +139,11 @@ public sealed partial class LcilEmitter
         _asm = asm;
         _module = module;
         _debug = debug;
-        // Cleat.Core 是隐含引用（CleatModule 属性、互操作、常量表都要它）
-        foreach (var r in asm.References.Prepend(CoreAssemblyName).Distinct()) _references.Add(LoadReference(r));
+        // Cleat.Core 是隐含引用（CleatModule 属性、Clojure 互操作、活常量都要它）；Cleat.Scheme 在用到时也是（Scheme 互操作、编码的常量表由它的 Fasl 读回）
+        var implicitRefs = new List<string> { CoreAssemblyName };
+        if (asm.Constants.Count > 0 || asm.Runtime == LcilRuntime.Scheme || asm.Types.Any(t => t.Methods.Any(m => m.Runtime == LcilRuntime.Scheme)))
+            implicitRefs.Add(SchemeAssemblyName);
+        foreach (var r in implicitRefs.Concat(asm.References).Distinct()) _references.Add(LoadReference(r));
         // 互操作类型名在已加载程序集中查找：被引用程序集的依赖也要加载
         // 每个程序集只处理一次：eval 与 compile-library 每次都新建发射器，重复 Assembly.Load 是热点（iron-033）
         foreach (var a in _references.ToList())
@@ -170,6 +176,9 @@ public sealed partial class LcilEmitter
         var core = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(x => x.GetName().Name == CoreAssemblyName);
         if (core?.GetType("Cleat.Core.Runtime.Loader")?.GetProperty("LoadPath")?.GetValue(null) is IEnumerable<string> paths)
             foreach (var p in paths) yield return p;
+        var scheme = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(x => x.GetName().Name == SchemeAssemblyName);
+        if (scheme?.GetType("Cleat.Scheme.Builtins")?.GetProperty("IncludePaths")?.GetValue(null) is IEnumerable<string> includes)
+            foreach (var p in includes) yield return p;
         yield return AppContext.BaseDirectory;
     }
 
@@ -404,6 +413,8 @@ public sealed partial class LcilEmitter
         public Dictionary<string, Label> Labels = new Dictionary<string, Label>();
         public ISymbolDocumentWriter Doc;
         public string[] Namespaces;
+        /// <summary>互操作指令按哪个运行时决议（方法的 runtime 子句，缺省程序集的）。</summary>
+        public string Runtime;
         // 互操作用的临时局部变量（object），按需分配、可复用
         public List<LocalBuilder> Temps = new List<LocalBuilder>();
     }
@@ -411,7 +422,7 @@ public sealed partial class LcilEmitter
     private void EmitBody(LcilType t, LcilMethod m, MethodBase b)
     {
         var il = b is ConstructorBuilder cb ? cb.GetILGenerator() : ((MethodBuilder)b).GetILGenerator();
-        var cx = new BodyContext { IL = il, M = m, Namespaces = m.Namespaces.ToArray() };
+        var cx = new BodyContext { IL = il, M = m, Namespaces = m.Namespaces.ToArray(), Runtime = m.Runtime ?? _asm.Runtime };
         foreach (var l in m.Locals) il.DeclareLocal(T(l, m.Pos));
         if (_debug && m.Source != null)
         {

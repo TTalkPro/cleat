@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Scheme 元层（Cleat.Scheme、Cleat.Stage0、Cleat.Emit 的 Scheme 一侧）的单元测试：从 IronScheme 的 IronScheme.Core.Tests 纳入
+       （去 async / FFI / 宿主 / R6RS 符合性；cleat-045）。测试框架与 Cleat.Core.Tests 一致（NUnit 4）。 -->
+  <PropertyGroup>
+    <RootNamespace>Cleat.Scheme.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cleat.Scheme\Cleat.Scheme.csproj" />
+    <ProjectReference Include="..\..\src\Cleat.Emit\Cleat.Emit.csproj" />
+    <ProjectReference Include="..\..\src\Cleat.PrimGen\Cleat.PrimGen.csproj" />
+    <ProjectReference Include="..\..\src\Cleat.Stage0\Cleat.Stage0.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="samples\*.lcil" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

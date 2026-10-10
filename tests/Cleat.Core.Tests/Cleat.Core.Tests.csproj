@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cleat.Core\Cleat.Core.csproj" />
     <ProjectReference Include="..\..\src\Cleat.Emit\Cleat.Emit.csproj" />
+    <ProjectReference Include="..\..\src\Cleat.Scheme\Cleat.Scheme.csproj" />
     <ProjectReference Include="..\..\src\Cleat.Stage0\Cleat.Stage0.csproj" />
     <ProjectReference Include="..\..\src\Cleat.PrimGen\Cleat.PrimGen.csproj" />
     <ProjectReference Include="..\..\src\Cleat.Host\Cleat.Host.csproj" />

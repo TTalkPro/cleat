@@ -10,5 +10,11 @@ This repository also contains code derived from other projects, kept in separate
 - tests/conformance/            — conformance corpus adapted from jolt (https://github.com/jolt-lang/jolt), Eclipse Public License 2.0 (LICENSE-EPL-2.0.txt in that directory).
 - tests/clojure-test-suite/     — git submodule of jank's clojure-test-suite (its own license).
 - tests/test_clojure/           — tests adapted from ClojureCLR (Eclipse Public License 1.0).
+- src/Cleat.Scheme/, src/Cleat.Stage0/, parts of src/Cleat.Emit/ and src/Cleat.PrimGen/, tests/Cleat.Scheme.Tests/
+                                — the Scheme meta-layer runtime, Lcore interpreter, Lcil emitter, primitive-table generator and their tests,
+                                  vendored from IronScheme (https://github.com/IronScheme/IronScheme, src/IronScheme.Core, IronScheme.Stage0,
+                                  IronScheme.Emit, IronScheme.PrimGen and tests/IronScheme.Core.Tests at commit 26386793ee27f478a2e69ccdc17bc10a3a134944),
+                                  Copyright (c) 2007-2024 Llewellyn Pritchard and (c) 2026 the IronScheme contributors.
+                                  BSD 3-Clause License (LICENSE-BSD.txt in src/Cleat.Scheme/; origin and changes in src/Cleat.Scheme/README.md).
 
 The nanopass framework for Scheme (MIT) served as the reference for the Clojure port in src/cleat/nanopass/; no code is copied.

@@ -7,26 +7,36 @@ using System.Text;
 namespace Cleat.Emit;
 
 /// <summary>
-/// 常量的中立编码（designs/05-cil-backend.md §3）→ 二进制 fasl。格式与 Cleat.Core.Runtime.Fasl 一致，
-/// 这里不引用 Core，标签值重复定义。从 IronScheme 的 FaslEncoder 移植，编码按 Clojure 数据重定义。
+/// 常量的中立编码（designs/05-cil-backend.md §3）→ 二进制 fasl。格式与 Cleat.Scheme.Fasl 一致（联合编码，designs/15 §1）：
+/// IronScheme 的编码（nil true false unspecified eof fix big rat flo cpx chr str mstr sym pair list dlist vec bv rtd rec ann eqht cnd rcd def ref）
+/// 加 cleat 的 Clojure 编码（long double bigint bigdec ratio char kw var map set sorted-map sorted-set queue meta regex inst uuid type record），
+/// 每个标签一个独立的字节。四个两边同名的编码 str / sym / list / vec 按常量表所属的运行时（Lcil 的 runtime 子句）解释：
+/// scheme 读回 string（含 BMP 外字符的为宽串）/ Scheme 符号 / Cons 表 / object[]；clojure 读回 string / clojure.lang.Symbol / PersistentList / PersistentVector。
+/// 这里不引用运行时，标签值重复定义。
 /// </summary>
 public static class FaslEncoder
 {
     public const byte Version = 1;
     public static readonly byte[] Magic = Encoding.ASCII.GetBytes("CLFASL");
 
-    public const byte Nil = 0x00, True = 0x01, False = 0x02,
-      Long = 0x10, Double = 0x11, BigInt = 0x12, BigDec = 0x13, Ratio = 0x14,
-      Char = 0x20, Str = 0x21,
-      Sym = 0x30, Kw = 0x31, Var = 0x32,
-      List = 0x40, Vec = 0x41, Map = 0x42, Set = 0x43, SortedMap = 0x44, SortedSet = 0x45, Queue = 0x46,
-      Meta = 0x50,
-      Regex = 0x60, Inst = 0x61, Uuid = 0x62, TypeTag = 0x63, Record = 0x64,
-      Def = 0x70, Ref = 0x71;
+    // 标签（与 Cleat.Scheme.Fasl 一致）：0x0_ 单例；0x1_ 数；0x2_ 字符、字符串、符号；0x3_ 序列；0x4_ Scheme 记录等；0x5_ Clojure 其他；0x6_ 共享
+    public const byte Nil = 0x00, True = 0x01, False = 0x02, Unspec = 0x03, EofTag = 0x04,
+      Fix = 0x10, Big = 0x11, Rat = 0x12, Flo = 0x13, Cpx = 0x14,
+      Long = 0x18, Double = 0x19, BigInt = 0x1A, BigDec = 0x1B, Ratio = 0x1C,
+      Chr = 0x20, Str = 0x21, MStr = 0x22, Sym = 0x23,
+      Char = 0x28, CljStr = 0x29, CljSym = 0x2A, Kw = 0x2B, Var = 0x2C,
+      Pair = 0x30, List = 0x31, Vec = 0x32, Bv = 0x33,
+      CljList = 0x38, CljVec = 0x39, Map = 0x3A, Set = 0x3B, SortedMap = 0x3C, SortedSet = 0x3D, Queue = 0x3E,
+      Rtd = 0x40, Rec = 0x41, Ann = 0x42, EqHt = 0x43, Cnd = 0x44, Rcd = 0x45,
+      Meta = 0x50, Regex = 0x51, Inst = 0x52, Uuid = 0x53, TypeTag = 0x54, Record = 0x55,
+      Def = 0x60, Ref = 0x61;
 
-    /// <summary>常量表（各项编码）→ fasl：整个表写成一个向量，def / ref 编号在全表内共享。</summary>
-    public static byte[] EncodeTable(IList<SNode> constants, string file)
+    /// <summary>常量表（各项编码）→ fasl：整个表写成一个（Scheme）向量，def / ref 编号在全表内共享。runtime 缺省 clojure。</summary>
+    public static byte[] EncodeTable(IList<SNode> constants, string file) => EncodeTable(constants, file, LcilRuntime.Clojure);
+
+    public static byte[] EncodeTable(IList<SNode> constants, string file, string runtime)
     {
+        if (Array.IndexOf(LcilRuntime.All, runtime) < 0) throw new LcilException($"{file}: unknown runtime {runtime}");
         var ms = new MemoryStream();
         using (var w = new BinaryWriter(ms, Encoding.UTF8, true))
         {
@@ -34,7 +44,7 @@ public static class FaslEncoder
             w.Write(Version);
             w.Write(Vec);
             w.Write7BitEncodedInt(constants.Count);
-            var e = new Encoder(w, file);
+            var e = new Encoder(w, file, runtime == LcilRuntime.Scheme);
             foreach (var c in constants) e.Encode(c);
             e.CheckRefs();
         }
@@ -45,10 +55,11 @@ public static class FaslEncoder
     {
         private readonly BinaryWriter _w;
         private readonly string _file;
+        private readonly bool _scheme;
         private readonly HashSet<long> _defined = new HashSet<long>();
         private readonly List<(long, SNode)> _refs = new List<(long, SNode)>();
 
-        public Encoder(BinaryWriter w, string file) { _w = w; _file = file; }
+        public Encoder(BinaryWriter w, string file, bool scheme) { _w = w; _file = file; _scheme = scheme; }
 
         private LcilException Err(SNode n, string msg) => new LcilException($"{n.Where(_file)}: constant: {msg}");
 
@@ -58,15 +69,17 @@ public static class FaslEncoder
             foreach (char c in s) _w.Write((ushort)c);
         }
 
+        private static string StrOf(SNode n) => (n as SStr)?.Value;
+
         private void Arity(SList l, int n)
         {
             if (l.Count - 1 != n) throw Err(l, $"{l.Head} takes {n} operand(s)");
         }
 
-        private string StrArg(SList l, int i) => l[i] is SStr s ? s.Value : throw Err(l[i], "expected a string");
+        private string StrArg(SList l, int i) => StrOf(l[i]) ?? throw Err(l[i], "expected a string");
         private long IntArg(SList l, int i) => l[i] is SInt n ? n.Value : throw Err(l[i], "expected an integer");
 
-        /// <summary>(sym "name") / (sym "ns" "name")：命名空间为空时写空串。</summary>
+        /// <summary>(sym "name") / (sym "ns" "name")（Clojure 的符号、关键字）：命名空间为空时写空串。</summary>
         private void Named(SList l)
         {
             if (l.Count == 2) { String(""); String(StrArg(l, 1)); }
@@ -87,32 +100,54 @@ public static class FaslEncoder
             for (int i = 1; i < l.Count; i++) Encode(l[i]);
         }
 
+        private ulong Bits(SList l, string what)
+        {
+            Arity(l, 1);
+            string hex = StrArg(l, 1);
+            if (hex.Length != 16 || !ulong.TryParse(hex, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out ulong bits))
+                throw Err(l[1], $"{what} must be 16 hexadecimal digits (IEEE bits)");
+            return bits;
+        }
+
         public void CheckRefs()
         {
+            // ref 必须指向已定义（或正在定义、即环）的编号
             foreach (var (id, pos) in _refs)
                 if (!_defined.Contains(id)) throw Err(pos, $"reference to undefined object {id}");
         }
 
         public void Encode(SNode n)
         {
-            if (!(n is SList l) || l.Head == null) throw Err(n, "expected an encoding like (long 1)");
+            if (!(n is SList l) || l.Head == null) throw Err(n, "expected an encoding like (fix 1)");
             switch (l.Head)
             {
+                // ———— 单例 ————
                 case "nil": Arity(l, 0); _w.Write(Nil); return;
                 case "true": Arity(l, 0); _w.Write(True); return;
                 case "false": Arity(l, 0); _w.Write(False); return;
-                case "long": Arity(l, 1); _w.Write(Long); _w.Write(IntArg(l, 1)); return;
-                case "double":
+                case "unspecified": Arity(l, 0); _w.Write(Unspec); return;
+                case "eof": Arity(l, 0); _w.Write(EofTag); return;
+                // ———— Scheme 数 ————
+                case "fix":
                     {
                         Arity(l, 1);
-                        if (!ulong.TryParse(StrArg(l, 1), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out ulong bits) || StrArg(l, 1).Length != 16)
-                            throw Err(l[1], "double must be 16 hexadecimal digits (IEEE bits)");
-                        _w.Write(Double); _w.Write(unchecked((long)bits));
+                        long v = IntArg(l, 1);
+                        if (v < int.MinValue || v > int.MaxValue) throw Err(l, "fixnum out of range");
+                        _w.Write(Fix); _w.Write((int)v);
                         return;
                     }
+                case "big": Arity(l, 1); _w.Write(Big); String(StrArg(l, 1)); return;
+                case "rat": Arity(l, 1); _w.Write(Rat); String(StrArg(l, 1)); return;
+                case "flo": _w.Write(Flo); _w.Write(unchecked((long)Bits(l, "flonum"))); return;
+                case "cpx": Arity(l, 2); _w.Write(Cpx); Encode(l[1]); Encode(l[2]); return;
+                // ———— Clojure 数 ————
+                case "long": Arity(l, 1); _w.Write(Long); _w.Write(IntArg(l, 1)); return;
+                case "double": _w.Write(Double); _w.Write(unchecked((long)Bits(l, "double"))); return;
                 case "bigint": Arity(l, 1); _w.Write(BigInt); String(StrArg(l, 1)); return;
                 case "bigdec": Arity(l, 1); _w.Write(BigDec); String(StrArg(l, 1)); return;
                 case "ratio": Arity(l, 1); _w.Write(Ratio); String(StrArg(l, 1)); return;
+                // ———— 字符、字符串、符号 ————
+                case "chr": Arity(l, 1); _w.Write(Chr); _w.Write((int)IntArg(l, 1)); return;
                 case "char":
                     {
                         Arity(l, 1);
@@ -121,17 +156,74 @@ public static class FaslEncoder
                         _w.Write(Char); _w.Write((ushort)c);
                         return;
                     }
-                case "str": Arity(l, 1); _w.Write(Str); String(StrArg(l, 1)); return;
-                case "sym": _w.Write(Sym); Named(l); return;
+                case "str": Arity(l, 1); _w.Write(_scheme ? Str : CljStr); String(StrArg(l, 1)); return;
+                case "mstr": Arity(l, 1); _w.Write(MStr); String(StrArg(l, 1)); return;
+                case "gensym": Arity(l, 1); _w.Write(Sym); String(StrArg(l, 1)); return;
+                case "sym":
+                    if (_scheme) { Arity(l, 1); _w.Write(Sym); String(StrArg(l, 1)); }
+                    else { _w.Write(CljSym); Named(l); }
+                    return;
                 case "kw": _w.Write(Kw); Named(l); return;
                 case "var": Arity(l, 2); _w.Write(Var); String(StrArg(l, 1)); String(StrArg(l, 2)); return;
-                case "list": _w.Write(List); Items(l, 1); return;
-                case "vec": _w.Write(Vec); Items(l, 1); return;
+                // ———— 序列 ————
+                case "pair": Arity(l, 2); _w.Write(Pair); Encode(l[1]); Encode(l[2]); return;
+                case "list":
+                    if (_scheme) { _w.Write(List); Items(l, 1); _w.Write(Nil); }
+                    else { _w.Write(CljList); Items(l, 1); }
+                    return;
+                case "dlist":
+                    if (l.Count < 3) throw Err(l, "dlist needs at least one element and a tail");
+                    _w.Write(List); _w.Write7BitEncodedInt(l.Count - 2);
+                    for (int i = 1; i < l.Count; i++) Encode(l[i]);
+                    return;
+                case "vec": _w.Write(_scheme ? Vec : CljVec); Items(l, 1); return;
+                case "bv":
+                    {
+                        Arity(l, 1);
+                        string hex = StrArg(l, 1);
+                        byte[] bytes;
+                        try { bytes = Convert.FromHexString(hex); } catch (FormatException) { throw Err(l[1], "bad hexadecimal bytevector"); }
+                        _w.Write(Bv); _w.Write7BitEncodedInt(bytes.Length); _w.Write(bytes);
+                        return;
+                    }
                 case "set": _w.Write(Set); Items(l, 1); return;
                 case "sorted-set": _w.Write(SortedSet); Items(l, 1); return;
                 case "queue": _w.Write(Queue); Items(l, 1); return;
                 case "map": _w.Write(Map); Pairs(l); return;
                 case "sorted-map": _w.Write(SortedMap); Pairs(l); return;
+                // ———— Scheme 记录、注解、哈希表 ————
+                case "rtd":
+                    {
+                        // (rtd "名字" uid 父 sealed? opaque? ((mutable|immutable "字段") …))
+                        Arity(l, 6);
+                        _w.Write(Rtd);
+                        String(StrArg(l, 1));
+                        Encode(l[2]);
+                        Encode(l[3]);
+                        _w.Write((byte)(Bool(l[4]) ? 1 : 0));
+                        _w.Write((byte)(Bool(l[5]) ? 1 : 0));
+                        var fields = l[6] as SList ?? throw Err(l[6], "expected a field list");
+                        _w.Write7BitEncodedInt(fields.Count);
+                        foreach (var f in fields.Items)
+                        {
+                            if (!(f is SList fl) || fl.Count != 2 || (fl.Head != "mutable" && fl.Head != "immutable")) throw Err(f, "field must be (mutable \"name\") or (immutable \"name\")");
+                            _w.Write((byte)(fl.Head == "mutable" ? 1 : 0));
+                            String(StrOf(fl[1]) ?? throw Err(fl[1], "expected a string"));
+                        }
+                        return;
+                    }
+                case "rec":
+                    if (l.Count < 2) throw Err(l, "rec needs a type descriptor");
+                    _w.Write(Rec); Encode(l[1]); Items(l, 2);
+                    return;
+                case "ann": Arity(l, 3); _w.Write(Ann); Encode(l[1]); Encode(l[2]); Encode(l[3]); return;
+                case "rcd": Arity(l, 2); _w.Write(Rcd); Encode(l[1]); Encode(l[2]); return;
+                case "cnd": _w.Write(Cnd); Items(l, 1); return;
+                case "eqht":
+                    if ((l.Count - 1) % 2 != 0) throw Err(l, "eqht needs key / value pairs");
+                    _w.Write(EqHt); Pairs(l);
+                    return;
+                // ———— Clojure 其他 ————
                 case "meta": Arity(l, 2); _w.Write(Meta); Encode(l[1]); Encode(l[2]); return;
                 case "regex": Arity(l, 1); _w.Write(Regex); String(StrArg(l, 1)); return;
                 case "inst": Arity(l, 1); _w.Write(Inst); String(StrArg(l, 1)); return;
@@ -141,6 +233,7 @@ public static class FaslEncoder
                     if (l.Count < 2) throw Err(l, "record needs a type name");
                     _w.Write(Record); String(StrArg(l, 1)); Items(l, 2);
                     return;
+                // ———— 共享与环 ————
                 case "def":
                     {
                         Arity(l, 2);
@@ -157,5 +250,7 @@ public static class FaslEncoder
                 default: throw Err(l, "unknown encoding: " + l.Head);
             }
         }
+
+        private bool Bool(SNode n) => n is SBool b ? b.Value : throw Err(n, "expected #t or #f");
     }
 }

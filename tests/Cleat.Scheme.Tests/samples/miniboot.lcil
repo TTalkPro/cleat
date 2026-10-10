@@ -1,0 +1,31 @@
+;; 迷你 boot 镜像（iron-021 验收样例）：入口执行顶层代码——定义全局过程、登记运行时钩子，并返回一个值。
+(lcil 1
+  (assembly "miniboot" (references "Cleat.Scheme") (runtime scheme) (entry "#Module" "Initialize"))
+  (constants
+    (0 (sym "mini-square"))
+    (1 (sym "with-exception-handler"))
+    (2 (sym "mini-greeting"))
+    (3 (str "hello from miniboot")))
+  ;; (lambda (x) (* x x))，只处理 fixnum
+  (type "mini$square" (base "Cleat.Scheme.Procedure") (attrs sealed)
+    (method ".ctor" (attrs ctor) (params)
+      (body (ldarg 0) (call "Cleat.Scheme.Procedure" ".ctor" () "System.Void") (ret)))
+    (method "Invoke1" (attrs override) (params "System.Object") (ret "System.Object")
+      (body (ldarg 1) (unbox.any "System.Int32") (ldarg 1) (unbox.any "System.Int32") (mul) (box "System.Int32") (ret))))
+  ;; with-exception-handler 钩子：(lambda (handler thunk) (thunk))
+  (type "mini$weh" (base "Cleat.Scheme.Procedure") (attrs sealed)
+    (method ".ctor" (attrs ctor) (params)
+      (body (ldarg 0) (call "Cleat.Scheme.Procedure" ".ctor" () "System.Void") (ret)))
+    (method "Invoke2" (attrs override) (params "System.Object" "System.Object") (ret "System.Object")
+      (body (ldarg 2) (castclass "Cleat.Scheme.Procedure")
+            (tail) (callvirt "Cleat.Scheme.Procedure" "Invoke0" () "System.Object") (ret))))
+  (type "#Module" (attrs abstract sealed)
+    (method "Initialize" (attrs static) (params) (ret "System.Object")
+      (body
+        ;; (set! mini-square (lambda (x) (* x x)))
+        (ldconst 0) (castclass "Cleat.Scheme.Symbol") (newobj "mini$square" ()) (stfld "Cleat.Scheme.Symbol" "Value")
+        ;; (set! mini-greeting "hello from miniboot")
+        (ldconst 2) (castclass "Cleat.Scheme.Symbol") (ldconst 3) (stfld "Cleat.Scheme.Symbol" "Value")
+        ;; ($set-runtime-hook! 'with-exception-handler mini-weh)
+        (ldconst 1) (newobj "mini$weh" ()) (call "Cleat.Scheme.RuntimeHooks" "SetRuntimeHook" ("System.Object" "System.Object") "System.Object") (pop)
+        (ldsfld "Cleat.Scheme.Unspecified" "Instance") (ret)))))

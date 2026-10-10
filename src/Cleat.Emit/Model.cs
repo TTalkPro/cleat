@@ -6,13 +6,15 @@ using System.Reflection.Emit;
 
 namespace Cleat.Emit;
 
-// Lcil 对象模型（LCIL.md §2 ~ §4）与解析、校验。从 IronScheme（BSD）的 Model.cs 移植并扩展：接口实现、volatile 字段、程序集属性。
+// Lcil 对象模型（LCIL.md §2 ~ §4）与解析、校验。从 IronScheme（BSD）的 Model.cs 移植并扩展：接口实现、volatile 字段、程序集属性、runtime 子句。
 
 public sealed class LcilAssembly
 {
     public string Name;
     public List<string> References = new List<string>();
     public string EntryType, EntryMethod;
+    /// <summary>(runtime scheme|clojure)：互操作指令与常量编码按哪个运行时解释（LCIL.md §2）；方法可单独覆盖。缺省 clojure。</summary>
+    public string Runtime = LcilRuntime.Clojure;
     /// <summary>(attribute "T" "字符串参数" …)：程序集级自定义属性。</summary>
     public List<(string Type, List<string> Args)> Attributes = new List<(string, List<string>)>();
     /// <summary>常量表：下标 → 编码（§3），保持原样交给常量编码器。</summary>
@@ -22,6 +24,13 @@ public sealed class LcilAssembly
     public int ConstantCount => LiveConstants >= 0 ? LiveConstants : Constants.Count;
     public List<LcilType> Types = new List<LcilType>();
     public string File;
+}
+
+/// <summary>Lcil 方法 / 常量表所属的运行时（互操作决议与值表示的规则，designs/15 §1）。</summary>
+public static class LcilRuntime
+{
+    public const string Clojure = "clojure", Scheme = "scheme";
+    public static readonly string[] All = { Clojure, Scheme };
 }
 
 public sealed class LcilType
@@ -53,6 +62,8 @@ public sealed class LcilMethod
     public List<string> Namespaces = new List<string>();
     /// <summary>(implements "I" "名字")：显式实现接口 I 的方法（DefineMethodOverride）；此时本方法可以是 private。</summary>
     public string ImplementsType, ImplementsName;
+    /// <summary>(runtime scheme|clojure)：本方法互操作指令的运行时；null 时沿用程序集的。</summary>
+    public string Runtime;
     public List<Instr> Body = new List<Instr>();
     public SNode Pos;
     public bool IsStatic => Attrs.Contains("static") || Attrs.Contains("cctor");
@@ -165,6 +176,7 @@ public static class LcilParser
                                 case "references": asm.References.AddRange(Strings(cl, 1, "reference")); break;
                                 case "entry": Arity(cl, 2, 2); asm.EntryType = Str(cl[1], "entry type"); asm.EntryMethod = Str(cl[2], "entry method"); break;
                                 case "attribute": Arity(cl, 1); asm.Attributes.Add((Str(cl[1], "attribute type"), Strings(cl, 2, "attribute argument"))); break;
+                                case "runtime": Arity(cl, 1, 1); asm.Runtime = Check(cl[1], "runtime", LcilRuntime.All); break;
                                 default: throw Err(cl, "unknown assembly clause: " + cl.Head);
                             }
                         }
@@ -263,6 +275,7 @@ public static class LcilParser
                     case "clr-namespaces": m.Namespaces = Strings(cl, 1, "namespace"); break;
                     case "source": Arity(cl, 1, 1); m.Source = Str(cl[1], "source file"); break;
                     case "implements": Arity(cl, 2, 2); m.ImplementsType = Str(cl[1], "interface"); m.ImplementsName = Str(cl[2], "interface method"); break;
+                    case "runtime": Arity(cl, 1, 1); m.Runtime = Check(cl[1], "runtime", LcilRuntime.All); break;
                     case "maxstack": break;   // 发射器自动计算，接受并忽略
                     case "body": body = cl; break;
                     default: throw Err(cl, "unknown method clause: " + cl.Head);

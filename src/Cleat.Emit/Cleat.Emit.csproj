@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Lcil → Reflection.Emit 发射器。设计：designs/05-cil-backend.md。对 Cleat.Core 按名字解析，不做项目引用 -->
+  <!-- Lcil → Reflection.Emit 发射器。设计：designs/05-cil-backend.md、15 §1。对 Cleat.Core 与 Cleat.Scheme（两个运行时，LCIL.md §5）按名字解析，不做项目引用 -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Cleat.Emit</RootNamespace>

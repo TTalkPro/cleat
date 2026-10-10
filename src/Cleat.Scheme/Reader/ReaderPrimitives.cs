@@ -1,0 +1,82 @@
+using System;
+using System.IO;
+using System.Text.RegularExpressions;
+
+namespace Cleat.Scheme;
+
+/// <summary>reader 相关原语（从旧 Ports.cs、Numbers.cs 转来，iron-008 → iron-010）。</summary>
+public partial class Builtins
+{
+    private static string PortFileName(TextReader r)
+    {
+        if (r is StreamReader sr && sr.BaseStream is FileStream fs)
+        {
+            string name = fs.Name;
+            string cwd = Environment.CurrentDirectory + Path.DirectorySeparatorChar;
+            return name.StartsWith(cwd, StringComparison.Ordinal) ? name.Substring(cwd.Length) : name;
+        }
+        return "";
+    }
+
+    /// <summary>从端口读一个数据。read（在 Scheme 中定义）= read-annotated 后去掉注解。</summary>
+    public static object ReadFromPort(object port, bool annotate)
+    {
+        var r = RequiresNotNull<TextReader>(port);
+        string fn = PortFileName(r);
+        try
+        {
+            return new SchemeReader(r, fn, annotate).Read();
+        }
+        catch (ReaderException ex)
+        {
+            return LexicalError($"{ex.Message} at ({ex.Line},{ex.Column})", fn.Length > 0 ? fn : (object)"(port)");
+        }
+        catch (ObjectDisposedException)
+        {
+            return IOPortViolation("read", "port has already been closed", port);
+        }
+        catch (IOException ex)
+        {
+            return IOPortViolation("read", ex.Message, port);
+        }
+    }
+
+    [Primitive("read-annotated")]
+    public static object ReadAnnotated(object port) => ReadFromPort(port, annotate: true);
+
+    [Primitive("make-annotation")]
+    public static object MakeAnnotation(object expr, object source, object stripped) =>
+      expr is Cleat.Scheme.Cons c && stripped is Cleat.Scheme.Cons s
+        ? new ConsAnnotation(c, source, s)
+        : new Annotation(expr, source, stripped);
+
+    [Primitive("string->number", Flags = PrimitiveFlags.Pure)]
+    public static object StringToNumber(object obj) => ParseNumber(RequiresNotNull<string>(obj)) ?? FALSE;
+
+    /// <summary>radix 只接受 2、8、10、16（与旧系统一致，其他返回 #f）；文本中的前缀优先于 radix。</summary>
+    [Primitive("string->number", Flags = PrimitiveFlags.Pure)]
+    public static object StringToNumber(object obj, object radix)
+    {
+        string s = RequiresNotNull<string>(obj);
+        int r = RequiresNotNull<int>(radix);
+        if (r != 2 && r != 8 && r != 10 && r != 16) return FALSE;
+        return ParseNumber(s, r) ?? FALSE;
+    }
+
+    private static readonly Regex s_locationPattern = new Regex(@"\((?<sl>\d+),(?<sc>\d+)\) - \((?<el>\d+),(?<ec>\d+)\)", RegexOptions.Compiled);
+
+    /// <summary>
+    /// "(行,列) - (行,列)" → ((起始行 . 起始列) (结束行 . 结束列))。
+    /// nanopass 的 IronScheme 适配文件按名字调用 IronScheme.Runtime.Builtins.SourceLocation（见 iron-002），
+    /// 新运行时提供同签名方法；命名空间差异由覆盖适配文件或 iron-013 的源码适配解决。
+    /// </summary>
+    public static object SourceLocation(string location)
+    {
+        var m = s_locationPattern.Match(location ?? "");
+        if (!m.Success) return FALSE;
+        int I(string g) => int.Parse(m.Groups[g].Value);
+        return Cleat.Scheme.Cons.FromArray(
+          new Cleat.Scheme.Cons(I("sl"), I("sc")),
+          new Cleat.Scheme.Cons(I("el"), I("ec")));
+    }
+}

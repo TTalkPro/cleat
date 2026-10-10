@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 反射 Cleat.Core 生成 src/boot/primitives.edn（cleat-011） -->
+  <!-- 反射 Cleat.Scheme 的 [Primitive] 与 Cleat.Core 的 Primitives.Table，生成 src/boot/primitives.ss（Scheme 编译器读）与 primitives.edn（cleat-011 / cleat-045） -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Cleat.PrimGen</RootNamespace>
@@ -7,9 +7,10 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
+    <ProjectReference Include="..\Cleat.Scheme\Cleat.Scheme.csproj" />
   </ItemGroup>
-  <!-- 构建后生成 src/boot/primitives.edn（内容不变时不写文件） -->
+  <!-- 构建后生成 src/boot/primitives.edn 与 primitives.ss（内容不变时不写文件） -->
   <Target Name="GeneratePrimitives" AfterTargets="Build" Condition="'$(GeneratePrimitives)' != 'false'">
-    <Exec Command="dotnet &quot;$(TargetPath)&quot; &quot;$(MSBuildThisFileDirectory)../boot/primitives.edn&quot;" />
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; &quot;$(MSBuildThisFileDirectory)../boot/primitives.edn&quot; &quot;$(MSBuildThisFileDirectory)../boot/primitives.ss&quot;" />
   </Target>
 </Project>

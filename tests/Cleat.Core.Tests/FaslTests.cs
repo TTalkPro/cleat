@@ -1,13 +1,13 @@
 using System;
 using System.Text.RegularExpressions;
-using Cleat.Core.Runtime;
 using Cleat.Emit;
+using Fasl = Cleat.Scheme.Fasl;
 using clojure.lang;
 using NUnit.Framework;
 
 namespace Cleat.Core.Tests;
 
-// cleat-021：编码 → fasl → 对象；对象 → fasl → 对象
+// cleat-021：编码 → fasl → 对象；对象 → fasl → 对象。cleat-045 起 fasl 由 Cleat.Scheme.Fasl 统一读写（联合编码），Clojure 标签照旧
 public class FaslTests
 {
     private static object[] ReadTable(string table)
@@ -94,6 +94,6 @@ public class FaslTests
         var sharedBack = (IPersistentVector)Fasl.Read(Fasl.Write(RT.vector(shared, shared)));
         Assert.That(sharedBack.nth(0), Is.SameAs(sharedBack.nth(1)));
         Assert.That(Fasl.Write(RT.vector(1L, 2L)), Is.EqualTo(Fasl.Write(RT.vector(1L, 2L))), "deterministic");
-        Assert.Throws<NotSupportedException>(() => Fasl.Write(new object()));
+        Assert.Throws<Cleat.Scheme.SchemeRuntimeError>(() => Fasl.Write(new object()));   // fasl-write 是 Scheme 原语的后端：报 assertion-violation（无钩子时为 SchemeRuntimeError）
     }
 }

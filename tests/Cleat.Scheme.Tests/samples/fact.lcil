@@ -1,0 +1,24 @@
+;; 阶乘：循环与递归（iron-019 验收样例）
+(lcil 1
+  (assembly "fact" (runtime scheme))
+  (type "Fact" (attrs public abstract sealed)
+    (method "Loop" (attrs static) (params "System.Int64") (ret "System.Int64")
+      (locals "System.Int64")
+      (body
+        (ldc.i8 1) (stloc 0)
+        (label top)
+        (ldarg 0) (ldc.i8 1) (ble done)
+        (ldloc 0) (ldarg 0) (mul) (stloc 0)
+        (ldarg 0) (ldc.i8 1) (sub) (starg 0)
+        (br top)
+        (label done)
+        (ldloc 0) (ret)))
+    (method "Rec" (attrs static) (params "System.Int64") (ret "System.Int64")
+      (body
+        (ldarg 0) (ldc.i8 1) (bgt rec)
+        (ldc.i8 1) (ret)
+        (label rec)
+        (ldarg 0)
+        (ldarg 0) (ldc.i8 1) (sub)
+        (call "Fact" "Rec" ("System.Int64") "System.Int64")
+        (mul) (ret)))))

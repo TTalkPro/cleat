@@ -7,44 +7,113 @@ using System.Reflection.Emit;
 namespace Cleat.Emit;
 
 // 互操作指令的决议（designs/05-cil-backend.md §5；从 IronScheme 移植）。
-// 规则与运行时 Cleat.Core.Runtime.Reflector 一致：类型名经 TypeResolver（含 import 的命名空间列表）解析；
-// 成员唯一时静态生成调用，参数经 Reflector.Convert<T>、返回值经 Reflector.ConvertFrom 转换；
-// 不唯一、类型在运行时才知道、索引器、params 数组、值类型实例等情况，生成对 Reflector.* 的调用，由运行时决议。
+// 两个运行时（LCIL.md §2 的 runtime 子句，designs/15 §1）各有一套规则，按方法选择：
+//   clojure：类型名经 Cleat.Core.Runtime.TypeResolver 解析，运行时决议与值转换由 Cleat.Core.Runtime.Reflector 完成（void → nil）；
+//   scheme ：类型名经 Cleat.Scheme.TypeResolver（含别名、尖括号泛型）解析，运行时决议与值转换由 Cleat.Scheme.Interop 完成
+//            （void → 未指定值，字符串规范化为宽串）。
+// 成员唯一时静态生成调用，参数经 Convert<T>、返回值经 ConvertFrom 转换；
+// 不唯一、类型在运行时才知道、索引器、params 数组、值类型实例等情况，生成对运行时 Call / GetField / … 的调用，由运行时决议。
 public sealed partial class LcilEmitter
 {
     private sealed class CoreApi
     {
+        public readonly bool IsScheme;
         public MethodInfo Resolve, Call, GetField, SetField, New, NewArray, Cast, Is, ConvertGeneric, ConvertFrom;
+        // 只有 Scheme 运行时有：返回值的字符串规范化、未指定值、泛型类型名说明用的符号与表
+        public MethodInfo NormalizeString;
+        public FieldInfo Unspecified;
+        public Func<string, object> Intern;
+        public Func<object[], object> MakeList;
 
-        public CoreApi(Assembly core)
+        private CoreApi(bool scheme) { IsScheme = scheme; }
+
+        private static MethodInfo Need(Type t, string name, Type[] ps) => t.GetMethod(name, ps) ?? throw new LcilException($"{t.FullName}.{name} not found in {t.Assembly.GetName().Name}");
+
+        private void Common(Type interop, Type resolver, Type resolveSpec)
         {
-            var reflector = core.GetType("Cleat.Core.Runtime.Reflector", true);
-            MethodInfo Need(Type t, string name, Type[] ps) => t.GetMethod(name, ps) ?? throw new LcilException($"{t.FullName}.{name} not found in {CoreAssemblyName}");
-            Resolve = Need(core.GetType("Cleat.Core.Runtime.TypeResolver", true), "Resolve", new[] { typeof(string), typeof(IEnumerable<string>) });
-            Call = Need(reflector, "Call", new[] { typeof(Type), typeof(string), typeof(object), typeof(object[]), typeof(Type[]), typeof(Type[]) });
-            GetField = Need(reflector, "GetField", new[] { typeof(Type), typeof(string), typeof(object) });
-            SetField = Need(reflector, "SetField", new[] { typeof(Type), typeof(string), typeof(object), typeof(object) });
-            New = Need(reflector, "New", new[] { typeof(Type), typeof(object[]) });
-            NewArray = Need(reflector, "NewArray", new[] { typeof(Type), typeof(object) });
-            Cast = Need(reflector, "Cast", new[] { typeof(Type), typeof(object) });
-            Is = Need(reflector, "Is", new[] { typeof(Type), typeof(object) });
-            ConvertGeneric = Need(reflector, "Convert", new[] { Type.MakeGenericMethodParameter(0) });
-            ConvertFrom = Need(reflector, "ConvertFrom", new[] { typeof(object), typeof(Type) });
+            Resolve = Need(resolver, "Resolve", new[] { resolveSpec, typeof(IEnumerable<string>) });
+            Call = Need(interop, "Call", new[] { typeof(Type), typeof(string), typeof(object), typeof(object[]), typeof(Type[]), typeof(Type[]) });
+            GetField = Need(interop, "GetField", new[] { typeof(Type), typeof(string), typeof(object) });
+            SetField = Need(interop, "SetField", new[] { typeof(Type), typeof(string), typeof(object), typeof(object) });
+            New = Need(interop, "New", new[] { typeof(Type), typeof(object[]) });
+            NewArray = Need(interop, "NewArray", new[] { typeof(Type), typeof(object) });
+            Cast = Need(interop, "Cast", new[] { typeof(Type), typeof(object) });
+            Is = Need(interop, "Is", new[] { typeof(Type), typeof(object) });
+            ConvertGeneric = Need(interop, "Convert", new[] { Type.MakeGenericMethodParameter(0) });
+            ConvertFrom = Need(interop, "ConvertFrom", new[] { typeof(object), typeof(Type) });
+        }
+
+        public static CoreApi Clojure(Assembly core)
+        {
+            var api = new CoreApi(false);
+            api.Common(core.GetType("Cleat.Core.Runtime.Reflector", true), core.GetType("Cleat.Core.Runtime.TypeResolver", true), typeof(string));
+            return api;
+        }
+
+        public static CoreApi Scheme(Assembly scheme)
+        {
+            var api = new CoreApi(true);
+            api.Common(scheme.GetType("Cleat.Scheme.Interop", true), scheme.GetType("Cleat.Scheme.TypeResolver", true), typeof(object));
+            api.NormalizeString = Need(scheme.GetType("Cleat.Scheme.SchemeString", true), "Normalize", new[] { typeof(string) });
+            api.Unspecified = scheme.GetType("Cleat.Scheme.Unspecified", true).GetField("Instance");
+            var intern = Need(scheme.GetType("Cleat.Scheme.Symbol", true), "Intern", new[] { typeof(string) });
+            api.Intern = s => intern.Invoke(null, new object[] { s });
+            var fromArray = Need(scheme.GetType("Cleat.Scheme.Cons", true), "FromArray", new[] { typeof(object[]) });
+            api.MakeList = xs => fromArray.Invoke(null, new object[] { xs });
+            return api;
         }
     }
 
-    private CoreApi _core;
-    private CoreApi Core => _core ??= new CoreApi(LoadReference(CoreAssemblyName));
+    private CoreApi _clojureApi, _schemeApi;
+
+    /// <summary>方法所属运行时的互操作 API（按需加载对应的运行时程序集）。</summary>
+    private CoreApi Core(BodyContext cx) =>
+      cx.Runtime == LcilRuntime.Scheme
+        ? _schemeApi ??= CoreApi.Scheme(LoadReference(SchemeAssemblyName))
+        : _clojureApi ??= CoreApi.Clojure(LoadReference(CoreAssemblyName));
 
     private static readonly MethodInfo s_getTypeFromHandle = typeof(Type).GetMethod("GetTypeFromHandle");
     private static readonly MethodInfo s_objectGetType = typeof(object).GetMethod("GetType");
 
-    /// <summary>互操作指令的类型操作数：本 Lcil 中定义的类型，否则经运行时 TypeResolver（ClojureCLR 的类型名语法，含泛型与数组）按方法的命名空间列表解析。</summary>
+    /// <summary>
+    /// 互操作指令的类型操作数：本 Lcil 中定义的类型，否则经所属运行时的 TypeResolver 按方法的命名空间列表解析
+    /// （clojure：ClojureCLR 的类型名语法，含泛型与数组；scheme：IronScheme 的别名表，尖括号泛型转成符号说明）。
+    /// </summary>
     private Type ClrType(string name, BodyContext cx, Instr ins)
     {
         if (_types.TryGetValue(name, out var tb)) return tb;
-        var t = (Type)Core.Resolve.Invoke(null, new object[] { name, cx.Namespaces });
+        var api = Core(cx);
+        var t = (Type)api.Resolve.Invoke(null, new object[] { api.IsScheme ? GenericSpec(name, api) : name, cx.Namespaces });
         return t ?? throw Err(ins.Pos, "type not found: " + name);
+    }
+
+    /// <summary>
+    /// Scheme 运行时：泛型类型名 "Name&lt;A,B&lt;C&gt;&gt;" → TypeResolver 的说明 (Name A (B C))（符号组成的 Cons）；其余原样返回字符串。
+    /// </summary>
+    private static object GenericSpec(string name, CoreApi api)
+    {
+        if (name.IndexOf('<') < 0) return name;
+        int pos = 0;
+        object Parse()
+        {
+            int start = pos;
+            while (pos < name.Length && name[pos] != '<' && name[pos] != ',' && name[pos] != '>') pos++;
+            var head = name.Substring(start, pos - start).Trim();
+            if (pos >= name.Length || name[pos] != '<') return head;
+            pos++;
+            var items = new List<object> { api.Intern(head) };
+            while (true)
+            {
+                var a = Parse();
+                items.Add(a is string s ? api.Intern(s) : a);
+                if (pos >= name.Length) throw new LcilException("bad generic type name: " + name);
+                char c = name[pos++];
+                if (c == '>') break;
+                if (c != ',') throw new LcilException("bad generic type name: " + name);
+            }
+            return api.MakeList(items.ToArray());
+        }
+        return Parse();
     }
 
     private LocalBuilder Temp(BodyContext cx, int i)
@@ -60,26 +129,35 @@ public sealed partial class LcilEmitter
     }
 
     /// <summary>栈顶 object → t（t 为 object 时不转换）。</summary>
-    private void ConvertTo(ILGenerator il, Type t)
+    private static void ConvertTo(ILGenerator il, CoreApi api, Type t)
     {
-        if (t != typeof(object)) il.Emit(OpCodes.Call, Core.ConvertGeneric.MakeGenericMethod(t));
+        if (t != typeof(object)) il.Emit(OpCodes.Call, api.ConvertGeneric.MakeGenericMethod(t));
     }
 
-    /// <summary>栈顶类型为 t 的值 → Clojure 表示（void → nil；object 与值类型按运行时规则转换：int → long 等）。</summary>
-    private void ConvertFrom(ILGenerator il, Type t)
+    /// <summary>
+    /// 栈顶类型为 t 的值 → 运行时的表示。clojure：void → nil，long / double / bool / char 只装箱，其余值类型与 object 按运行时规则转换（int → long 等）。
+    /// scheme：void → 未指定值，字符串规范化（含代理码元的转为宽串，iron-055），值类型装箱后按运行时规则转换。
+    /// </summary>
+    private static void ConvertFrom(ILGenerator il, CoreApi api, Type t)
     {
-        if (t == typeof(void)) { il.Emit(OpCodes.Ldnull); return; }
-        if (t == typeof(object) || t == typeof(ValueType))
+        if (t == typeof(void))
         {
-            EmitType(il, typeof(object));
-            il.Emit(OpCodes.Call, Core.ConvertFrom);
+            if (api.IsScheme) il.Emit(OpCodes.Ldsfld, api.Unspecified); else il.Emit(OpCodes.Ldnull);
             return;
         }
-        if (!t.IsValueType) return;   // 引用类型 ConvertFrom 不改变值
-        if (t == typeof(long) || t == typeof(double) || t == typeof(bool) || t == typeof(char)) { il.Emit(OpCodes.Box, t); return; }   // 本就是 Clojure 的表示
+        if (t == typeof(object) || t == typeof(ValueType))
+        {
+            // 声明为 object 的值按运行时类型转换（装箱的 Int64 等）
+            EmitType(il, typeof(object));
+            il.Emit(OpCodes.Call, api.ConvertFrom);
+            return;
+        }
+        if (api.IsScheme && t == typeof(string)) { il.Emit(OpCodes.Call, api.NormalizeString); return; }
+        if (!t.IsValueType) return;   // 其他引用类型 ConvertFrom 不改变值
+        if (!api.IsScheme && (t == typeof(long) || t == typeof(double) || t == typeof(bool) || t == typeof(char))) { il.Emit(OpCodes.Box, t); return; }   // 本就是 Clojure 的表示
         il.Emit(OpCodes.Box, t);
         EmitType(il, t);
-        il.Emit(OpCodes.Call, Core.ConvertFrom);
+        il.Emit(OpCodes.Call, api.ConvertFrom);
     }
 
     /// <summary>把临时变量 from..from+n-1 装进 object[]。</summary>
@@ -148,6 +226,7 @@ public sealed partial class LcilEmitter
     private void Clr(BodyContext cx, Instr ins)
     {
         var il = cx.IL;
+        var api = Core(cx);
         switch (ins.ClrOp)
         {
             case "call": ClrCall(cx, ins); return;
@@ -161,7 +240,7 @@ public sealed partial class LcilEmitter
                     il.Emit(OpCodes.Stloc, size);
                     EmitType(il, t);
                     il.Emit(OpCodes.Ldloc, size);
-                    il.Emit(OpCodes.Call, Core.NewArray);
+                    il.Emit(OpCodes.Call, api.NewArray);
                     return;
                 }
             case "cast":
@@ -172,7 +251,7 @@ public sealed partial class LcilEmitter
                     il.Emit(OpCodes.Stloc, v);
                     EmitType(il, t);
                     il.Emit(OpCodes.Ldloc, v);
-                    il.Emit(OpCodes.Call, ins.ClrOp == "cast" ? Core.Cast : Core.Is);
+                    il.Emit(OpCodes.Call, ins.ClrOp == "cast" ? api.Cast : api.Is);
                     return;
                 }
             case "type": EmitType(il, ClrType(ins.ClrType, cx, ins)); return;
@@ -190,6 +269,7 @@ public sealed partial class LcilEmitter
     private void ClrCall(BodyContext cx, Instr ins)
     {
         var il = cx.IL;
+        var api = Core(cx);
         int n = ins.ClrArgc;
         SpillArgs(cx, n, !ins.ClrStatic);
         Type t = ins.ClrType == null ? null : ClrType(ins.ClrType, cx, ins);
@@ -201,14 +281,14 @@ public sealed partial class LcilEmitter
             target = StaticMethod(t, ins.ClrMember, ins.ClrStatic, n, ins.ClrHints.Select(h => ClrType(h, cx, ins)).ToArray());
         if (target != null)
         {
-            if (!ins.ClrStatic) { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); ConvertTo(il, t); }
+            if (!ins.ClrStatic) { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); ConvertTo(il, api, t); }
             var ps = target.GetParameters();
-            for (int i = 0; i < n; i++) { il.Emit(OpCodes.Ldloc, Temp(cx, i + 1)); ConvertTo(il, ps[i].ParameterType); }
+            for (int i = 0; i < n; i++) { il.Emit(OpCodes.Ldloc, Temp(cx, i + 1)); ConvertTo(il, api, ps[i].ParameterType); }
             il.Emit(ins.ClrStatic || target.DeclaringType.IsValueType ? OpCodes.Call : OpCodes.Callvirt, target);
-            ConvertFrom(il, target.ReturnType);
+            ConvertFrom(il, api, target.ReturnType);
             return;
         }
-        // 运行时决议：Interop.Call(type, member, instance, args, paramTypes, genericArgs)
+        // 运行时决议：Call(type, member, instance, args, paramTypes, genericArgs)
         if (t != null) EmitType(il, t);
         else { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); il.Emit(OpCodes.Callvirt, s_objectGetType); }
         il.Emit(OpCodes.Ldstr, ins.ClrMember);
@@ -216,7 +296,7 @@ public sealed partial class LcilEmitter
         EmitArgArray(cx, 1, n);
         if (ptypes != null) EmitTypeArray(il, ptypes); else il.Emit(OpCodes.Ldnull);
         if (gtypes != null) EmitTypeArray(il, gtypes); else il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, Core.Call);
+        il.Emit(OpCodes.Call, api.Call);
     }
 
     private FieldInfo StaticField(Type t, string name, bool isStatic) =>
@@ -226,30 +306,31 @@ public sealed partial class LcilEmitter
     private void ClrFieldGet(BodyContext cx, Instr ins)
     {
         var il = cx.IL;
+        var api = Core(cx);
         SpillArgs(cx, 0, !ins.ClrStatic);
         Type t = ins.ClrType == null ? null : ClrType(ins.ClrType, cx, ins);
         var f = StaticField(t, ins.ClrMember, ins.ClrStatic);
-        if (f != null && f.IsLiteral && EmitLiteral(il, f.GetRawConstantValue(), f.FieldType)) return;
+        if (f != null && f.IsLiteral && EmitLiteral(il, api, f.GetRawConstantValue(), f.FieldType)) return;
         if (f != null && !f.IsLiteral)
         {
             if (ins.ClrStatic) il.Emit(OpCodes.Ldsfld, f);
-            else { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); ConvertTo(il, t); il.Emit(OpCodes.Ldfld, f); }
-            ConvertFrom(il, f.FieldType);
+            else { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); ConvertTo(il, api, t); il.Emit(OpCodes.Ldfld, f); }
+            ConvertFrom(il, api, f.FieldType);
             return;
         }
         if (t != null) EmitType(il, t);
         else { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); il.Emit(OpCodes.Callvirt, s_objectGetType); }
         il.Emit(OpCodes.Ldstr, ins.ClrMember);
         if (ins.ClrStatic) il.Emit(OpCodes.Ldnull); else il.Emit(OpCodes.Ldloc, Temp(cx, 0));
-        il.Emit(OpCodes.Call, Core.GetField);
+        il.Emit(OpCodes.Call, api.GetField);
     }
 
     /// <summary>常量字段（const）直接内联值；不认识的类型返回 false，交给运行时。</summary>
-    private bool EmitLiteral(ILGenerator il, object v, Type ft)
+    private static bool EmitLiteral(ILGenerator il, CoreApi api, object v, Type ft)
     {
         switch (v)
         {
-            case string s: il.Emit(OpCodes.Ldstr, s); return true;
+            case string s: il.Emit(OpCodes.Ldstr, s); break;
             case int i when !ft.IsEnum: EmitInt(il, i); break;
             case long l: il.Emit(OpCodes.Ldc_I8, l); break;
             case double d: il.Emit(OpCodes.Ldc_R8, d); break;
@@ -262,23 +343,24 @@ public sealed partial class LcilEmitter
             case sbyte s8: EmitInt(il, s8); break;
             default: return false;
         }
-        ConvertFrom(il, ft);
+        ConvertFrom(il, api, ft);
         return true;
     }
 
     private void ClrFieldSet(BodyContext cx, Instr ins)
     {
         var il = cx.IL;
+        var api = Core(cx);
         SpillArgs(cx, 1, !ins.ClrStatic);
         Type t = ins.ClrType == null ? null : ClrType(ins.ClrType, cx, ins);
         var f = StaticField(t, ins.ClrMember, ins.ClrStatic);
         if (f != null && !f.IsLiteral && !f.IsInitOnly)
         {
-            if (!ins.ClrStatic) { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); ConvertTo(il, t); }
+            if (!ins.ClrStatic) { il.Emit(OpCodes.Ldloc, Temp(cx, 0)); ConvertTo(il, api, t); }
             il.Emit(OpCodes.Ldloc, Temp(cx, 1));
-            ConvertTo(il, f.FieldType);
+            ConvertTo(il, api, f.FieldType);
             il.Emit(ins.ClrStatic ? OpCodes.Stsfld : OpCodes.Stfld, f);
-            il.Emit(OpCodes.Ldnull);
+            ConvertFrom(il, api, typeof(void));   // 结果：clojure 为 nil，scheme 为未指定值
             return;
         }
         if (t != null) EmitType(il, t);
@@ -286,12 +368,13 @@ public sealed partial class LcilEmitter
         il.Emit(OpCodes.Ldstr, ins.ClrMember);
         if (ins.ClrStatic) il.Emit(OpCodes.Ldnull); else il.Emit(OpCodes.Ldloc, Temp(cx, 0));
         il.Emit(OpCodes.Ldloc, Temp(cx, 1));
-        il.Emit(OpCodes.Call, Core.SetField);
+        il.Emit(OpCodes.Call, api.SetField);
     }
 
     private void ClrNew(BodyContext cx, Instr ins)
     {
         var il = cx.IL;
+        var api = Core(cx);
         int n = ins.ClrArgc;
         SpillArgs(cx, n, false);
         var t = ClrType(ins.ClrType, cx, ins);
@@ -308,12 +391,12 @@ public sealed partial class LcilEmitter
         if (ctor != null)
         {
             var ps = ctor.GetParameters();
-            for (int i = 0; i < n; i++) { il.Emit(OpCodes.Ldloc, Temp(cx, i + 1)); ConvertTo(il, ps[i].ParameterType); }
+            for (int i = 0; i < n; i++) { il.Emit(OpCodes.Ldloc, Temp(cx, i + 1)); ConvertTo(il, api, ps[i].ParameterType); }
             il.Emit(OpCodes.Newobj, ctor);
             return;
         }
         EmitType(il, t);
         EmitArgArray(cx, 1, n);
-        il.Emit(OpCodes.Call, Core.New);
+        il.Emit(OpCodes.Call, api.New);
     }
 }
