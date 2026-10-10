@@ -20,34 +20,50 @@
 ;;;   标签：每个 Var 一个 gensym（Var 为宏时用另一个），Var 对象即身份，所以重定义（同一个 Var）标签不变；
 ;;;   绑定 (kind . value) 放在标签的 symbol-value，即 psyntax 的全局标签表（imported-label->binding），boot 不必改。
 ;;;   绑定种类（经 048 的绑定扩展表登记）：
-;;;     clj-var      值为 Var：引用 → 读根（getRawRoot；动态 Var 为 get），set! → Var.set
-;;;     clj-macro    值为转换器（defmacro 垫片：Clojure 数据进、Clojure 数据出、使用处上下文）；macroexpand-1 展开它
+;;;     clj-var      值为 Var：引用 → 读根（getRawRoot；动态 Var 为 get；:const 为常量），set! → Var.set；
+;;;                  以它开头的调用交给 set-var-call-handler! 登记的过程（(clojure syntax)：:inline、instance?、IFn.invoke）
+;;;     clj-macro    值为转换器（defmacro 垫片：Clojure 数据进、Clojure 数据出、使用处上下文，&env 由
+;;;                  set-macro-env-provider! 给出）；macroexpand-1 展开它
 ;;;     clj-type     值为 Type：引用 → 常量
 ;;;     clj-special  值为转换器；按未限定名字登记（register-clj-special!），先于命名空间映射；macroexpand-1 不展开它
+;;;     clj-form     值为过程 (e expand) → 核心形式（register-clj-form!，cleat-050 的特殊形式）；macroexpand-1 不展开它
+;;;   特殊形式只在列表头部起作用、不被词法绑定遮蔽（Clojure 的规则）：clj->scheme 把头部是特殊形式名的列表的头部换成
+;;;   该特殊形式专用的 gensym（注解的 stripped 仍是原符号），查找过程按 gensym 找到它；不在头部的同名符号照常解析。
+;;;   解析不到的符号交给 set-unresolved-lookup! 登记的过程（(clojure syntax) 用它处理 .method、Type.、Type/member 等宿主语法）。
 ;;;
 ;;; 三、错误：clojure-eval 等入口在 syntax-error-hook 下运行，语法错误改抛 Cleat.Core.Expand.ExpanderException
 ;;;   （"Syntax error (file:line:col) message"）；"unbound identifier" 的文本由 resolve-in 给出具体原因。
+;;;
+;;; 入口 eval-in-ns / expand-in-ns / macroexpand-1-in-ns 只有本库的绑定种类；用户代码用 (clojure syntax) 的
+;;; clojure-eval 等（它们引用 (clojure syntax) 的变量，库体才会执行、特殊形式才会登记）。
 
 (library (clojure namespaces)
   (export clj->scheme scheme->clj syntax->clj clj-datum->syntax*
           clj-symbol clj-symbol? scheme-symbol->clj
           current-ns find-ns ns-name* in-ns! with-ns-binding refer! alias! import!
           resolve-in clj-ns-resolve clj-resolve
-          namespace-environment clojure-eval clojure-expand clojure-macroexpand-1
-          symbol-label register-clj-special! var-label
-          clojure-error-hook expander-exception)
+          namespace-for namespace-environment eval-in-ns expand-in-ns macroexpand-1-in-ns macroexpand-in-ns
+          symbol-label register-clj-special! register-clj-form! register-hidden-clj-form! var-label type-label make-label
+          set-unresolved-lookup! set-macro-env-provider! set-var-call-handler!
+          clojure-expanding? clojure-form? clj-op var-reference macro-transformer
+          clojure-error-hook expander-exception syntax-position source-path)
   (import
     (rnrs)
     (rnrs eval)
-    (only (ironscheme) gensym set-symbol-value! expand->core with-clr-exception-handler parameterize)
+    (only (ironscheme) gensym set-symbol-value! expand->core with-clr-exception-handler parameterize make-parameter)
     (only (ironscheme core) stx? stx-expr)
-    (only (ironscheme reader) make-annotation annotation? annotation-source)
+    (only (ironscheme reader) make-annotation annotation? annotation-source annotation-stripped)
     (only (ironscheme unsafe) $throw)
     (ironscheme syntax-ext)
     (ironscheme clr)
     (clojure syntax-kinds))
 
   ;;; —— 互操作小工具 ——
+
+  ;;; Clojure 值的运行时操作：C# 过程（Cleat.Scheme.Clojure.ClojureOps），实参与返回值不经 Scheme 互操作的转换（cleat-050）
+  (define-syntax clj-op
+    (syntax-rules ()
+      ((_ name) (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps name))))
 
   (define (clj-symbol name) (clr-static-call clojure.lang.Symbol (intern System.String) name))
   (define (clj-symbol? x) (clr-is clojure.lang.Symbol x))
@@ -61,7 +77,6 @@
   (define (var-public? v) (clr-call clojure.lang.Var get_isPublic v))
   (define (var-macro? v) (clr-call clojure.lang.Var get_IsMacro v))
   (define (var-dynamic? v) (clr-call clojure.lang.Var isDynamic v))
-  (define (meta-of x) (if (clr-is clojure.lang.IMeta x) (clr-call clojure.lang.IMeta meta x) '()))
   (define (nil->f x) (if (null? x) #f x))
   (define current-ns-var (clr-static-field-get clojure.lang.RT CurrentNSVar))
 
@@ -84,6 +99,11 @@
     (let ((e (syntax-extension-of x)))
       (and e (memq e clojure-syntax-kinds) e)))
 
+  ;;; 特殊形式名（未限定，字符串）→ 专用的 gensym（clj->scheme 换掉列表头部用）
+  (define special-keys (make-hashtable string-hash string=?))
+  (define (special-head-key x)
+    (and (clj-symbol? x) (not (sym-ns x)) (hashtable-ref special-keys (sym-name x) #f)))
+
   (define (clj->scheme x)
     (let convert ((x x) (pos #f))
       (cond
@@ -95,9 +115,10 @@
                  x
                  (let* ((own (or (clojure-source-of x) pos))
                         (new (map (lambda (k) (convert k own)) kids)))
-                   (make-annotation
-                     (if (eq? (syntax-extension-kind e) 'clj-list) new ((syntax-extension-rebuild e) x new))
-                     own x))))))
+                   (if (eq? (syntax-extension-kind e) 'clj-list)
+                       (let ((key (special-head-key (car kids))))
+                         (make-annotation (if key (cons (make-annotation key own (car kids)) (cdr new)) new) own x))
+                       (make-annotation ((syntax-extension-rebuild e) x new) own x)))))))
         (else x))))
 
   ;;; strip 之后的数据 → Clojure 数据：Scheme 符号 → Clojure 符号，序对 → PersistentList，Clojure 集合按子项重建
@@ -199,22 +220,40 @@
           (hashtable-set! type-labels t l)
           l)))
 
-  ;;; 特殊形式：未限定名字（Scheme 符号）→ 标签
+  ;;; 特殊形式：gensym 键 → 标签。名字（未限定）→ 键在 special-keys，clj->scheme 只在列表头部换成键
   (define specials (make-eq-hashtable))
+  (define (special-key! name)
+    (let ((n (if (symbol? name) (symbol->string name) (->string name))))
+      (or (hashtable-ref special-keys n #f)
+          (let ((k (gensym n)))
+            (hashtable-set! special-keys n k)
+            k))))
   (define (register-clj-special! name transformer)
-    (hashtable-set! specials (if (symbol? name) name (string->symbol (->string name)))
-      (make-label (cons 'clj-special transformer))))
+    (hashtable-set! specials (special-key! name) (make-label (cons 'clj-special transformer))))
+  ;;; 过程式的特殊形式：(proc e expand) → 核心形式，expand 在当前环境展开一个子形式（cleat-050）
+  (define (register-clj-form! name proc)
+    (hashtable-set! specials (special-key! name) (make-label (cons 'clj-form proc))))
+  ;;; 只能由展开器产生的形式（如 (clojure syntax) 的 %ctx）：返回键，用 (datum->syntax 使用处标识符 键) 引用
+  (define (register-hidden-clj-form! name proc)
+    (let ((k (gensym name)))
+      (hashtable-set! specials k (make-label (cons 'clj-form proc)))
+      k))
 
-  ;;; 查找 rib 的过程：特殊形式 → 命名空间（标记不参与：Clojure 按名字解析）
+  ;;; 解析不到的符号的后备：(proc ns 符号) → 标签或 #f
+  (define unresolved-lookup #f)
+  (define (set-unresolved-lookup! proc) (set! unresolved-lookup proc))
+
+  ;;; 查找 rib 的过程：特殊形式 → 命名空间 → 后备（标记不参与：Clojure 按名字解析）
   (define (ns-lookup ns)
     (lambda (sym mark*)
       (or (hashtable-ref specials sym #f)
-          (let-values (((o msg private?) (resolve-in ns (scheme-symbol->clj sym))))
-            (cond
-              ((not o) #f)
-              ((var? o) (var-label o))
-              ((type? o) (type-label o))
-              (else #f))))))
+          (let ((csym (scheme-symbol->clj sym)))
+            (let-values (((o msg private?) (resolve-in ns csym)))
+              (cond
+                ((var? o) (var-label o))
+                ((type? o) (type-label o))
+                ((and (not o) (not private?) unresolved-lookup) (unresolved-lookup ns csym))
+                (else #f)))))))
 
   ;;; 符号在 ns（缺省 *ns*）里的标签，或 #f（测试与 &env 用）
   (define symbol-label
@@ -235,11 +274,28 @@
   (define here #'here)
   (define (const x) (datum->syntax here x))
 
+  (define kw-const (clj-keyword "const"))
+  (define op-var-root (clj-op VarRoot))
+  (define op-var-get (clj-op VarGet))
+  (define op-var-set (clj-op VarSet))
+  (define op-invoke (clj-op Invoke))
+  (define op-meta (clj-op Meta))
+  (define op-get (clj-op Get))
+
+  ;;; Var 的读（核心形式）：:const 的 Var 为常量，动态 Var 为 Var.get，否则 getRawRoot（与 C# 展开器的 var-ref 相同）
   (define (var-reference v)
-    (with-syntax ((var (const v)))
-      (if (var-dynamic? v)
-          #'(clr-call clojure.lang.Var get (quote var))
-          #'(clr-call clojure.lang.Var getRawRoot (quote var)))))
+    (cond
+      ((nil->f (op-get (op-meta v) kw-const)) (list 'quote (op-var-get v)))
+      ((var-dynamic? v) (list (list 'quote op-var-get) (list 'quote v)))
+      (else (list (list 'quote op-var-root) (list 'quote v)))))
+
+  ;;; 以 Var 开头的调用：(clojure syntax) 登记（:inline、instance?、IFn.invoke）；没有登记时按 IFn 调用
+  (define var-call-handler #f)
+  (define (set-var-call-handler! proc) (set! var-call-handler proc))
+  (define (default-var-call e v expand)
+    (syntax-case e ()
+      ((_ arg ...)
+       (cons* (list 'quote op-invoke) (var-reference v) (map expand #'(arg ...))))))
 
   ;;; 当前展开中的标识符 e（语法对象）对应的 Clojure 符号
   (define (form-symbol e) (syntax->clj e))
@@ -250,13 +306,13 @@
   (define (register-kinds!)
     (register-binding-extension!
       (make-binding-extension 'clj-var
-        (lambda (e v expand) (expand (var-reference v)))
+        (lambda (e v expand) (var-reference v))
         (lambda (e v expand)
           (syntax-case e ()
             ((_ id val)
-             (with-syntax ((var (const v)))
-               (expand #'(clr-call clojure.lang.Var set (quote var) val))))))
-        #f #f))
+             (list (list 'quote op-var-set) (list 'quote v) (expand #'val)))))
+        (lambda (e v expand) ((or var-call-handler default-var-call) e v expand))
+        #f))
     (register-binding-extension!
       (make-binding-extension 'clj-macro
         (lambda (e t expand)
@@ -265,98 +321,73 @@
         #f #t #t))
     (register-binding-extension!
       (make-binding-extension 'clj-type
-        (lambda (e t expand) (expand (with-syntax ((type (const t))) #'(quote type))))
+        (lambda (e t expand) (list 'quote t))
         #f #f #f))
     (register-binding-extension!
       (make-binding-extension 'clj-special
         (lambda (e t expand) (unresolvable e))
-        #f #t #f)))
+        #f #t #f))
+    (register-binding-extension!
+      (make-binding-extension 'clj-form
+        (lambda (e t expand) (unresolvable e))
+        #f
+        (lambda (e proc expand) (proc e expand))
+        #f)))
 
-  ;;; —— defmacro 垫片（最小：&env 为 nil；完整的在 cleat-050）——
+  ;;; —— defmacro 垫片：输入剥成 Clojure 数据（&form），(&form &env 实参…) 调宏函数，输出挂使用处上下文 ——
+  ;;; 与 Clojure 完全相同的不卫生语义：宏输出里的符号按使用处解析。&env 由 set-macro-env-provider! 登记的过程给出
+  ;;; （(clojure syntax) 给出词法局部的 符号 → LocalBinding map），没有登记时为 nil。
 
-  (define (apply-macro v form)
-    (let ((args (clr-static-call clojure.lang.RT (cons System.Object System.Object) form
-                  (clr-static-call clojure.lang.RT (cons System.Object System.Object) '()
-                    (clr-static-call clojure.lang.RT (next System.Object) form)))))
-      (clr-call clojure.lang.IFn applyTo v args)))
+  (define macro-env-provider (lambda () '()))
+  (define (set-macro-env-provider! thunk) (set! macro-env-provider thunk))
+
+  (define op-apply-to (clj-op ApplyTo))
+
+  (define (apply-macro v form env)
+    (op-apply-to v
+      (clr-static-call clojure.lang.RT (cons System.Object System.Object) form
+        (clr-static-call clojure.lang.RT (cons System.Object System.Object) env
+          (clr-static-call clojure.lang.RT (next System.Object) form)))))
+
+  (define (munge s) (clr-static-call clojure.lang.Munge munge s))
+
+  ;;; ns$name__1234 → ns$name
+  (define (remove-fn-suffix name)
+    (let loop ((i 0))
+      (cond
+        ((>= (+ i 1) (string-length name)) name)
+        ((and (char=? (string-ref name i) #\_) (char=? (string-ref name (+ i 1)) #\_)) (substring name 0 i))
+        (else (loop (+ i 1))))))
+
+  ;;; 宏函数的 ArityException 隐去 &form / &env 两个参数（Clojure 的 macroexpand1 的规则）
+  (define (macro-arity-fix v ex)
+    (if (clr-is clojure.lang.ArityException ex)
+        (let ((name (clr-call clojure.lang.ArityException get_Name ex)))
+          (if (string=? (remove-fn-suffix name)
+                        (string-append (munge (ns-name* (var-ns v))) "$" (munge (sym-name (clr-call clojure.lang.Var get_Symbol v)))))
+              (clr-new clojure.lang.ArityException (- (clr-call clojure.lang.ArityException get_Actual ex) 2) name)
+              ex))
+        ex))
+
+  ;;; 宏调用：v 为宏 Var，form 为 Clojure 数据，pos 为错误位置；返回展开结果（Clojure 数据）
+  (define (call-macro v form pos)
+    (with-clr-exception-handler
+      (lambda (ex)
+        (if (clr-is Cleat.Core.Expand.ExpanderException ex)
+            ($throw ex)
+            (let ((ex (macro-arity-fix v ex)))
+              ($throw (expander-exception pos
+                        (if (or (clr-is System.ArgumentException ex) (clr-is System.InvalidOperationException ex)
+                                (clr-is clojure.lang.IExceptionInfo ex))
+                            'macro-syntax-check 'macroexpand)
+                        (clr-call System.Exception get_Message ex) ex)))))
+      (lambda () (apply-macro v form (macro-env-provider)))))
 
   (define (macro-transformer v)
     (lambda (stx)
       (syntax-case stx ()
         ((head . _)
-         (let ((form (syntax->clj stx)))
-           (clj-datum->syntax* #'head
-             (with-clr-exception-handler
-               (lambda (ex)
-                 (if (clr-is Cleat.Core.Expand.ExpanderException ex)
-                     ($throw ex)
-                     ($throw (expander-exception (syntax-position stx)
-                               (if (or (clr-is System.ArgumentException ex) (clr-is System.InvalidOperationException ex)
-                                       (clr-is clojure.lang.IExceptionInfo ex))
-                                   'macro-syntax-check 'macroexpand)
-                               (clr-call System.Exception get_Message ex) ex))))
-               (lambda () (apply-macro v form)))))))))
-
-  ;;; —— def（特殊形式；按 C# Expander.ParseDef / LookupVar(sym, true)）——
-
-  (define kw-line (clj-keyword "line"))
-  (define kw-column (clj-keyword "column"))
-  (define kw-file (clj-keyword "file"))
-  (define kw-doc (clj-keyword "doc"))
-  (define kw-dynamic (clj-keyword "dynamic"))
-
-  (define (assoc* m k v) (clr-static-call clojure.lang.RT (assoc System.Object System.Object System.Object) m k v))
-  (define (meta-get m k) (nil->f (clr-static-call clojure.lang.RT (get System.Object System.Object) m k)))
-
-  (define (def-var e ns sym)
-    (define (err msg) (syntax-violation #f msg e))
-    (let ((nsname (sym-ns sym)) (name (clj-symbol (sym-name sym))))
-      (if nsname
-          (let ((target (namespace-for ns nsname)))
-            (cond
-              ((not target) (err "Can't refer to qualified var that doesn't exist"))
-              ((eq? target ns) (clr-call clojure.lang.Namespace intern ns name))
-              ((nil->f (clr-call clojure.lang.Namespace FindInternedVar target name))
-               (err "Can't create defs outside of current namespace"))
-              (else (err "Can't refer to qualified var that doesn't exist"))))
-          (let ((o (nil->f (clr-call clojure.lang.Namespace GetMapping ns name))))
-            (cond
-              ((not o) (clr-call clojure.lang.Namespace intern ns name))
-              ((and (var? o) (eq? (var-ns o) ns)) o)
-              ((var? o) (clr-call clojure.lang.Namespace intern ns name))   ; 替换 refer 来的 Var（Namespace 打印警告）
-              (else (err (string-append "Expecting var, but " (->string sym) " is mapped to " (->string o)))))))))
-
-  (define (def-transformer stx)
-    (define (build name doc init)
-      (let ((sym (syntax->clj name)))
-        (unless (clj-symbol? sym)
-          (syntax-violation #f "First argument to def must be a Symbol" stx))
-        (let* ((ns (current-ns))
-               (v (def-var stx ns sym))
-               (m (let* ((m (meta-of sym))
-                         (pos (syntax-position stx))
-                         (m (if pos (assoc* (assoc* m kw-line (car pos)) kw-column (cadr pos)) m))
-                         (m (assoc* m kw-file (or (and pos (caddr pos)) (source-path))))
-                         (m (if doc (assoc* m kw-doc doc) m)))
-                    m)))
-          (when (meta-get m kw-dynamic) (clr-call clojure.lang.Var setDynamic v))
-          (with-syntax ((var (const v)) (meta (const m)))
-            (if init
-                (with-syntax ((init init))
-                  #'(begin
-                      (clr-call clojure.lang.Var setMeta (quote var) (quote meta))
-                      (clr-call clojure.lang.Var bindRoot (quote var) init)
-                      (quote var)))
-                #'(begin
-                    (clr-call clojure.lang.Var setMeta (quote var) (quote meta))
-                    (quote var)))))))
-    (syntax-case stx ()
-      ((_ name) (build #'name #f #f))
-      ((_ name init) (build #'name #f #'init))
-      ((_ name doc init) (string? (syntax->datum #'doc)) (build #'name (syntax->datum #'doc) #'init))
-      ((_ name x y z . rest) (syntax-violation #f "Too many arguments to def" stx))
-      ((_ name x y) (syntax-violation #f "Too many arguments to def" stx))
-      (_ (syntax-violation #f "Too few arguments to def" stx))))
+         (clj-datum->syntax* #'head (call-macro v (syntax->clj stx) (syntax-position stx)))))))
 
   ;;; —— 当前命名空间与运行时的命名空间操作（Clojure 的 in-ns / refer / alias / import 的最小形式）——
 
@@ -443,24 +474,37 @@
 
   ;;; —— 入口：在 *ns* 里展开 / 求值 Clojure 形式 ——
 
+  ;;; 正在展开 Clojure 形式（(clojure syntax) 的数据挂钩只在此时处理 Scheme 的 '() 等数据）
+  (define clojure-expanding? (make-parameter #f))
+
+  ;;; e 是否来自 Clojure 数据（clj->scheme 产生的列表注解，stripped 为 Clojure 的 seq）
+  (define (clojure-form? e)
+    (and (stx? e)
+         (let ((x (stx-expr e)))
+           (and (annotation? x) (clr-is clojure.lang.ISeq (annotation-stripped x))))))
+
   (define (in-clojure thunk)
-    (parameterize ((syntax-error-hook clojure-error-hook))
+    (parameterize ((syntax-error-hook clojure-error-hook) (clojure-expanding? #t))
       (thunk)))
 
-  (define (clojure-eval form)
+  (define (eval-in-ns form)
     (in-clojure (lambda () (eval (clj->scheme form) (namespace-environment (current-ns))))))
 
   ;;; 展开为 Lcore（不求值）
-  (define (clojure-expand form)
+  (define (expand-in-ns form)
     (in-clojure (lambda () (expand->core (clj->scheme form) (namespace-environment (current-ns))))))
 
   ;;; Clojure 的 macroexpand-1：返回 Clojure 数据；不是宏调用（含特殊形式）则返回 form 本身
-  (define (clojure-macroexpand-1 form)
+  (define (macroexpand-1-in-ns form)
     (in-clojure
       (lambda ()
         (let* ((x (clj->scheme form))
                (y (environment-macroexpand-1 x (namespace-environment (current-ns)))))
           (if (eq? y x) form (scheme->clj y))))))
 
-  (register-kinds!)
-  (register-clj-special! 'def def-transformer))
+  ;;; Clojure 的 macroexpand：重复 macroexpand-1 直到不变
+  (define (macroexpand-in-ns form)
+    (let ((x (macroexpand-1-in-ns form)))
+      (if (eq? x form) form (macroexpand-in-ns x))))
+
+  (register-kinds!))

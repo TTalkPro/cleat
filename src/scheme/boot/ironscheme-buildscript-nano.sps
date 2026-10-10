@@ -1786,6 +1786,8 @@
     (syntax-error-hook                            isx)
     (make-lookup-environment                      isx)
     (environment-macroexpand-1                    isx)
+    (syntax-ext-kind                              isx)   ; cleat-050
+    (syntax-ext->list                             isx)   ; cleat-050
     ))
 
 

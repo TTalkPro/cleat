@@ -22,13 +22,9 @@
     (ironscheme syntax-ext)
     (ironscheme clr))
 
-  ;;; ISeq → Scheme 列表
-  (define (seq->list s)
-    (let loop ((s (clr-static-call clojure.lang.RT (seq System.Object) s)) (acc '()))
-      (if (null? s)
-          (reverse acc)
-          (loop (clr-call clojure.lang.ISeq next s)
-                (cons (clr-call clojure.lang.ISeq first s) acc)))))
+  ;;; ISeq / map → Scheme 列表。经 C# 过程（ClojureOps）而不是 clr-call：Scheme 互操作会把返回的 long 变成 fixnum（cleat-050）
+  (define seq->list (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps SeqToList))
+  (define map-children (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps MapToList))
 
   (define (meta-of x)
     (if (clr-is clojure.lang.IMeta x)
@@ -55,13 +51,6 @@
     (clr-static-call clojure.lang.PersistentList (create System.Collections.IList) (list->vector xs)))
   (define (clj-keyword name)
     (clr-static-call clojure.lang.Keyword (intern System.String) name))
-
-  (define (map-children m)
-    (apply append
-      (map (lambda (e)
-             (list (clr-call clojure.lang.IMapEntry key e)
-                   (clr-call clojure.lang.IMapEntry val e)))
-           (seq->list m))))
 
   (define clj-vector-kind
     (make-syntax-extension 'clj-vector

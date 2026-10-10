@@ -1,9 +1,9 @@
 ;;; cleat-049：Clojure 的命名空间模型（designs/14 §6 / §8 的通过判据）在镜像上的端到端测试。
 ;;; Clojure 源码由 C# 的 LispReader 读入（带 :line / :column），经 (clojure namespaces) 转换、在 *ns* 的查找环境里
 ;;; 展开 → 编译 → 运行。clojure.core 未加载，所以 ns / require 由下面的 ns-form! 直接调命名空间原语完成；
-;;; 除 def 以外的特殊形式属于 cleat-050，测试用 register-clj-special! 登记几个最小的。
+;;; 特殊形式（def、let*、set! …）来自 cleat-050 的 (clojure syntax)，入口 clojure-eval 等也在那里。
 (import (rnrs) (rnrs eval) (ironscheme) (ironscheme clr) (ironscheme compiler) (ironscheme syntax-ext)
-        (clojure syntax-kinds) (clojure namespaces))
+        (clojure syntax-kinds) (clojure namespaces) (clojure syntax))
 
 (clr-static-call clojure.lang.RT Init)
 
@@ -80,15 +80,8 @@
                     (begin (ns-form! f) #f)
                     (clojure-eval f)))))))
 
-;;; 测试用的特殊形式（真正的在 cleat-050）：转换器把 Clojure 形式改写为 Scheme 核心形式。
-;;; Clojure 向量的模式由准引用拼出（Scheme reader 读不出 Clojure 字面量）。
+;;; 特殊形式来自 (clojure syntax)（cleat-050）；另登记一个测试用的转换器式特殊形式
 (define env (environment '(rnrs) '(ironscheme) '(ironscheme clr) '(clojure syntax-kinds)))
-(register-clj-special! 'let*
-  (eval `(lambda (stx)
-           (syntax-case stx ()
-             ((_ ,(clj-vector 'n 'v) body) #'(let ((n v)) body))))
-        env))
-(register-clj-special! 'set! (eval '(lambda (stx) (syntax-case stx () ((_ n v) #'(set! n v)))) env))
 (register-clj-special! 'dummy-special (eval '(lambda (stx) #''expanded-dummy) env))
 
 (with-ns-binding (find-ns 'user)

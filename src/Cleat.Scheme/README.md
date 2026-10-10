@@ -21,3 +21,12 @@ Copyright (c) 2026 the IronScheme contributors。许可全文见本目录 LICENS
 - 逃逸续延（`Control.cs` 的 `call/cc`、`EscapeContinuation`、`ContinuationException`）与处理器栈（`ExceptionHandlers`、
   `$current-handlers`）已删除（cleat-047，designs/15 §3）：`raise` 抛 `SchemeException(条件)`，捕获用核心形式 `$try/catch`
   （stage0 的 `TryCatch` 节点、编译器的 `try-catch` 节点 → Lcil `try`/`catch`）。
+
+## cleat 新增：`Clojure/`（cleat-050）
+
+Clojure 在 Scheme 元层上运行所需的 C# 部分（命名空间 `Cleat.Scheme.Clojure`，由 `src/scheme/clojure/syntax.sls` 使用）：
+- `ClojureFn`：`fn*` 的值，`clojure.lang.AFunction` 包着展开器生成的 Scheme 过程（固定参数子句的 case-lambda + 变长子句），
+  ArityException 用 Clojure 的类名规则。
+- `ClojureOps`：Clojure 代码的运行时操作（IFn 调用、Var 读写、集合字面量、Reflector 互操作、case* 分派等），都是 `Procedure`，
+  因为 Scheme 的 `clr-call` 会把返回的 long 转成 fixnum、枚举转成符号（值边界，designs/13 §7）。
+- `HostSyntax`：展开期的类型名 / 类型提示决议与 deftype* / reify* 的接口方法匹配（规则照 C# 展开器）。

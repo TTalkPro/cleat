@@ -36,6 +36,7 @@
           expand->core
           new-interaction-environment
           make-lookup-environment environment-macroexpand-1
+          syntax-ext-kind syntax-ext->list
           interaction-environment-symbols environment-bindings
           ellipsis-map assertion-error syntax-transpose
 		      environment environment? environment-symbols
@@ -2991,7 +2992,7 @@
           ((core-prim)
            (let ((name value))
              (build-primref no-source name)))
-          ((call) (chi-application e r mr))
+          ((call) (chi-call e r mr))
           ((lexical)
            (let ((lex (lexical-var value)))
              (build-lexical-reference (syntax-annotation e) lex)))
@@ -3071,7 +3072,20 @@
                      ((eq? form #t)
                       (chi-expr (do-macro-call value e r #f) r mr))
                      (else (form e value expand))))
-                 (stx-error e "invalid expression"))))))))
+                 (chi-datum e r mr))))))))
+
+  ;;; 应用与非自求值数据的挂钩（cleat-050）：保留的绑定扩展种类 $application / $datum。
+  ;;; 登记了 $application 时，call 形式先交给它的 expand-form (e #f expand)；返回 #f 则照常 chi-application。
+  ;;; 登记了 $datum 时，syntax-type 为 other 的非标识符数据交给它的 expand-reference (e #f expand)；返回 #f 则照常报错。
+  (define (chi-call e r mr)
+    (let ((x (binding-extension-of '$application)))
+      (or (and x ((binding-extension-expand-form x) e #f (lambda (e) (chi-expr e r mr))))
+          (chi-application e r mr))))
+
+  (define (chi-datum e r mr)
+    (let ((x (and (not (id? e)) (binding-extension-of '$datum))))
+      (or (and x ((binding-extension-expand-reference x) e #f (lambda (e) (chi-expr e r mr))))
+          (stx-error e "invalid expression"))))
 
   ;;; macroexpand-1（cleat-049，designs/14 §6）：e 是宏调用（含 expand-form 为 #t 且 macroexpand-1? 为真的
   ;;; 绑定扩展）时展开一步，返回结果语法对象；否则返回 #f。头部标识符未绑定时也返回 #f（不报错）。
