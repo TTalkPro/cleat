@@ -58,3 +58,18 @@
 ## §5 结论
 
 三层的方向是对的，它把 [13](13-syntax-objects-and-scheme-core.md) 方案 C 说成了可以同时承载 R6RS 与 Clojure 两个表面语言、多个目标的通用结构。按字面做会在"第 2 层是什么"上出错：它是**编译期元层加一份运行期契约接口**，不是 Clojure 的运行基底；"看不到 Scheme"靠三道边界的纪律。接受这两条修正后，剩下的不确定性与 13 §6 的 PoC 完全重合，所以下一步仍是 cleat-044。
+
+## §6 风险能否靠扩展 psyntax 解决
+
+能，而且扩展点都已定位（IronScheme 的展开器是 psyntax 的派生副本，在 `boot/expander/core.sls` 里自行维护，改它不是给上游打补丁）。逐条：
+
+| 风险 | psyntax 里的挂钩点（`core.sls`） | 扩展 | 规模 |
+|---|---|---|---|
+| 命名空间模型 | `interaction-env` 记录 `(rib r locs)`、参数 `top-level-context`、`new-interaction-environment`（从库的 subst 建 rib）、`gen-define-label+loc`（顶层 `define` 在 env 里"伪造"一个 `lexical` 绑定并 `extend-rib!`）、`label->binding-no-fluids` 的 `top-level-context` 分支 | 命名空间 = 带名字的 `interaction-env` + 一张 ns 表；新增绑定类型 `(clj-var . Var)`：`def` 建标签 → Var（重定义复用同一标签，Var 对象可变，所以无需改 rib）；`refer` / `alias` / `import` = 向 rib 加条目或在 `id->label` 前加别名拆解；`chi-expr` 的 `case type` 加 `clj-var` 分支生成 Var 读；私有性放在 Var 元数据 | 300 ~ 500 行 |
+| 展开速度 | `id->label`：未封印的 rib 按 `rib-sym*` 线性查找，只有 `seal-rib!` 后才有哈希索引（`rib-sealed/freq`）；交互环境的 rib 永不封印，`core.clj` 几百个顶层定义后每次标识符查找都是 O(n) | 给交互 rib 加可变哈希索引（`extend-rib!` 时同步更新），`id->label` 先查索引；`do-macro-call` 的 `return` 遍历与 `add-mark` 要认识 Clojure 集合（map / set）以免退化为逐项复制 | 100 ~ 200 行；是 PoC 第 6 项的前提 |
+| `macroexpand` 停止点 | `chi-expr` 用 `syntax-type` 分派；宏调用集中在 `do-macro-call`（输入加反标记，输出 `gen-mark`） | 新 API `(macroexpand-1 stx env)`：`syntax-type` 后只对 `macro` / `global-macro` 类型调一次 `do-macro-call` 并返回，其余原样返回；Clojure 特殊形式注册为新类型 `clj-special`（实现仍是 core-macro 转换器），`macroexpand-1` 对它不展开，`chi-expr` 对它展开 | 50 行 |
+| 诊断边界 | `stx-error` 宏（855 行）→ `syntax-violation`；语法对象带注解 `stx-ae*`（源位置） | wrap 时把 reader 的 `:line` / `:column` / `:file` 元数据转成注解；`stx-error` 改为经钩子抛 `ExpanderException`（Clojure 文本：`Syntax error (file:line:col)`，`:clojure.error/*` 数据）；宏体抛出的异常在 `do-macro-call` 处按 Clojure 的 phase 分类包装 | 100 行 + 错误黄金文件 |
+| 函数值跨层 | 不在 psyntax 里 | 运行时：`ClojureFn : Procedure, IFn`，或让 `Procedure` 实现 `IFn`（IronScheme.Core 几十行） | 运行时改动 |
+| `defmacro` 的输出 | `do-macro-call` 的 `return` 拒绝输出里的裸符号（"raw symbol encountered in output of macro"） | 垫片用 `datum->syntax` 挂使用处上下文后再返回，自然满足；Clojure 集合要进入 `return` 的遍历 | 含在上两项里 |
+
+结论：五个风险里四个在 psyntax 的既有挂钩点上扩展即可，总量约 600 ~ 900 行 Scheme；"展开速度"的真正隐患不是标记 / rib 本身，而是交互 rib 的线性查找，加索引即可消除。PoC（cleat-044）据此可以把工作内容写得更具体。
