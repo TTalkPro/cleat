@@ -267,8 +267,11 @@
   [{:keys [name extends methods]}]
   (let [extendTypes (map the-class extends)        
         methodSigs (map (fn [[mname pclasses rclass pmetas]] [mname (map the-class-maybe-by-ref-for-definterface pclasses) (the-class-for-definterface rclass) pmetas]) methods)]
-	;; CLEAT-017: GenInterface/GenerateInterface → 原语 cleat.kernel/gen-interface（待提供：stage0 用 Cleat.Emit 生成接口类型）
-	(cleat.kernel/gen-interface (str name) (extract-attributes (meta name)) extendTypes methodSigs)))
+	;; CLEAT-053: GenInterface/GenerateInterface → 返回 deftype* 形式（:cleat/interface 选项），由编译器生成 interface 类型
+	;; （与 deftype 同路，AOT 时进同一个程序集）；属性（extract-attributes）暂不支持
+	`(deftype* ~(symbol (str name)) ~(symbol (str name)) []
+	   :implements ~(vec (map (fn [^Type t] (symbol (.FullName t))) extendTypes))
+	   :cleat/interface ~(vec (map (fn [[mname ps r]] [mname (vec ps) r]) methodSigs)))))
 
 
 (defmacro gen-interface
@@ -302,5 +305,5 @@
 
   [& options]
   (let [options-map (apply hash-map options) ]
-  ;; CLEAT-017: parse-eval* 不支持：接口改在运行时（求值该顶层形式时）生成，后续顶层形式展开时类型已存在
-  `(#'clojure.core/generate-interface '~options-map)))
+  ;; CLEAT-053: parse-eval* 不支持：展开为 deftype* 形式（generate-interface），接口在求值该顶层形式时生成，后续顶层形式展开时类型已存在
+  (generate-interface options-map)))

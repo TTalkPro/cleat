@@ -842,6 +842,10 @@
     (overload "clojure.lang.RT" "map" 0 #t () #f))
   (primitive cleat.kernel/max
     (overload "clojure.lang.Numbers" "max" 2 #f (pure) #f))
+  (primitive cleat.kernel/maybe-special-tag
+    (overload "Cleat.Core.Runtime.Kernel" "MaybeSpecialTag" 1 #f () #f))
+  (primitive cleat.kernel/maybe-type
+    (overload "Cleat.Core.Runtime.Kernel" "MaybeType" 2 #f () #f))
   (primitive cleat.kernel/min
     (overload "clojure.lang.Numbers" "min" 2 #f (pure) #f))
   (primitive cleat.kernel/minus

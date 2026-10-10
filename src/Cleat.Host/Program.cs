@@ -34,6 +34,9 @@ public static class Program
         public bool Repl;              // -r 或无其他动作
         public string[] ScriptArgs = Array.Empty<string>();
         public bool Help, Version;
+        public bool NoBoot;            // --no-boot：不加载 Clojure 镜像（从源码构建镜像时）
+        public string CompileBoot;     // --compile-boot out.dll：编译 Clojure 镜像（cleat-053）
+        public string BootOrder;       // --boot-order edn（缺省 out.dll 旁的 boot-order.edn）
     }
 
     public static Options Parse(string[] args)
@@ -48,6 +51,9 @@ public static class Program
                 case "--boot" when i + 1 < args.Length: o.Boot = args[++i]; break;
                 case "--scheme-boot" when i + 1 < args.Length: o.SchemeBoot = args[++i]; break;
                 case "-I" when i + 1 < args.Length: o.IncludeDirs.Add(args[++i]); break;
+                case "--no-boot": o.NoBoot = true; break;
+                case "--compile-boot" when i + 1 < args.Length: o.CompileBoot = args[++i]; break;
+                case "--boot-order" when i + 1 < args.Length: o.BootOrder = args[++i]; break;
                 case "-e": case "--eval": if (i + 1 >= args.Length) throw new ArgumentException("-e needs an expression"); o.Inits.Add(("eval", args[++i])); break;
                 case "-i": case "--init": if (i + 1 >= args.Length) throw new ArgumentException("-i needs a file"); o.Inits.Add(("init", args[++i])); break;
                 case "-m": case "--main": if (i + 1 >= args.Length) throw new ArgumentException("-m needs a namespace"); o.MainNs = args[++i]; i++; goto done;
@@ -62,7 +68,7 @@ public static class Program
         }
     done:
         o.ScriptArgs = args.Skip(i).ToArray();
-        if (o.Script == null && o.MainNs == null && !o.Repl && o.Inits.Count == 0) o.Repl = true;
+        if (o.Script == null && o.MainNs == null && !o.Repl && o.Inits.Count == 0 && o.CompileBoot == null) o.Repl = true;
         return o;
     }
 
@@ -104,7 +110,8 @@ public static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: cleat [--scheme-boot dll] [--boot dll] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
+        Console.Error.WriteLine("usage: cleat [--scheme-boot dll] [--boot dll | --no-boot] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
+        Console.Error.WriteLine("       cleat [--boot dll | --no-boot] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]");
         return 2;
     }
 
@@ -131,12 +138,15 @@ public static class Program
         SchemeImageMs = sw.ElapsedMilliseconds;
         Cleat.Scheme.Clojure.ClojureHost.Start(Cleat.Scheme.Clojure.ClojureHost.LibraryDirFor(schemeBoot));
         DriverMs = sw.ElapsedMilliseconds - SchemeImageMs;
-        string boot = o.Boot ?? Environment.GetEnvironmentVariable("CLEAT_BOOT") ?? FindBoot("cleat.boot.dll");
+        string boot = o.NoBoot ? null : o.Boot ?? Environment.GetEnvironmentVariable("CLEAT_BOOT") ?? FindBoot("cleat.boot.dll");
         if (boot != null)
         {
-            Loader.LoadModule(boot, false);
-            if (Loader.LoadedAssemblies.TryGetValue(Path.GetFileNameWithoutExtension(boot), out var asm))
-                BootInterface.CurrentImageId = asm.ManifestModule.ModuleVersionId;
+            boot = Path.GetFullPath(boot);
+            Loader.LoadBootImage(boot);
+            // 开发布局（镜像在 src/boot/）：src/clojure 的源码也在加载路径上（JVM 的 clojure.jar 带着源码；按需加载的
+            // clojure.core.reducers 等由此可 require）
+            string src = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure"));
+            if (File.Exists(Path.Combine(src, "clojure", "core.clj"))) Loader.AddPath(src);
         }
         ClojureImageMs = sw.ElapsedMilliseconds - SchemeImageMs - DriverMs;
         if (Environment.GetEnvironmentVariable("CLEAT_TIME") != null)
@@ -188,6 +198,7 @@ public static class Program
         Var.pushThreadBindings(RT.map(RT.CurrentNSVar, ns, RT.CmdLineArgsVar, RT.seq(o.ScriptArgs)));
         try
         {
+            if (o.CompileBoot != null) return CompileBootImage(o);
             foreach (var (kind, value) in o.Inits)
             {
                 if (kind == "eval") EvalReader(new StringReader(value), "<eval>", v => { if (v != null) Print(v); });   // clojure.main：每个非 nil 值都打印
@@ -203,10 +214,75 @@ public static class Program
             }
             if (o.Script == "-") { EvalReader(Console.In, "<stdin>"); return 0; }
             if (o.Script != null) { Loader.LoadFile(o.Script); return 0; }
-            if (o.Repl) return Repl(Console.In, Console.Out, Console.Error);
+            if (o.Repl)
+            {
+                ReplRequires();
+                return Repl(Console.In, Console.Out, Console.Error);
+            }
             return 0;
         }
         finally { Var.popThreadBindings(); }
+    }
+
+    /// <summary>
+    /// 编译 Clojure 镜像（cleat-053，designs/08 §3）：按 boot-order.edn 依次 load cleat.kernel、clojure.core，require 其余
+    /// <c>:boot true</c> 且不是 <c>:loaded-by</c> 的命名空间，全部加载到的形式编成一个程序集。
+    /// </summary>
+    private static int CompileBootImage(Options o)
+    {
+        string dll = Path.GetFullPath(o.CompileBoot);
+        string orderPath = o.BootOrder ?? Path.Combine(Path.GetDirectoryName(dll) ?? ".", "boot-order.edn");
+        var forms = BootForms(File.ReadAllText(orderPath));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        // 已运行着 Clojure 镜像时（不动点的第二段）：*loaded-libs* 绑到空集，require 与从源码构建时一样真正加载每个库
+        var core = Namespace.find(Symbol.intern("clojure.core"));
+        var loadedLibs = core?.FindInternedVar(Symbol.intern("*loaded-libs*"));
+        if (loadedLibs != null) Var.pushThreadBindings(RT.map(loadedLibs, new Ref(PersistentTreeSet.EMPTY)));
+        try
+        {
+            Cleat.Scheme.Clojure.Driver.CompileBoot(forms, dll);
+        }
+        finally
+        {
+            if (loadedLibs != null) Var.popThreadBindings();
+        }
+        Console.Error.WriteLine($"cleat: compiled the Clojure boot image ({forms.Count} entries) in {sw.ElapsedMilliseconds} ms -> {dll}");
+        return 0;
+    }
+
+    /// <summary>boot-order.edn → 加载形式：kernel 与 core 用 RT.load（core 之前没有 require），其余 (clojure.core/require 'ns)。</summary>
+    public static List<object> BootForms(string edn)
+    {
+        var order = (IPersistentMap)EdnReader.readString(edn, PersistentHashMap.EMPTY);
+        var forms = new List<object>();
+        Keyword K(string n) => Keyword.intern(n);
+        for (ISeq s = RT.seq(order.valAt(K("entries"))); s != null; s = s.next())
+        {
+            var e = (IPersistentMap)s.first();
+            if (!RT.booleanCast(e.valAt(K("boot"))) || e.valAt(K("loaded-by")) != null) continue;
+            var ns = (Symbol)e.valAt(K("ns"));
+            string path = (string)e.valAt(K("path"));
+            if (ns.Name == "cleat.kernel" || ns.Name == "clojure.core")
+                forms.Add(RT.list(Symbol.intern("clojure.lang.RT", "load"), path.Substring(0, path.LastIndexOf('.'))));
+            else
+                forms.Add(RT.list(Symbol.intern("clojure.core", "require"), RT.list(Symbol.intern("quote"), ns)));
+        }
+        return forms;
+    }
+
+    /// <summary>clojure.main 的 REPL 在 user 里 (apply require clojure.main/repl-requires)（doc、source、pst …）；clojure.main 已加载时照做。</summary>
+    public static void ReplRequires()
+    {
+        var main = Namespace.find(Symbol.intern("clojure.main"));
+        var reqs = main?.FindInternedVar(Symbol.intern("repl-requires"));
+        var require = Namespace.find(Symbol.intern("clojure.core"))?.FindInternedVar(Symbol.intern("require"));
+        if (reqs == null || require == null) return;
+        // 逐个 require：不在镜像里、加载路径上又没有源码的库（clojure.repl.deps）跳过
+        for (ISeq s = RT.seq(reqs.deref()); s != null; s = s.next())
+        {
+            try { ((IFn)require.deref()).invoke(s.first()); }
+            catch (Exception) { }
+        }
     }
 
     /// <summary>读一段文本的全部形式并逐个经 eval 钩子求值，返回最后一个值。</summary>

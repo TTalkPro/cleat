@@ -31,6 +31,13 @@
 
 M6 建立并记入本文：语料通过数 / 偏离数；clojure-test-suite 逐命名空间通过数；test_clojure 通过数；自举耗时与镜像大小。之后的任务不得降低。
 
+已记入的基线：
+
+| 日期 | 来源 | 项 | 值 |
+|---|---|---|---|
+| 2026-10-10 | cleat-053 | 语料 `:common`（`dotnet run tools/build.cs -- conformance --run`，宿主 + Clojure 镜像，`=` 比较） | 4842 行：通过 3913（80.8%），不等 179，异常 749，超时 1 |
+| 2026-10-10 | cleat-053 | Clojure 镜像 `cleat.boot.dll`（`GenerateBootImage`） | 构建约 18 ~ 20 秒；dll 1.8 MB，Lcil 14 MB，2308 个类型，2189 个顶层形式；不动点 B == C |
+
 ## 4. 运行方式
 
 - `dotnet test`（全部 C# 测试 + 以进程方式驱动 `Cleat.Host` / `Cleat.Stage0` 的 Clojure 测试，每个套件一个进程）；`--filter Category=Bootstrap` / `Conformance`。

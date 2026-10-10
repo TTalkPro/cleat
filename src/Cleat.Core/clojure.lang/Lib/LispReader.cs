@@ -1474,6 +1474,11 @@ namespace clojure.lang
                             //Classname/foo => package.qualified.Classname/foo
                             sym = Symbol.intern(nsym.Name, sym.Name);
                         }
+                        else if (sym.Namespace == null && sym.Name.IndexOf('.') > 0)
+                        {
+                            // CLEAT-053: Compiler.resolveSymbol leaves class names (containing '.') alone; the default resolver path
+                            // used to qualify them with the current namespace (`clojure.lang.Util -> clojure.core/clojure.lang.Util)
+                        }
                         else if (sym.Namespace == null)
                         {
                             Symbol rsym = resolver.ResolveClass(sym);

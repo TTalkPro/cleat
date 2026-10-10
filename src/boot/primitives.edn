@@ -40,6 +40,8 @@
   cleat.kernel/lte [{:target :clr :type "clojure.lang.Numbers" :method "lte" :params ["System.Object" "System.Object"] :ret "System.Boolean" :flags #{:pure :inline}}]
   cleat.kernel/map [{:target :clr :type "clojure.lang.RT" :method "map" :params ["System.Object[]"] :ret "clojure.lang.IPersistentMap" :flags #{}}]
   cleat.kernel/max [{:target :clr :type "clojure.lang.Numbers" :method "max" :params ["System.Object" "System.Object"] :ret "System.Object" :flags #{:pure}}]
+  cleat.kernel/maybe-special-tag [{:target :clr :type "Cleat.Core.Runtime.Kernel" :method "MaybeSpecialTag" :params ["System.Object"] :ret "System.Object" :flags #{}}]
+  cleat.kernel/maybe-type [{:target :clr :type "Cleat.Core.Runtime.Kernel" :method "MaybeType" :params ["System.Object" "System.Object"] :ret "System.Object" :flags #{}}]
   cleat.kernel/min [{:target :clr :type "clojure.lang.Numbers" :method "min" :params ["System.Object" "System.Object"] :ret "System.Object" :flags #{:pure}}]
   cleat.kernel/minus [{:target :clr :type "clojure.lang.Numbers" :method "minus" :params ["System.Object" "System.Object"] :ret "System.Object" :flags #{:pure :inline}}]
   cleat.kernel/more [{:target :clr :type "clojure.lang.RT" :method "more" :params ["System.Object"] :ret "clojure.lang.ISeq" :flags #{:inline}}]

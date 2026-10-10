@@ -25,6 +25,9 @@
   ;;; ISeq / map → Scheme 列表。经 C# 过程（ClojureOps）而不是 clr-call：Scheme 互操作会把返回的 long 变成 fixnum（cleat-050）
   (define seq->list (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps SeqToList))
   (define map-children (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps MapToList))
+  ;;; 语法对象的 map / set 重建：保持子项顺序（cleat-053，见 ClojureOps.OrderedMap）；过程调用，实参不经 Scheme 互操作的数值规范化
+  (define ordered-map (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps OrderedMap))
+  (define ordered-set (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps OrderedSet))
 
   (define (meta-of x)
     (if (clr-is clojure.lang.IMeta x)
@@ -62,13 +65,13 @@
     (make-syntax-extension 'clj-map
       (lambda (x) (clr-is clojure.lang.IPersistentMap x))
       map-children
-      (lambda (x ls) (with-meta-of (apply clj-map ls) x))))
+      (lambda (x ls) (with-meta-of (ordered-map ls) x))))
 
   (define clj-set-kind
     (make-syntax-extension 'clj-set
       (lambda (x) (clr-is clojure.lang.IPersistentSet x))
       seq->list
-      (lambda (x ls) (with-meta-of (apply clj-set ls) x))))
+      (lambda (x ls) (with-meta-of (ordered-set ls) x))))
 
   (define clj-list-kind
     (make-syntax-extension 'clj-list

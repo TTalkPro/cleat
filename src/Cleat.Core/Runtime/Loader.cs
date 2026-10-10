@@ -176,6 +176,29 @@ public static class Loader
         return WithLoadBindings(() => Run(asm));
     }
 
+    /// <summary>
+    /// Clojure 镜像（cleat.boot.dll，cleat-053）正在初始化：镜像里已经含有 boot 命名空间全部文件的形式（被加载的文件排在
+    /// (load …) / (require …) 之前），这期间 RT.load 是空操作；require 照常把库记入 *loaded-libs*。
+    /// </summary>
+    public static bool BootImageInitializing { get; private set; }
+
+    /// <summary>加载 Clojure 镜像并设置 <see cref="BootInterface.CurrentImageId"/>；返回程序集。</summary>
+    public static Assembly LoadBootImage(string path)
+    {
+        BootImageInitializing = true;
+        try
+        {
+            LoadModule(path, false);
+        }
+        finally
+        {
+            BootImageInitializing = false;
+        }
+        var asm = Loaded.TryGetValue(Path.GetFileNameWithoutExtension(path), out var a) ? a : null;
+        if (asm != null) BootInterface.CurrentImageId = asm.ManifestModule.ModuleVersionId;
+        return asm;
+    }
+
     /// <summary>对已建好的程序集（内存 eval 程序集或已载入的模块）调入口方法。</summary>
     public static object Run(Assembly asm)
     {
@@ -221,6 +244,7 @@ public static class Loader
         }
 
         string rel = relativePath.TrimStart('/');
+        if (BootImageInitializing) return true;
         if (!RuntimeBootstrapFlag.DisableFileLoad)
         {
             FileInfo source = null, assembly = null;

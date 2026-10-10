@@ -66,6 +66,8 @@ public static class Primitives
         P("equiv", UT, "equiv", new[] { O, O }, pure: true, inline: true), P("equals", UT, "equals", new[] { O, O }, pure: true),
         P("identical?", UT, "identical", new[] { O, O }, pure: true, inline: true), P("hash", UT, "hash", new[] { O }, pure: true),
         P("hasheq", UT, "hasheq", new[] { O }, pure: true), P("compare", UT, "compare", new[] { O, O }, pure: true), P("class-of", UT, "classOf", new[] { O }, pure: true),
+        // 宿主类型名（Kernel，cleat-053：core.clj 原来直接调 HostExpr）
+        P("maybe-special-tag", typeof(Kernel), "MaybeSpecialTag", new[] { O }), P("maybe-type", typeof(Kernel), "MaybeType", new[] { O, O }),
     };
 
     public static Entry Find(Type type, string method, Type[] ps) =>

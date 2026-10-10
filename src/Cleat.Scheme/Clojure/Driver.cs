@@ -281,7 +281,11 @@ public static class Driver
     public static readonly Procedure MakeReader = new P1("clojure-make-reader", r =>
         r is LineNumberingTextReader ? r : new LineNumberingTextReader((TextReader)r));
 
-    [ThreadStatic] private static int t_lastLine;
+    [ThreadStatic] private static int t_lastLine, t_lastColumn;
+    [ThreadStatic] private static string t_lastSource;
+
+    /// <summary>CLEAT_TRACE_LOAD：加载时把每个顶层形式的 文件:行 写到标准错误（找出没有位置的错误出在哪个形式，cleat-053）。</summary>
+    private static readonly bool s_traceLoad = Environment.GetEnvironmentVariable("CLEAT_TRACE_LOAD") != null;
 
     /// <summary>(read-form reader eof) → 下一个形式，或 eof。记下形式开始的行列（形式本身没有 :line 元数据时用）。</summary>
     public static readonly Procedure ReadForm = new P2("clojure-read-form", (r, eof) =>
@@ -289,6 +293,9 @@ public static class Driver
         var rdr = (LineNumberingTextReader)r;
         SkipWhitespace(rdr);
         t_lastLine = rdr.LineNumber;
+        t_lastColumn = rdr.ColumnNumber;
+        t_lastSource = SourceLabel();
+        if (s_traceLoad) Console.Error.WriteLine($"cleat: load {SourceLabel()}:{t_lastLine}");
         try { return LispReader.read(rdr, false, eof, false, s_readOpts); }
         catch (Exception e) when (StampSource(e)) { throw; }
     });
@@ -394,9 +401,12 @@ public static class Driver
 
     private static readonly clojure.lang.Symbol s_do = clojure.lang.Symbol.intern("do");
 
-    /// <summary>(macroexpand-top? form)：Clojure 的 Compiler.eval 先对集合形式 macroexpand，头部是 def… 符号的除外。</summary>
-    public static readonly Procedure MacroexpandTop = new P1("clojure-macroexpand-top?", form =>
-        form is ISeq s && !(s.first() is clojure.lang.Symbol h && h.Name.StartsWith("def", StringComparison.Ordinal)));
+    /// <summary>
+    /// (macroexpand-top? form)：Clojure 的 Compiler.eval 先对序列形式 macroexpand（展开出 do 则拆开）。头部是 def… 的形式也展开
+    /// （cleat-053：defprotocol / defrecord 展开为顶层 do，接口要在后面的子形式展开之前生成；Compiler.eval 里 def… 的例外只关于
+    /// 是否包进 fn，不关于 macroexpand）。
+    /// </summary>
+    public static readonly Procedure MacroexpandTop = new P1("clojure-macroexpand-top?", form => form is ISeq);
 
     // ———————————————— 三、钩子 ————————————————
 
@@ -410,8 +420,23 @@ public static class Driver
             case "load-source": CoreHooks.LoadSource = (r, path, src) => p.Invoke3(r, path, src); break;
             case "compile": CoreHooks.Compile = (r, path, src) => p.Invoke3(r, path, src); break;
             case "macroexpand-1": CoreHooks.Macroexpand1 = (x, env) => p.Invoke1(x); break;
+            case "compile-boot": CompileBootHook = (forms, dll) => p.Invoke2(forms, dll); break;
             default: throw new ArgumentException("unknown hook for the Clojure driver: " + name, nameof(name));
         }
+    }
+
+    /// <summary>(clojure-compile-boot 形式列表 dll路径)：编译 Clojure 镜像（cleat-053）；由 (clojure driver) 登记。</summary>
+    public static Func<object, object, object> CompileBootHook;
+
+    /// <summary>
+    /// 编译 Clojure 镜像：依次求值 forms（Clojure 形式），把加载到的全部顶层形式编成一个程序集 dllPath（旁边 .lcil、.ifc）。
+    /// </summary>
+    public static void CompileBoot(IEnumerable<object> forms, string dllPath)
+    {
+        var hook = CompileBootHook ?? throw new InvalidOperationException("the Clojure driver has not registered compile-boot");
+        object list = null;
+        foreach (var f in forms.Reverse()) list = new Cons(f, list);
+        hook(list, Path.GetFullPath(dllPath));
     }
 
     /// <summary>登记 Clojure 风格的错误报告（写到 *err*）。</summary>
@@ -465,7 +490,10 @@ public static class Driver
 
     private static string FormatSyntaxError(ExpanderException x)
     {
-        string loc = $"{DisplayPath(x.SourcePath)}:{x.Line}:{x.Column}";
+        // 宏展开出的形式没有位置（0:0）：报最内层顶层形式的位置（Clojure 的编译器同样报外层形式的 LINE / COLUMN）
+        string loc = x.Line == 0 && t_lastLine > 0 && DisplayPath(x.SourcePath) == t_lastSource && t_lastSource != "REPL"
+            ? $"{DisplayPath(x.SourcePath)}:{t_lastLine}:{t_lastColumn}"
+            : $"{DisplayPath(x.SourcePath)}:{x.Line}:{x.Column}";
         string sym = x.Symbol != null ? x.Symbol + " " : "";
         string reason = x.Reason ?? x.Message;
         if (x.Phase == ExpanderException.PhaseSyntax) return $"Syntax error macroexpanding {sym}at ({loc}).{NL}{reason}";

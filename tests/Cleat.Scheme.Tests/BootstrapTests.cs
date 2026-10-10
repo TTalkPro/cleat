@@ -73,11 +73,22 @@ public class BootstrapTests
     {
         if (!File.Exists(Dll(3))) Assert.Ignore("stage3 not built");
         Directory.CreateDirectory(Path.GetDirectoryName(SchemePaths.Boot));
-        File.Copy(Dll(3), SchemePaths.Boot, true);
-        File.Copy(Lcil(3), Path.ChangeExtension(SchemePaths.Boot, ".lcil"), true);
+        Replace(Dll(3), SchemePaths.Boot);
+        Replace(Lcil(3), Path.ChangeExtension(SchemePaths.Boot, ".lcil"));
         // 接口文件记录镜像 id：与镜像一起换，否则编译器认为它过期而不用
         var ifc = Path.ChangeExtension(Dll(3), ".ifc");
-        if (File.Exists(ifc)) File.Copy(ifc, Path.ChangeExtension(SchemePaths.Boot, ".ifc"), true);
+        if (File.Exists(ifc)) Replace(ifc, Path.ChangeExtension(SchemePaths.Boot, ".ifc"));
+    }
+
+    /// <summary>
+    /// 先复制到同目录的临时文件再原子改名：File.Copy 覆盖会就地截断重写，并行运行的宿主进程（Cleat.Host.Tests）
+    /// 若正映射着旧镜像就会收到 SIGBUS（退出码 135）；改名后旧 inode 仍对已打开它的进程有效。
+    /// </summary>
+    private static void Replace(string source, string destination)
+    {
+        string tmp = destination + "." + System.Guid.NewGuid().ToString("N") + ".tmp";
+        File.Copy(source, tmp);
+        File.Move(tmp, destination, true);
     }
 
     /// <summary>

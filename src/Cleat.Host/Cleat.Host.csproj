@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 命令行宿主与 REPL；Clojure 镜像的 GenerateBootImage 目标（cleat-053）以后也在这里加入 -->
+  <!-- 命令行宿主与 REPL；Scheme 镜像、宿主库与 Clojure 镜像（GenerateBootImage，cleat-053）的生成目标 -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Cleat.Host</RootNamespace>
@@ -65,5 +65,26 @@
     <MakeDir Directories="$(ClojureHostLibDir)" />
     <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(Stage0Dir)\stage0.dll&quot; -I lib -I nanopass --boot &quot;$(SchemeBootImage)&quot; clojure/build-host.sps &quot;$(ClojureHostLibDir)&quot;"
           WorkingDirectory="$(SchemeDir)" />
+  </Target>
+
+  <!--
+    Clojure 镜像（cleat-053；designs/08 §3 第二段）：宿主不加载已有的 Clojure 镜像（no-boot），按 src/boot/boot-order.edn 从
+    src/clojure 源码加载 cleat.kernel、clojure.core 及其余 boot 命名空间（每个形式展开、编译、求值），把全部顶层形式编成一个
+    程序集 src/boot/cleat.boot.{dll,lcil,ifc}。宿主启动时自动加载它（Loader.LoadBootImage）。
+    按输入增量：Clojure 源码、boot-order.edn、Scheme 镜像与宿主库、宿主及其依赖程序集（约 20 秒）。-p:BuildBootImage=false 跳过。
+  -->
+  <PropertyGroup>
+    <ClojureBootImage>$(SchemeBootDir)\cleat.boot.dll</ClojureBootImage>
+    <ClojureSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\clojure'))</ClojureSourceDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClojureBootImageInput Include="$(ClojureSourceDir)\**\*.clj;$(ClojureSourceDir)\**\*.cljc;$(SchemeBootDir)\boot-order.edn" />
+    <ClojureBootImageInput Include="$(SchemeBootImage);$(ClojureHostLibDir)\cleat-host.manifest" />
+  </ItemGroup>
+  <Target Name="GenerateBootImage" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(BuildBootImage)' == 'true'"
+          Inputs="@(ClojureBootImageInput);$(TargetPath);$(OutDir)Cleat.Core.dll;$(OutDir)Cleat.Scheme.dll;$(OutDir)cleat-emit.dll"
+          Outputs="$(ClojureBootImage)">
+    <Message Importance="high" Text="Cleat: compiling the Clojure boot image from src/clojure (about 20 seconds) -> $(ClojureBootImage)" />
+    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --scheme-boot &quot;$(SchemeBootImage)&quot; --no-boot -I &quot;$(ClojureSourceDir)&quot; --compile-boot &quot;$(ClojureBootImage)&quot;" />
   </Target>
 </Project>

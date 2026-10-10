@@ -257,7 +257,7 @@ public class SchemeInvisibilityTests
     [TestCase("(.ToString 1)", "(. 1 ToString)")]
     [TestCase("(System.Text.StringBuilder. \"a\")", "(new System.Text.StringBuilder \"a\")")]
     [TestCase("(System.Math/Abs -1)", "(. System.Math Abs -1)")]
-    [TestCase("(System.String/.Length \"abc\")", "(. (clojure.core/identity \"abc\") Length)")]
+    [TestCase("(System.String/.Length \"abc\")", "(. \"abc\" Length)")]
     public void HostSugarExpandsToClojureData(string src, string expected)
     {
         object x = Macroexpand1(Read(src));

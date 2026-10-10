@@ -13,11 +13,12 @@
 ;;;   Clojure 值的常量编码器（编译器 (ironscheme compiler constants) 的外来常量挂钩）在本库体执行时登记。
 
 (library (clojure compile)
-  (export clojure-compile-forms clojure-compile-unit encode-clojure-constant)
+  (export clojure-compile-forms clojure-compile-unit clojure-compile-boot-unit encode-clojure-constant)
   (import
     (rnrs)
+    (only (ironscheme) parameterize)
     (ironscheme clr)
-    (only (ironscheme compiler) compile-forms->lcil compile-core)
+    (only (ironscheme compiler) compile-forms->lcil compile-core compile->lcil-text-from-sexpr canonical-gensyms)
     (only (ironscheme compiler constants) set-foreign-constant-encoder!)
     (clojure syntax-kinds)
     (clojure namespaces)
@@ -52,9 +53,9 @@
        (with-meta (cons 'csym (named (clr-prop-get clojure.lang.Symbol Namespace x) (clr-prop-get clojure.lang.Symbol Name x)))))
       ((clr-is clojure.lang.IPersistentVector x) (with-meta (cons 'cvec (map encode (seq->list* x)))))
       ((clr-is clojure.lang.PersistentTreeMap x) (with-meta (cons 'sorted-map (map encode (map->list* x)))))
-      ((clr-is clojure.lang.IPersistentMap x) (with-meta (cons 'map (map encode (map->list* x)))))
+      ((clr-is clojure.lang.IPersistentMap x) (with-meta (cons 'map (sorted-pairs (map encode (map->list* x))))))
       ((clr-is clojure.lang.PersistentTreeSet x) (with-meta (cons 'sorted-set (map encode (seq->list* x)))))
-      ((clr-is clojure.lang.IPersistentSet x) (with-meta (cons 'set (map encode (seq->list* x)))))
+      ((clr-is clojure.lang.IPersistentSet x) (with-meta (cons 'set (sorted-items (map encode (seq->list* x))))))
       ((or (clr-is clojure.lang.IPersistentList x) (clr-is clojure.lang.ISeq x))
        (with-meta (cons 'clist (map encode (seq->list* x)))))
       ((clr-is clojure.lang.BigInt x) (list 'bigint (->string x)))
@@ -63,6 +64,18 @@
       ((clr-is System.Text.RegularExpressions.Regex x) (list 'regex (->string x)))
       ((clr-is System.Type x) (list 'type (clr-prop-get System.Type FullName x)))
       (else #f)))
+
+  ;;; 哈希 map / set 的项按编码的文本排序（cleat-053）：迭代顺序依赖键的哈希，Type、Var 等的哈希按对象标识、每个进程不同；
+  ;;; 加载时按值重建，顺序不影响语义，排序使两次编译的 Lcil 相同（镜像不动点）
+  (define (encoded-text x) (call-with-string-output-port (lambda (p) (write x p))))
+  (define (sorted-items xs)
+    (map cdr (list-sort (lambda (a b) (string<? (car a) (car b)))
+                        (map (lambda (x) (cons (encoded-text x) x)) xs))))
+  (define (sorted-pairs kvs)
+    (let loop ((xs kvs) (pairs '()))
+      (if (null? xs)
+          (apply append (map cdr (list-sort (lambda (a b) (string<? (car a) (car b))) pairs)))
+          (loop (cddr xs) (cons (cons (encoded-text (car xs)) (list (car xs) (cadr xs))) pairs)))))
 
   (define (clojure-compile-forms forms dll-path)
     (let* ((cores (map (lambda (f)
@@ -83,6 +96,21 @@
            (lcil (compile-forms->lcil cores asm "#Module")))
       (when (file-exists? dll-path) (delete-file dll-path))
       (clr-static-call Cleat.Emit.LcilEmitter (SaveData Object String String Boolean) lcil dll-path dll-path #f)
+      (clr-static-call Cleat.Scheme.Clojure.Driver (WriteInterfaceFile String Object Object) dll-path cores lcil)
+      dll-path))
+
+  ;;; Clojure 镜像（cleat-053）：一个单元编成 dll，旁边写 Lcil 文本（同名 .lcil）与接口文件（.ifc）。Scheme 的 gensym 规范化
+  ;;; （与 Scheme 镜像的构建相同），使两次构建的 Lcil 可以逐字比较（不动点）。
+  (define (clojure-compile-boot-unit cores dll-path)
+    (let* ((asm (clr-static-call System.IO.Path GetFileNameWithoutExtension dll-path))
+           (lcil (parameterize ((canonical-gensyms #t))
+                   (compile-forms->lcil cores asm "#Module")))
+           (text (compile->lcil-text-from-sexpr lcil))
+           (lcil-path (clr-static-call System.IO.Path ChangeExtension dll-path ".lcil")))
+      (when (file-exists? lcil-path) (delete-file lcil-path))
+      (call-with-output-file lcil-path (lambda (p) (put-string p text)))
+      (when (file-exists? dll-path) (delete-file dll-path))
+      (clr-static-call Cleat.Emit.LcilEmitter (Save String String String Boolean) text lcil-path dll-path #f)
       (clr-static-call Cleat.Scheme.Clojure.Driver (WriteInterfaceFile String Object Object) dll-path cores lcil)
       dll-path))
 

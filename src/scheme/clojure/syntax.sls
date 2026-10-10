@@ -85,6 +85,7 @@
   (define kw-inline (clj-keyword "inline"))
   (define kw-inline-arities (clj-keyword "inline-arities"))
   (define kw-implements (clj-keyword "implements"))
+  (define kw-cleat-interface (clj-keyword "cleat/interface"))
   (define kw-volatile-mutable (clj-keyword "volatile-mutable"))
   (define kw-unsync-mutable (clj-keyword "unsynchronized-mutable"))
   (define kw-reify (clj-keyword "reify"))
@@ -788,8 +789,9 @@
           (check (cdr fs))))
       ;; 方法体可以引用正在定义的类型（(new Foo …)、^Foo）：先登记同名的桩类型（HostSyntax.DefineStub，运行时换成真正的类型）
       (unless reify?
-        (clr-static-call Cleat.Scheme.Clojure.HostSyntax DefineStub class-name
-          (list->vector (map (lambda (f) (munge (sym-name (cadr f)))) fields))))
+        (clr-static-call Cleat.Scheme.Clojure.HostSyntax (DefineStub System.String System.Object System.String) class-name
+          (list->vector (map (lambda (f) (munge (sym-name (cadr f)))) fields))
+          tagname))
       (let loop ((ms method-forms) (specs '()) (rs '()) (lambdas '()))
         (if (pair? ms)
             (syntax-case (car ms) ()
@@ -817,12 +819,21 @@
                                        (map type-desc (vector->list (vector-ref st 3)))
                                        (nil->f (vector-ref st 4))))
                                (vector->list (vector-ref layout 1))))
+                   ;; defrecord（cleat-053）：末尾的 __meta __extmap __hash __hasheq 不进 getBasis；有它们时编译器另生成
+                   ;; 只取基本字段的构造函数、去掉 __hash __hasheq 的构造函数与静态 create(IPersistentMap)（ClojureCLR 的 AltCtorDrops）
+                   (drops (let count-drops ((fs (reverse fields)) (n 0))
+                            (if (and (pair? fs) (member (sym-name (cadar fs)) '("__meta" "__extmap" "__hash" "__hasheq")))
+                                (count-drops (cdr fs) (+ n 1))
+                                n)))
+                   (basis (let take ((fs fields) (n (- (length fields) drops))) (if (= n 0) '() (cons (car fs) (take (cdr fs) (- n 1))))))
                    (info (list class-name reify?
                                (map (lambda (f) (list (munge (sym-name (cadr f))) (caddr f) (cadddr f))) fields)
                                (vector->list (vector-ref layout 0))
                                (reverse specs)
                                stubs
-                               (and (not reify?) (apply clj-vector (map cadr fields))))))
+                               (and (not reify?) (apply clj-vector (map cadr basis)))
+                               (if (and (not reify?) (> drops 0)) (map (lambda (f) (sym-name (cadr f))) basis) '())
+                               drops)))
               (with-syntax ((k (node-id head)) (data (const-stx (list info))) (none (const-stx '()))
                             ((f ...) (map car fields)) ((l ...) (reverse lambdas)))
                 #'(k $clj-deftype data (lambda (f ...) (k $clj-methods none l ...)))))))))
@@ -835,8 +846,36 @@
        (let loop ((rest (stx-list #'rest)) (opts (clj-map)))
          (if (and (pair? rest) (keyword? (syntax->clj (car rest))) (pair? (cdr rest)))
              (loop (cddr rest) (assoc* opts (syntax->clj (car rest)) (syntax->clj (cadr rest))))
-             (build-type e #'head (sym-name (syntax->clj #'tagname)) (sym-name (syntax->clj #'class-name))
-                         (vector-items #'fields) (or (meta-get opts kw-implements) (clj-vector)) rest opts #f))))))
+             (if (meta-get opts kw-cleat-interface)
+                 (build-interface e #'head (sym-name (syntax->clj #'class-name))
+                                  (or (meta-get opts kw-implements) (clj-vector)) (meta-get opts kw-cleat-interface))
+                 (build-type e #'head (sym-name (syntax->clj #'tagname)) (sym-name (syntax->clj #'class-name))
+                             (vector-items #'fields) (or (meta-get opts kw-implements) (clj-vector)) rest opts #f)))))))
+
+  ;;; gen-interface / definterface（cleat-053）：genclass.clj 的 gen-interface 宏展开为
+  ;;;   (deftype* 名字 名字 [] :implements [父接口 …] :cleat/interface [[方法名 [参数类型 …] 返回类型] …])
+  ;;; 类型是 Type 或类型符号。编译为 Lcil 的 interface 类型（描述的 reify? 位置为 interface），值为该类型——AOT 时与 deftype 一样
+  ;;; 进同一个程序集。原始类型参数照原样（int、long …），没有 by-ref。
+  (define (build-interface e head class-name extends sigs)
+    (define (resolve-type x)
+      (let ((t (if (clr-is System.Type x) x (maybe-type x))))
+        (unless t (err e (string-append "Unable to resolve classname: " (->string x))))
+        (type-desc (type-name t))))
+    (let* ((ifaces (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax ResolveInterfaces extends)))
+           (specs (map (lambda (sig)
+                         (let ((items (seq->list sig)))
+                           (unless (>= (length items) 3) (err e "Malformed gen-interface method signature"))
+                           (list #f (sym-name* (car items)) (resolve-type (caddr items))
+                                 (map (lambda (p)
+                                        (when (clj-list? p) (err e "by-ref parameters are not supported in gen-interface"))
+                                        (resolve-type p))
+                                      (seq->list (cadr items))))))
+                       (seq->list sigs)))
+           (info (list class-name 'interface '()
+                       (map type-name (vector->list ifaces))
+                       specs '() #f)))
+      (with-syntax ((k (node-id head)) (data (const-stx (list info))) (none (const-stx '())))
+        #'(k $clj-deftype data (lambda () (k $clj-methods none))))))
 
   (define-special reify* (e)
     (syntax-case e ()
@@ -976,6 +1015,12 @@
   (define (type-hinted x type-sym)
     (with-meta* x (clj-map kw-tag type-sym)))
 
+  ;;; Type/.method 的目标：能带元数据（符号、列表）就挂 :tag，否则（字面量）原样——字面量的类型本来就已知
+  (define (hint-target x type-sym)
+    (if (clr-is clojure.lang.IObj x)
+        (with-meta* x (assoc* (meta-of x) kw-tag type-sym))
+        x))
+
   ;;; Type/member：(类型符号 . 成员名) 或 #f
   (define (static-member-of sym)
     (let ((nsname (sym-ns sym)))
@@ -1013,7 +1058,8 @@
                          ((string=? name "new") (apply clj-list new-sym tsym (cdr items)))
                          ((and (> (string-length name) 1) (char=? (string-ref name 0) #\.))
                           (when (< (length items) 2) (err where (string-append "Malformed member expression, expecting (" (->string op) " target ...)")))
-                          (apply clj-list dot-sym (type-hinted (clj-list identity-sym (cadr items)) (clj-symbol (clr-call System.Type get_FullName (car sm))))
+                          ;; 提示直接挂在目标上（cleat-053：原来是 (clojure.core/identity 目标)，core.clj 在 identity 定义之前就用 IMeta/.meta）
+                          (apply clj-list dot-sym (hint-target (cadr items) (clj-symbol (clr-call System.Type get_FullName (car sm))))
                                  (clj-symbol (substring name 1 (string-length name))) (cddr items)))
                          (else (apply clj-list dot-sym tsym (clj-symbol name) (cdr items))))
                        form))))

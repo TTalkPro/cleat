@@ -354,12 +354,25 @@ See docs/license.txt. |#
 
   (define (contains-try? code) (exists (lambda (i) (eq? (car i) 'try)) code))
 
+  (define (reload-cast code)
+    (if (null? code)
+        '()
+        (let ((last-i (list-ref code (- (length code) 1))))
+          (cond
+            ((and (pair? last-i) (eq? (car last-i) 'castclass)) (list last-i))
+            ((and (pair? last-i) (memq (car last-i) '(call callvirt)) (= (length last-i) 5)
+                  (equal? (list-ref last-i 4) proc-type))
+             (list `(castclass ,(list-ref last-i 4))))
+            (else '())))))
+
   ;; 依次生成多个操作数（每个 gen 产生一个值）。排在后面的操作数含 try 时，先全部存入临时变量（lift-try）。
   (define (operands! mc gens)
     (let ((codes (map (lambda (g) (with-buffer mc g)) gens)))
       (if (and (pair? codes) (exists contains-try? (cdr codes)))
           (let ((temps (map (lambda (c) (let ((t (new-local! mc obj))) (emit-code! mc c) (emit! mc `(stloc ,t)) t)) codes)))
-            (for-each (lambda (t) (emit! mc `(ldloc ,t))) temps))
+            ;; 临时变量是 object：操作数原来以 castclass（IFn、Var …）或返回 Procedure 的调用结尾时，取回后再转换一次，
+            ;; 否则栈上的类型与随后的 callvirt 不符（ILVerify StackUnexpected；cleat-053 在 Clojure 镜像里发现）
+            (for-each (lambda (t c) (emit! mc `(ldloc ,t)) (for-each (lambda (i) (emit! mc i)) (reload-cast c))) temps codes))
           (for-each (lambda (c) (emit-code! mc c)) codes))))
 
   ;; 把栈上 n 个值（已按顺序压栈）收进 object[]：先存临时变量再建数组
@@ -1217,8 +1230,8 @@ See docs/license.txt. |#
          (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))]
       [(clj-deftype ,d (,x* ...) ,le* ...)
        ;; deftype*：值为生成的类型（运行时登记，classForName 取最新的）；reify*：值为新实例（自由变量与 nil 元数据作构造参数）
-       (let ((c (deftype-class! mc d x* le*)))
-         (if (deftype-info-reify? d)
+       (let ((c (if (deftype-interface? d) (interface-class! mc d) (deftype-class! mc d x* le*))))
+         (if (and (deftype-info-reify? d) (not (deftype-interface? d)))
              (begin
                (for-each (lambda (v) (load-var! mc v)) (cdr c))
                (emit! mc '(ldnull) `(newobj ,(car c) ,(append (objs (length (cdr c))) (list obj)))))
@@ -1785,6 +1798,63 @@ See docs/license.txt. |#
   (define (deftype-info-methods d) (list-ref d 4))
   (define (deftype-info-stubs d) (list-ref d 5))
   (define (deftype-info-basis d) (list-ref d 6))
+  ;; defrecord（cleat-053）：基本字段的名字（create 的关键字）与末尾特殊字段（__meta __extmap __hash __hasheq）的个数
+  (define (deftype-info-record-keys d) (if (> (length d) 7) (list-ref d 7) '()))
+  (define (deftype-info-drops d) (if (> (length d) 8) (list-ref d 8) 0))
+
+  ;; 记录的另外两个构造函数与静态 create（ClojureCLR NewInstanceExpr 的 AltCtorDrops / EmitStatics）：
+  ;; (基本字段 …) → 全部字段（__meta、__extmap 为 null，__hash、__hasheq 为 0）；(除 __hash __hasheq 外的字段) → 全部字段；
+  ;; create(IPersistentMap m)：按关键字取出基本字段并从 m 去掉，其余作 __extmap（RT.seqOrElse）
+  (define (record-members name d)
+    (let* ((n (length (deftype-info-fields d)))
+           (drops (deftype-info-drops d))
+           (keys (deftype-info-record-keys d))
+           (nb (- n drops))
+           (zero '((ldc.i4 0) (box "System.Int32"))))
+      (define (alt-ctor k tail)
+        `(method ".ctor" (attrs ctor) (params ,@(objs k))
+           (body (ldarg 0)
+                 ,@(let loop ((i 1)) (if (> i k) '() (cons `(ldarg ,i) (loop (+ i 1)))))
+                 ,@tail
+                 (call ,name ".ctor" ,(objs n) ,void-type)
+                 (ret))))
+      (if (or (= drops 0) (null? keys))
+          '()
+          (append
+            (if (and (> nb 0) (= drops 4)) (list (alt-ctor nb `((ldnull) (ldnull) ,@zero ,@zero))) '())
+            (if (and (> (- n 2) 0) (= drops 4)) (list (alt-ctor (- n 2) `(,@zero ,@zero))) '())
+            (list
+              `(method "create" (attrs static) (params "clojure.lang.IPersistentMap") (ret ,name)
+                 (locals "clojure.lang.Keyword" ,@(objs nb))
+                 (body
+                   ,@(apply append
+                       (let loop ((ks keys) (i 1))
+                         (if (null? ks)
+                             '()
+                             (cons `((ldarg 0) (ldstr ,(car ks)) (call "clojure.lang.Keyword" "intern" (,string-type) "clojure.lang.Keyword")
+                                     (dup) (stloc 0) (ldnull)
+                                     (callvirt "clojure.lang.ILookup" "valAt" (,obj ,obj) ,obj) (stloc ,i)
+                                     (ldarg 0) (ldloc 0) (callvirt "clojure.lang.IPersistentMap" "without" (,obj) "clojure.lang.IPersistentMap")
+                                     (starg 0))
+                                   (loop (cdr ks) (+ i 1))))))
+                   ,@(let loop ((i 1)) (if (> i nb) '() (cons `(ldloc ,i) (loop (+ i 1)))))
+                   (ldnull) (ldarg 0) (call "clojure.lang.RT" "seqOrElse" (,obj) ,obj)
+                   ,@zero ,@zero
+                   (newobj ,name ,(objs n))
+                   (ret))))))))
+
+  ;; gen-interface（cleat-053）：描述的 reify? 位置为 interface；方法规格 (#f 名字 返回类型 (参数类型 …))，接口为父接口
+  (define (deftype-interface? d) (eq? (deftype-info-reify? d) 'interface))
+
+  (define (interface-class! mc d)
+    (let ((u (mctx-unit mc)) (name (deftype-info-class d)))
+      (hashtable-set! (unit-type-names u) name #t)
+      (add-class! u
+        `(type ,name (attrs interface abstract) (interfaces ,@(deftype-info-ifaces d))
+           ,@(map (lambda (sp)
+                    `(method ,(cadr sp) (attrs abstract virtual) (params ,@(map tname (cadddr sp))) (ret ,(tname (caddr sp)))))
+                  (deftype-info-methods d))))
+      (cons name '())))
 
   (define (tname t) (car t))
   (define (value-type? t) (cdr t))
@@ -1833,7 +1903,8 @@ See docs/license.txt. |#
                      (body ,@(apply append (map (lambda (c) `((ldarg 0) (ldfld ,name ,c))) cnames))
                            (ldarg 1) (newobj ,name ,(objs (length ctor-fields))) (ret))))
                  `((method "getBasis" (attrs static) (params) (ret "clojure.lang.IPersistentVector")
-                     (body (ldconst ,(constant-index! u (deftype-info-basis d))) (castclass "clojure.lang.IPersistentVector") (ret)))))))
+                     (body (ldconst ,(constant-index! u (deftype-info-basis d))) (castclass "clojure.lang.IPersistentVector") (ret)))
+                   ,@(record-members name d)))))
       (cons name caps)))
 
   ;; 方法体：this 为 ldarg 0；原始类型的参数在入口装箱进局部变量；字段读写 this 的字段；返回值转换为声明类型

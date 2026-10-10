@@ -1699,8 +1699,10 @@ of parameters as well."
      (second (first params))))
   (doall
    (map #(let [val (first %1)]
+           ;; CLEAT-053: 宿主互操作返回的 int 是 long（Int32/Parse 得 Int64），声明为 Int32 的参数接受任何整数
            (if (not (or (nil? val) (contains? special-params val) 
-                        (instance? (second (second %2)) val)))
+                        (instance? (second (second %2)) val)
+                        (and (= Int32 (second (second %2))) (integer? val))))
              (format-error (str "Parameter " (name (first %2))
                                 " has bad type in directive \"" (:directive def) "\": "
                                 (class val))

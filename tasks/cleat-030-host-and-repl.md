@@ -1,6 +1,6 @@
 # cleat-030 宿主 Cleat.Host 与 REPL
 
-- 里程碑：M5　依赖：cleat-022、cleat-012　状态：未开始
+- 里程碑：M5　依赖：cleat-022、cleat-012　状态：完成
 - 设计依据：[02 §9、§11](../designs/02-runtime.md)
 
 ## 工作内容
@@ -22,3 +22,4 @@
 
 ## 进度
 - 2026-10-10（cleat-052）：宿主接上 Scheme 镜像与驱动库，REPL / 脚本 / `-e` / `-i` / `-` / `load-file` / `RT.load` 实际可用（不依赖 clojure.core）；启动顺序改为两镜像（`--scheme-boot` 与 `--boot`），见 cleat-052 结论。错误打印改由 Scheme 登记的 `report-error`（Clojure 风格）。剩余验收 `(require 'clojure.string)` 需要 core.clj 的 `require`：cleat-053 完成后在 `tests/Cleat.Host.Tests` 加一项 REPL 里 `(require 'clojure.string)` 的进程测试即可把本任务改为完成（行编辑仍在 cleat-034）。
+- 2026-10-10（cleat-053）：**验收完成**。宿主自动加载 Clojure 镜像 `src/boot/cleat.boot.dll`（`Loader.LoadBootImage`），REPL 里 `(require 'clojure.string)` 后 `(clojure.string/upper-case "a")` 得 `"A"`；新增进程测试 `HostProcessTests.ReplRequireClojureString`（含 `require :as`、repl-requires 带来的 `doc`）。REPL 照 clojure.main 做 repl-requires；打印走 core_print 的 print-method。状态改为完成（行编辑仍在 cleat-034）。

@@ -393,8 +393,9 @@
               `(~(symbol mname) ~params ~@body)))
        `(let [pc# (get-proxy-class ~@class-and-interfaces)
               p# (construct-proxy pc# ~@args)]
+          ;; CLEAT-053: into 在 core.clj 加载 core_proxy 之后才定义，改用 reduce1
           (init-proxy p#
-            ~(into {} (map (fn [[mname meths]] [mname (cons `fn meths)]) fmap)))
+            ~(reduce1 (fn [m [mname meths]] (assoc m mname (cons `fn meths))) {} fmap))
           p#))))
 
 (defn proxy-call-with-super [call this meth]

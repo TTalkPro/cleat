@@ -44,7 +44,8 @@
         psig (fn [[name [& args]]]
                (vector name (vec (map tag args)) (tag name) (map meta args)))
         cname (with-meta (symbol (str (namespace-munge *ns*) "." name)) (meta name))]
-    `(let [] 
+    ;; CLEAT-053: (let [] …) → (do …)：顶层 do 拆开求值，import 展开时接口已经生成（ClojureCLR 在展开期生成接口）
+    `(do
        (gen-interface :name ~cname :methods ~(vec (map psig sigs)))
        (import ~cname))))
   

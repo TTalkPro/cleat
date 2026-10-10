@@ -10,7 +10,8 @@ namespace Cleat.Host.Tests;
 
 /// <summary>
 /// cleat-052：宿主的进程级测试。每个测试在自己的临时目录里以子进程运行 <c>dotnet cleat.dll …</c>（工作区的 Scheme 镜像由宿主自动找到），
-/// clojure.core 尚未存在（cleat-053），所以只用特殊形式、def、fn*、互操作与 cleat.kernel 原语。
+/// 测试原写于 clojure.core 之前（只用特殊形式、def、fn*、互操作与 cleat.kernel 原语）；cleat-053 起宿主自动加载 Clojure 镜像
+/// src/boot/cleat.boot.dll，打印走 print-method，REPL 照 clojure.main 做 repl-requires。
 /// </summary>
 [Category("Host")]
 public class HostProcessTests
@@ -128,25 +129,42 @@ public class HostProcessTests
         var r = Cleat(input);
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         var lines = r.Out.Split('\n');
+        // clojure.core 在镜像里（cleat-053）：值按 print-method 打印（#'user/x、命名空间与函数为 #object[…]）
         string[] expected =
         {
-            "user=> #=(var user/x)",
-            "user=> \"42\"",
-            "user=> 1",
-            "user=> 1",
-            "user=> \"42\"",
-            "user=> user=> user=> \"Divide by zero\"",
-            "user=> foo",
-            "foo=> #=(var foo/y)",
-            "foo=> 2",
-            "foo=> user",
+            "^user=> #'user/x$",
+            "^user=> \"42\"$",
+            "^user=> 1$",
+            "^user=> 1$",
+            "^user=> \"42\"$",
+            "^user=> user=> user=> \"Divide by zero\"$",
+            "^user=> #object\\[Namespace 0x[0-9a-f]+ \"foo\"\\]$",
+            "^foo=> #'foo/y$",
+            "^foo=> 2$",
+            "^foo=> #object\\[Namespace 0x[0-9a-f]+ \"user\"\\]$",
+            "^user=> #object\\[user\\$fn__\\d+ 0x[0-9a-f]+ \"user\\$fn__\\d+\"\\]$",
         };
-        Assert.That(lines.Take(expected.Length), Is.EqualTo(expected), r.ToString());
-        Assert.That(lines[expected.Length], Does.Match(@"^user=> user\$fn__\d+$"), r.ToString());
+        for (int i = 0; i < expected.Length; i++)
+            Assert.That(lines[i], Does.Match(expected[i]), r.ToString());
         Assert.That(r.Err, Does.Contain("Syntax error compiling at (REPL:0:0).\nUnable to resolve symbol: nope in this context"));
         Assert.That(r.Err, Does.Contain("Execution error (ArithmeticException) at (REPL:7).\nDivide by zero"));
         Assert.That(r.Err, Does.Contain("Syntax error reading source at (REPL:"));
         Assert.That(r.Err, Does.Contain("EOF while reading"));
+    }
+
+    /// <summary>cleat-030 的验收（cleat-053 起 clojure.core 在 Clojure 镜像里）：REPL 里 require clojure.string 并调用；doc 来自 repl-requires。</summary>
+    [Test]
+    public void ReplRequireClojureString()
+    {
+        var r = Cleat("(require 'clojure.string)\n(clojure.string/upper-case \"a\")\n(str/join \",\" [1 2])\n(require '[clojure.string :as str])\n(str/join \",\" [1 2])\n(with-out-str (doc inc))\n");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        var lines = r.Out.Split('\n');
+        Assert.That(lines[0], Is.EqualTo("user=> nil"), r.ToString());
+        Assert.That(lines[1], Is.EqualTo("user=> \"A\""), r.ToString());
+        Assert.That(lines[2], Is.EqualTo("user=> user=> nil"), r.ToString());   // str/ 未定义别名：语法错误，然后 require :as
+        Assert.That(lines[3], Is.EqualTo("user=> \"1,2\""), r.ToString());
+        Assert.That(lines[4], Does.StartWith("user=> \"-------------------------\\nclojure.core/inc"), r.ToString());
+        Assert.That(r.Err, Does.Contain("No such namespace: str"), r.ToString());
     }
 
     [Test]
@@ -166,7 +184,7 @@ public class HostProcessTests
     {
         var r = Cleat(null, "-e", "(cleat.kernel/add 1 2) nil (. \"abc\" Length)", "-e", "(def z 5)", "-e", "[z (. (. z GetType) FullName)]");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        Assert.That(r.Out, Is.EqualTo("3\n3\n#=(var user/z)\n[5 \"System.Int64\"]\n"));
+        Assert.That(r.Out, Is.EqualTo("3\n3\n#'user/z\n[5 \"System.Int64\"]\n"));
     }
 
     [Test]
@@ -206,9 +224,9 @@ public class HostProcessTests
     public void LoadFileSwitchesNamespace()
     {
         Write("other.clj", "(in-ns 'other)\n(def z 3)\n(def here clojure.core/*ns*)\n(do (in-ns 'other2) (def w (cleat.kernel/add other/z 1)))\n");
-        var r = Cleat(null, "-e", "(load-file \"other.clj\")", "-e", "[clojure.core/*ns* other/z other/here other2/w]");
+        var r = Cleat(null, "-e", "(load-file \"other.clj\")", "-e", "[(. clojure.core/*ns* Name) other/z (. other/here Name) other2/w]");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        Assert.That(r.Out, Is.EqualTo("#=(var other2/w)\n[user 3 other 4]\n"));
+        Assert.That(r.Out, Is.EqualTo("#'other2/w\n[user 3 other 4]\n"));
     }
 
     [Test]

@@ -42,10 +42,11 @@ public static class HostSyntax
         if (form is not clojure.lang.Symbol sym || sym.Namespace != null) return null;
         string n = sym.Name;
         if (n.IndexOf('.') > 0 || n[^1] == ']' || n.IndexOfAny(s_triggerTypeChars) >= 0)
-            return TypeResolver.Resolve(n, Array.Empty<string>());
+            // Scheme 的解析器认得桩与本进程生成的类型；ClojureCLR 的泛型语法（BlockingCollection`1[System.Object]）由 Cleat.Core 的解析（cleat-053）
+            return TypeResolver.Resolve(n, Array.Empty<string>()) ?? Cleat.Core.Runtime.TypeResolver.Resolve(n, Array.Empty<string>());
         if (isLocal) return null;
         if (CurrentNs.GetMapping(sym) is Type t) return t;
-        return ClassForName(n);
+        return StubForTag(n) ?? ClassForName(n);
     }
 
     /// <summary>JVM 风格的数组类型 <c>long/1</c>（ClojureCLR 的 HostExpr.MaybeArrayType）。</summary>
@@ -88,7 +89,7 @@ public static class HostSyntax
         if (at != null) return at;
         if (tag.Namespace != null) return null;
         if (CurrentNs?.GetMapping(tag) is Type mapped) return mapped;
-        return ClassForName(tag.Name);
+        return StubForTag(tag.Name) ?? ClassForName(tag.Name);
     }
 
     /// <summary>Lcore 里的类型名：全名；动态程序集里的类型加程序集名。</summary>
@@ -147,6 +148,25 @@ public static class HostSyntax
     // （deftype* 求值时登记的同名类型），保存的 dll 里类型常量按名字解析，本来就是真正的类型。与 ClojureCLR 的做法相同。
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Type, object> s_stubs = new();
+
+    // 方法体里还可以用 deftype 的短名字（tagname）引用它（Clojure 的 COMPILE_STUB_SYM）：按（命名空间，短名字）登记桩，
+    // 只在定义它的命名空间里解析；deftype 宏随后 import 真正的类型，命名空间映射优先（cleat-053）
+    private static readonly Dictionary<string, Type> s_stubTags = new Dictionary<string, Type>();
+
+    private static Type StubForTag(string name)
+    {
+        var ns = CurrentNs;
+        if (ns == null) return null;
+        lock (s_stubTags) return s_stubTags.TryGetValue(ns.Name.Name + "/" + name, out var t) ? t : null;
+    }
+
+    public static Type DefineStub(string name, object fieldNames, string tagName)
+    {
+        var t = DefineStub(name, fieldNames);
+        if (CurrentNs != null && !string.IsNullOrEmpty(tagName))
+            lock (s_stubTags) s_stubTags[CurrentNs.Name.Name + "/" + tagName] = t;
+        return t;
+    }
 
     public static Type DefineStub(string name, object fieldNames)
     {
@@ -238,6 +258,10 @@ public static class HostSyntax
         var matches = (candidates.TryGetValue(methodName, out var list) ? list : new List<Candidate>())
           .Where(c => c.Method.GetParameters().Length == argc && (explicitIface == null || c.Interface == explicitIface)).ToList();
         if (matches.Count == 0) return $"Can't define method not in interfaces: {dotName.Name}";
+        // 不同接口里签名相同（参数与返回类型）的方法是同一个方法（ClojureCLR 按签名收集）：取第一个，其余接口的由桩转调
+        // （cleat-053：gvec 的 count 同时来自 IPersistentCollection 与 Counted）
+        matches = matches.GroupBy(c => string.Join(",", c.Method.GetParameters().Select(p => p.ParameterType.FullName)) + "->" + c.Method.ReturnType.FullName)
+                         .Select(g => g.First()).ToList();
         var hinted = new Type[argc];
         bool anyHint = TagOf(dotName) != null;
         for (int i = 0; i < argc; i++)

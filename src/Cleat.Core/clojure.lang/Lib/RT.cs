@@ -501,6 +501,13 @@ namespace clojure.lang
 
         // initial-lowercase name, used in core.clj
 
+        // CLEAT-053: the Clojure boot-image build resets the counter at every top-level form (designs/08 §7), so gensyms and
+        // fn class names do not depend on how many ids the building process consumed before (image fixpoint B == C).
+        static public void setNextID(int value)
+        {
+            Interlocked.Exchange(ref _id, value);
+        }
+
         static public int nextID()
         {
             return Interlocked.Increment(ref _id);
@@ -2955,9 +2962,12 @@ namespace clojure.lang
 
             // CLEAT-005: removed `ClrTypeSpec.GetTypeFromParsedName(parsedTypename, ns)` fallback (generic/array/ns-alias type
             // specs such as |System.Collections.Generic.List`1[System.String]|); Reflector rewrite (cleat-010) must provide it.
-            if (canCallClrTypeSpec && parsedTypename is not null)
+            if (canCallClrTypeSpec && p.IndexOfAny(['`', '[', ',', '+', '&', '*']) >= 0)
             {
-                // intentionally no-op in the spike
+                // CLEAT-053: the ClrTypeSpec fallback, via Cleat.Core.Runtime.TypeResolver (cleat-010; it calls back here with
+                // canCallClrTypeSpec = false): generic / array / nested / assembly-qualified type specs such as
+                // |System.Collections.Concurrent.BlockingCollection`1[System.Object]| (core.clj tapq)
+                return Cleat.Core.Runtime.TypeResolver.Resolve(p, Array.Empty<string>());
             }
             //// Handle generic types and array types.
             //if (p.IndexOfAny(_triggerTypeChars) != -1)

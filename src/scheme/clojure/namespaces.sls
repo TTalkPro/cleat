@@ -103,8 +103,12 @@
 
   ;;; 特殊形式名（未限定，字符串）→ 专用的 gensym（clj->scheme 换掉列表头部用）
   (define special-keys (make-hashtable string-hash string=?))
+  ;;; Clojure 的特殊形式表里 import* 是限定的 clojure.core/import*（core.clj 的 import 宏展开成它，cleat-053）
   (define (special-head-key x)
-    (and (clj-symbol? x) (not (sym-ns x)) (hashtable-ref special-keys (sym-name x) #f)))
+    (and (clj-symbol? x)
+         (or (not (sym-ns x))
+             (and (string=? (sym-ns x) "clojure.core") (string=? (sym-name x) "import*")))
+         (hashtable-ref special-keys (sym-name x) #f)))
 
   (define (clj->scheme x)
     (let convert ((x x) (pos #f))

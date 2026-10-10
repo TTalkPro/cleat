@@ -578,6 +578,12 @@ public static class Reflector
             return best[0];
         }
 
+        // 只差在引用类型的形参（实参同时实现两个接口：ChunkedCons 既是 IList 又是 ISeq，PersistentHashSet.create）：
+        // 与 JVM Clojure 的 Reflector 相同，取第一个（cleat-053）；数值转换上的歧义照旧报错
+        if (best.All(b => b.Levels.SequenceEqual(best[0].Levels)) && best[0].Levels.All(l => l <= 1)
+            && best.All(b => b.Method.GetParameters().All(p => !p.ParameterType.IsValueType)))
+            return best[0];
+
         throw new InvalidOperationException(
             $"More than one matching {what} found: {methods[0].Name} for type {Util.NameForType(type)} with argument types ({ArgTypeNames(argTypes)}): "
             + string.Join("; ", best.Select(c => Describe(c.Method))));
@@ -697,7 +703,7 @@ public static class Reflector
             FieldInfo f = FindField(t, name, key.IsStatic);
             if (f != null)
             {
-                if (f.IsLiteral) return ToClojure(Expression.Constant(f.GetRawConstantValue(), f.FieldType), f.FieldType);
+                if (f.IsLiteral) return ToClojure(Expression.Constant(f.GetValue(null), f.FieldType), f.FieldType);   // GetValue：枚举常量是枚举值（GetRawConstantValue 给底层整数，cleat-053）
                 Expression fe = key.IsStatic ? Expression.Field(null, f) : Expression.Field(Target(inst, t, key.InstanceType, f), f);
                 return ToClojure(fe, f.FieldType);
             }

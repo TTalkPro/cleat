@@ -13,7 +13,7 @@
 ;;; AOT 需要的 (clojure compile) 在第一次 compile 时才装入（宿主的延后库，或源码）。
 (library (clojure driver)
   (export clojure-eval-toplevel clojure-load-reader clojure-compile-reader install-clojure-hooks!
-          compile-core-of-image)
+          compile-core-of-image clojure-compile-boot)
   (import
     (rnrs)
     (rnrs eval)
@@ -42,17 +42,31 @@
   ;;; —— AOT 单元：编译一个文件时收集各顶层形式的 Lcore（按求值顺序）——
   (define current-unit (make-parameter #f))
 
+  ;;; 形式在求值**之后**记入单元（后序）：求值中嵌套加载的文件（load / require）的形式排在这个形式之前——镜像初始化时
+  ;;; 先执行被加载文件的形式，再执行 (load …) / (require …) 本身（镜像初始化期间加载是空操作，见 Loader.LoadBootImage；cleat-053）。
+  ;;; 没有嵌套加载时与先序相同。
   (define (eval-form form)
     (run-form
       (lambda ()
-        (let ((core (clojure-expand form)))
-          (let ((unit (current-unit)))
-            (when unit (vector-set! unit 0 (cons core (vector-ref unit 0)))))
-          (let ((v (try-eval-simple core)))
-            (if (eq? v not-simple)
-                (run-compiled core)
-                v))))
+        (let* ((core (clojure-expand form))
+               (unit (current-unit))
+               (v (let ((v (try-eval-simple core)))
+                    (if (eq? v not-simple)
+                        (run-compiled core)
+                        v))))
+          (when unit (vector-set! unit 0 (cons core (vector-ref unit 0))))
+          v))
       form))
+
+  ;;; 构建 Clojure 镜像（cleat-053）：boot-build 为真时嵌套加载的文件也记入同一个单元（平时每个文件各自一个单元或不记）
+  (define boot-build (make-parameter #f))
+
+  ;;; 构建镜像时每个顶层形式（按读入顺序编号）开始前把 RT 的 id 计数器置为 编号 × 100000（designs/08 §7）：gensym
+  ;;; （x__123__auto__、p__123）与 fn 类名（fn__123）不随构建进程之前消耗过多少 id 变化——镜像 A 上构建 B 与 B 上构建 C 相同
+  (define form-ordinal 0)
+  (define (reset-ids!)
+    (set! form-ordinal (+ form-ordinal 1))
+    (clr-static-call clojure.lang.RT setNextID (* form-ordinal 100000)))
 
   ;;; 编译执行：值经 ClojureOps.HoldResult 存放、TakeResult 取出——compile-core 的 thunk 经 Scheme 互操作返回，
   ;;; 会把 long 规范成 Int32（cleat-055 值边界）。AOT 单元收集的是未包装的 core
@@ -77,17 +91,29 @@
       (clojure-eval-toplevel form)))
 
   (define (clojure-load-reader reader path name)
-    (let ((r (make-reader reader)) (eof (clr-new System.Object)))
-      (with-ns-binding (current-ns)
-        (lambda ()
-          (let loop ((last '()))
-            (let ((form (read-form r eof)))
-              (if (eq? form eof)
-                  last
-                  (loop (clojure-eval-toplevel form)))))))))
+    (let* ((r (make-reader reader)) (eof (clr-new System.Object))
+           (ns0 (current-ns))
+           (v (with-ns-binding ns0
+                (lambda ()
+                  (let loop ((last '()))
+                    (let ((form (read-form r eof)))
+                      (if (eq? form eof)
+                          last
+                          (begin
+                            (when (boot-build) (reset-ids!))
+                            (loop (clojure-eval-toplevel form))))))))))
+      ;; 构建镜像时：load 结束后 *ns* 恢复（绑定弹出），镜像里被加载文件的形式之后也要恢复——记一个 (in-ns '原命名空间)
+      (let ((unit (current-unit)))
+        (when (and unit (boot-build))
+          (vector-set! unit 0 (cons (clojure-expand (restore-ns-form ns0)) (vector-ref unit 0)))))
+      v))
+
+  (define (restore-ns-form ns)
+    (clj-list (clj-symbol "clojure.core/in-ns")
+              (clj-list (clj-symbol "quote") (clr-prop-get clojure.lang.Namespace Name ns))))
 
   (define (load-hook reader path name)
-    (parameterize ((current-unit #f))
+    (parameterize ((current-unit (and (boot-build) (current-unit))))
       (clojure-load-reader reader path name)))
 
   ;;; —— compile：延后装入 (clojure compile) ——
@@ -108,6 +134,20 @@
                   (clr-static-call Cleat.Scheme.Clojure.Driver ClojureImageId))
         v)))
 
+  ;;; (clojure-compile-boot 形式列表 dll路径)：在 user 命名空间里依次求值形式（boot-order 的 load / require），全部加载到的文件的
+  ;;; 顶层形式按求值顺序（后序）收集成**一个**单元，编译为 Clojure 镜像 dll（同名 .lcil 文本、.ifc 接口文件）。
+  ;;; 编译时若已运行着一个 Clojure 镜像（不动点的第二段），不加 CheckBootImage。
+  (define compile-boot-unit #f)
+  (define (clojure-compile-boot forms dll-path)
+    (unless compile-boot-unit
+      (compile-unit-proc)
+      (set! compile-boot-unit (eval 'clojure-compile-boot-unit (environment '(clojure compile)))))
+    (let ((unit (vector '())))
+      (set! form-ordinal 0)
+      (parameterize ((current-unit unit) (boot-build #t))
+        (for-each (lambda (f) (reset-ids!) (clojure-eval-toplevel f)) forms))
+      (compile-boot-unit (reverse (vector-ref unit 0)) dll-path)))
+
   (define (install! name proc)
     (clr-static-call Cleat.Scheme.Clojure.Driver InstallHook name proc))
 
@@ -117,4 +157,5 @@
     (install! "load-source" load-hook)
     (install! "compile" clojure-compile-reader)
     (install! "macroexpand-1" clojure-macroexpand-1)
+    (install! "compile-boot" clojure-compile-boot)
     (clr-static-call Cleat.Scheme.Clojure.Driver InstallReportError)))

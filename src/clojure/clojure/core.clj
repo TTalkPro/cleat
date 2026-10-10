@@ -4421,7 +4421,8 @@ Note that read can execute code (controlled by *read-eval*),
       (finally (. clojure.lang.Var (popThreadBindings))))))
 
 ;; CLEAT-017: Compiler/maybeResolveIn 的 Clojure 版（规则同 ClojureCLR Compiler.maybeResolveIn；展开器自己的决议在 Expander.Resolve）
-(defn- maybe-resolve-in [^clojure.lang.Namespace n ^clojure.lang.Symbol sym]
+;; CLEAT-053: defn- 在 5203 行才定义，这里改用 (defn ^:private …)
+(defn ^:private maybe-resolve-in [^clojure.lang.Namespace n ^clojure.lang.Symbol sym]
   (if (namespace sym)
     (let [nsym (symbol (namespace sym))
           ns (or (.LookupAlias n nsym) (clojure.lang.Namespace/find nsym))]

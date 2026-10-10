@@ -12,9 +12,14 @@
 //                         （默认 src/boot/，此时等同 dotnet build 的 GenerateSchemeBootImage，但总是重新生成）  [cleat-046]
 //   seed [--stage0]       重新生成 Scheme 文本种子 src/scheme/boot/boot-seed.core（IronScheme 05 §5）：默认在新系统上运行
 //                         （stage0 --boot src/boot/cleat.scheme.boot.dll），--stage0 由 stage0 执行现有种子来运行；产物相同 [cleat-046]
-//   stage1 [输出目录]     编译 C# 项目后，用 Scheme 镜像编译 core.clj 等 → cleat.boot.dll（默认 src/boot/）        [cleat-053]
+//   stage1 [输出目录] [--boot 镜像]
+//                         编译 C# 项目后，宿主按 src/boot/boot-order.edn 从 src/clojure 源码编译 Clojure 镜像 cleat.boot.{dll,lcil,ifc}
+//                         （默认 src/boot/，等同 dotnet build 的 GenerateBootImage 但总是重新生成；--boot 时在该镜像上编译，
+//                         即不动点的第二段）                                                                         [cleat-053]
 //   ilverify <dll> …      用 ILVerify 校验发射器生成的程序集（dotnet tool install -g dotnet-ilverify）  [cleat-020]
-//   conformance [选项]    运行 tests/conformance 的语料（designs/09）                                   [cleat-002]
+//   conformance [--stats] 语料统计（cleat-002）
+//   conformance --run [--portability common|jvm|all] [--timeout ms] [--report out.edn] [--limit n]
+//                         在宿主（Clojure 镜像）上运行语料，按 = 比较，报告通过数与失败分组（tools/conformance.clj）  [cleat-053]
 //   compile-libs          预编译随附命名空间为 .clj.dll                                                [cleat-033]
 using System.Diagnostics;
 
@@ -42,7 +47,7 @@ try
             break;
         case "stage1":
             BuildCSharp();
-            NotYet("stage1", "cleat-053");
+            Stage1(rest);
             break;
         case "ilverify":
             if (rest.Length == 0) return Usage();
@@ -77,7 +82,7 @@ void Conformance(string[] a)
 {
     string dir = Path.Combine(root, "tests", "conformance");
     var rows = Edn.ReadRows(File.ReadAllText(Path.Combine(dir, "corpus.edn")));
-    if (a.Contains("--stats") || a.Length == 0)
+    if (!a.Contains("--run"))
     {
         Console.WriteLine($"rows: {rows.Count}");
         foreach (var g in rows.GroupBy(r => r.GetValueOrDefault(":portability", "?")).OrderBy(g => g.Key))
@@ -93,7 +98,25 @@ void Conformance(string[] a)
         Console.WriteLine($"known-divergences (jolt): {div.Count} entries, {stale.Count} not in corpus");
         return;
     }
-    throw new CommandFailed("conformance: evaluation on a host is not implemented yet (cleat-018)");
+    // --run：宿主运行 tools/conformance.clj（cleat-053 基线；修正失败是 cleat-032）
+    var args = new List<string> { Bin("Cleat.Host", "cleat.dll"), Path.Combine(root, "tools", "conformance.clj"), Path.Combine(dir, "corpus.edn") };
+    args.AddRange(a.Where(x => x != "--run"));
+    Run("dotnet", args.ToArray(), root);
+}
+
+// Clojure 镜像（cleat-053）：宿主 --compile-boot，见 Cleat.Host.csproj 的 GenerateBootImage
+void Stage1(string[] a)
+{
+    int bi = Array.IndexOf(a, "--boot");
+    string? withBoot = bi >= 0 && bi + 1 < a.Length ? Path.GetFullPath(a[bi + 1]) : null;
+    var positional = a.Where((x, i) => x != "--boot" && (bi < 0 || i != bi + 1)).ToArray();
+    string outDir = positional.Length > 0 ? Path.GetFullPath(positional[0]) : bootDir;
+    Directory.CreateDirectory(outDir);
+    var args = new List<string> { Bin("Cleat.Host", "cleat.dll") };
+    args.AddRange(withBoot != null ? new[] { "--boot", withBoot } : new[] { "--no-boot" });
+    args.AddRange(new[] { "-I", Path.Combine(srcDir, "clojure"), "--compile-boot", Path.Combine(outDir, "cleat.boot.dll"),
+                          "--boot-order", Path.Combine(bootDir, "boot-order.edn") });
+    Run("dotnet", args.ToArray(), root);
 }
 
 void NotYet(string command, string task) => throw new CommandFailed($"{command}: not implemented yet (task {task})");

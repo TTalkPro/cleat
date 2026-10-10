@@ -197,9 +197,12 @@ public sealed partial class LcilEmitter
             // "类型名, 程序集名"（iron-034e：直接引用 boot 镜像或已加载的库产物中的类）。Type.GetType 经运行时的解析
             // （ModuleLoader 登记的程序集）找不到时，按简单名在已加载的程序集中找
             string asmName = name.Substring(comma + 1).Trim(), typeName = name.Substring(0, comma).Trim();
+            // [cleat] 本单元自己定义的同名类型优先：Clojure 的 deftype / gen-interface 在 eval 时生成于动态程序集（Lcore 里写
+            // "类型, eval$N"），AOT 时同一个类型在本单元里重新定义，引用应指向本单元的（cleat-053）
+            if (_types.TryGetValue(typeName, out var own)) return own;
             foreach (var a in _references.Concat(AppDomain.CurrentDomain.GetAssemblies()))
             {
-                if (a.IsDynamic || a.GetName().Name != asmName) continue;
+                if (a.GetName().Name != asmName) continue;
                 var u = a.GetType(typeName);
                 if (u != null && (u.IsPublic || u.IsNestedPublic)) return u;
             }
@@ -355,8 +358,21 @@ public sealed partial class LcilEmitter
     /// <summary>接口 it（可为本 Lcil 中定义的接口）中名为 name、参数类型为 ps 的方法。</summary>
     private MethodInfo FindInterfaceMethod(Type it, string name, Type[] ps, SNode pos)
     {
-        if (it is TypeBuilder && _methods.TryGetValue(it.Name, out var own))
-            return own.FirstOrDefault(x => x.M.Name == name && x.P.SequenceEqual(ps)).B as MethodInfo ?? throw Err(pos, $"interface method not found: {it.Name}::{name}");
+        if (it is TypeBuilder)
+        {
+            // 本 Lcil 定义的接口（按 Lcil 的类型名，即全名）及它在 Lcil 中声明的父接口（cleat-053：gen-interface 与实现它的 deftype 同在 Clojure 镜像里）
+            string key = _methods.ContainsKey(it.FullName) ? it.FullName : it.Name;
+            if (_methods.TryGetValue(key, out var own) && own.FirstOrDefault(x => x.M.Name == name && x.P.SequenceEqual(ps)).B is MethodInfo hit)
+                return hit;
+            var lt = _asm.Types.FirstOrDefault(x => x.Name == key);
+            if (lt != null)
+                foreach (var parent in lt.Interfaces)
+                {
+                    try { return FindInterfaceMethod(T(parent, pos), name, ps, pos); }
+                    catch (LcilException) { }
+                }
+            throw Err(pos, $"interface method not found: {key}::{name}");
+        }
         foreach (var i in new[] { it }.Concat(it.GetInterfaces()))
         {
             var m = i.GetMethod(name, BindingFlags.Public | BindingFlags.Instance, null, ps, null);
