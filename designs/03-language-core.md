@@ -1,0 +1,91 @@
+# 03 核心语法、展开器与 core 库
+
+## 1. 范围：Clojure 核心语法
+
+| 层 | 内容 | 来源 |
+|---|---|---|
+| reader | 数字（含 `N`、`M`、`r` 基数、`0x`、ratio）、字符串、字符、符号、关键字（含 `::`）、列表 / 向量 / map / set、`'` `` ` `` `~` `~@` `#'` `#(…)` `#_` `#?` `#?@` `#"…"` `#{…}` `#inst` `#uuid` `#=` `^meta` `@` `#:ns{…}` `#::{…}` | `LispReader`（02 §7） |
+| 特殊形式 | `def`、`if`、`do`、`let*`、`loop*`、`recur`、`fn*`、`quote`、`var`、`throw`、`try`（`catch` / `finally`）、`monitor-enter`、`monitor-exit`、`.`、`new`、`set!`、`letfn*`、`case*`、`deftype*`、`reify*`、`import*` | 与 Clojure 相同的 21 个 |
+| 不支持的 | `parse-eval*`（ClojureCLR 专用）、`await*`（后续）、`proxy` 全量（第一版子集）、`gen-class`（后续）、`definterface` 以 `deftype*` 的接口生成实现（M3） | — |
+| 核心库 | `clojure.core`、`core.protocols`、`core_deftype`、`core_proxy`（子集）、`core_print`、`gvec`、`instant`、`uuid`、`string`、`set`、`walk`、`edn`、`data`、`template`、`test`、`stacktrace`、`repl`、`main`、`pprint`、`zip`、`java.io` → `clojure.clr.io`、`clojure.clr.shell`、`reflect`（子集） | ClojureCLR `Clojure.Source/clojure/` |
+
+## 2. 展开器（`Cleat.Core.Expander`，C#）
+
+输入一个顶层形式（reader 输出的数据），输出 **Lcore**（§3）。它是 Clojure `Compiler.analyze` 去掉发射后的部分，预计 1500 ~ 2000 行 C#。职责：
+
+1. **宏展开**：`macroexpand-1` 规则同 Clojure（符号头 → 查 Var `:macro` → 调 `(fn [&form &env & args])`；`:inline` 在展开器里按 `inline-arities` 应用；`(.method x)`、`(Type/member)`、`(Type. …)`、`Type/.method`、`Type/new` 的糖改写为 `.` / `new`；`^:once`）。`&env` 是词法环境 map（符号 → `LocalBinding` 信息），与 Clojure 相同。
+2. **符号决议**：词法变量（`let*`/`fn*`/`loop*`/`letfn*`/`catch` 绑定、`deftype*` 字段与 `this`）→ `(local x)`；特殊形式；Var（`ns/name`、别名、`refer`）→ `(var-ref #'ns/name)`，未解析报 "Unable to resolve symbol"；宿主类型（`System.String`、`String`（`import`）、`|…|` 语法、数组 `String[]`）→ `(host-type "全名")`；`Type/Static`、`Type/.Instance` 等 → 相应 `host-*` 节点。
+3. **特殊形式的语法检查与规范化**：`fn*` 名字、参数向量、`&` 剩余参数、最多 20 个固定参数、只许一个变长 arity、arity 不冲突；`loop*`/`recur` 参数个数与尾位置（`recur` 不能跨 `try`）；`case*` 的三种 switch 形态（`:int`、`:hash-equiv`、`:hash-identity`，由 `case` 宏预哈希后以数据进入 Lcore）；`deftype*` / `reify*` 的接口与方法签名**在展开器里用反射查出**（接口的方法、参数类型、返回类型），以数据写入 Lcore；`try` 的 `catch` 类型决议；`.`/`new` 的类型提示与成员名保持符号。
+4. **类型提示**：`^String`、`^long`、`^"System.String[]"`、`^{:tag …}` 统一为 `(tag "全名")` 附在节点上；`*warn-on-reflection*` 的警告在这里给出（它能查到类型；编译器不查）。
+5. **源位置**：每个节点带 `{:line :column :file}`，供编译器生成序列点与错误信息。
+6. **不做的**：不做闭包分析、不做常量折叠、不发射——这些在编译器里。
+
+展开器与运行时同进程、依赖当前 `*ns*` 与已加载的 Var，所以**不纯**；它的输出 Lcore 是纯数据。`eval` = 展开 → 编译 → 发射 → 执行，逐个顶层形式（`do` 顶层展开为逐个子形式，与 Clojure 相同）。
+
+## 3. Lcore 文法（编译器的固定输入）
+
+```
+e ::= (const d)                              ; 字面量与 quote；d 为任意 Clojure 数据（含集合、正则、符号、关键字、Var）
+    | (local x)                              ; 词法变量（x 为唯一化后的符号：name__N）
+    | (var-ref v) | (the-var v)              ; v = (var ns name {dynamic? macro? redef?})
+    | (if e e e)
+    | (do e ... e)
+    | (let ((x e) ...) e)                    ; let* 规范化；绑定顺序即求值顺序
+    | (loop ((x e) ...) e)                   ; loop*
+    | (recur e ...)                          ; 只在尾位置；展开器已检查
+    | (fn name ((x ...) rest e) ...)         ; fn*；每子句 (固定参数 剩余参数|nil 体)；name 可为 nil；meta: once?
+    | (letfn ((x fn) ...) e)
+    | (def v e) | (def v)                    ; 含 meta 与 doc；v 同 var-ref
+    | (set! target e)                        ; target: (var-ref v) | (host-field …) | (local x)（deftype 可变字段）
+    | (throw e)
+    | (try e ((T x e) ...) e)                ; catch 子句 (类型 绑定 体)；finally 体可为 nil
+    | (monitor-enter e) | (monitor-exit e)
+    | (case e shift mask low high default ((int|hash → test expr) ...) switch-type test-type skip-check)
+    | (host-call T|nil "member" e args ... {tag})      ; .、Type/member；T 为 nil 时按实例类型
+    | (host-field T|nil "name" e?) | (host-new T args ...) | (host-static-field T "name")
+    | (host-type T)                           ; 类型字面量（Class 对象）
+    | (instance-of T e)                       ; instance?（展开器把 (instance? T e) 识别为节点，T 为字面类型时）
+    | (deftype name T fields ((iface method (params) body) ...) {meta})  ; 含 reify：name 由展开器生成
+    | (import T)
+    | (call e e ...)                          ; 应用；e 为 (var-ref v) 时编译器可直接链接
+    | (vector e ...) | (map e ...) | (set e ...)   ; 含非常量元素的集合字面量；全常量的走 const
+    | (keyword-invoke k e)                    ; (:k x) 的调用站点
+```
+
+- 符号已唯一化、Var 已决议、类型名已是字符串：编译器不再查任何表。
+- `case` 的全部预处理在 `case` 宏 + 展开器完成；`deftype` 的接口方法签名是数据；`(tag …)` 是字符串。
+- 文本形式：Lcore 可以写成 EDN（常量用 05 §3 的中立编码），用于快照测试与 Lcore 种子（08 §5）。
+
+## 4. 与 Clojure 的明确偏离
+
+| 项 | Clojure / ClojureCLR | cleat |
+|---|---|---|
+| 反射互操作 | DLR 动态站点（CLR） | `Reflector` 缓存委托；语义相同 |
+| `proxy` | 生成子类 | 第一版：只支持"实现接口 + 无基类方法重写"的子集（等于 `reify`）；`proxy-super` 不支持 |
+| `gen-class` | 支持 | 后续 |
+| `definterface` | 生成接口 | 支持（M3 发射器生成接口类型） |
+| 原始类型签名 `IFn.LL` 等 | 支持 | 第一版不支持；`^long` 参数装箱传递（后续拆箱） |
+| 直接链接 | 可选 | 默认开（00 D13） |
+| `*compiler-options*` `:disable-locals-clearing` 等 | 支持 | 局部变量清除第一版不做（`^:once` 做） |
+| `ParseEval`、`await*` | ClojureCLR 专有 | 不支持 |
+| 尾调用 | 无 | 无（00 D14） |
+
+## 5. core 库的组织（00 D15）
+
+```
+src/clojure/
+  cleat/kernel.clj         ; 新写：原语 Var（def 到 cleat.kernel/… 的原语）、编译器与 nanopass 要用的最小函数集（first/next/cons/seq/vector/conj/assoc/get/nth/count/str/symbol/keyword/gensym/meta/with-meta/apply/concat/list*…）
+  clojure/core.clj         ; ClojureCLR core.clj 改写：开头 (ns clojure.core) 后 refer cleat.kernel；去掉对 HostExpr/MaybeType 的调用（改原语）；CLR 差异保留；LLVM 差异用 #?(:cleat-llvm …)
+  clojure/core_deftype.clj, core_proxy.clj(子集), core_print.clj, core/protocols.clj, gvec.clj, instant.clj, uuid.clj
+  clojure/string.clj, set.clj, walk.clj, edn.clj, data.clj, template.clj, test.clj, stacktrace.clj, repl.clj, main.clj, pprint/…, zip.clj, clr/io.clj, clr/shell.clj, reflect.clj
+```
+
+- **加载顺序**（boot 镜像的构建顺序）：`cleat.kernel` → `clojure.core` →（core 末尾按 ClojureCLR 顺序）`core_clr` → `core_proxy` → `core_print` → `core_deftype` → `core/protocols` → `gvec` → `instant` → `uuid` → `cleat.nanopass` → `cleat.compiler`。`string`、`set`、`walk`、`edn`、`pprint` 等也编进 boot 镜像（REPL 与编译器驱动要用），其余按需从源码或 `.clj.dll` 加载。
+- `core.clj` 中依赖编译器内部的地方（`HostExpr/MaybeType`、`Compiler/…`）改为 `cleat.kernel` 原语。
+- 协议：`defprotocol` / `extend-type` / `extend-protocol` 按 ClojureCLR `core_deftype.clj`（`MethodImplCache` + 接口快速路径）。
+- `defrecord` / `deftype` / `reify` 展开到 `deftype*` / `reify*`（与 Clojure 相同），由编译器生成类型。
+
+## 6. 验证
+
+- 展开器单测（C#）：每个特殊形式的 Lcore 快照；错误信息与 Clojure 一致（"Unable to resolve symbol"、"Can only recur from tail position"、"Mismatched argument count"…）。
+- `core.clj` 全部顶层形式经展开器得到 Lcore（无未知形式），作为 04 的快照输入与 08 的种子来源。

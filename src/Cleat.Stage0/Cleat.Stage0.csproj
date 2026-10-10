@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- stage0：Lcore 解释器。设计：designs/08-bootstrap.md §4 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Cleat.Stage0</RootNamespace>
+    <AssemblyName>stage0</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
+    <ProjectReference Include="..\Cleat.Emit\Cleat.Emit.csproj" />
+  </ItemGroup>
+</Project>

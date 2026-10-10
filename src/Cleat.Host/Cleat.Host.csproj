@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 命令行宿主与 REPL；GenerateBootImage 目标（cleat-029）在这里加入 -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Cleat.Host</RootNamespace>
+    <AssemblyName>cleat</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
+    <ProjectReference Include="..\Cleat.Emit\Cleat.Emit.csproj" />
+    <ProjectReference Include="..\Cleat.Stage0\Cleat.Stage0.csproj" />
+  </ItemGroup>
+</Project>

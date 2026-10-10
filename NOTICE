@@ -1,0 +1,14 @@
+Cleat — Clojure on the CLR
+Copyright (c) 2026 the Cleat contributors. Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository also contains code derived from other projects, kept in separate directories under their own licenses:
+
+- src/Cleat.Core/clojure.lang/  — adapted from ClojureCLR (https://github.com/clojure/clojure-clr),
+  Copyright (c) Rich Hickey and David Miller. Eclipse Public License 1.0 (LICENSE-EPL.txt in that directory).
+- src/clojure/                  — clojure.core and companion namespaces adapted from Clojure / ClojureCLR,
+  Copyright (c) Rich Hickey. Eclipse Public License 1.0 (LICENSE-EPL.txt in that directory).
+- tests/conformance/            — conformance corpus adapted from jolt (Mozilla Public License 2.0, see the header there).
+- tests/clojure-test-suite/     — git submodule of jank's clojure-test-suite (its own license).
+- tests/test_clojure/           — tests adapted from ClojureCLR (Eclipse Public License 1.0).
+
+The nanopass framework for Scheme (MIT) served as the reference for the Clojure port in src/cleat/nanopass/; no code is copied.

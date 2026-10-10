@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 运行时（无 DLR）。设计：designs/02-runtime.md。clojure.lang/ 下是从 ClojureCLR 改写的 EPL 代码（designs/00 D11） -->
+  <PropertyGroup>
+    <RootNamespace>Cleat.Core</RootNamespace>
+    <AssemblyName>Cleat.Core</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- 旧代码带 CLSCompliant 等标注 -->
+    <NoWarn>$(NoWarn);CS3021;CS1591</NoWarn>
+  </PropertyGroup>
+</Project>

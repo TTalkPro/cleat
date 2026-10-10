@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Cleat.Core.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cleat.Core\Cleat.Core.csproj" />
+    <ProjectReference Include="..\..\src\Cleat.Emit\Cleat.Emit.csproj" />
+    <ProjectReference Include="..\..\src\Cleat.Stage0\Cleat.Stage0.csproj" />
+    <ProjectReference Include="..\..\src\Cleat.PrimGen\Cleat.PrimGen.csproj" />
+  </ItemGroup>
+</Project>

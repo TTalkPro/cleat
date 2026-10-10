@@ -1,0 +1,6 @@
+<Project>
+  <!-- 仓库根目录 dotnet build / dotnet test（Cleat.slnx）默认用 Release：构建会运行 stage0 生成 boot 镜像。用 -c Debug 可改回。 -->
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+  </PropertyGroup>
+</Project>

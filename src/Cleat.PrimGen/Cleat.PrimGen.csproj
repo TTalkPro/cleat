@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 反射 Cleat.Core 生成 src/boot/primitives.edn（cleat-011） -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Cleat.PrimGen</RootNamespace>
+    <AssemblyName>primgen</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
+  </ItemGroup>
+</Project>
