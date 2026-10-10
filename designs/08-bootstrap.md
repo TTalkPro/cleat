@@ -32,7 +32,7 @@
    判据：用镜像 A 编得 B，用 B 编得 C，B == C
 ```
 
-与 IronScheme 的差别：第二段没有自己的 stage0，Clojure 从来不需要被解释执行；`eval` 的"简单形式解释"（04 §9）复用第一段的 stage0 解释器。
+与 IronScheme 的差别：第二段没有自己的 stage0，Clojure 从来不需要被解释执行；`eval` 的"简单形式解释"（04 §9）由一个只认简单 Lcore 的 C# 小解释器承担（cleat-052；stage0 的解释器不认 Clojure 节点）。
 
 ## 4. 耗时（2026-10-10 实测，cleat-046）
 

@@ -22,7 +22,7 @@ Copyright (c) 2026 the IronScheme contributors。许可全文见本目录 LICENS
   `$current-handlers`）已删除（cleat-047，designs/15 §3）：`raise` 抛 `SchemeException(条件)`，捕获用核心形式 `$try/catch`
   （stage0 的 `TryCatch` 节点、编译器的 `try-catch` 节点 → Lcil `try`/`catch`）。
 
-## cleat 新增：`Clojure/`（cleat-050、cleat-051）
+## cleat 新增：`Clojure/`（cleat-050 ~ cleat-052）
 
 Clojure 在 Scheme 元层上运行所需的 C# 部分（命名空间 `Cleat.Scheme.Clojure`，由 `src/scheme/clojure/*.sls` 使用）：
 - `ClojureOps`：编译后的 Clojure 代码经编译器的 `$clj-call` 节点直接调用的静态方法（集合字面量、Reflector 互操作、`case*`
@@ -30,3 +30,8 @@ Clojure 在 Scheme 元层上运行所需的 C# 部分（命名空间 `Cleat.Sche
   不用 Scheme 的 `clr-call`，因为它会把返回的 long 转成 fixnum、枚举转成符号（值边界，designs/13 §7）。
   `fn*` 的值是编译器生成的 `AFunction` / `RestFn` 子类（cleat-051，原来的 `ClojureFn` 包装已删除）。
 - `HostSyntax`：展开期的类型名 / 类型提示决议与 deftype* / reify* 的接口方法匹配、类型布局（规则照 C# 展开器）。
+- `Driver`（cleat-052）：编译驱动 `(clojure driver)` 的 C# 一侧——简单形式的小解释器（不生成程序集）、读形式、带位置执行
+  （异常不包装，位置记在 `Exception.Data`）、顶层 do、把 Scheme 过程包成 `Cleat.Core.Runtime.RuntimeHooks` 的委托、
+  Clojure 风格的错误文本、`.clj.dll` 的输出路径与接口文件 `.ifc`。
+- `ClojureHost`（cleat-052）：宿主装入驱动的 Scheme 库——读 `src/boot/cleat.scheme.clojure/cleat-host.manifest`
+  （`clojure/build-host.sps` 构建时生成的 fasl），延后库（编译器、nanopass）在第一次 AOT 编译时装入；不可用时退回源码。

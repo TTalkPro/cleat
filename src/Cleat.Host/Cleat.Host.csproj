@@ -43,4 +43,27 @@
     <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(Stage0Dir)\stage0.dll&quot; -I lib -I nanopass boot/boot-seed.core boot/ironscheme-buildscript-nano.sps &quot;$(SchemeBootDir)&quot;"
           WorkingDirectory="$(SchemeDir)" />
   </Target>
+
+  <!--
+    宿主用的 Scheme 库（cleat-052）：镜像上运行 clojure/build-host.sps，把 (clojure driver) 与 (clojure compile) 连同依赖（编译器、nanopass）
+    预编译成 src/boot/cleat.scheme.clojure/ 下的 fasl 与清单 cleat-host.manifest；宿主启动时装入，不必从源码展开（约 10 秒 → 0.x 秒）。
+    镜像或这些库的源码变了就重新生成（约 20 秒）。
+  -->
+  <PropertyGroup>
+    <ClojureHostLibDir>$(SchemeBootDir)\cleat.scheme.clojure</ClojureHostLibDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClojureHostLibInput Include="$(SchemeBootImage)" />
+    <ClojureHostLibInput Include="$(SchemeDir)\clojure\*.sls;$(SchemeDir)\clojure\*.sps" />
+    <ClojureHostLibInput Include="$(SchemeDir)\lib\**\*.sls" />
+    <ClojureHostLibInput Include="$(SchemeDir)\nanopass\nanopass.ss;$(SchemeDir)\nanopass\nanopass\**\*.ss;$(SchemeDir)\nanopass\nanopass\**\*.sls" />
+  </ItemGroup>
+  <Target Name="GenerateClojureHostLibraries" AfterTargets="GenerateSchemeBootImage" BeforeTargets="CopyFilesToOutputDirectory"
+          Condition="'$(BuildBootImage)' == 'true'"
+          Inputs="@(ClojureHostLibInput)" Outputs="$(ClojureHostLibDir)\cleat-host.manifest">
+    <Message Importance="high" Text="Cleat: precompiling the Clojure driver's Scheme libraries (about 20 seconds) -> $(ClojureHostLibDir)" />
+    <MakeDir Directories="$(ClojureHostLibDir)" />
+    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(Stage0Dir)\stage0.dll&quot; -I lib -I nanopass --boot &quot;$(SchemeBootImage)&quot; clojure/build-host.sps &quot;$(ClojureHostLibDir)&quot;"
+          WorkingDirectory="$(SchemeDir)" />
+  </Target>
 </Project>

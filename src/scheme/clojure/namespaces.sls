@@ -47,7 +47,8 @@
           symbol-label register-clj-special! register-clj-form! register-hidden-clj-form! var-label type-label make-label
           set-unresolved-lookup! set-macro-env-provider! set-var-call-handler!
           clojure-expanding? clojure-form? clj-op var-reference macro-transformer
-          clojure-error-hook expander-exception syntax-position source-path)
+          clojure-error-hook expander-exception syntax-position source-path
+          macro-var-head call-macro)
   (import
     (rnrs)
     (rnrs eval)
@@ -496,13 +497,31 @@
   (define (expand-in-ns form)
     (in-clojure (lambda () (expand->core (clj->scheme form) (namespace-environment (current-ns))))))
 
+  ;;; 以宏 Var 对象（不是符号）开头的形式 (#<Var m> …)：只能由宏构造（cleat-052；C# 展开器 IsMacro 的 op is Var 分支）。
+  ;;; 是则返回该 Var（别的命名空间的私有宏报 C# 的文本 "Var: #'a/m is not public"），否则 #f。
+  ;;; fail 为报错过程 (fail 消息)。
+  (define (macro-var-head form fail)
+    (and (clr-is clojure.lang.ISeq form)
+         (let ((op (clr-static-call clojure.lang.RT (first System.Object) form)))
+           (and (clr-is clojure.lang.Var op)
+                (var-macro? op)
+                (begin
+                  (when (and (not (eq? (var-ns op) (current-ns))) (not (var-public? op)))
+                    (fail (string-append "Var: " (->string op) " is not public")))
+                  op)))))
+
   ;;; Clojure 的 macroexpand-1：返回 Clojure 数据；不是宏调用（含特殊形式）则返回 form 本身
   (define (macroexpand-1-in-ns form)
     (in-clojure
       (lambda ()
-        (let* ((x (clj->scheme form))
-               (y (environment-macroexpand-1 x (namespace-environment (current-ns)))))
-          (if (eq? y x) form (scheme->clj y))))))
+        (cond
+          ((macro-var-head form
+             (lambda (msg) ($throw (expander-exception #f 'compile-syntax-check msg '())))) 
+           => (lambda (v) (call-macro v form #f)))
+          (else
+           (let* ((x (clj->scheme form))
+                  (y (environment-macroexpand-1 x (namespace-environment (current-ns)))))
+             (if (eq? y x) form (scheme->clj y))))))))
 
   ;;; Clojure 的 macroexpand：重复 macroexpand-1 直到不变
   (define (macroexpand-in-ns form)

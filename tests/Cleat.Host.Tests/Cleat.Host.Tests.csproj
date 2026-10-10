@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 宿主的进程级测试（cleat-052）：以子进程运行 cleat（Scheme 镜像 + 驱动库 + 钩子），经标准输入 / 输出驱动 REPL、脚本、-e、load、
+       require、compile 到 .clj.dll 与回退。 -->
+  <PropertyGroup>
+    <RootNamespace>Cleat.Host.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 只为构建顺序：先构建宿主（及其 Scheme 镜像与预编译的驱动库）；测试以子进程运行 src/Cleat.Host/bin/…/cleat.dll -->
+    <ProjectReference Include="..\..\src\Cleat.Host\Cleat.Host.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

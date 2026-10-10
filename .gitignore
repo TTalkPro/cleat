@@ -69,3 +69,5 @@ src/scheme/boot/*.dll
 src/scheme/boot/*.lcil
 src/scheme/boot/*.pdb
 tests/scheme/compiler/snapshots/*.actual
+# cleat-052：宿主用的预编译 Scheme 库（Cleat.Host 的 GenerateClojureHostLibraries）
+src/boot/cleat.scheme.clojure/

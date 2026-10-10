@@ -9,6 +9,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Cleat.Core.Tests/Cleat.Core.Tests.csproj" />
+    <Project Path="tests/Cleat.Host.Tests/Cleat.Host.Tests.csproj" />
     <Project Path="tests/Cleat.Scheme.Tests/Cleat.Scheme.Tests.csproj" />
   </Folder>
 </Solution>

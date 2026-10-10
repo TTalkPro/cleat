@@ -19,3 +19,6 @@
 - REPL：逐形式读—`RuntimeHooks.Eval`—打印，`*1` `*2` `*3` `*e`，`:repl/quit`，错误打印异常链（`CLEAT_TRACE_ERRORS` 打印栈），`ReportError` 钩子可接管。
 - 测试 `HostTests`（3 项，用假的 eval 钩子）：参数解析、REPL 输出与历史、钩子缺失的错误。
 - 未完成：用 stage1 启动并 `(require 'clojure.string)` 的验收（依赖 cleat-029）；行编辑在 cleat-034。
+
+## 进度
+- 2026-10-10（cleat-052）：宿主接上 Scheme 镜像与驱动库，REPL / 脚本 / `-e` / `-i` / `-` / `load-file` / `RT.load` 实际可用（不依赖 clojure.core）；启动顺序改为两镜像（`--scheme-boot` 与 `--boot`），见 cleat-052 结论。错误打印改由 Scheme 登记的 `report-error`（Clojure 风格）。剩余验收 `(require 'clojure.string)` 需要 core.clj 的 `require`：cleat-053 完成后在 `tests/Cleat.Host.Tests` 加一项 REPL 里 `(require 'clojure.string)` 的进程测试即可把本任务改为完成（行编辑仍在 cleat-034）。

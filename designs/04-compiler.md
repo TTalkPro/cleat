@@ -90,7 +90,7 @@ codegen 只经表项取类名、原语符号、互操作指令名；驱动的 `*
 | 构建脚本 `src/boot/build-boot.clj` | 按 03 §5 的顺序编译全部 boot 命名空间 → `cleat.boot.dll`；写出 Lcil 文本用于比较不动点 |
 | `--target llvm` | 同样的驱动，产物是 `.ll`（06 §6） |
 
-**REPL / `eval` 的简单形式不编译**（借 Chez 的 `compile-interpret-simple`，`s/compile.ss:1820`：Chez 的 `current-eval` 缺省就是 `compile`，每个顶层形式跑完整的 nanopass 管线生成机器码，但不创建过程的简单表达式改走解释器）：`compile-form` 对不含 `fn` / `deftype` 的 Lcore（常量、Var 引用、直接调用、`def` 常量）不生成程序集，直接解释求值——内存模式每次 `Reflection.Emit` 几百微秒且类型数有平方级开销（cleat-003）。解释器在方案 A 是 stage0，在方案 C 是 IronScheme 的 `compile-core`，在方案 B 要单写一个小的。
+**REPL / `eval` 的简单形式不编译**（借 Chez 的 `compile-interpret-simple`，`s/compile.ss:1820`：Chez 的 `current-eval` 缺省就是 `compile`，每个顶层形式跑完整的 nanopass 管线生成机器码，但不创建过程的简单表达式改走解释器）：`compile-form` 对不含 `fn` / `deftype` 的 Lcore（常量、Var 引用、直接调用、`def` 常量）不生成程序集，直接解释求值——内存模式每次 `Reflection.Emit` 几百微秒且类型数有平方级开销（cleat-003）。解释器在方案 A 是 stage0，在方案 C 是 IronScheme 的 `compile-core`，在方案 B 要单写一个小的。**实际（cleat-052）**：镜像里的 `eval` 经编译器、没有解释器，stage0 的解释器不认 `$clj-…` 节点，所以单写了一个只认简单 Lcore 的小解释器（`Cleat.Scheme.Clojure.Driver`：`quote`、局部、`if` / `begin`、let、`null?`、`$clj-var-ref` / `$clj-var-set!` / `$clj-def` / `$clj-invoke` / `$clj-keyword-invoke` / `$clj-call`），先整体检查再求值；实测每个简单形式由约 2.3 ~ 3 ms（生成程序集）降到约 6 µs（展开另计）。
 
 ## 10. 第一版不做、后续做
 

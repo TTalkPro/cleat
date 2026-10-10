@@ -859,6 +859,9 @@
     (let ((d (syntax->clj e)))
       (cond
         ((null? d) (list 'quote '()))
+        ;; Namespace 对象（RT 的引导 ns 宏的展开结果）：不能作为常量存进 dll，按名字取（cleat-052）
+        ((clr-is clojure.lang.Namespace d)
+         (clj-call "FindNamespaceOf" #f (list 'quote (clr-prop-get clojure.lang.Namespace Name d))))
         ((memq (syntax-ext-kind e) '(clj-vector clj-map clj-set clj-list))
          (let* ((v (const-value d))
                 (m (user-meta d))
@@ -890,10 +893,16 @@
       ((f arg ...)
        (let ((fd (syntax->clj #'f)) (nt (ctx-nontail (cur))) (args #'(arg ...)))
          (when (null? fd) (err e (string-append "Can't call nil, form: " (print-str (syntax->clj e)))))
-         (if (and (keyword? fd) (<= 1 (length args) 2))
+         (cond
+           ;; 以宏 Var 对象开头（宏构造的 (#'m …)，cleat-052）：展开该宏，结果挂使用处上下文再展开
+           ((macro-var-head (syntax->clj e) (lambda (msg) (err e msg)))
+            => (lambda (v)
+                 (expand (clj-datum->syntax* #'f (call-macro v (syntax->clj e) (syntax-position e))))))
+           ((and (keyword? fd) (<= 1 (length args) 2))
              ;; KeywordInvokeExpr：(:k x) / (:k x 缺省)（cleat-051：ILookup.valAt 快速路径，否则 RT.get）
-             (cons* '$clj-keyword-invoke (list 'quote fd) (map (lambda (a) (expand-in nt a expand)) args))
-             (invoke-core (expand-in nt #'f expand) (map (lambda (a) (expand-in nt a expand)) args)))))))
+             (cons* '$clj-keyword-invoke (list 'quote fd) (map (lambda (a) (expand-in nt a expand)) args)))
+           (else
+            (invoke-core (expand-in nt #'f expand) (map (lambda (a) (expand-in nt a expand)) args))))))))
 
   ;;; 把 Clojure 形式 old 的源位置（:line :column :source-span）与 :tag 带到 new 上
   (define (transfer-source new old)

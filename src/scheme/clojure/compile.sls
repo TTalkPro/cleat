@@ -6,11 +6,14 @@
 ;;;     常量编码进 dll（Fasl）：Var 为 (var ns name)，加载时 intern；关键字、符号、集合、long 等用 Clojure 的标签。
 ;;;     加载：Cleat.Scheme.ModuleLoader.LoadModule（或 Cleat.Core 的 Loader），执行全部顶层形式。
 ;;;
+;;;   (clojure-compile-unit Lcore列表 dll路径 镜像id或#f) → dll路径（cleat-052，编译驱动 (clojure driver) 的 compile 钩子调用）
+;;;     各形式已经由驱动展开、求值过（顺序即求值顺序，顶层 do 已拆开），这里只编译保存：dll 加上旁边的接口文件（Driver.WriteInterfaceFile）；
+;;;     镜像id（编译时运行的 Clojure boot 镜像）不是 #f 时，入口第一个形式是 BootInterface.Check（镜像换了则加载器回退源码）。
+;;;
 ;;;   Clojure 值的常量编码器（编译器 (ironscheme compiler constants) 的外来常量挂钩）在本库体执行时登记。
-;;;   这是 cleat-052 编译驱动（compile / compile-file、.clj.dll 与接口文件）之前的最小版本。
 
 (library (clojure compile)
-  (export clojure-compile-forms encode-clojure-constant)
+  (export clojure-compile-forms clojure-compile-unit encode-clojure-constant)
   (import
     (rnrs)
     (ironscheme clr)
@@ -70,6 +73,17 @@
            (asm (clr-static-call System.IO.Path GetFileNameWithoutExtension dll-path))
            (lcil (compile-forms->lcil cores asm "#Module")))
       (clr-static-call Cleat.Emit.LcilEmitter (SaveData Object String String Boolean) lcil dll-path dll-path #f)
+      dll-path))
+
+  (define (clojure-compile-unit cores dll-path image-id)
+    (let* ((cores (if image-id
+                      (cons (list '$clj-call (list 'quote "CheckBootImage") (list 'quote #f) (list 'quote image-id)) cores)
+                      cores))
+           (asm (clr-static-call System.IO.Path GetFileNameWithoutExtension dll-path))
+           (lcil (compile-forms->lcil cores asm "#Module")))
+      (when (file-exists? dll-path) (delete-file dll-path))
+      (clr-static-call Cleat.Emit.LcilEmitter (SaveData Object String String Boolean) lcil dll-path dll-path #f)
+      (clr-static-call Cleat.Scheme.Clojure.Driver (WriteInterfaceFile String Object Object) dll-path cores lcil)
       dll-path))
 
   (set-foreign-constant-encoder! encode-clojure-constant))

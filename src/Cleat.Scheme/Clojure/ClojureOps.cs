@@ -175,6 +175,19 @@ public static class ClojureOps
         return null;
     }
 
+    /// <summary>
+    /// AOT 产物（.clj.dll）入口的第一个形式（cleat-052）：编译时运行的 Clojure boot 镜像 id 与现在的不同则抛
+    /// <see cref="Cleat.Core.Runtime.BootInterface.StaleModuleException"/>，加载器回退源码（designs/04 §6）。
+    /// </summary>
+    public static object CheckBootImage(object imageId)
+    {
+        Cleat.Core.Runtime.BootInterface.Check(imageId?.ToString());
+        return null;
+    }
+
+    /// <summary>Namespace 对象作为表达式（RT 的引导 ns 宏展开为它）：按名字取，AOT 产物里不存 Namespace 常量（cleat-052）。</summary>
+    public static object FindNamespaceOf(object name) => Namespace.findOrCreate((clojure.lang.Symbol)name);
+
     public static object ImportOf(object t)
     {
         ((Namespace)clojure.lang.RT.CurrentNSVar.deref()).importClass(HostSyntax.Real((Type)t));
