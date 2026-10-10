@@ -11,9 +11,9 @@
 | [cleat-004](tasks/cleat-004-spike-llvm-toolchain.md) | 验证 LLVM 工具链与原生 ABI（异常方案、调用约定） | 后续（LLVM） | cleat-001 | 搁置 |
 | [cleat-005](tasks/cleat-005-spike-extract-clojurelang.md) | 提取试验：clojure.lang 不带 DLR 能否编译 | M0 | cleat-001 | 完成 |
 | [cleat-006](tasks/cleat-006-core-values-and-collections.md) | Cleat.Core 骨架、值表示与持久集合 | M1 | cleat-005 | 完成 |
-| [cleat-007](tasks/cleat-007-var-namespace-refs.md) | Var、Namespace、引用类型、STM 与 MultiFn | M1 | cleat-006 | 未开始 |
-| [cleat-008](tasks/cleat-008-function-model.md) | 函数模型 IFn / AFn / AFunction / RestFn | M1 | cleat-006 | 未开始 |
-| [cleat-009](tasks/cleat-009-reader.md) | reader 提取与决议接口 | M1 | cleat-006、cleat-007 | 未开始 |
+| [cleat-007](tasks/cleat-007-var-namespace-refs.md) | Var、Namespace、引用类型、STM 与 MultiFn | M1 | cleat-006 | 完成 |
+| [cleat-008](tasks/cleat-008-function-model.md) | 函数模型 IFn / AFn / AFunction / RestFn | M1 | cleat-006 | 完成 |
+| [cleat-009](tasks/cleat-009-reader.md) | reader 提取与决议接口 | M1 | cleat-006、cleat-007 | 完成 |
 | [cleat-010](tasks/cleat-010-reflector.md) | Reflector 与 TypeResolver（无 DLR） | M1 | cleat-008 | 未开始 |
 | [cleat-011](tasks/cleat-011-primitives-and-primgen.md) | 原语标注与 PrimGen（primitives.edn） | M1 | cleat-006 ~ cleat-010 | 未开始 |
 | [cleat-012](tasks/cleat-012-rt-split-loader-hooks.md) | RT 拆分、加载器与运行时钩子 | M1 | cleat-007、cleat-009、cleat-010 | 未开始 |

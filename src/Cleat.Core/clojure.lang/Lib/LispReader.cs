@@ -160,8 +160,16 @@ namespace clojure.lang
         static readonly Keyword EOFTHROW = Keyword.intern(null, "eofthrow");
 
         // Platform features - always installed
+        // CLEAT-009: 平台特性（designs/02 §7）：:cleat、按编译目标的 :cleat-clr（:cleat-llvm 在 LLVM 目标时替换），:cljr 为兼容别名
         static readonly Keyword PLATFORM_KEY = Keyword.intern(null, "cljr");
-        static readonly Object PLATFORM_FEATURES = PersistentHashSet.create(PLATFORM_KEY);
+        static IPersistentSet PLATFORM_FEATURES = PersistentHashSet.create(Keyword.intern(null, "cleat"), Keyword.intern(null, "cleat-clr"), PLATFORM_KEY);
+
+        /// <summary>reader 条件的平台特性集合；编译驱动按目标切换（:cleat-clr / :cleat-llvm）。</summary>
+        public static IPersistentSet PlatformFeatures
+        {
+            get => PLATFORM_FEATURES;
+            set => PLATFORM_FEATURES = value ?? throw new ArgumentNullException(nameof(value));
+        }
 
         // Reader conditional options - use with :read-cond
         public static readonly Keyword COND_ALLOW = Keyword.intern(null, "allow");
@@ -224,7 +232,13 @@ namespace clojure.lang
                 if (features == null)
                     return mopts.assoc(LispReader.OPT_FEATURES, PLATFORM_FEATURES);
                 else
-                    return mopts.assoc(LispReader.OPT_FEATURES, RT.conj((IPersistentSet)features, PLATFORM_KEY));
+                {
+                    // CLEAT-009: 用户给的特性集合加上全部平台特性
+                    IPersistentSet all = (IPersistentSet)features;
+                    for (ISeq s = RT.seq(PLATFORM_FEATURES); s != null; s = s.next())
+                        all = (IPersistentSet)RT.conj(all, s.first());
+                    return mopts.assoc(LispReader.OPT_FEATURES, all);
+                }
             }
         }
 
@@ -1086,7 +1100,7 @@ namespace clojure.lang
                 if (lntr != null)
                 {
                     startLine = lntr.LineNumber;
-                    startCol = lntr.ColumnNumber;
+                    startCol = lntr.ColumnNumber - 1;   // CLEAT-009: 与 JVM 一致，:column 是 '(' 本身的 1 起始列（JVM getColumnNumber()-1）
                 }
                 IList<Object> list = ReadDelimitedList(')', r, true, opts, EnsurePending(pendingForms));
                 if (list.Count == 0)
@@ -1399,8 +1413,7 @@ namespace clojure.lang
 
                 if (sym != null)
                 {
-                    // CLEAT-005: was (IReaderResolver)RT.ReaderResolverVar.deref(); now never null, so the Compiler.* fallback branches below are dead
-                    IReaderResolver resolver = ResolverOrDefault();
+                    IReaderResolver resolver = ResolverOrDefault();   // CLEAT-005/009: *reader-resolver* 未绑定时用 DefaultReaderResolver
 
                     if (sym.Namespace == null && sym.Name.EndsWith("#", StringComparison.Ordinal))
                     {
@@ -1417,14 +1430,9 @@ namespace clojure.lang
                     else if (sym.Namespace == null && sym.Name.EndsWith(".", StringComparison.Ordinal))
                     {
                         Symbol csym = Symbol.intern(null, sym.Name.Substring(0, sym.Name.Length - 1));
-                        if (resolver != null)
-                        {
-                            Symbol rc = resolver.ResolveClass(csym);
-                            if (rc != null)
-                                csym = rc;
-                        }
-                        else
-                            throw new NotImplementedException("cleat-005 stub: unreachable, was Compiler.resolveSymbol(csym)"); // CLEAT-005
+                        Symbol rc = resolver.ResolveClass(csym);   // CLEAT-009: 解析器永不为 null（缺省为 DefaultReaderResolver）
+                        if (rc != null)
+                            csym = rc;
                         sym = Symbol.intern(null, csym.Name + ".");
 
                     }
@@ -1432,7 +1440,7 @@ namespace clojure.lang
                     {
                         // simply quote method names
                     }
-                    else if (resolver != null)
+                    else
                     {
                         Symbol nsym = null;
                         if (sym.Namespace != null)
@@ -1457,12 +1465,6 @@ namespace clojure.lang
                             else sym = Symbol.intern(resolver.CurrentNS().Name, sym.Name);
                         }
                         // leave alone if no qualified
-                    }
-                    else
-                    {
-                        // CLEAT-005: unreachable; was the no-resolver fallback using Compiler.CurrentNamespace.GetMapping(ns-part) as Type
-                        // and Compiler.resolveSymbol(sym). DefaultReaderResolver implements the same rules.
-                        throw new NotImplementedException("cleat-005 stub: unreachable, was Compiler.resolveSymbol(sym)");
                     }
                     return RT.list(QUOTE, sym); // CLEAT-005: was Compiler.QuoteSym
                 }
