@@ -13,6 +13,8 @@ See docs/license.txt. |#
 ;;;   L3  uncover-free 之后：lambda 带自由变量表
 ;;;
 ;;; 应用一律带关键字 call（nanopass 中不带关键字的应用产生式会吞掉同形的形式，03 §9）。
+;;; Clojure 节点（cleat-051，clj- 开头）：Var 的读 / 写 / def、IFn 调用、关键字调用、ClojureOps 静态方法调用、deftype* / reify*；
+;;; fn* 是名字位置放 clj-fn-name 记录的 lambda（前中端与普通 lambda 相同，codegen 生成 AFunction / RestFn 的子类）。
 ;;; 库变量（library-letrec* 绑定的变量）编译为模块类型的静态字段，不是词法变量，不会被闭包捕获。
 (library (ironscheme compiler languages)
   (export
@@ -20,12 +22,16 @@ See docs/license.txt. |#
     L1 unparse-L1
     L2 unparse-L2
     L3 unparse-L3
-    datum? name? flag?)
+    datum? name? flag?
+    make-clj-fn-name clj-fn-name? clj-fn-name-class clj-fn-name-variadic)
   (import (rnrs) (nanopass))
 
   (define (datum? x) #t)
-  ;; 过程名（错误信息与打印用）：符号、字符串或 #f
-  (define (name? x) (or (symbol? x) (string? x) (not x)))
+  ;; Clojure 的 fn*（cleat-051）：class 是 Clojure 的类名（ns$name），variadic 是变长子句（总是最后一个子句，
+  ;; 形参为"必需参数 + 剩余 seq"）的必需参数个数，没有变长子句为 #f
+  (define-record-type clj-fn-name (fields class variadic))
+  ;; 过程名（错误信息与打印用）：符号、字符串或 #f；Clojure fn* 为 clj-fn-name 记录
+  (define (name? x) (or (symbol? x) (string? x) (not x) (clj-fn-name? x)))
   (define (flag? x) (boolean? x))
 
   (define-language L0
@@ -75,7 +81,16 @@ See docs/license.txt. |#
       (host-using d)
       (host-reference d)
       (host-namespaces)
-      (unsupported d e* ...))
+      (unsupported d e* ...)
+      ;; —— Clojure 节点（cleat-051）——
+      (clj-var-ref d st)                 ; d 为 Var；st 为真（^:dynamic）时 Var.get，否则 getRawRoot
+      (clj-var-set! d e)                 ; Var.set，值为新值
+      (clj-def d st0 st1 e0 e1)          ; st0：有初值（bindRoot e0）；st1：^:dynamic（setDynamic）；setMeta e1；值为 Var
+      (clj-invoke e e* ...)              ; IFn.invoke(k)
+      (clj-keyword-invoke d e e* ...)    ; d 为关键字；ILookup.valAt 快速路径，否则 RT.get；e* 为可选的缺省值
+      (clj-call d0 d1 e* ...)            ; ClojureOps 的静态方法 d0；d1 为 #f（全部是 object 参数）或固定参数个数 n（其余打包成 object[]）
+      (clj-case d e0 e1 e* ...)          ; case*：d 为 (shift mask 种类 ((哈希 测试值 跳过检查?) …))，e0 为被测值，e1 为 default，e* 与条目对齐
+      (clj-deftype d (x* ...) le* ...))  ; d 为类型描述；x* 为字段（方法体里可读、可变字段可 set!），le* 为方法（this 参数 …）
     (LambdaExpr (le)
       (lambda nm cl* ...))
     (Clause (cl)

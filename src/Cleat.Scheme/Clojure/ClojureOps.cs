@@ -6,8 +6,9 @@ using clojure.lang;
 namespace Cleat.Scheme.Clojure;
 
 /// <summary>
-/// Clojure 代码的运行时操作（cleat-050）：都是 Scheme 过程（<see cref="Procedure"/>），由 <c>(clojure syntax)</c> 的展开结果以
-/// 常量 <c>((quote 过程) 实参 …)</c> 调用。
+/// Clojure 代码的运行时操作。cleat-050 里它们都是 Scheme 过程（<see cref="Procedure"/>），展开结果以常量 <c>((quote 过程) 实参 …)</c>
+/// 调用；cleat-051 起编译后的代码经编译器的 Clojure 节点直接调用下面的静态方法（<c>$clj-call</c>）或 clojure.lang 的方法，
+/// 这里的过程只剩展开期用的（宏调用、:const 的值、元数据与集合的遍历）。
 /// <para>为什么不用 Scheme 的 <c>clr-call</c>：它对返回值（含声明为 object 的）做 <c>Interop.ConvertFrom</c>——long → fixnum（Int32）、
 /// 枚举 → 符号、字符串规范化，Clojure 的值经过它就变了（designs/13 §7 的值边界）。过程调用的实参与返回值不经转换。</para>
 /// 规则与 C# 展开器（cleat-013/014）给编译器的 Lcore 节点相同：调用 = IFn.invoke，Var 读 = getRawRoot / get，宿主互操作 = Reflector。
@@ -33,24 +34,6 @@ public static class ClojureOps
         public Op2(string name, Func<object, object, object> f) { _name = name; _f = f; }
         public override string Name => _name;
         public override object Invoke2(object a, object b) => _f(a, b);
-    }
-
-    private sealed class Op3 : Procedure
-    {
-        private readonly string _name;
-        private readonly Func<object, object, object, object> _f;
-        public Op3(string name, Func<object, object, object, object> f) { _name = name; _f = f; }
-        public override string Name => _name;
-        public override object Invoke3(object a, object b, object c) => _f(a, b, c);
-    }
-
-    private sealed class Op4 : Procedure
-    {
-        private readonly string _name;
-        private readonly Func<object, object, object, object, object> _f;
-        public Op4(string name, Func<object, object, object, object, object> f) { _name = name; _f = f; }
-        public override string Name => _name;
-        public override object Invoke4(object a, object b, object c, object d) => _f(a, b, c, d);
     }
 
     private sealed class OpN : VariadicProcedure
@@ -100,24 +83,9 @@ public static class ClojureOps
     public static readonly Procedure Invoke = new InvokeProc();
     public static readonly Procedure ApplyTo = new Op2("clojure-apply-to", (f, s) => ((IFn)f).applyTo(clojure.lang.RT.seq(s)));
 
-    /// <summary>(make-fn 名字 固定子句过程|#f 变长过程|#f 必需参数个数 固定个数位图)</summary>
-    public static readonly Procedure MakeFn = new OpN("clojure-make-fn", a =>
-      new ClojureFn(a[0].ToString(), a[1] as Procedure, a[2] as Procedure, Convert.ToInt32(a[3]), Convert.ToInt32(a[4])));
+    // —— Var（展开期：:const 的值）——
 
-    // —— Var ——
-
-    public static readonly Procedure VarRoot = new Op1("clojure-var-root", v => ((Var)v).getRawRoot());
     public static readonly Procedure VarGet = new Op1("clojure-var-get", v => ((Var)v).get());
-    public static readonly Procedure VarSet = new Op2("clojure-var-set", (v, x) => ((Var)v).set(x));
-    public static readonly Procedure VarBindRoot = new Op2("clojure-var-bind-root", (v, x) => { ((Var)v).bindRoot(x); return v; });
-    public static readonly Procedure VarSetMeta = new Op2("clojure-var-set-meta", (v, m) => { ((Var)v).setMeta((IPersistentMap)m); return v; });
-
-    // —— 集合字面量（与 Clojure 的 VectorExpr / MapExpr / SetExpr 相同：map 与 set 运行时检查重复键）——
-
-    public static readonly Procedure Vector = new OpN("clojure-vector", a => clojure.lang.RT.vector((object[])a.Clone()));
-    public static readonly Procedure HashMap = new OpN("clojure-map", a => clojure.lang.RT.map((object[])a.Clone()));
-    public static readonly Procedure HashSet = new OpN("clojure-set", a => clojure.lang.RT.set((object[])a.Clone()));
-    public static readonly Procedure WithMeta = new Op2("clojure-with-meta", (o, m) => ((IObj)o).withMeta((IPersistentMap)m));
 
     // —— 宿主互操作（Reflector 的规则；类型为 nil 时按实例的运行时类型）——
 
@@ -131,70 +99,6 @@ public static class ClojureOps
 
     private static object NotNil(object instance, object name) =>
       instance ?? throw new NullReferenceException($"Cannot invoke member {name} on nil");
-
-    /// <summary>(host-call 类型|nil 名字 实参数组 泛型实参|nil)：静态调用。</summary>
-    public static readonly Procedure StaticCall = new Op4("clojure-static-call", (t, name, args, gen) =>
-      Reflector.Call((Type)t, (string)name, null, (object[])args, null, Types(gen)));
-
-    /// <summary>(instance-call 类型|nil 名字 实例 实参数组 泛型实参|nil)：实例为 nil 抛 NullReferenceException（不当作静态调用）。</summary>
-    public static readonly Procedure InstanceCall = new OpN("clojure-instance-call", a =>
-      Reflector.Call((Type)a[0], (string)a[1], NotNil(a[2], a[1]), (object[])a[3], null, Types(a[4])));
-
-    public static readonly Procedure StaticField = new Op2("clojure-static-field", (t, name) => Reflector.GetField((Type)t, (string)name, null));
-    public static readonly Procedure InstanceField = new Op3("clojure-instance-field", (t, name, inst) =>
-      Reflector.GetField((Type)t, (string)name, NotNil(inst, name)));
-
-    /// <summary>(set-field 类型|nil 名字 实例|nil 值)：返回值（set! 的值）。</summary>
-    public static readonly Procedure SetField = new Op4("clojure-set-field", (t, name, inst, v) =>
-    {
-        Reflector.SetField((Type)t, (string)name, inst, v);
-        return v;
-    });
-
-    public static readonly Procedure New = new Op2("clojure-new", (t, args) => Reflector.New((Type)t, (object[])args));
-    public static readonly Procedure IsInstance = new Op2("clojure-instance?", (t, x) => Reflector.Is((Type)t, x));
-
-    public static readonly Procedure MonitorEnter = new Op1("clojure-monitor-enter", x => { Monitor.Enter(x); return null; });
-    public static readonly Procedure MonitorExit = new Op1("clojure-monitor-exit", x => { Monitor.Exit(x); return null; });
-
-    /// <summary>(import 类型)：导入 *ns*（运行时，与 ClojureCLR 的 ImportExpr 相同；值为 nil）。</summary>
-    public static readonly Procedure Import = new Op1("clojure-import", t =>
-    {
-        ((Namespace)clojure.lang.RT.CurrentNSVar.deref()).importClass((Type)t);
-        return null;
-    });
-
-    // —— case*（ClojureCLR CaseExpr 的语义；分支由展开结果按下标分派）——
-
-    /// <summary>
-    /// (case-index x shift mask 种类 哈希数组 测试数组 跳过检查数组) → 命中的分支下标，或 -1（default）。
-    /// 种类：0 = :int（非整数 → default；键为 ConvertToInt）、1 = :hash-equiv（Util.hash，比较用 equiv）、2 = :hash-identity（比较用同一性）；
-    /// 跳过检查的分支（哈希碰撞，由 case 宏生成 condp）不比较测试值。
-    /// </summary>
-    public static readonly Procedure CaseIndex = new OpN("clojure-case-index", a =>
-    {
-        object x = a[0];
-        int shift = Convert.ToInt32(a[1]), mask = Convert.ToInt32(a[2]), kind = Convert.ToInt32(a[3]);
-        var hashes = (object[])a[4];
-        var tests = (object[])a[5];
-        var skip = (object[])a[6];
-        int key;
-        if (kind == 0)
-        {
-            if (!Util.IsNonCharNumeric(x)) return -1;
-            key = Util.ConvertToInt(x);
-        }
-        else key = Util.hash(x);
-        if (mask != 0) key = (key >> shift) & mask;
-        for (int i = 0; i < hashes.Length; i++)
-        {
-            if (Convert.ToInt32(hashes[i]) != key) continue;
-            if (skip[i] is true) return i;
-            bool hit = kind == 2 ? ReferenceEquals(x, tests[i]) : Util.equiv(x, tests[i]);
-            return hit ? i : -1;
-        }
-        return -1;
-    });
 
     // —— 展开期使用（Clojure 数据的遍历，不经 Scheme 互操作的转换）——
 
@@ -228,7 +132,85 @@ public static class ClojureOps
     public static readonly Procedure ToLong = new Op1("clojure-long", x => Convert.ToInt64(x));
     public static readonly Procedure NextId = new Op1("clojure-next-id", _ => clojure.lang.RT.nextID().ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-    /// <summary>需要 cleat-051 编译器节点的形式（deftype* / reify*）的占位：运行时报错。</summary>
-    public static readonly Procedure Unsupported = new OpN("clojure-unsupported", a =>
-      throw new NotSupportedException($"{a[0]} is not supported yet: it needs the cleat-051 compiler (Clojure nodes: real CLR types)"));
+    // —— 编译后代码直接调用的静态方法（cleat-051 的 $clj-call 节点：参数与返回都是 object，尾部实参可打包成 object[]）——
+    // 与上面同名操作的过程语义相同；编译器生成 call ClojureOps::方法，不经 Scheme 过程，也不经 Scheme 互操作的转换。
+
+    public static object VectorOf(object[] items) => clojure.lang.RT.vector(items);
+    public static object MapOf(object[] kvs) => clojure.lang.RT.map(kvs);
+    public static object SetOf(object[] items) => clojure.lang.RT.set(items);
+    public static object WithMetaOf(object o, object m) => ((IObj)o).withMeta((IPersistentMap)m);
+
+    /// <summary>静态方法调用：t 为 Type，name 为成员名，gen 为泛型实参（Type 的 object[]）或 nil。</summary>
+    public static object CallStatic(object t, object name, object gen, object[] args) =>
+      Reflector.Call(HostSyntax.Real((Type)t), (string)name, null, args, null, Types(gen));
+
+    /// <summary>实例方法调用：t 为静态已知的类型或 nil（按实例的运行时类型）；实例为 nil 抛 NullReferenceException。</summary>
+    public static object CallInstance(object t, object name, object inst, object gen, object[] args) =>
+      Reflector.Call(HostSyntax.Real((Type)t), (string)name, NotNil(inst, name), args, null, Types(gen));
+
+    public static object GetStaticField(object t, object name) => Reflector.GetField(HostSyntax.Real((Type)t), (string)name, null);
+    public static object GetInstanceField(object t, object name, object inst) => Reflector.GetField(HostSyntax.Real((Type)t), (string)name, NotNil(inst, name));
+
+    public static object SetFieldOf(object t, object name, object inst, object v)
+    {
+        Reflector.SetField(HostSyntax.Real((Type)t), (string)name, inst, v);
+        return v;
+    }
+
+    /// <summary>类型作为值（类名符号求值）：桩类型换成真正的类型（deftype* 方法体里引用正在定义的类型）。</summary>
+    public static object RealType(object t) => HostSyntax.Real((Type)t);
+
+    public static object NewOf(object t, object[] args) => Reflector.New(HostSyntax.Real((Type)t), args);
+    public static object IsInstanceOf(object t, object x) => Reflector.Is(HostSyntax.Real((Type)t), x);
+
+    public static object MonitorEnterOf(object x)
+    {
+        Monitor.Enter(x);
+        return null;
+    }
+
+    public static object MonitorExitOf(object x)
+    {
+        Monitor.Exit(x);
+        return null;
+    }
+
+    public static object ImportOf(object t)
+    {
+        ((Namespace)clojure.lang.RT.CurrentNSVar.deref()).importClass(HostSyntax.Real((Type)t));
+        return null;
+    }
+
+    /// <summary>deftype* 求值时登记生成的类型（classForName 取最新定义的，cleat-051）；值为该类型。</summary>
+    public static object DefineType(object t)
+    {
+        // 两个类型名解析器都要看到最新的定义：Clojure 侧（classForName → Loader）与展开期的 HostSyntax（Scheme 的 TypeResolver）
+        Cleat.Core.Runtime.Loader.RegisterType((Type)t);
+        Cleat.Scheme.TypeResolver.AddCompileTimeType((Type)t);
+        return t;
+    }
+
+    // —— deftype* / reify* 方法的值转换（cleat-051）——
+
+    /// <summary>方法的原始类型实参装箱成 Clojure 的值（int → long 等，Reflector.ConvertFrom 的规则）。</summary>
+    public static object BoxArg(object x) => Reflector.ConvertFrom(x, null);
+
+    /// <summary>方法体的值（object）→ 声明的返回类型，装箱后由调用方 unbox.any / castclass：按 Reflector.Convert&lt;T&gt;（Clojure 的实参转换规则）。</summary>
+    public static object ConvertReturn(object x, Type t)
+    {
+        if (t == typeof(object)) return x;
+        var f = s_converters.GetOrAdd(t, type =>
+        {
+            var m = typeof(Reflector).GetMethod(nameof(Reflector.Convert)).MakeGenericMethod(type);
+            return v => m.Invoke(null, new[] { v });
+        });
+        try { return f(x); }
+        catch (System.Reflection.TargetInvocationException e) when (e.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+            throw;
+        }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Func<object, object>> s_converters = new();
 }

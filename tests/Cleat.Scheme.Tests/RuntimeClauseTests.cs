@@ -47,6 +47,23 @@ public class RuntimeClauseTests
         Assert.That(Assert.Throws<LcilException>(() => Table("(nil)", "forth")).Message, Does.Contain("unknown runtime"));
     }
 
+    /// <summary>cleat-051：cstr / csym / clist / cvec 总是 Clojure 的值，与程序集的 runtime 无关（Scheme 编译器的单元里的 Clojure 常量）。</summary>
+    [TestCase(LcilRuntime.Scheme)]
+    [TestCase(LcilRuntime.Clojure)]
+    public void UnambiguousClojureEncodings(string runtime)
+    {
+        var t = Table(@"(csym ""x"") (csym ""ns"" ""y"") (clist (long 1) (csym ""z"")) (cvec (long 2)) (cstr ""s"") (clist) (meta (map (kw ""m"") (true)) (cvec))", runtime);
+        Assert.That(t[0], Is.EqualTo(clojure.lang.Symbol.intern("x")));
+        Assert.That(t[1], Is.EqualTo(clojure.lang.Symbol.intern("ns", "y")));
+        Assert.That(t[2], Is.InstanceOf<clojure.lang.IPersistentList>());
+        Assert.That(clojure.lang.RT.printString(t[2]), Is.EqualTo("(1 z)"));
+        Assert.That(t[3], Is.InstanceOf<clojure.lang.IPersistentVector>());
+        Assert.That(((clojure.lang.IPersistentVector)t[3]).nth(0), Is.EqualTo(2L));
+        Assert.That(t[4], Is.EqualTo("s"));
+        Assert.That(clojure.lang.RT.count(t[5]), Is.EqualTo(0));
+        Assert.That(clojure.lang.RT.printString(((clojure.lang.IMeta)t[6]).meta()), Is.EqualTo("{:m true}"));
+    }
+
     private const string Lcil = @"
 (lcil 1
   (assembly ""rt"" (references ""Cleat.Scheme""))

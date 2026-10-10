@@ -104,6 +104,19 @@ See docs/license.txt. |#
   (define-target-type calls-type calls)
   (define-target-type arith-type inline-arith)
   (define-target-type scheme-exn-type scheme-exception)
+  ;; Clojure 运行时（cleat-051）
+  (define-target-type ifn-type ifn)
+  (define-target-type clj-var-type clj-var)
+  (define-target-type ilookup-type ilookup)
+  (define-target-type clj-util-type clj-util)
+  (define-target-type clj-rt-type clj-rt)
+  (define-target-type afunction-type afunction)
+  (define-target-type restfn-type restfn)
+  (define-target-type pmap-type persistent-map)
+  (define-target-type iobj-type iobj)
+  (define-target-type clojure-ops-type clojure-ops)
+  (define-target-type type-type type)
+  (define-target-type type-handle-type type-handle)
   ;; host-* 节点对应的发射器指令名（CLR 目标就是 Lcil 的 clr-*）
   (define (interop key) (target-interop (current-target) key))
 
@@ -129,7 +142,8 @@ See docs/license.txt. |#
             known-loc            ; eq 哈希表：位置符号 → known 记录（本单元导出的已知过程，iron-034e）
             (mutable boot-ref)    ; 见下行
             (mutable shared-count) ; 034d：共享持有类中已分配的过程个数
-            shared))              ; 034d：eqv 哈希表 持有类下标 → #(字段 方法 初始化代码)（各逆序）
+            shared                ; 034d：eqv 哈希表 持有类下标 → #(字段 方法 初始化代码)（各逆序）
+            type-names))          ; cleat-051：按名字生成的类型（Clojure 的函数类、deftype）已用的名字（字符串哈希表）
   ;; 跨单元引用 boot 的已知过程：off（不可用）| #f（可用、还没用）| #t（用过，入口要核对镜像）
 
   ;; 已知过程：class 是过程的名字（共享过程的方法前缀 / 单独的类名），子句方法在 owner 类里，名为 prefix + "C<i>"
@@ -659,6 +673,13 @@ See docs/license.txt. |#
       [(unsupported ,d ,e* ...) (for-each Expr e*)]
       [(box ,e) (Expr e)]
       [(set-box! ,x ,e) (Expr e)]
+      [(clj-var-set! ,d ,e) (Expr e)]
+      [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (Expr e0) (Expr e1)]
+      [(clj-invoke ,e ,e* ...) (Expr e) (for-each Expr e*)]
+      [(clj-keyword-invoke ,d ,e ,e* ...) (Expr e) (for-each Expr e*)]
+      [(clj-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
+      [(clj-case ,d ,e0 ,e1 ,e* ...) (Expr e0) (Expr e1) (for-each Expr e*)]
+      [(clj-deftype ,d (,x* ...) ,le* ...) (for-each exclude! x*) (for-each Expr le*)]
       [else (void)])
     (Expr ir))
 
@@ -809,7 +830,7 @@ See docs/license.txt. |#
         ((arg) (emit! mc `(ldarg ,(cdr loc))))
         ((local) (emit! mc `(ldloc ,(cdr loc))))
         ((tlocal) (emit! mc `(ldloc ,(cadr loc))) (box-raw! mc (cddr loc)))
-        ((field) (emit! mc '(ldarg 0) `(ldfld ,(mctx-class mc) ,(cdr loc))))
+        ((field dfield) (emit! mc '(ldarg 0) `(ldfld ,(mctx-class mc) ,(cdr loc))))
         ((self) (cond
                   ((pair? (cdr loc)) (emit! mc `(ldsfld ,(cadr loc) ,(cddr loc))))   ; 034d：共享持有类中的过程
                   ((mctx-static? mc) (emit! mc `(ldsfld ,(mctx-class mc) "Instance")))
@@ -821,6 +842,9 @@ See docs/license.txt. |#
         ((arg) (emit! mc `(starg ,(cdr loc))))
         ((local) (emit! mc `(stloc ,(cdr loc))))
         ((tlocal) (emit! mc `(stloc ,(cadr loc))))   ; 栈上须是原始值（cg-raw）
+        ;; deftype* 的可变字段（cleat-051）
+        ((dfield) (let ((t (new-local! mc obj)))
+                    (emit! mc `(stloc ,t) '(ldarg 0) `(ldloc ,t) `(stfld ,(mctx-class mc) ,(cdr loc)))))
         (else (error 'codegen "cannot assign captured variable (should be boxed)" x)))))
 
   ;; 为词法变量分配存储：IL 局部变量（有类型的是 int32 / double 局部变量）。返回下标
@@ -1081,6 +1105,118 @@ See docs/license.txt. |#
        (for-each (lambda (x) (cg x mc 'effect)) e*)
        (emit! mc `(ldstr ,d) `(call ,calls-type "Unsupported" (,string-type) ,obj))
        (finish-value! mc ctx)]
+      ;; —— Clojure 节点（cleat-051）：直接调 clojure.lang 的方法，不经 Scheme 过程与互操作的值转换 ——
+      [(clj-var-ref ,d ,st)
+       ;; VarExpr：^:dynamic 的 Var 用 get（看线程绑定），否则 getRawRoot
+       (unless (eq? ctx 'effect)
+         (load-constant! mc d)
+         (emit! mc `(castclass ,clj-var-type) `(callvirt ,clj-var-type ,(if st "get" "getRawRoot") () ,obj))
+         (finish-value! mc ctx))]
+      [(clj-var-set! ,d ,e)
+       (operands! mc (list (lambda () (load-constant! mc d) (emit! mc `(castclass ,clj-var-type)))
+                           (lambda () (cg e mc 'value))))
+       (emit! mc `(callvirt ,clj-var-type "set" (,obj) ,obj))
+       (finish-value! mc ctx)]
+      [(clj-def ,d ,st0 ,st1 ,e0 ,e1)
+       ;; DefExpr：setDynamic、bindRoot（有初值时）、setMeta；值为 Var
+       (let ((var! (lambda () (load-constant! mc d) (emit! mc `(castclass ,clj-var-type)))))
+         (when st1
+           (var!)
+           (emit! mc `(callvirt ,clj-var-type "setDynamic" () ,clj-var-type) '(pop)))
+         (when st0
+           (operands! mc (list var! (lambda () (cg e0 mc 'value))))
+           (emit! mc `(callvirt ,clj-var-type "bindRoot" (,obj) ,void-type)))
+         (operands! mc (list var! (lambda () (cg e1 mc 'value) (emit! mc `(castclass ,pmap-type)))))
+         (emit! mc `(callvirt ,clj-var-type "setMeta" (,pmap-type) ,void-type))
+         (unless (eq? ctx 'effect)
+           (load-constant! mc d)
+           (finish-value! mc ctx)))]
+      [(clj-invoke ,e ,e* ...)
+       ;; InvokeExpr：callvirt IFn::invoke(object × k)；超过 20 个实参时第 21 个起打包成 params 数组
+       (let ((argc (length e*)))
+         (operands! mc (cons (lambda () (cg e mc 'value) (emit! mc `(castclass ,ifn-type)))
+                             (map (lambda (x) (lambda () (cg x mc 'value))) e*)))
+         (when (> argc 20) (pack-array! mc (- argc 20)))
+         (when (and (tail-ok? mc ctx) (target-clojure-tail-calls? (current-target))) (emit! mc '(tail)))
+         (emit! mc `(callvirt ,ifn-type "invoke" ,(if (> argc 20) (append (objs 20) (list obj-array)) (objs argc)) ,obj))
+         (finish-value! mc ctx))]
+      [(clj-keyword-invoke ,d ,e ,e* ...)
+       ;; KeywordInvokeExpr：目标是 ILookup 时 valAt，否则 RT.get（与 Keyword.invoke 相同）；实参先存入临时变量
+       (let ((t (new-local! mc obj))
+             (defs (map (lambda (x) (new-local! mc obj)) e*))
+             (slow (new-label! mc))
+             (end (new-label! mc))
+             (rest! (lambda (defs) (for-each (lambda (l) (emit! mc `(ldloc ,l))) defs))))
+         (cg e mc 'value)
+         (emit! mc `(stloc ,t))
+         (for-each (lambda (x l) (cg x mc 'value) (emit! mc `(stloc ,l))) e* defs)
+         (emit! mc `(ldloc ,t) `(isinst ,ilookup-type) '(dup) `(brfalse ,slow))
+         (load-constant! mc d)
+         (rest! defs)
+         (emit! mc `(callvirt ,ilookup-type "valAt" ,(objs (+ 1 (length defs))) ,obj) `(br ,end)
+                `(label ,slow) '(pop) `(ldloc ,t))
+         (load-constant! mc d)
+         (rest! defs)
+         (emit! mc `(call ,clj-rt-type "get" ,(objs (+ 2 (length defs))) ,obj) `(label ,end))
+         (finish-value! mc ctx))]
+      [(clj-call ,d0 ,d1 ,e* ...)
+       ;; ClojureOps 的静态方法：参数与返回都是 object；d1 为固定参数个数时其余实参打包成 object[]
+       (let ((argc (length e*)))
+         (operands! mc (map (lambda (x) (lambda () (cg x mc 'value))) e*))
+         (when d1 (pack-array! mc (- argc d1)))
+         (emit! mc `(call ,clojure-ops-type ,d0 ,(if d1 (append (objs d1) (list obj-array)) (objs argc)) ,obj))
+         (finish-value! mc ctx))]
+      [(clj-case ,d ,e0 ,e1 ,e* ...)
+       ;; CaseExpr（ClojureCLR 的语义）：键 = :int 时 ConvertToInt（非数字直接 default），否则 Util.hash；有 mask 时 (键 >> shift) & mask；
+       ;; 按键 switch（键的范围稠密时用 IL switch 表，否则比较链），命中后比较测试值（:hash-identity 用同一性，其余 Util.equiv；
+       ;; 哈希碰撞由 case 宏生成的分支跳过比较），不等则 default。分支与 default 按上下文生成（尾位置照常）
+       (let* ((shift (list-ref d 0)) (mask (list-ref d 1)) (kind (list-ref d 2)) (entries (list-ref d 3))
+              (x (new-local! mc obj)) (k (new-local! mc int32-type))
+              (def-l (new-label! mc)) (end-l (new-label! mc))
+              (labels (map (lambda (en) (new-label! mc)) entries))
+              (hs (map car entries)))
+         (cg e0 mc 'value)
+         (emit! mc `(stloc ,x))
+         (if (= kind 0)
+             (emit! mc `(ldloc ,x) `(call ,clj-util-type "IsNonCharNumeric" (,obj) ,bool-type) `(brfalse ,def-l)
+                    `(ldloc ,x) `(call ,clj-util-type "ConvertToInt" (,obj) ,int32-type))
+             (emit! mc `(ldloc ,x) `(call ,clj-util-type "hash" (,obj) ,int32-type)))
+         (unless (= mask 0) (emit! mc `(ldc.i4 ,shift) '(shr) `(ldc.i4 ,mask) '(and)))
+         (emit! mc `(stloc ,k))
+         (unless (null? hs)
+           (let ((lo (apply min hs)) (hi (apply max hs)))
+             (if (<= (- hi lo) (+ 8 (* 2 (length hs))))
+                 (emit! mc `(ldloc ,k) `(ldc.i4 ,lo) '(sub)
+                        `(switch ,(let loop ((h lo))
+                                    (if (> h hi)
+                                        '()
+                                        (cons (let ((i (find-index (lambda (v) (= v h)) hs))) (if i (list-ref labels i) def-l))
+                                              (loop (+ h 1)))))))
+                 (for-each (lambda (h l) (emit! mc `(ldloc ,k) `(ldc.i4 ,h) `(beq ,l))) hs labels))))
+         (emit! mc `(br ,def-l))
+         (for-each
+           (lambda (en l then)
+             (emit! mc `(label ,l))
+             (unless (caddr en)
+               (emit! mc `(ldloc ,x))
+               (load-constant! mc (cadr en))
+               (emit! mc (if (= kind 2) '(ceq) `(call ,clj-util-type "equiv" (,obj ,obj) ,bool-type)) `(brfalse ,def-l)))
+             (cg then mc ctx)
+             (unless (eq? ctx 'tail) (emit! mc `(br ,end-l))))
+           entries labels e*)
+         (emit! mc `(label ,def-l))
+         (cg e1 mc ctx)
+         (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))]
+      [(clj-deftype ,d (,x* ...) ,le* ...)
+       ;; deftype*：值为生成的类型（运行时登记，classForName 取最新的）；reify*：值为新实例（自由变量与 nil 元数据作构造参数）
+       (let ((c (deftype-class! mc d x* le*)))
+         (if (deftype-info-reify? d)
+             (begin
+               (for-each (lambda (v) (load-var! mc v)) (cdr c))
+               (emit! mc '(ldnull) `(newobj ,(car c) ,(append (objs (length (cdr c))) (list obj)))))
+             (emit! mc `(ldtoken ,(car c)) `(call ,type-type "GetTypeFromHandle" (,type-handle-type) ,type-type)
+                    `(call ,clojure-ops-type "DefineType" (,obj) ,obj)))
+         (finish-value! mc ctx))]
       [(box ,e)
        (cg e mc 'value)
        (emit! mc `(newobj ,box-type (,obj)))
@@ -1394,9 +1530,11 @@ See docs/license.txt. |#
   ;; preset：已知过程的 known 记录（类名 / 持有类与前缀已在 collect-known! 中确定）
   (define (procedure-class! mc nm x1* cl* self self-mref preset)
     (let ((fields (if self (remq self x1*) x1*)))
+      (if (clj-fn-name? nm)
+          (clj-fn-class! mc nm x1* cl* self)
       (if (and opt-shared? (null? fields))
           (shared-procedure! mc nm cl* self self-mref (and (pair? preset) (car preset)))
-          (procedure-class1! mc nm x1* cl* self self-mref preset))))
+          (procedure-class1! mc nm x1* cl* self self-mref preset)))))
 
   ;; 034d：共享持有类中的过程。返回 (#t 持有类 字段)
   (define (shared-procedure! mc nm cl* self self-mref k)
@@ -1546,6 +1684,223 @@ See docs/license.txt. |#
               ,@(reverse methods)))
          (list static? name "Instance")))
 
+;; ———————————————— Clojure 的 fn* → AFunction / RestFn 子类（cleat-051）————————————————
+  ;;
+  ;; 与 Procedure 子类同构：自由变量为实例字段 c0 …，没有自由变量的是单例（静态字段 Instance，.cctor 创建），
+  ;; letrec 的自引用为 this。固定参数子句 = invoke(k) 的覆盖；变长子句（最后一个，形参为"必需参数 + 剩余 seq"）
+  ;; = RestFn.doInvoke 的覆盖 + getRequiredArity（RestFn 负责打包剩余参数与 applyTo）；HasArity 按子句。
+  ;; 类名是 Clojure 的 ns$name（AFn.WrongArityException 用类型全名，ArityException 的文本因此与 Clojure 相同），单元内重名加 __N
+
+  (define (unique-type-name! u name)
+    (let ((names (unit-type-names u)))
+      (let loop ((k 1))
+        (let ((n (if (= k 1) name (string-append name "__" (number->string k)))))
+          (if (hashtable-ref names n #f)
+              (loop (+ k 1))
+              (begin (hashtable-set! names n #t) n))))))
+
+  (define (clj-fn-class! mc nm x1* cl* self)
+    (let* ((u (mctx-unit mc))
+           (fields (if self (remq self x1*) x1*))
+           (static? (null? fields))
+           (name (unique-type-name! u (clj-fn-name-class nm)))
+           (variadic (clj-fn-name-variadic nm))
+           (n (length cl*))
+           (base (if variadic restfn-type afunction-type))
+           (field-names (let loop ((fs fields) (i 0))
+                          (if (null? fs) '() (cons (string-append "c" (number->string i)) (loop (cdr fs) (+ i 1))))))
+           (arities (let loop ((cl* cl*) (i 0))
+                      (if (null? cl*) '() (cons (car (clause-shape (car cl*))) (loop (cdr cl*) (+ i 1))))))
+           (fixed (if variadic (list-head arities (- n 1)) arities))
+           (methods '()))
+      (define (add-method! m) (set! methods (cons m methods)))
+      (let loop ((cls cl*) (i 0))
+        (unless (null? cls)
+          (add-method! (clj-clause-method u name (car cls) fields field-names self
+                                          (if (and variadic (= i (- n 1))) "doInvoke" "invoke")))
+          (loop (cdr cls) (+ i 1))))
+      (when variadic
+        (add-method! `(method "getRequiredArity" (attrs override) (params) (ret ,int32-type)
+                        (body (ldc.i4 ,variadic) (ret)))))
+      (add-method!
+        `(method "HasArity" (attrs override) (params ,int32-type) (ret ,bool-type)
+           (body ,@(apply append (map (lambda (k) `((ldarg 1) (ldc.i4 ,k) (beq YES))) fixed))
+                 ,@(if variadic `((ldarg 1) (ldc.i4 ,variadic) (bge YES)) '())
+                 (ldc.i4 0) (ret) (label YES) (ldc.i4 1) (ret))))
+      (add-method! `(method ".ctor" (attrs ctor) (params)
+                      (body (ldarg 0) (call ,base ".ctor" () ,void-type) (ret))))
+      (when static?
+        (add-method! `(method ".cctor" (attrs cctor) (params)
+                        (body (newobj ,name ()) (stsfld ,name "Instance") (ret)))))
+      (add-class! u
+        `(type ,name (base ,base) (attrs sealed)
+           ,@(if static? `((field "Instance" ,name static)) (map (lambda (f) `(field ,f ,obj)) field-names))
+           ,@(reverse methods)))
+      (list static? name "Instance")))
+
+  (define (find-index pred ls)
+    (let loop ((ls ls) (i 0)) (cond ((null? ls) #f) ((pred (car ls)) i) (else (loop (cdr ls) (+ i 1))))))
+
+  (define (list-head ls n) (if (= n 0) '() (cons (car ls) (list-head (cdr ls) (- n 1)))))
+
+  ;; Clojure 函数类的一个子句：实例方法 mname（invoke / doInvoke 的覆盖），形参都是 object
+  (define (clj-clause-method u class cl fields field-names self mname)
+    (nanopass-case (L3 Clause) cl
+      [(clause (,x* ...) ,x ,body)
+       (when x (error 'codegen "Clojure fn clauses have fixed parameters" x))
+       (let ((mc (make-method-ctx u class #f #f #f #f)))
+         (let loop ((ps x*) (j 1))
+           (unless (null? ps)
+             (hashtable-set! (mctx-vars mc) (car ps) (cons 'arg j))
+             (loop (cdr ps) (+ j 1))))
+         (for-each (lambda (f n) (hashtable-set! (mctx-vars mc) f (cons 'field n))) fields field-names)
+         (when self (hashtable-set! (mctx-vars mc) self '(self)))
+         (mctx-big?-set! mc (bigger-than? body big-body-nodes))
+         (cg body mc 'tail)
+         (finish-method mc mname '(override) (objs (length x*))))]))
+
+  ;; ———————————————— deftype* / reify* → CLR 类型（cleat-051）————————————————
+  ;;
+  ;; 描述 d（由 (clojure syntax) 在展开期按 C# 展开器的规则算好，编译器不反射）：
+  ;;   (类名 reify? 字段 接口 方法 桩 basis)
+  ;;   字段：((名字 可变? volatile?) …)，与 x* 对齐；接口：类型名（含继承的接口）；
+  ;;   方法：((接口|#f 名字 返回类型 (参数类型 …)) …)，与 le* 对齐；类型写作 ("名字" . 值类型?)；
+  ;;   桩：接口中没有被方法实现的方法 ((接口 名字 返回类型 (参数类型 …) 目标方法下标|#f) …)：
+  ;;       有同名同参的方法时转调它（返回值按需转换），否则抛 NotImplementedException（CLR 要求实现全部接口方法）；
+  ;;   basis：deftype 的 getBasis 返回的向量（常量），reify 为 #f。
+  ;; 字段（与 reify 的自由变量）都是 object；方法的原始类型参数在入口按 Clojure 的规则装箱（int → long），
+  ;; 返回值按声明类型转换（Reflector.Convert）。reify 另有 __meta 字段与 IObj 的 meta / withMeta。
+  (define (deftype-info-class d) (list-ref d 0))
+  (define (deftype-info-reify? d) (list-ref d 1))
+  (define (deftype-info-fields d) (list-ref d 2))
+  (define (deftype-info-ifaces d) (list-ref d 3))
+  (define (deftype-info-methods d) (list-ref d 4))
+  (define (deftype-info-stubs d) (list-ref d 5))
+  (define (deftype-info-basis d) (list-ref d 6))
+
+  (define (tname t) (car t))
+  (define (value-type? t) (cdr t))
+
+  ;; 返回 (类名 . 自由变量)
+  (define (deftype-class! mc d x* le*)
+    (let* ((u (mctx-unit mc))
+           (name (deftype-info-class d))
+           (reify? (deftype-info-reify? d))
+           (fnames (map car (deftype-info-fields d)))
+           (caps (fold-left (lambda (acc le)
+                              (nanopass-case (L3 LambdaExpr) le
+                                [(lambda ,nm (,x1* ...) ,cl* ...)
+                                 (fold-left (lambda (a v) (if (or (memq v a) (memq v x*)) a (append a (list v)))) acc x1*)]))
+                            '() le*))
+           (cnames (let loop ((cs caps) (i 0))
+                     (if (null? cs) '() (cons (string-append "c" (number->string i)) (loop (cdr cs) (+ i 1))))))
+           (specs (deftype-info-methods d))
+           (mnames (let loop ((ss specs) (used '()) (acc '()))
+                     (if (null? ss)
+                         (reverse acc)
+                         (let* ((sp (car ss))
+                                (key (cons (cadr sp) (map tname (cadddr sp))))
+                                (n (if (or (not (car sp)) (not (member key used))) (cadr sp) (string-append (car sp) "." (cadr sp)))))
+                           (loop (cdr ss) (cons key used) (cons n acc))))))
+           (ctor-fields (if reify? (append cnames (list "__meta")) fnames)))
+      (when (and (not reify?) (pair? caps))
+        (syntax-violation 'deftype* "deftype* methods cannot close over locals" (map pretty caps)))
+      (hashtable-set! (unit-type-names u) name #t)
+      (add-class! u
+        `(type ,name (attrs sealed) (interfaces ,@(deftype-info-ifaces d))
+           ,@(if reify?
+                 (map (lambda (f) `(field ,f ,obj)) ctor-fields)
+                 (map (lambda (f) `(field ,(car f) ,obj ,@(if (caddr f) '(volatile) '()))) (deftype-info-fields d)))
+           (method ".ctor" (attrs ctor) (params ,@(objs (length ctor-fields)))
+             (body (ldarg 0) (call ,obj ".ctor" () ,void-type)
+                   ,@(let loop ((fs ctor-fields) (i 1))
+                       (if (null? fs) '() (cons* '(ldarg 0) `(ldarg ,i) `(stfld ,name ,(car fs)) (loop (cdr fs) (+ i 1)))))
+                   (ret)))
+           ,@(map (lambda (le sp mn) (deftype-method u name le sp mn x* fnames caps cnames)) le* specs mnames)
+           ,@(map (lambda (st) (deftype-stub name st specs mnames)) (deftype-info-stubs d))
+           ,@(if reify?
+                 `((method "meta" (params) (ret ,pmap-type) (implements "clojure.lang.IMeta" "meta")
+                     (body (ldarg 0) (ldfld ,name "__meta") (castclass ,pmap-type) (ret)))
+                   (method "withMeta" (params ,pmap-type) (ret ,iobj-type) (implements "clojure.lang.IObj" "withMeta")
+                     (body ,@(apply append (map (lambda (c) `((ldarg 0) (ldfld ,name ,c))) cnames))
+                           (ldarg 1) (newobj ,name ,(objs (length ctor-fields))) (ret))))
+                 `((method "getBasis" (attrs static) (params) (ret "clojure.lang.IPersistentVector")
+                     (body (ldconst ,(constant-index! u (deftype-info-basis d))) (castclass "clojure.lang.IPersistentVector") (ret)))))))
+      (cons name caps)))
+
+  ;; 方法体：this 为 ldarg 0；原始类型的参数在入口装箱进局部变量；字段读写 this 的字段；返回值转换为声明类型
+  (define (deftype-method u class le spec mname fvars fnames caps cnames)
+    (nanopass-case (L3 LambdaExpr) le
+      [(lambda ,nm (,x1* ...) ,cl)
+       (nanopass-case (L3 Clause) cl
+         [(clause (,x2* ...) ,x ,body)
+          (let* ((mc (make-method-ctx u class #f #f #f #f))
+                 (iface (car spec)) (ret (caddr spec)) (ptypes (cadddr spec))
+                 (entry (with-buffer mc
+                          (lambda ()
+                            (hashtable-set! (mctx-vars mc) (car x2*) '(self))
+                            (let loop ((ps (cdr x2*)) (ts ptypes) (j 1))
+                              (unless (null? ps)
+                                (if (value-type? (car ts))
+                                    (let ((l (new-local! mc obj)))
+                                      (emit! mc `(ldarg ,j) `(box ,(tname (car ts)))
+                                             `(call ,clojure-ops-type "BoxArg" (,obj) ,obj) `(stloc ,l))
+                                      (hashtable-set! (mctx-vars mc) (car ps) (cons 'local l)))
+                                    (hashtable-set! (mctx-vars mc) (car ps) (cons 'arg j)))
+                                (loop (cdr ps) (cdr ts) (+ j 1))))
+                            (for-each (lambda (f n) (hashtable-set! (mctx-vars mc) f (cons 'dfield n))) fvars fnames)
+                            (for-each (lambda (c n) (hashtable-set! (mctx-vars mc) c (cons 'field n))) caps cnames)))))
+            (emit-code! mc entry)
+            (mctx-big?-set! mc (bigger-than? body big-body-nodes))
+            (cond
+              ((string=? (tname ret) void-type) (cg body mc 'effect) (emit! mc '(ret)))
+              ((string=? (tname ret) obj) (cg body mc 'tail))
+              (else (cg body mc 'value) (convert-return! mc ret) (emit! mc '(ret))))
+            `(method ,mname (attrs ,@(if iface '() '(override))) (params ,@(map tname ptypes)) (ret ,(tname ret))
+               (locals ,@(reverse (mctx-locals mc)))
+               (,(interop 'namespaces))
+               ,@(if iface `((implements ,iface ,(cadr spec))) '())
+               (body ,@(reverse (mctx-buffer mc)))))])]))
+
+  ;; 栈上的 object → 声明类型 t（("名字" . 值类型?)）
+  (define (convert-return! mc t)
+    (cond
+      ((string=? (tname t) obj) (void))
+      ((value-type? t)
+       (emit! mc `(ldtoken ,(tname t)) `(call ,type-type "GetTypeFromHandle" (,type-handle-type) ,type-type)
+              `(call ,clojure-ops-type "ConvertReturn" (,obj ,type-type) ,obj) `(unbox.any ,(tname t))))
+      (else (emit! mc `(castclass ,(tname t))))))
+
+  ;; 接口中没有直接实现的方法：转调同名同参的方法，或抛 NotImplementedException
+  (define (deftype-stub class st specs mnames)
+    (let* ((iface (list-ref st 0)) (name (list-ref st 1)) (ret (list-ref st 2)) (ptypes (list-ref st 3)) (target (list-ref st 4))
+           (mname (string-append iface "." name)))
+      `(method ,mname (attrs private) (params ,@(map tname ptypes)) (ret ,(tname ret))
+         (implements ,iface ,name)
+         (body
+           ,@(if target
+                 (let* ((sp (list-ref specs target)) (tret (caddr sp)))
+                   `((ldarg 0)
+                     ,@(let loop ((i 1) (ts ptypes)) (if (null? ts) '() (cons `(ldarg ,i) (loop (+ i 1) (cdr ts)))))
+                     (call ,class ,(list-ref mnames target) ,(map tname (cadddr sp)) ,(tname tret))
+                     ,@(cond
+                         ((string=? (tname ret) void-type) (if (string=? (tname tret) void-type) '() '((pop))))
+                         ((string=? (tname tret) (tname ret)) '())
+                         (else
+                          (append
+                            (cond ((string=? (tname tret) void-type) '((ldnull)))
+                                  ((value-type? tret) `((box ,(tname tret))))
+                                  (else '()))
+                            (cond ((string=? (tname ret) obj) '())
+                                  ((value-type? ret)
+                                   `((ldtoken ,(tname ret)) (call ,type-type "GetTypeFromHandle" (,type-handle-type) ,type-type)
+                                     (call ,clojure-ops-type "ConvertReturn" (,obj ,type-type) ,obj) (unbox.any ,(tname ret))))
+                                  (else `((castclass ,(tname ret))))))))
+                     (ret)))
+                 `((ldstr ,(string-append iface "." name " is not implemented by " class))
+                   (newobj "System.NotImplementedException" (,string-type))
+                   (throw)))))))
+
   (define (class-name u nm)
     (string-append (sanitize (unit-module u)) "$" (number->string (next-id! u))
                    (if nm (string-append "$" (sanitize nm)) "")))
@@ -1651,7 +2006,7 @@ See docs/license.txt. |#
     (let ((u (make-unit assembly-name module-name '() '() 0 (make-eq-hashtable) '() '() '() (make-eq-hashtable)
                         (make-eq-hashtable) '() 0 massigned (make-eq-hashtable)
                         (if (and opt-034? (not (string=? assembly-name boot-assembly-name)) (boot-interface)) #f 'off)
-                        0 (make-eqv-hashtable))))
+                        0 (make-eqv-hashtable) (make-hashtable string-hash string=?))))
       ;; 1. 已知过程：库变量绑定的、无自由变量且不被再赋值的 lambda
       (for-each (lambda (f) (collect-known! u f)) forms)
       (hashtable-clear! var-types)

@@ -1,4 +1,4 @@
-# Lcil 第 1 版规格（cleat-019 冻结；cleat-045 加 runtime 子句与联合常量编码）
+# Lcil 第 1 版规格（cleat-019 冻结；cleat-045 加 runtime 子句与联合常量编码；cleat-051 加无歧义的 Clojure 常量编码）
 
 继承 IronScheme `designs/04-lcil-and-emitter.md` §2 的全部内容，本文只写完整规格与 cleat 的扩展（标 **[cleat]**）。设计背景见 [designs/05-cil-backend.md](../../designs/05-cil-backend.md)、[designs/15 §1](../../designs/15-scheme-core-vendoring.md)。
 
@@ -97,5 +97,6 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
 | IronScheme | `(unspecified)` `(eof)` `(fix n)` `(big "十进制")` `(rat "n/d")` `(flo "位模式")` `(cpx 实 虚)` `(chr 码点)` `(mstr "…")` `(gensym "…")` `(pair a d)` `(dlist e … 表尾)` `(bv "十六进制")` `(rtd …)` `(rec rtd f …)` `(ann …)` `(eqht k v …)` `(cnd …)` `(rcd rtd 父)` | Scheme 值（IronScheme 04 §3） |
 | cleat | `(long n)` `(double "位模式")` `(bigint "…")` `(bigdec "…")` `(ratio "n/d")` `(char 码元)` `(kw "name")` / `(kw "ns" "name")` `(var "ns" "name")` `(map k v …)` `(set e …)` `(sorted-map k v …)` `(sorted-set e …)` `(queue e …)` `(meta m x)` `(regex "…")` `(inst "…")` `(uuid "…")` `(type "全名")` `(record "全名" k v …)` | clojure.lang 值（designs/05 §3） |
 | **按 runtime 解释** | `(str "…")` `(sym …)` `(list e …)` `(vec e …)` | `scheme`：`string`（含 BMP 外字符为宽串）/ `Cleat.Scheme.Symbol`（一个名字）/ `Cons` 表 / `object[]`；`clojure`：`string` / `clojure.lang.Symbol`（`(sym "name")` 或 `(sym "ns" "name")`）/ `PersistentList` / `PersistentVector` |
+| cleat（无歧义，cleat-051） | `(cstr "…")` `(csym "name")` / `(csym "ns" "name")` `(clist e …)` `(cvec e …)` | 总是 Clojure 的 `string` / `clojure.lang.Symbol` / `PersistentList` / `PersistentVector`，与程序集的 runtime 无关：Scheme 单元（Scheme 编译器的产物都是 `(runtime scheme)`）里的 Clojure 常量用它们 |
 
 常量表所属的运行时是程序集的 `runtime`（方法级的 `runtime` 只影响互操作指令）。

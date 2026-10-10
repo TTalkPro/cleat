@@ -57,7 +57,15 @@ See docs/license.txt. |#
       [(host-using ,d) '()]
       [(host-reference ,d) '()]
       [(host-namespaces) '()]
-      [(unsupported ,d ,e* ...) e*]))
+      [(unsupported ,d ,e* ...) e*]
+      [(clj-var-ref ,d ,st) '()]
+      [(clj-var-set! ,d ,e) (list e)]
+      [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (list e0 e1)]
+      [(clj-invoke ,e ,e* ...) (cons e e*)]
+      [(clj-keyword-invoke ,d ,e ,e* ...) (cons e e*)]
+      [(clj-call ,d0 ,d1 ,e* ...) e*]
+      [(clj-case ,d ,e0 ,e1 ,e* ...) (cons* e0 e1 e*)]
+      [(clj-deftype ,d (,x* ...) ,le* ...) le*]))
 
 
   (define (var-ref? e v)
@@ -103,6 +111,8 @@ See docs/license.txt. |#
                 (or (r e #f) (r* e*))))))]
       [(if ,e0 ,e1 ,e2) (or (r e0 #f) (r e1 tail?) (r e2 tail?))]
       [(begin ,e* ... ,e) (or (r* e*) (r e tail?))]
+      ;; case* 的分支与 default 在尾位置（与 if 相同）
+      [(clj-case ,d ,e0 ,e1 ,e* ...) (or (r e0 #f) (r e1 tail?) (exists (lambda (b) (r b tail?)) e*))]
       [(let ([,x* ,e*] ...) ,body) (or (r* e*) (r body tail?))]
       [(letrec ([,x* ,e*] ...) ,body) (or (r* e*) (r body tail?))]
       [(lambda ,nm ,cl* ...)
@@ -123,6 +133,7 @@ See docs/license.txt. |#
                   node))))]
         [(if ,e0 ,e1 ,e2) `(if ,e0 ,(jumpify v e1) ,(jumpify v e2))]
         [(begin ,e* ... ,e) `(begin ,e* ... ,(jumpify v e))]
+        [(clj-case ,d ,e0 ,e1 ,e* ...) `(clj-case ,d ,e0 ,(jumpify v e1) ,(map (lambda (b) (jumpify v b)) e*) ...)]
         [(let ([,x* ,e*] ...) ,body) `(let ([,x* ,e*] ...) ,(jumpify v body))]
         [(letrec ([,x* ,e*] ...) ,body) `(letrec ([,x* ,e*] ...) ,(jumpify v body))]
         [else node])))

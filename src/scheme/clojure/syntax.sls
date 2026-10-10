@@ -3,17 +3,19 @@
 ;;; 规格是 C# 展开器（src/Cleat.Core/Expander/Expander.cs 与 ExpanderTests）：规则与错误文本逐条照搬；产物不同——
 ;;; 这里展开为 Scheme 核心形式 + 运行时过程（Cleat.Scheme.Clojure.ClojureOps），今天就能编译运行：
 ;;;
-;;;   def        Var 在展开期 intern（Namespace.intern 的语义），运行时 bindRoot / setMeta，值为 Var
+;;;   （cleat-051 起：运行时操作全部是编译器的 Clojure 节点 $clj-…，不再是 Scheme 过程常量，见各形式与 designs/04 §6）
+;;;   def        Var 在展开期 intern（Namespace.intern 的语义），运行时 $clj-def（setDynamic / bindRoot / setMeta），值为 Var
 ;;;   if         (if (let ((t 测试)) (if (null? t) #f t)) then else)：nil（CLR null = '()）与 false 为假
 ;;;   do         begin；let* / loop* → let* / 命名 let（recur = 调用循环标签，只在尾位置，IronScheme 降为循环）
-;;;   fn*        ClojureFn（AFunction）包着 case-lambda / 变长过程；子句体是命名 let，recur 回到子句开头
+;;;   fn*        $clj-fn：编译为 AFunction / RestFn 的子类（固定子句 invoke(k)，变长子句 doInvoke）；子句体是命名 let，recur 回到子句开头
 ;;;   letfn*     letrec；quote → 常量；var → Var 常量；throw → $throw；try → $try/catch + $try/finally
-;;;   monitor-*  Monitor.Enter / Exit；import* → 运行时导入 *ns*；new / . / set! → Reflector（Clojure 的转换规则）
-;;;   case*      C# 过程按 CaseExpr 的规则算出分支下标，再 cond 分派
-;;;   deftype* reify*   要生成真实 CLR 类型：展开为占位调用（运行时报 needs cleat-051），形状以常量留在展开结果里，
-;;;                     方法体照常展开（报错照常）
-;;; 调用一律经 IFn.invoke（ClojureOps.Invoke）；字面量：关键字、nil、正则等为常量，集合元素全为常量时整个是常量，
-;;; 否则运行时构造（RT.vector / map / set，元数据经 withMeta）。
+;;;   monitor-*  Monitor.Enter / Exit；import* → 运行时导入 *ns*；new / . / set! → Reflector（Clojure 的转换规则）；
+;;;              都是 $clj-call（ClojureOps 的静态方法）
+;;;   case*      $clj-case：编译器按 CaseExpr 的规则算键、IL switch 分派
+;;;   deftype* reify*   $clj-deftype：编译为真实 CLR 类型（字段、接口方法、getBasis；reify 捕获局部、实现 IObj）
+;;; 调用一律经 $clj-invoke（IFn.invoke(k)），(:k x) 为 $clj-keyword-invoke；字面量：关键字、nil、正则等为常量，
+;;; 集合元素全为常量时整个是常量，否则运行时构造（RT.vector / map / set，元数据经 withMeta）。
+;;; 模板（转换器式的特殊形式）里的节点经隐藏形式 %node：(%node 头 (数据 …) 子形式 …) → (头 '数据 … 子形式的展开 …)。
 ;;;
 ;;; 上下文（尾位置、recur 目标、词法局部、fn 的类名、def 给 fn 的名字）放在参数 current-ctx 里：展开子形式时参数化。
 ;;; 引入绑定的形式是转换器（经 do-macro-call，卫生标记使模板里的 let / case-lambda 不被用户的同名局部捕获），子形式包在
@@ -34,32 +36,16 @@
 
   ;;; —— 运行时过程（实参与返回值不经 Scheme 互操作的转换）——
 
+  ;;; 展开期用的（Clojure 值的遍历与宏的调用）；运行时操作是编译器的节点，不是这些过程
   (define op-invoke (clj-op Invoke))
-  (define op-make-fn (clj-op MakeFn))
-  (define op-var-bind-root (clj-op VarBindRoot))
-  (define op-var-set-meta (clj-op VarSetMeta))
-  (define op-var-set (clj-op VarSet))
-  (define op-vector (clj-op Vector))
-  (define op-map (clj-op HashMap))
-  (define op-set (clj-op HashSet))
-  (define op-with-meta (clj-op WithMeta))
-  (define op-static-call (clj-op StaticCall))
-  (define op-instance-call (clj-op InstanceCall))
-  (define op-static-field (clj-op StaticField))
-  (define op-instance-field (clj-op InstanceField))
-  (define op-set-field (clj-op SetField))
-  (define op-new (clj-op New))
-  (define op-instance? (clj-op IsInstance))
-  (define op-monitor-enter (clj-op MonitorEnter))
-  (define op-monitor-exit (clj-op MonitorExit))
-  (define op-import (clj-op Import))
-  (define op-case-index (clj-op CaseIndex))
   (define op-apply-to (clj-op ApplyTo))
   (define op-meta (clj-op Meta))
   (define op-get (clj-op Get))
   (define op-long (clj-op ToLong))
   (define op-next-id (clj-op NextId))
-  (define op-unsupported (clj-op Unsupported))
+
+  ;;; ClojureOps 的静态方法调用节点（核心形式）：(clj-call "方法" 固定参数个数|#f 子形式核心 …)
+  (define (clj-call method fixed . args) (cons* '$clj-call (list 'quote method) (list 'quote fixed) args))
 
   ;;; —— Clojure 数据的小工具 ——
 
@@ -88,7 +74,6 @@
       (cond ((< i 0) #f) ((char=? (string-ref s i) ch) i) (else (loop (- i 1))))))
   (define (last ls) (if (null? (cdr ls)) (car ls) (last (cdr ls))))
   (define (all-but-last ls) (if (null? (cdr ls)) '() (cons (car ls) (all-but-last (cdr ls)))))
-  (define (iota* n) (let loop ((i (- n 1)) (acc '())) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
 
   (define kw-tag (clj-keyword "tag"))
   (define kw-line (clj-keyword "line"))
@@ -172,6 +157,19 @@
         (syntax-case e ()
           ((_ c body) (expand-in (syntax->datum #'c) #'body expand))
           ((_ c lp n body) (expand-in (ctx-with-loop (syntax->datum #'c) (cons #'lp (syntax->datum #'n))) #'body expand))))))
+
+  ;;; %node：模板里的编译器节点（cleat-051）。(%node 头 (数据 …) 子形式 …) → (头 (quote 数据) … 子形式的展开 …)，
+  ;;; 数据是展开期算好的常量（Var、类型名、描述），子形式照常展开（通常已包在 %ctx 里）
+  (define node-key
+    (register-hidden-clj-form! "node"
+      (lambda (e expand)
+        (syntax-case e ()
+          ((_ h ds x ...)
+           (cons (syntax->datum #'h)
+                 (append (map (lambda (d) (list 'quote d)) (syntax->datum #'ds))
+                         (map expand #'(x ...)))))))))
+
+  (define (node-id head) (datum->syntax head node-key))
 
   (define (in-ctx head c stx)
     (if (eq? c (cur))
@@ -262,18 +260,18 @@
                              " or change the name. (" (source-file pos) ":" (if pos (number->string (car pos)) "0") ")")))
           (let ((al (meta-get sm kw-arglists)))
             (when al
-              (op-var-set-meta v (assoc* (meta-of v) kw-arglists (clr-static-call clojure.lang.RT (second System.Object) al)))))
+              (clr-call clojure.lang.Var setMeta v (assoc* (meta-of v) kw-arglists (clr-static-call clojure.lang.RT (second System.Object) al)))))
           (let* ((m (assoc* sm kw-line (op-long (if pos (car pos) 0))))
                  (m (assoc* m kw-column (op-long (if pos (cadr pos) 0))))
                  (m (assoc* m kw-file (source-file pos)))
                  (m (if doc (assoc* m kw-doc doc) m))
                  (c (cur)))
-            (with-syntax ((var (const-stx v))
-                          (meta (in-ctx head (ctx-nontail c) (clj-datum->syntax* head m))))
-              (if init
-                  (with-syntax ((init (in-ctx head (ctx-hinted c (sym-name sym)) init)))
-                    #'(begin (op-var-bind-root 'var init) (op-var-set-meta 'var meta) 'var))
-                  #'(begin (op-var-set-meta 'var meta) 'var)))))))
+            ;; DefExpr → ($clj-def 'var '有初值? '动态? 初值 元数据)（cleat-051）：动态性也在运行时设置，保存的 dll 加载后同样成立
+            (with-syntax ((k (node-id head))
+                          (data (const-stx (list v (and init #t) dynamic?)))
+                          (meta (in-ctx head (ctx-nontail c) (clj-datum->syntax* head m)))
+                          (init (if init (in-ctx head (ctx-hinted c (sym-name sym)) init) #''())))
+              #'(k $clj-def data init meta))))))
     (syntax-case e ()
       ((head name) (build #'head #'name #f #f))
       ((head name init) (build #'head #'name #f #'init))
@@ -339,13 +337,15 @@
       ((head x) (with-syntax ((x (in-ctx #'head (ctx-nontail (cur)) #'x))) #'($throw x)))
       (_ (err e "Too many arguments to throw, throw expects a single Exception instance"))))
 
-  (define (monitor-special name op)
+  (define (monitor-special name method)
     (lambda (e)
       (syntax-case e ()
-        ((head x) (with-syntax ((x (in-ctx #'head (ctx-nontail (cur)) #'x)) (op op)) #'(op x)))
+        ((head x)
+         (with-syntax ((x (in-ctx #'head (ctx-nontail (cur)) #'x)) (k (node-id #'head)) (data (const-stx (list method #f))))
+           #'(k $clj-call data x)))
         (_ (err e (string-append name " requires one argument"))))))
-  (registration (register-clj-special! 'monitor-enter (monitor-special "monitor-enter" #'op-monitor-enter)))
-  (registration (register-clj-special! 'monitor-exit (monitor-special "monitor-exit" #'op-monitor-exit)))
+  (registration (register-clj-special! 'monitor-enter (monitor-special "monitor-enter" "MonitorEnterOf")))
+  (registration (register-clj-special! 'monitor-exit (monitor-special "monitor-exit" "MonitorExitOf")))
 
   (define-form import* (e expand)
     (syntax-case e ()
@@ -354,7 +354,7 @@
          (unless (string? name) (err e "import* requires a string"))
          (let ((t (class-for-name name)))
            (unless t (err e (string-append "Unable to resolve classname: " name)))
-           (list (list 'quote op-import) (list 'quote t)))))
+           (clj-call "ImportOf" #f (list 'quote t)))))
       (_ (err e "import* requires a string"))))
 
   (define-form catch (e expand) (err e "catch must be inside try"))
@@ -495,18 +495,18 @@
                (begin
                  (when (and variadic (pair? arities) (>= (apply max arities) (+ (car variadic) 1)))
                    (err e "Can't have fixed arity methods with more params than the variadic method."))
-                 (let* ((mask (fold-left (lambda (m n) (bitwise-ior m (bitwise-arithmetic-shift-left 1 n))) 0 arities))
-                        (m (user-meta (syntax->clj e))))
-                   (with-syntax ((name (const-stx name))
-                                 (fixed (if (null? fixed) #'#f (with-syntax (((cl ...) (reverse fixed))) #'(case-lambda cl ...))))
-                                 (variadic (if variadic (with-syntax ((cl (cdr variadic))) #'(case-lambda cl)) #'#f))
-                                 (required (if variadic (car variadic) 0))
-                                 (mask mask))
-                     (let* ((fn #'(op-make-fn 'name fixed variadic required mask))
+                 ;; ($clj-fn '类名 '变长必需个数|#f (case-lambda 固定子句 … 变长子句))（cleat-051）：编译为 AFunction / RestFn 的子类；
+                 ;; 变长子句在最后，形参为"必需参数 + 剩余 seq"
+                 (let* ((m (user-meta (syntax->clj e))))
+                   (with-syntax ((k (node-id head))
+                                 (data (const-stx (list name (and variadic (car variadic)))))
+                                 ((cl ...) (append (reverse fixed) (if variadic (list (cdr variadic)) '()))))
+                     (let* ((fn #'(k $clj-fn data (case-lambda cl ...)))
                             (fn (if (null? m)
                                     fn
-                                    (with-syntax ((fn fn) (m (in-ctx head (ctx-nontail c) (clj-datum->syntax* head m))))
-                                      #'(op-with-meta fn m)))))
+                                    (with-syntax ((fn fn) (m (in-ctx head (ctx-nontail c) (clj-datum->syntax* head m)))
+                                                  (data (const-stx (list "WithMetaOf" #f))))
+                                      #'(k $clj-call data fn m)))))
                        (if self
                            (with-syntax ((self self) (fn fn)) #'(letrec ((self fn)) self))
                            fn)))))))))))
@@ -586,8 +586,8 @@
 
   ;;; ———————————————— 宿主互操作：. / new / set! ————————————————
 
-  (define (types-vector-stx types)
-    (if types (with-syntax (((t ...) (map const-stx types))) #'(vector 't ...)) #''()))
+  ;;; 泛型实参：Type 的向量常量（object[]），没有则 nil
+  (define (type-args-datum types) (if types (list->vector types) '()))
 
   ;;; 实参：(by-ref x) 不支持；其余在非尾位置
   (define (host-args e head args)
@@ -640,19 +640,21 @@
          (let* ((head #'head)
                 (nt (ctx-nontail (ctx-clear (cur))))
                 (args (host-args e head args)))
-           (with-syntax ((t (const-stx (or type '())))
-                         (name (const-stx member))
-                         (gen (types-vector-stx type-args))
-                         ((a ...) args))
-             (cond
-               ((and static (null? args) (not method?))
-                (if prop? #'(op-static-field 't 'name) #'(op-static-call 't 'name (vector) gen)))
-               (static #'(op-static-call 't 'name (vector a ...) gen))
-               (else
-                (with-syntax ((x (in-ctx head nt target)))
-                  (if (and prop? (null? args) (not method?))
-                      #'(op-instance-field 't 'name x)
-                      #'(op-instance-call 't 'name x (vector a ...) gen)))))))))))
+           ;; ClojureOps.CallStatic / CallInstance / GetStaticField / GetInstanceField（Reflector 的规则）：类型、名字、泛型实参是常量
+           (let ((t (or type '())) (gen (type-args-datum type-args)))
+             (with-syntax ((k (node-id head)) ((a ...) args))
+               (cond
+                 ((and static (null? args) (not method?))
+                  (with-syntax ((data (const-stx (if prop? (list "GetStaticField" #f t member) (list "CallStatic" 3 t member gen)))))
+                    #'(k $clj-call data)))
+                 (static (with-syntax ((data (const-stx (list "CallStatic" 3 t member gen)))) #'(k $clj-call data a ...)))
+                 (else
+                  (with-syntax ((x (in-ctx head nt target)))
+                    (if (and prop? (null? args) (not method?))
+                        (with-syntax ((data (const-stx (list "GetInstanceField" #f t member)))) #'(k $clj-call data x))
+                        (with-syntax ((data (const-stx (list "CallInstance" 4 t member)))
+                                      (gen (const-stx gen)))
+                          #'(k $clj-call data x 'gen a ...)))))))))))))
 
   (define-special new (e)
     (syntax-case e ()
@@ -660,8 +662,8 @@
        (let* ((td (syntax->clj #'tsym))
               (t (maybe-type td)))
          (unless t (err e (string-append "Unable to resolve classname: " (->string td))))
-         (with-syntax ((t (const-stx t)) ((a ...) (host-args e #'head #'(arg ...))))
-           #'(op-new 't (vector a ...)))))
+         (with-syntax ((k (node-id #'head)) (data (const-stx (list "NewOf" 1 t))) ((a ...) (host-args e #'head #'(arg ...))))
+           #'(k $clj-call data a ...))))
       (_ (err e "wrong number of arguments, expecting: (new Typename args ...)"))))
 
   (define-special set! (e)
@@ -671,9 +673,9 @@
               (td (syntax->clj #'target))
               (v (in-ctx head (ctx-nontail (ctx-clear (cur))) #'val)))
          (define (field-set static target member)
-           (with-syntax ((t (const-stx (or static '()))) (name (const-stx member)) (v v)
+           (with-syntax ((k (node-id head)) (data (const-stx (list "SetFieldOf" #f (or static '()) member))) (v v)
                          (x (if target (in-ctx head (ctx-nontail (cur)) target) #''())))
-             #'(op-set-field 't 'name x v)))
+             #'(k $clj-call data x v)))
          (cond
            ((clj-symbol? td)
             (let ((l (and (not (sym-ns td)) (find-local td))))
@@ -685,7 +687,7 @@
                 (else
                  (let-values (((o msg p?) (resolve-in (current-ns) td)))
                    (cond
-                     ((var? o) (with-syntax ((var (const-stx o)) (v v)) #'(op-var-set 'var v)))
+                     ((var? o) (with-syntax ((k (node-id head)) (data (const-stx (list o))) (v v)) #'(k $clj-var-set! data v)))
                      (msg (err e msg))
                      (else (err e "Invalid assignment target"))))))))
            ((and (clj-list? td) (rewrite-to-dot td e)) =>
@@ -720,24 +722,31 @@
                                 (cons (list h (syntax->clj (car pair)) (cadr pair)
                                             (and (not (null? skip-set)) (clr-call clojure.lang.IPersistentSet contains skip-set h)))
                                       acc)))))))
-           (with-syntax ((x (in-ctx head (ctx-nontail c) #'x))
-                         (shift (syntax->clj #'shift)) (mask (syntax->clj #'mask)) (kind kind)
-                         (hashes (const-stx (list->vector (map car entries))))
-                         (tests (const-stx (list->vector (map cadr entries))))
-                         (skips (const-stx (list->vector (map cadddr entries))))
-                         (((i then) ...) (map (lambda (en i) (list i (in-ctx head c (caddr en)))) entries (iota* (length entries))))
-                         (default (in-ctx head c #'default)))
-             #'(let ((k (op-case-index x 'shift 'mask kind 'hashes 'tests 'skips)))
-                 (cond ((eqv? k i) then) ... (else default)))))))
+           ;; ($clj-case '(shift mask 种类 ((哈希 测试值 跳过?) …)) x default then …)（cleat-051）：编译器按 CaseExpr 的规则算键、
+           ;; IL switch 分派、比较测试值；分支与 default 在尾位置
+           (let ((int (lambda (n) (string->number (->string n)))))
+             (with-syntax ((k (node-id head))
+                           (data (const-stx (list (list (int (syntax->clj #'shift)) (int (syntax->clj #'mask)) kind
+                                                        (map (lambda (en) (list (int (car en)) (cadr en) (cadddr en))) entries)))))
+                           (x (in-ctx head (ctx-nontail c) #'x))
+                           ((then ...) (map (lambda (en) (in-ctx head c (caddr en))) entries))
+                           (default (in-ctx head c #'default)))
+               #'(k $clj-case data x default then ...))))))
       (_ (err e "Malformed case*"))))
 
   (define (sym-name* x) (if (keyword? x) (clr-call clojure.lang.Keyword get_Name x) (->string x)))
 
-  ;;; ———————————————— deftype* / reify*（占位：需要 cleat-051 生成真实类型）————————————————
+  ;;; ———————————————— deftype* / reify*（cleat-051：编译为真实 CLR 类型）————————————————
 
   (define (host-check e r) (if (string? r) (err e r) r))
 
-  ;;; 形状（Clojure 数据，同 C# 的 Lcore deftype 节点去掉方法体）与每个方法的 lambda
+  ;;; 类型名 → 编译器的类型描述 ("名字" . 值类型?)
+  (define (type-desc name) (cons name (and (clr-static-call Cleat.Scheme.Clojure.HostSyntax IsValueType name) #t)))
+
+  ;;; ($clj-deftype '描述 (lambda (字段 …) ($clj-methods 方法 …)))：字段是 lambda 绑定的变量（方法体里可读、可变字段可 set!），
+  ;;; 方法是 (lambda (this 参数 …) 体)（recur 回到方法开头）。描述的格式见编译器 codegen 的 deftype-class!：
+  ;;; 接口方法按 C# 展开器的规则在展开期用反射选定（TypeMethod），接口全集与没有直接实现的接口方法（桥接或抛错的桩）
+  ;;; 由 HostSyntax.InterfaceLayout 算出——编译器不反射
   (define (build-type e head tagname class-name field-syms ifaces method-forms opts reify?)
     (let* ((ifaces (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax ResolveInterfaces ifaces)))
            (fields (map (lambda (f)
@@ -750,36 +759,46 @@
                         field-syms))
            (field-locals (map (lambda (f) (make-local (cadr f) (tag-of (cadr f)) (caddr f) 'field)) fields))
            (c (cur)))
-      (let loop ((ms method-forms) (shapes '()) (lambdas '()))
+      ;; 方法体可以引用正在定义的类型（(new Foo …)、^Foo）：先登记同名的桩类型（HostSyntax.DefineStub，运行时换成真正的类型）
+      (unless reify?
+        (clr-static-call Cleat.Scheme.Clojure.HostSyntax DefineStub class-name
+          (list->vector (map (lambda (f) (munge (sym-name (cadr f)))) fields))))
+      (let loop ((ms method-forms) (specs '()) (rs '()) (lambdas '()))
         (if (pair? ms)
             (syntax-case (car ms) ()
               ((mname params mbody ...)
                (let* ((pd (syntax->clj #'params))
                       (r (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax TypeMethod ifaces (syntax->clj #'mname) pd)))
-                      (iface (vector-ref r 0)) (name (vector-ref r 1)) (ret (vector-ref r 2)) (ptypes (vector->list (vector-ref r 3)))
+                      (iface (nil->f (vector-ref r 0))) (name (vector-ref r 1)) (ret (vector-ref r 2)) (ptypes (vector->list (vector-ref r 3)))
                       (pitems (vector-items #'params))
                       (this (car pitems)) (args (cdr pitems))
                       (locals (append field-locals
                                       (list (make-local (syntax->clj this) (clj-symbol class-name) #f 'this))
                                       (map (lambda (a t) (make-local (clj-symbol (sym-name (syntax->clj a))) (clj-symbol t) #f 'arg)) args ptypes)))
                       (bc (make-ctx #t #f (append (reverse locals) (ctx-locals c)) (ctx-fn-name c) #f))
-                      (shape (clj-list (clj-symbol "method") (nil-of iface) name (->string (syntax->clj this))
-                                       (apply clj-list (map (lambda (a t) (clj-list (sym-name (syntax->clj a)) t)) args ptypes))
-                                       ret)))
-                 (with-syntax (((f ...) (map car fields)) (this this) ((a ...) args)
+                      (spec (list iface name (type-desc ret) (map type-desc ptypes))))
+                 (with-syntax ((this this) ((a ...) args)
                                ((lp) (generate-temporaries '(recur)))
                                (body (body-stx head #'(mbody ...) bc)))
                    (with-syntax ((body (in-ctx/loop head bc #'lp (length args) #'body)))
-                     (loop (cdr ms) (cons shape shapes)
-                           (cons #'(lambda (this f ... a ...) (let lp ((a a) ...) body)) lambdas))))))
+                     (loop (cdr ms) (cons spec specs) (cons r rs)
+                           (cons #'(lambda (this a ...) (let lp ((a a) ...) body)) lambdas))))))
               (_ (err e (string-append "Method name must be a symbol: " (->string (syntax->clj (car ms)))))))
-            (let ((shape (clj-list (clj-symbol "deftype") tagname class-name
-                                   (apply clj-list (map (lambda (f) (clj-list (clj-symbol "field") (sym-name (cadr f)) (list-ref f 4) (caddr f) (cadddr f))) fields))
-                                   (apply clj-list (map type-name (vector->list ifaces)))
-                                   (apply clj-list (reverse shapes))
-                                   (assoc* opts kw-reify reify?))))
-              (with-syntax ((what (const-stx (if reify? "reify*" "deftype*"))) (shape (const-stx shape)) ((l ...) (reverse lambdas)))
-                #'(op-unsupported 'what 'shape l ...)))))))
+            (let* ((layout (clr-static-call Cleat.Scheme.Clojure.HostSyntax InterfaceLayout ifaces (list->vector (reverse rs)) reify?))
+                   (stubs (map (lambda (st)
+                                 (list (vector-ref st 0) (vector-ref st 1) (type-desc (vector-ref st 2))
+                                       (map type-desc (vector->list (vector-ref st 3)))
+                                       (nil->f (vector-ref st 4))))
+                               (vector->list (vector-ref layout 1))))
+                   (info (list class-name reify?
+                               (map (lambda (f) (list (munge (sym-name (cadr f))) (caddr f) (cadddr f))) fields)
+                               (vector->list (vector-ref layout 0))
+                               (reverse specs)
+                               stubs
+                               (and (not reify?) (apply clj-vector (map cadr fields))))))
+              (with-syntax ((k (node-id head)) (data (const-stx (list info))) (none (const-stx '()))
+                            ((f ...) (map car fields)) ((l ...) (reverse lambdas)))
+                #'(k $clj-deftype data (lambda (f ...) (k $clj-methods none l ...)))))))))
 
   (define (nil-of x) (or x '()))
 
@@ -802,8 +821,9 @@
               (m (user-meta (syntax->clj e))))
          (if (null? m)
              node
-             (with-syntax ((node node) (m (in-ctx head (ctx-nontail (cur)) (clj-datum->syntax* head m))))
-               #'(op-with-meta node m)))))))
+             (with-syntax ((k (node-id head)) (data (const-stx (list "WithMetaOf" #f)))
+                           (node node) (m (in-ctx head (ctx-nontail (cur)) (clj-datum->syntax* head m))))
+               #'(k $clj-call data node m)))))))
 
   ;;; ———————————————— 字面量与集合（boot 的 $datum 挂钩）————————————————
 
@@ -844,15 +864,15 @@
                 (m (user-meta d))
                 (node (if (eq? v no-const)
                           (let ((kind (syntax-ext-kind e)))
-                            (cons (list 'quote (case kind ((clj-vector) op-vector) ((clj-map) op-map) (else op-set)))
-                                  (map (lambda (x) (expand-in (ctx-nontail (cur)) x expand)) (syntax-ext->list e kind))))
+                            (apply clj-call (case kind ((clj-vector) "VectorOf") ((clj-map) "MapOf") (else "SetOf")) 0
+                                   (map (lambda (x) (expand-in (ctx-nontail (cur)) x expand)) (syntax-ext->list e kind))))
                           (list 'quote (if (clr-is clojure.lang.IObj v) (with-meta* v '()) v)))))
            (cond
              ((null? m) node)
              ((eq? (car node) 'quote) (list 'quote (with-meta* (cadr node) m)))
              (else
               (let ((mv (const-value m)))
-                (list (list 'quote op-with-meta) node
+                (clj-call "WithMetaOf" #f node
                       (if (eq? mv no-const)
                           (let ((id (find-id e)))
                             (unless id (err e "Unsupported non-constant metadata on a literal without symbols"))
@@ -862,14 +882,18 @@
 
   ;;; ———————————————— 调用（boot 的 $application 挂钩与以 Var 开头的调用）————————————————
 
-  (define (invoke-core f-core arg-cores) (cons* (list 'quote op-invoke) f-core arg-cores))
+  ;;; InvokeExpr → ($clj-invoke f a …)（cleat-051：callvirt IFn::invoke(k)）
+  (define (invoke-core f-core arg-cores) (cons* '$clj-invoke f-core arg-cores))
 
   (define (application e expand)
     (syntax-case e ()
       ((f arg ...)
-       (let ((fd (syntax->clj #'f)) (nt (ctx-nontail (cur))))
+       (let ((fd (syntax->clj #'f)) (nt (ctx-nontail (cur))) (args #'(arg ...)))
          (when (null? fd) (err e (string-append "Can't call nil, form: " (print-str (syntax->clj e)))))
-         (invoke-core (expand-in nt #'f expand) (map (lambda (a) (expand-in nt a expand)) #'(arg ...)))))))
+         (if (and (keyword? fd) (<= 1 (length args) 2))
+             ;; KeywordInvokeExpr：(:k x) / (:k x 缺省)（cleat-051：ILookup.valAt 快速路径，否则 RT.get）
+             (cons* '$clj-keyword-invoke (list 'quote fd) (map (lambda (a) (expand-in nt a expand)) args))
+             (invoke-core (expand-in nt #'f expand) (map (lambda (a) (expand-in nt a expand)) args)))))))
 
   ;;; 把 Clojure 形式 old 的源位置（:line :column :source-span）与 :tag 带到 new 上
   (define (transfer-source new old)
@@ -903,7 +927,7 @@
               (expand (clj-datum->syntax* #'head (transfer-source out form)))))
            ((and (= n 2) (string=? (->string v) "#'clojure.core/instance?") (maybe-type (syntax->clj (car args))))
             => (lambda (t)
-                 (list (list 'quote op-instance?) (list 'quote t) (expand-in nt (cadr args) expand))))
+                 (clj-call "IsInstanceOf" #f (list 'quote t) (expand-in nt (cadr args) expand))))
            (else
             (invoke-core (var-reference v) (map (lambda (a) (expand-in nt a expand)) args))))))))
 
@@ -987,8 +1011,7 @@
       (make-binding-extension 'clj-static-member
         (lambda (e t expand)
           (let ((sm (static-member-of (syntax->clj e))))
-            (list (list 'quote op-static-call) (list 'quote (car sm)) (list 'quote (munge (cdr sm)))
-                  (list 'quote (vector)) (list 'quote '()))))
+            (clj-call "CallStatic" 3 (list 'quote (car sm)) (list 'quote (munge (cdr sm))) (list 'quote '()))))
         #f #t #t))
     (register-binding-extension!
       (make-binding-extension 'clj-host-sugar

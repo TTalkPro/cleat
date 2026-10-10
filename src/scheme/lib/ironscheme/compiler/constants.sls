@@ -11,8 +11,10 @@ See docs/license.txt. |#
 ;;;   (encode-constants obj*) → 编码的列表；共享与环用 (def n x) / (ref n) 表示，编号在整张表内统一
 ;;;   (encode-constant obj)   → 单个常量的编码
 ;;;   (write-lcil-datum x port) → 按 Lcil 词法（04 §2.1）写出编码等 S 表达式
+;;;   (set-foreign-constant-encoder! proc) → 登记"外来常量"的编码器 (proc 对象 encode) → 编码 | #f，最先查（cleat-051：
+;;;                              Clojure 的 Var、long、关键字、符号、集合等由 (clojure compile) 登记；编译器本身不认识它们）
 (library (ironscheme compiler constants)
-  (export encode-constant encode-constants write-lcil-datum)
+  (export encode-constant encode-constants write-lcil-datum set-foreign-constant-encoder!)
   (import
     (rnrs)
     (rnrs mutable-strings)
@@ -125,6 +127,9 @@ See docs/license.txt. |#
                               (symbol->string (vector-ref names i)))
                         acc))))))
 
+  (define foreign-encoder #f)
+  (define (set-foreign-constant-encoder! proc) (set! foreign-encoder proc))
+
   (define (make-encoder counts)
     (let ((ids (make-eq-hashtable))
           (next 0))
@@ -141,6 +146,7 @@ See docs/license.txt. |#
           (else (encode-object x))))
       (define (encode-object x)
         (cond
+          ((and foreign-encoder (foreign-encoder x encode)) => (lambda (enc) enc))
           ((null? x) '(nil))
           ((eq? x #t) '(true))
           ((eq? x #f) '(false))

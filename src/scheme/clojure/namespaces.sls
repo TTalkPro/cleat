@@ -20,7 +20,8 @@
 ;;;   标签：每个 Var 一个 gensym（Var 为宏时用另一个），Var 对象即身份，所以重定义（同一个 Var）标签不变；
 ;;;   绑定 (kind . value) 放在标签的 symbol-value，即 psyntax 的全局标签表（imported-label->binding），boot 不必改。
 ;;;   绑定种类（经 048 的绑定扩展表登记）：
-;;;     clj-var      值为 Var：引用 → 读根（getRawRoot；动态 Var 为 get；:const 为常量），set! → Var.set；
+;;;     clj-var      值为 Var：引用 → 编译器的 Var 节点 $clj-var-ref（getRawRoot；动态 Var 为 get；:const 为常量），
+;;;                  set! → $clj-var-set!（Var.set）（cleat-051）；
 ;;;                  以它开头的调用交给 set-var-call-handler! 登记的过程（(clojure syntax)：:inline、instance?、IFn.invoke）
 ;;;     clj-macro    值为转换器（defmacro 垫片：Clojure 数据进、Clojure 数据出、使用处上下文，&env 由
 ;;;                  set-macro-env-provider! 给出）；macroexpand-1 展开它
@@ -275,19 +276,16 @@
   (define (const x) (datum->syntax here x))
 
   (define kw-const (clj-keyword "const"))
-  (define op-var-root (clj-op VarRoot))
   (define op-var-get (clj-op VarGet))
-  (define op-var-set (clj-op VarSet))
-  (define op-invoke (clj-op Invoke))
   (define op-meta (clj-op Meta))
   (define op-get (clj-op Get))
 
-  ;;; Var 的读（核心形式）：:const 的 Var 为常量，动态 Var 为 Var.get，否则 getRawRoot（与 C# 展开器的 var-ref 相同）
+  ;;; Var 的读（核心形式）：:const 的 Var 为常量，否则编译器的 Var 节点（cleat-051）：动态 Var 为 Var.get，否则 getRawRoot
+  ;;; （与 C# 展开器的 var-ref 相同）。Var 在 Lcore 里是常量：进程内求值为对象本身，保存到 dll 时编码为 (var ns name)，加载时 intern
   (define (var-reference v)
-    (cond
-      ((nil->f (op-get (op-meta v) kw-const)) (list 'quote (op-var-get v)))
-      ((var-dynamic? v) (list (list 'quote op-var-get) (list 'quote v)))
-      (else (list (list 'quote op-var-root) (list 'quote v)))))
+    (if (nil->f (op-get (op-meta v) kw-const))
+        (list 'quote (op-var-get v))
+        (list '$clj-var-ref (list 'quote v) (list 'quote (and (var-dynamic? v) #t)))))
 
   ;;; 以 Var 开头的调用：(clojure syntax) 登记（:inline、instance?、IFn.invoke）；没有登记时按 IFn 调用
   (define var-call-handler #f)
@@ -295,7 +293,7 @@
   (define (default-var-call e v expand)
     (syntax-case e ()
       ((_ arg ...)
-       (cons* (list 'quote op-invoke) (var-reference v) (map expand #'(arg ...))))))
+       (cons* '$clj-invoke (var-reference v) (map expand #'(arg ...))))))
 
   ;;; 当前展开中的标识符 e（语法对象）对应的 Clojure 符号
   (define (form-symbol e) (syntax->clj e))
@@ -310,7 +308,7 @@
         (lambda (e v expand)
           (syntax-case e ()
             ((_ id val)
-             (list (list 'quote op-var-set) (list 'quote v) (expand #'val)))))
+             (list '$clj-var-set! (list 'quote v) (expand #'val)))))
         (lambda (e v expand) ((or var-call-handler default-var-call) e v expand))
         #f))
     (register-binding-extension!
@@ -321,7 +319,11 @@
         #f #t #t))
     (register-binding-extension!
       (make-binding-extension 'clj-type
-        (lambda (e t expand) (list 'quote t))
+        ;; deftype* 方法体里的桩类型（cleat-051）：运行时换成真正的类型
+        (lambda (e t expand)
+          (if (clr-static-call Cleat.Scheme.Clojure.HostSyntax IsStub t)
+              (list '$clj-call (list 'quote "RealType") (list 'quote #f) (list 'quote t))
+              (list 'quote t)))
         #f #f #f))
     (register-binding-extension!
       (make-binding-extension 'clj-special

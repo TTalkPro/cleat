@@ -163,6 +163,9 @@ public static class FaslEncoder
                     if (_scheme) { Arity(l, 1); _w.Write(Sym); String(StrArg(l, 1)); }
                     else { _w.Write(CljSym); Named(l); }
                     return;
+                // [cleat-051] 无歧义的 Clojure 名字（不按程序集 runtime 解释）：Scheme 单元里的 Clojure 常量
+                case "cstr": Arity(l, 1); _w.Write(CljStr); String(StrArg(l, 1)); return;
+                case "csym": _w.Write(CljSym); Named(l); return;
                 case "kw": _w.Write(Kw); Named(l); return;
                 case "var": Arity(l, 2); _w.Write(Var); String(StrArg(l, 1)); String(StrArg(l, 2)); return;
                 // ———— 序列 ————
@@ -177,6 +180,8 @@ public static class FaslEncoder
                     for (int i = 1; i < l.Count; i++) Encode(l[i]);
                     return;
                 case "vec": _w.Write(_scheme ? Vec : CljVec); Items(l, 1); return;
+                case "clist": _w.Write(CljList); Items(l, 1); return;
+                case "cvec": _w.Write(CljVec); Items(l, 1); return;
                 case "bv":
                     {
                         Arity(l, 1);

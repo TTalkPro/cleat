@@ -1,6 +1,6 @@
 ;;; cleat-050：(clojure syntax) 的特殊形式、字面量、调用、宿主互操作与 defmacro 垫片，在 Scheme 镜像上展开 → 编译 → 运行。
 ;;; 规格是 C# 展开器的 tests/Cleat.Core.Tests/ExpanderTests.cs：同名分组逐条翻译，能运行的断言运行结果（Lcore 的形状
-;;; 允许不同），需要 cleat-051 的 deftype* / reify* 断言展开结果里的形状数据；错误一律断言 Clojure 的文本。
+;;; 允许不同；cleat-051 起 deftype* / reify* 编译为真实类型，断言其行为）；错误一律断言 Clojure 的文本。
 ;;; 另有 test_clojure/special.clj、macros.clj 里不依赖 clojure.core 的回归用例。clojure.core 未加载：测试需要的
 ;;; 几个函数（list、=、inc …）在下面用 def + fn* + 互操作定义。
 (import (rnrs) (rnrs eval) (ironscheme) (ironscheme clr) (ironscheme compiler)
@@ -74,17 +74,6 @@
 (define-syntax t-mx
   (syntax-rules () ((_ name src expected) (check name (lambda () (str (clojure-macroexpand-1 (read1 src)))) expected))))
 
-;;; Lcore 里第一个 (quote X)，X 是以 head 符号开头的 Clojure 列表（deftype* / reify* 的形状）
-(define (find-shape lcore head)
-  (let walk ((x lcore))
-    (cond
-      ((and (pair? x) (eq? (car x) 'quote) (pair? (cdr x))
-            (clr-is clojure.lang.ISeq (cadr x))
-            (string=? (str (clr-static-call clojure.lang.RT (first System.Object) (cadr x))) head))
-       (cadr x))
-      ((pair? x) (or (walk (car x)) (walk (cdr x))))
-      (else #f))))
-(define (shape src head) (let ((s (find-shape (clojure-expand (read1 src)) head))) (if s (str s) "no shape")))
 
 ;;; —— 环境：clojure.core 的几个函数、测试命名空间（同 ExpanderTests.SetUp）——
 (define source-path-var (clr-static-field-get clojure.lang.RT SourcePathVar))
@@ -188,7 +177,7 @@
   (t "letfn* mutual recursion"
      "(letfn* [ev? (fn* ev? [n] (if (= n 0) true (od? (dec n)))) od? (fn* od? [n] (if (= n 0) false (ev? (dec n))))] [(ev? 10) (od? 7)])"
      "[true true]")
-  (t "letfn* names the functions" "(letfn* [g (fn* [] 1)] (. (class g) Name))" "\"ClojureFn\"")
+  (t "letfn* names the functions" "(letfn* [g (fn* [] 1)] (. (class g) Name))" "\"expander$g\"")
   (t "throw / catch" "(try (throw (Exception. \"boom\")) (catch Exception e (.-Message e)))" "\"boom\"")
   (t-err-has "throw of a non-exception" "(throw f)" "Unable to cast")
   (t "monitor-enter / monitor-exit" "(let* [o (Object.)] (monitor-enter o) (monitor-exit o))" "nil")
@@ -397,27 +386,25 @@
      "(loop* [i 0] (case* i 0 0 i {0 [0 (recur 1)]} :compact :int))" "1")
   (t-err "case* needs a local" "(case* 1 0 0 :d {} :compact :int)" "Syntax error (t.clj:1:1) case* expects a local as its expression")
 
-  ;; ———————— DeftypeAndReify（需要 cleat-051：断言展开形状与运行时报错）————————
-  (check "deftype* shape"
-    (lambda () (shape "(deftype* P cleat.test.expander.P [a ^:unsynchronized-mutable b] :implements [clojure.lang.IDeref clojure.lang.Counted] (deref [this] a) (count [_] (set! b 2) 1))" "deftype"))
-    "(deftype \"P\" \"cleat.test.expander.P\" ((field \"a\" \"System.Object\" false false) (field \"b\" \"System.Object\" true false)) (\"clojure.lang.IDeref\" \"clojure.lang.Counted\") ((method \"clojure.lang.IDeref\" \"deref\" \"this\" () \"System.Object\") (method \"clojure.lang.Counted\" \"count\" \"_\" () \"System.Int32\")) {:implements [clojure.lang.IDeref clojure.lang.Counted], :reify false})")
-  (t-err "deftype* needs cleat-051 at run time"
-     "(deftype* P cleat.test.expander.P [a] :implements [clojure.lang.IDeref] (deref [this] a))"
-     "deftype* is not supported yet: it needs the cleat-051 compiler (Clojure nodes: real CLR types)")
-  (check "overloaded method chosen by hints"
-    (lambda () (shape "(deftype* P P [] :implements [System.IComparable |System.IComparable`1[System.String]|] (CompareTo [_ ^String o] 0) (CompareTo [_ ^Object o] 1))" "deftype"))
-    "(deftype \"P\" \"P\" () (\"System.IComparable\" \"System.IComparable`1[[System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]\") ((method \"System.IComparable`1[[System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]\" \"CompareTo\" \"_\" ((\"o\" \"System.String\")) \"System.Int32\") (method \"System.IComparable\" \"CompareTo\" \"_\" ((\"o\" \"System.Object\")) \"System.Int32\")) {:implements [System.IComparable System.IComparable`1[System.String]], :reify false})")
-  (check "explicit Iface.name"
-    (lambda () (shape "(deftype* P P [] :implements [System.IComparable |System.IComparable`1[System.String]|] (System.IComparable.CompareTo [_ o] 0))" "deftype"))
-    "(deftype \"P\" \"P\" () (\"System.IComparable\" \"System.IComparable`1[[System.String, System.Private.CoreLib, Version=10.0.0.0, Culture=neutral, PublicKeyToken=7cec85d7bea7798e]]\") ((method \"System.IComparable\" \"CompareTo\" \"_\" ((\"o\" \"System.Object\")) \"System.Int32\")) {:implements [System.IComparable System.IComparable`1[System.String]], :reify false})")
-  (check "reify* shape"
-    (lambda ()
-      (let* ((s (shape "(reify* [clojure.lang.IDeref] (deref [_] 1) (ToString [_] \"p\"))" "deftype"))
-             (i (let loop ((i 1)) (if (char=? (string-ref s i) #\() i (loop (+ i 1))))))
-        (list (substring s 0 37) (substring s i (string-length s)))))
-    (list "(deftype \"cleat.test.expander$reify__" "() (\"clojure.lang.IDeref\" \"clojure.lang.IObj\") ((method \"clojure.lang.IDeref\" \"deref\" \"_\" () \"System.Object\") (method nil \"ToString\" \"_\" () \"System.String\")) {:reify true})"))
-  (t-err "reify* needs cleat-051 at run time" "(reify* [clojure.lang.IDeref] (deref [_] 1))"
-     "reify* is not supported yet: it needs the cleat-051 compiler (Clojure nodes: real CLR types)")
+  ;; ———————— DeftypeAndReify（cleat-051 起编译为真实 CLR 类型：断言行为；展开期的报错不变）————————
+  (t "deftype* builds a type with fields and interface methods"
+     "(deftype* P cleat.test.expander.P [a ^:unsynchronized-mutable b] :implements [clojure.lang.IDeref clojure.lang.Counted] (deref [this] [a b]) (count [_] (set! b 2) 1))
+      (def p1 (new cleat.test.expander.P 1 0))
+      [(. p1 deref) (. p1 count) (. p1 deref) (instance? clojure.lang.Counted p1)]"
+     "[[1 0] 1 [1 2] true]")
+  (t-str "deftype* evaluates to the type" "(deftype* P cleat.test.expander.P [a] :implements [clojure.lang.IDeref] (deref [this] a))" "cleat.test.expander.P")
+  (t "overloaded method chosen by hints"
+     "(deftype* P cleat.test.expander.P2 [] :implements [System.IComparable |System.IComparable`1[System.String]|] (CompareTo [_ ^String o] 0) (CompareTo [_ ^Object o] 1))
+      (let* [p (new cleat.test.expander.P2)] [(. p (CompareTo \"s\")) (. p (CompareTo 5))])"
+     "[0 1]")
+  (t "explicit Iface.name"
+     "(deftype* P cleat.test.expander.P3 [] :implements [System.IComparable |System.IComparable`1[System.String]|] (System.IComparable.CompareTo [_ o] 7))
+      (. (new cleat.test.expander.P3) (CompareTo 5))"
+     "7")
+  (t "reify* builds an instance (IObj, ToString)"
+     "(let* [r (reify* [clojure.lang.IDeref] (deref [_] 1) (ToString [_] \"p\"))]
+        [(. r deref) (. r ToString) (instance? clojure.lang.IObj r) (meta r)])"
+     "[1 \"p\" true nil]")
   (t-err "method not in interfaces" "(deftype* P P [a] :implements [clojure.lang.IDeref] (Nope [this] a))" "Syntax error (t.clj:1:1) Can't define method not in interfaces: Nope")
   (t-err "overloaded method needs a hint" "(deftype* P P [] :implements [System.IComparable |System.IComparable`1[System.String]|] (CompareTo [_ o] 0))" "Syntax error (t.clj:1:1) Must hint overloaded method: CompareTo")
   (t-err "hint matches no overload" "(deftype* P P [] :implements [System.IComparable |System.IComparable`1[System.String]|] (CompareTo [_ ^long o] 0))" "Syntax error (t.clj:1:1) Can't find matching overloaded method: CompareTo")

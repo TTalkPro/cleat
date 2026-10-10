@@ -112,9 +112,28 @@ public static class Loader
         }
     }
 
-    /// <summary>在已登记的模块程序集里按全名找类型（RT.classForName 的第一站；原来是 Compiler.FindDuplicateType）。</summary>
+    /// <summary>
+    /// deftype* / reify* 定义的类型（cleat-051）：按全名登记，后登记的取代先登记的（同名类型重定义时 classForName 取最新的，
+    /// 与 ClojureCLR 的 DynamicClassLoader 相同）。由生成的代码在 deftype* 求值时调用。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Type> DefinedTypes = new(StringComparer.Ordinal);
+
+    public static Type RegisterType(Type t)
+    {
+        ArgumentNullException.ThrowIfNull(t);
+        DefinedTypes[t.FullName] = t;
+        TypeResolver.Forget(t.FullName);
+        return t;
+    }
+
+    /// <summary>在已登记的类型与模块程序集里按全名找类型（RT.classForName 的第一站；原来是 Compiler.FindDuplicateType）。</summary>
     public static Type FindType(string fullName)
     {
+        if (DefinedTypes.TryGetValue(fullName, out var defined))
+        {
+            return defined;
+        }
+
         foreach (var asm in Loaded.Values)
         {
             Type t = asm.GetType(fullName, false);

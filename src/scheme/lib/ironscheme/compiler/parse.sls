@@ -11,6 +11,8 @@ See docs/license.txt. |#
 ;;; - case-lambda 各变体统一为 (lambda 名字 (clause (形参 …) 剩余形参 体) …)，类型说明忽略；
 ;;;   async-lambda 不支持（cleat-046）；特殊原语 $try/catch → (try-catch e (d* e*) …)（designs/15 §3）；
 ;;; - 注解（annotated-*）剥离。第一版不保留源位置。
+;;; - Clojure 节点（cleat-051）：$clj-var-ref $clj-var-set! $clj-def $clj-invoke $clj-keyword-invoke $clj-call $clj-fn $clj-deftype
+;;;   （头部是这些名字且未被词法绑定时；只由 (clojure syntax) 产生）→ L0 的 clj-… 节点。
 (library (ironscheme compiler parse)
   (export parse-core typed-clauses-made)
   (import
@@ -227,6 +229,57 @@ See docs/license.txt. |#
              (let ((a (quoted (cadr x) "clr-reference assembly" x)))
                `(host-reference ,(if (symbol? a) (symbol->string a) a))))
             ((clr-namespaces-internal) `(host-namespaces))
+            ;; —— Clojure 节点（cleat-051）：只由 (clojure syntax) / (clojure namespaces) 产生，数据操作数一律引用 ——
+            (($clj-var-ref)
+             (unless (and (list? x) (= (length x) 3)) (bad-form "$clj-var-ref" x))
+             `(clj-var-ref ,(quoted (cadr x) "$clj-var-ref var" x) ,(and (quoted (caddr x) "$clj-var-ref flag" x) #t)))
+            (($clj-var-set!)
+             (unless (and (list? x) (= (length x) 3)) (bad-form "$clj-var-set!" x))
+             `(clj-var-set! ,(quoted (cadr x) "$clj-var-set! var" x) ,(Expr (caddr x))))
+            (($clj-def)
+             ;; ($clj-def 'var '有初值? '动态? 初值 元数据)
+             (unless (and (list? x) (= (length x) 6)) (bad-form "$clj-def" x))
+             `(clj-def ,(quoted (cadr x) "$clj-def var" x)
+                       ,(and (quoted (caddr x) "$clj-def flag" x) #t)
+                       ,(and (quoted (cadddr x) "$clj-def flag" x) #t)
+                       ,(Expr (list-ref x 4)) ,(Expr (list-ref x 5))))
+            (($clj-invoke)
+             (unless (and (list? x) (>= (length x) 2)) (bad-form "$clj-invoke" x))
+             `(clj-invoke ,(Expr (cadr x)) ,(Args (cddr x) x) ...))
+            (($clj-keyword-invoke)
+             (unless (and (list? x) (<= 3 (length x) 4)) (bad-form "$clj-keyword-invoke" x))
+             `(clj-keyword-invoke ,(quoted (cadr x) "$clj-keyword-invoke keyword" x) ,(Expr (caddr x)) ,(Args (cdddr x) x) ...))
+            (($clj-call)
+             ;; ($clj-call '方法名 '固定参数个数|#f 实参 …)
+             (unless (and (list? x) (>= (length x) 3)) (bad-form "$clj-call" x))
+             (let ((m (quoted (cadr x) "$clj-call method" x))
+                   (n (quoted (caddr x) "$clj-call fixed count" x)))
+               (unless (and (string? m) (or (not n) (and (fixnum? n) (<= 0 n (length (cdddr x)))))) (bad-form "$clj-call" x))
+               `(clj-call ,m ,n ,(Args (cdddr x) x) ...)))
+            (($clj-case)
+             ;; ($clj-case '描述 x default then …)
+             (unless (and (list? x) (>= (length x) 4)) (bad-form "$clj-case" x))
+             (let ((d (quoted (cadr x) "$clj-case info" x)))
+               (unless (and (list? d) (= (length d) 4) (= (length (cadddr d)) (length (cddddr x)))) (bad-form "$clj-case" x))
+               `(clj-case ,d ,(Expr (caddr x)) ,(Expr (cadddr x)) ,(Args (cddddr x) x) ...)))
+            (($clj-fn)
+             ;; ($clj-fn '类名 '变长必需个数|#f (case-lambda 子句 …))
+             (unless (and (list? x) (= (length x) 4)) (bad-form "$clj-fn" x))
+             (let ((class (quoted (cadr x) "$clj-fn class" x))
+                   (variadic (quoted (caddr x) "$clj-fn variadic" x)))
+               (Lambda (lambda-clauses (cadddr x) x) #f (make-clj-fn-name class variadic) x)))
+            (($clj-deftype)
+             ;; ($clj-deftype '描述 (case-lambda ((字段 …) ($clj-methods 方法 …))))：字段是词法变量，方法是 lambda
+             (unless (and (list? x) (= (length x) 3)) (bad-form "$clj-deftype" x))
+             (let ((info (quoted (cadr x) "$clj-deftype info" x))
+                   (cls (lambda-clauses (caddr x) x)))
+               (unless (and (= (length cls) 1) (list? (caar cls)) (for-all symbol? (caar cls)) (= (length (car cls)) 2))
+                 (bad-form "$clj-deftype fields" x))
+               (let ((fields (caar cls)) (body (cadar cls)))
+                 (unless (and (pair? body) (eq? (car body) '$clj-methods) (list? body)) (bad-form "$clj-deftype methods" x))
+                 (for-each (lambda (f) (bind! f 'lex)) fields)
+                 `(clj-deftype ,info (,fields ...)
+                    ,(map (lambda (m) (Lambda (lambda-clauses m x) #f #f x)) (cdr body)) ...))))
             ;; ffi-callout-internal 等是运行时原语（IronScheme.Core.Ffi，iron-032），按普通原语调用
             ((define-clr-class-internal)
              `(unsupported ,(symbol->string h)))
@@ -276,6 +329,14 @@ See docs/license.txt. |#
               ((annotated-typed-case-lambda) (Lambda (cddr x) #t (pretty-name name) x))
               (else (Lambda (list (cdr x)) #f (pretty-name name) x)))
             (Expr x)))
+
+      ;; (case-lambda 子句 …) / (annotated-case-lambda 注解 子句 …) / (lambda 形参 体 …) 的子句表（Clojure 节点里的 lambda）
+      (define (lambda-clauses l form)
+        (cond
+          ((and (pair? l) (eq? (car l) 'case-lambda) (list? l)) (cdr l))
+          ((and (pair? l) (eq? (car l) 'annotated-case-lambda) (list? l) (pair? (cdr l))) (cddr l))
+          ((and (pair? l) (eq? (car l) 'lambda) (list? l) (pair? (cdr l))) (list (cdr l)))
+          (else (bad-form "Clojure node: expected a lambda" form))))
 
       ;; async-lambda 不纳入 cleat（designs/15 §1：运行时没有 AsyncFrame，lower-async 不纳入）：到这里就报错
       (define (no-async x)

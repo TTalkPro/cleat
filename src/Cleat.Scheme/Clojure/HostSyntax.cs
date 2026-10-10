@@ -141,6 +141,77 @@ public static class HostSyntax
         return all;
     }
 
+    // —— deftype* 方法体里引用正在定义的类型（cleat-051）——
+    // 展开方法体时类型还不存在：先在一个可回收的动态程序集里定义同名的桩类型（公开 object 字段 + 构造函数）并登记，
+    // 于是 (new Foo …)、(. this -x)、^Foo 提示在展开期都能解析；运行时 ClojureOps 的互操作方法经 Real 把桩换成真正的类型
+    // （deftype* 求值时登记的同名类型），保存的 dll 里类型常量按名字解析，本来就是真正的类型。与 ClojureCLR 的做法相同。
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Type, object> s_stubs = new();
+
+    public static Type DefineStub(string name, object fieldNames)
+    {
+        var asmName = new AssemblyName("cleat$stub$" + Guid.NewGuid().ToString("N"));
+        var ab = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(asmName, System.Reflection.Emit.AssemblyBuilderAccess.RunAndCollect);
+        var tb = ab.DefineDynamicModule(asmName.Name).DefineType(name, TypeAttributes.Public | TypeAttributes.Sealed);
+        var fields = ((object[])fieldNames).Cast<string>().ToArray();
+        foreach (var f in fields) tb.DefineField(f, typeof(object), FieldAttributes.Public);
+        var ctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, fields.Select(_ => typeof(object)).ToArray());
+        var il = ctor.GetILGenerator();
+        il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
+        il.Emit(System.Reflection.Emit.OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes));
+        il.Emit(System.Reflection.Emit.OpCodes.Ret);
+        var t = tb.CreateType();
+        s_stubs.AddOrUpdate(t, null);
+        Cleat.Scheme.TypeResolver.AddCompileTimeType(t);
+        return t;
+    }
+
+    public static bool IsStub(object t) => t is Type ty && s_stubs.TryGetValue(ty, out _);
+
+    /// <summary>桩类型 → 同名的真正类型（已登记时）；其余原样。</summary>
+    public static Type Real(Type t) =>
+      t != null && s_stubs.TryGetValue(t, out _) ? Cleat.Core.Runtime.Loader.FindType(t.FullName) ?? t : t;
+
+    /// <summary>类型名（TypeName 的结果）是否值类型（cleat-051：deftype 方法的参数装箱、返回值转换；void 也算）。</summary>
+    public static bool IsValueType(string name)
+    {
+        var t = TypeResolver.Resolve(name, Array.Empty<string>());
+        return t != null && t.IsValueType;
+    }
+
+    /// <summary>
+    /// deftype* / reify* 的类型布局（cleat-051）：ifaces 为 ResolveInterfaces 的结果，specs 为各方法的 TypeMethod 结果。
+    /// 返回 object[] { 接口全集（含继承的接口，类型名数组）, 桩数组 }；桩为接口中没有被方法直接实现的方法
+    /// object[] { 接口名, 方法名, 返回类型名, 参数类型名数组, 目标方法下标（同名同参的方法，转调它）或 null（抛 NotImplementedException） }。
+    /// reify 的 IObj.withMeta 与 IMeta.meta 由编译器生成，不列入。CLR 要求实现全部接口方法（JVM 不要求）。
+    /// </summary>
+    public static object InterfaceLayout(object ifaces, object specs, bool reify)
+    {
+        var all = new List<Type>();
+        foreach (Type t in ((object[])ifaces).Cast<Type>())
+        {
+            if (!all.Contains(t)) all.Add(t);
+            foreach (var it in t.GetInterfaces()) if (!all.Contains(it)) all.Add(it);
+        }
+        var ms = ((object[])specs).Cast<object[]>().ToList();
+        static string[] Ps(object o) => ((object[])o).Cast<string>().ToArray();
+        var stubs = new List<object>();
+        foreach (var it in all)
+        {
+            foreach (var m in it.GetMethods())
+            {
+                if (m.IsStatic) continue;
+                var ps = m.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray();
+                if (reify && ((it == typeof(IObj) && m.Name == "withMeta") || (it == typeof(IMeta) && m.Name == "meta"))) continue;
+                string iname = TypeName(it);
+                if (ms.Any(sp => (string)sp[0] == iname && (string)sp[1] == m.Name && Ps(sp[3]).SequenceEqual(ps))) continue;
+                int target = ms.FindIndex(sp => (string)sp[1] == m.Name && Ps(sp[3]).SequenceEqual(ps));
+                stubs.Add(new object[] { iname, m.Name, TypeName(m.ReturnType), ps.Cast<object>().ToArray(), target < 0 ? null : (object)target });
+            }
+        }
+        return new object[] { all.Select(t => (object)TypeName(t)).ToArray(), stubs.ToArray() };
+    }
+
     /// <summary>
     /// deftype* / reify* 的一个方法 (name [this args*] body…)：按名字（可为 Iface.name 显式实现）、参数个数与类型提示在接口
     /// （含继承的接口与 Object 的虚方法）中选定方法。返回 object[] { 接口名|null, 方法名, 返回类型名, 参数类型名数组 }，

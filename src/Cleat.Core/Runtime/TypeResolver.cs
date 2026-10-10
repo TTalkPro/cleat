@@ -19,6 +19,13 @@ public static class TypeResolver
 {
     private static readonly ConcurrentDictionary<(string Name, string Namespaces), Type> s_cache = new ConcurrentDictionary<(string, string), Type>();
 
+    /// <summary>忘掉名字为 name 的缓存项（deftype* 重定义同名类型时，cleat-051）。</summary>
+    public static void Forget(string name)
+    {
+        foreach (var key in s_cache.Keys)
+            if (key.Name == name) s_cache.TryRemove(key, out _);
+    }
+
     /// <summary>解析类型名；找不到返回 null。</summary>
     public static Type Resolve(string name, IEnumerable<string> namespaces)
     {

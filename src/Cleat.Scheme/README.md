@@ -22,11 +22,11 @@ Copyright (c) 2026 the IronScheme contributors。许可全文见本目录 LICENS
   `$current-handlers`）已删除（cleat-047，designs/15 §3）：`raise` 抛 `SchemeException(条件)`，捕获用核心形式 `$try/catch`
   （stage0 的 `TryCatch` 节点、编译器的 `try-catch` 节点 → Lcil `try`/`catch`）。
 
-## cleat 新增：`Clojure/`（cleat-050）
+## cleat 新增：`Clojure/`（cleat-050、cleat-051）
 
-Clojure 在 Scheme 元层上运行所需的 C# 部分（命名空间 `Cleat.Scheme.Clojure`，由 `src/scheme/clojure/syntax.sls` 使用）：
-- `ClojureFn`：`fn*` 的值，`clojure.lang.AFunction` 包着展开器生成的 Scheme 过程（固定参数子句的 case-lambda + 变长子句），
-  ArityException 用 Clojure 的类名规则。
-- `ClojureOps`：Clojure 代码的运行时操作（IFn 调用、Var 读写、集合字面量、Reflector 互操作、case* 分派等），都是 `Procedure`，
-  因为 Scheme 的 `clr-call` 会把返回的 long 转成 fixnum、枚举转成符号（值边界，designs/13 §7）。
-- `HostSyntax`：展开期的类型名 / 类型提示决议与 deftype* / reify* 的接口方法匹配（规则照 C# 展开器）。
+Clojure 在 Scheme 元层上运行所需的 C# 部分（命名空间 `Cleat.Scheme.Clojure`，由 `src/scheme/clojure/*.sls` 使用）：
+- `ClojureOps`：编译后的 Clojure 代码经编译器的 `$clj-call` 节点直接调用的静态方法（集合字面量、Reflector 互操作、`case*`
+  的下标、deftype* 的类型登记与值转换，参数与返回都是 object）；以及展开期用的 `Procedure`（宏调用、元数据与集合遍历）——
+  不用 Scheme 的 `clr-call`，因为它会把返回的 long 转成 fixnum、枚举转成符号（值边界，designs/13 §7）。
+  `fn*` 的值是编译器生成的 `AFunction` / `RestFn` 子类（cleat-051，原来的 `ClojureFn` 包装已删除）。
+- `HostSyntax`：展开期的类型名 / 类型提示决议与 deftype* / reify* 的接口方法匹配、类型布局（规则照 C# 展开器）。

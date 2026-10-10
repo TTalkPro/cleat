@@ -12,12 +12,13 @@ See docs/license.txt. |#
 ;;;   (target-type t 'object)      → 运行时类型名（Lcil 里的类型引用字符串）
 ;;;   (target-core-assembly t)     → 运行时程序集名（Lcil 的 references）
 (library (ironscheme compiler targets)
-  (export target-of target? target-name target-tail-calls? target-type target-core-assembly target-interop)
+  (export target-of target? target-name target-tail-calls? target-clojure-tail-calls? target-type target-core-assembly target-interop)
   (import (rnrs))
 
   (define-record-type target
     (fields name            ; 符号
             tail-calls?     ; 尾调用前缀可用
+            clojure-tail-calls? ; Clojure 节点（IFn 调用）是否发尾调用前缀（cleat-051：Clojure 没有尾调用语义，CLR 上不发）
             core-assembly   ; 运行时程序集
             types           ; 符号 → 类型名字符串的 alist
             interops))      ; host-* 节点 → 该目标发射器的互操作指令名（04 §2.5）的 alist
@@ -33,7 +34,7 @@ See docs/license.txt. |#
       (else (assertion-violation 'target-type "unknown type key" (target-name t) key))))
 
   (define clr
-    (make-target 'clr #t "Cleat.Scheme"
+    (make-target 'clr #t #f "Cleat.Scheme"
       '((object . "System.Object")
         (object-array . "System.Object[]")
         (int32 . "System.Int32")
@@ -53,7 +54,21 @@ See docs/license.txt. |#
         (calls . "Cleat.Scheme.Calls")
         (inline-arith . "Cleat.Scheme.InlineArith")
         (boot-interface . "Cleat.Scheme.BootInterface")
-        (unspecified . "Cleat.Scheme.Unspecified"))
+        (unspecified . "Cleat.Scheme.Unspecified")
+        ;; Clojure 运行时（cleat-051 的 Clojure 节点）
+        (ifn . "clojure.lang.IFn")
+        (clj-var . "clojure.lang.Var")
+        (keyword . "clojure.lang.Keyword")
+        (ilookup . "clojure.lang.ILookup")
+        (clj-util . "clojure.lang.Util")
+        (clj-rt . "clojure.lang.RT")
+        (afunction . "clojure.lang.AFunction")
+        (restfn . "clojure.lang.RestFn")
+        (persistent-map . "clojure.lang.IPersistentMap")
+        (iobj . "clojure.lang.IObj")
+        (clojure-ops . "Cleat.Scheme.Clojure.ClojureOps")
+        (type . "System.Type")
+        (type-handle . "System.RuntimeTypeHandle"))
       '((call . clr-call) (field-get . clr-field-get) (field-set . clr-field-set) (new . clr-new)
         (new-array . clr-new-array) (cast . clr-cast) (is . clr-is) (typeof . clr-type) (namespaces . clr-namespaces))))
 

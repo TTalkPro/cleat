@@ -37,13 +37,15 @@ See docs/license.txt. |#
             captured      ; eq 哈希表：出现在某个 lambda 自由变量中的词法变量
             letrec-refs   ; eq 哈希表：letrec 右边（L0 记录）→ 它引用的同组变量
             massigned     ; eq 哈希表：被 mset! 的库变量（除初始化外还被赋值，不能当作已知过程直接调用）
-            forward))     ; eq 哈希表：simplify-letrec 引入的前向变量（读取时要检查是否已初始化）
+            forward       ; eq 哈希表：simplify-letrec 引入的前向变量（读取时要检查是否已初始化）
+            fields))      ; eq 哈希表：deftype* 的字段变量（cleat-051；被 set! 也不装箱）
 
   (define (analyze ir)
     (let ((assigned (make-eq-hashtable))
           (captured (make-eq-hashtable))
           (letrec-refs (make-eq-hashtable))
-          (massigned (make-eq-hashtable)))
+          (massigned (make-eq-hashtable))
+          (fields (make-eq-hashtable)))
       ;; 返回 e 中自由出现的词法变量
       (define (Expr e)
         (nanopass-case (L0 Expr) e
@@ -89,13 +91,24 @@ See docs/license.txt. |#
           [(host-using ,d) '()]
           [(host-reference ,d) '()]
           [(host-namespaces) '()]
-          [(unsupported ,d ,e* ...) (union* (map Expr e*))]))
+          [(unsupported ,d ,e* ...) (union* (map Expr e*))]
+          [(clj-var-ref ,d ,st) '()]
+          [(clj-var-set! ,d ,e) (Expr e)]
+          [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (set-union (Expr e0) (Expr e1))]
+          [(clj-invoke ,e ,e* ...) (union* (map Expr (cons e e*)))]
+          [(clj-keyword-invoke ,d ,e ,e* ...) (union* (map Expr (cons e e*)))]
+          [(clj-call ,d0 ,d1 ,e* ...) (union* (map Expr e*))]
+          [(clj-case ,d ,e0 ,e1 ,e* ...) (union* (map Expr (cons* e0 e1 e*)))]
+          [(clj-deftype ,d (,x* ...) ,le* ...)
+           ;; 字段是对象的字段：方法里的 set! 直接写字段，不装箱
+           (for-each (lambda (x) (hashtable-set! fields x #t)) x*)
+           (set-minus (union* (map Expr le*)) x*)]))
       (define (Clause cl)
         (nanopass-case (L0 Clause) cl
           [(clause (,x* ...) ,x ,body)
            (set-minus (Expr body) (if x (cons x x*) x*))]))
       (Expr ir)
-      (make-analysis assigned captured letrec-refs massigned (make-eq-hashtable))))
+      (make-analysis assigned captured letrec-refs massigned (make-eq-hashtable) fields)))
 
   (define (lambda-form? e)
     (nanopass-case (L0 Expr) e
@@ -223,7 +236,8 @@ See docs/license.txt. |#
     (definitions
       (define (boxed? x)
         (and (hashtable-ref (analysis-assigned an) x #f)
-             (hashtable-ref (analysis-captured an) x #f)))
+             (hashtable-ref (analysis-captured an) x #f)
+             (not (hashtable-ref (analysis-fields an) x #f))))
       ;; label 的形参表：jump 给被装箱的形参传新 Box
       (define label-params (make-eq-hashtable)))
     (Expr : Expr (ir) -> Expr ()
