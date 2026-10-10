@@ -3374,7 +3374,12 @@
   ([] (transient []))
   ([coll] coll)
   ([^clojure.lang.ITransientCollection coll x]
-     (.conj coll x)))
+     (.conj coll x))
+  ([^clojure.lang.ITransientCollection coll x & xs]                                ;;; CLEAT-032: variadic, like conj
+     (let [ret (.conj coll x)]
+       (if xs
+         (recur ret (first xs) (next xs))
+         ret))))
 
 (defn assoc!
   "When applied to a transient map, adds mapping of key(s) to
@@ -3476,7 +3481,9 @@
    :static true}
   ([] nil)
   ([x] x)
-  ([x y] (if (and x y) (into1 x y) (or x y)))
+  ([x y] (when (or x y)                                                                  ;;; CLEAT-032: Clojure 1.12's conj semantics: a [k v] pair or
+           (let [x (or x {})]                                                             ;;;   a map entry is conj-ed, a non-map y is refused by conj
+             (cond (nil? y) x (map? y) (into1 x y) :else (conj x y)))))                  ;;;   (was (if (and x y) (into1 x y) (or x y)))
   ([x y & maps]
    (reduce1 merge (merge x y) maps)))
 
@@ -5325,11 +5332,12 @@ Note that read can execute code (controlled by *read-eval*),
   ([coll]
    (let [step (fn step [xs seen]
                 (lazy-seq
-                  ((fn [[f :as xs] seen]
+                  ((fn [xs seen]                                                      ;;; CLEAT-032: was [[f :as xs] seen] -- nth on a set or map
                      (when-let [s (seq xs)]
-                       (if (contains? seen f)
-                         (recur (rest s) seen)
-                         (cons f (step (rest s) (conj seen f))))))
+                       (let [f (first s)]
+                         (if (contains? seen f)
+                           (recur (rest s) seen)
+                           (cons f (step (rest s) (conj seen f)))))))
                    xs seen)))]
      (step coll #{}))))
 
@@ -8434,7 +8442,7 @@ clojure.lang.IKVReduce
   [^String s]                                                                ;;; ^Double  -- no equivalent since this can return nil  -- at least until we can return Nullable<double>
   (if (string? s)
     (try
-      (Double/Parse s (.NumberFormat System.Globalization.CultureInfo/InvariantCulture))       ;;; Double/valueOf, added InvariantCulture
+      (Cleat.Core.Runtime.JvmText/ParseDouble s)                                               ;;; Double/valueOf  CLEAT-032: Java's grammar (hex, f/d suffix, case-sensitive Infinity)
       (catch FormatException _ nil)(catch OverflowException _ nil))                            ;;; NumberFormatException  -- and added other cases
     (throw (ArgumentException. (parsing-err s)))))                                             ;;; IllegalArgumentException
 

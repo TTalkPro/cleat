@@ -61,6 +61,9 @@ namespace clojure.lang
             // Per CLJ-2915, 2026-09-29
             d.Add(Symbol.intern("ExceptionInfo"), typeof(clojure.lang.ExceptionInfo));
 
+            // CLEAT-032: JVM exception class names as implicit imports, mapped to the CLR types Cleat.Core throws
+            Cleat.Core.Runtime.JvmNames.AddImports(d);
+
             return d;
         }
 
@@ -983,7 +986,8 @@ namespace clojure.lang
             if (coll is ITransientAssociative2 ta2)
                 return ta2.entryAt(key);
 
-            return null;
+            // CLEAT-032: like the JVM's RT.find
+            throw new ArgumentException("find not supported on type: " + Util.NameForType(coll.GetType()));
         }
 
 
@@ -2663,10 +2667,8 @@ namespace clojure.lang
             //    So I need double/float to print a trailing .0 even when integer-valued.
             else if (x is double || x is float)
             {
-                string s = x.ToString();
-                if (!s.Contains('.') && !s.Contains('E'))
-                    s += ".0";
-                w.Write(s);
+                // CLEAT-032: JVM text (Cleat.Core.Runtime.JvmText), always with a '.' or an 'E'
+                w.Write(Cleat.Core.Runtime.JvmText.ToStr(x));
             }
             // CLEAT-006: C# 的 bool.ToString() 是 "True"/"False"；Clojure 打印 true/false（ClojureCLR 靠 core_print 的 print-method 覆盖）
             else if (x is bool b)
@@ -2813,6 +2815,11 @@ namespace clojure.lang
                 NumDuplicates++;
                 return t;
             }
+
+            // CLEAT-032: java.lang.IllegalArgumentException etc. (Cleat.Core.Runtime.JvmNames)
+            t = Cleat.Core.Runtime.JvmNames.FindFull(p);
+            if (t != null)
+                return t;
 
             // Try using Type.GetType which can find types with assembly-qualified names.
             t = Type.GetType(p, false);
@@ -3388,7 +3395,7 @@ namespace clojure.lang
         // The Java version goes through Array.sort to do this,
         // but I don't have a way to pass a comparator.
 
-        class ComparerConverter : IComparer
+        class ComparerConverter : IComparer, IComparer<object>  // CLEAT-032: also generic, for the stable OrderBy
         {
             readonly IFn _fn;
 
@@ -3401,7 +3408,15 @@ namespace clojure.lang
 
             public int Compare(object x, object y)
             {
-                return Util.ConvertToInt(_fn.invoke(x, y));
+                // CLEAT-032: a boolean "less-than" fn works as a comparator (like AFunction.Compare / AFunction.compare on the JVM)
+                object o = _fn.invoke(x, y);
+                if (o is bool lt)
+                {
+                    if (lt)
+                        return -1;
+                    return RT.booleanCast(_fn.invoke(y, x)) ? 1 : 0;
+                }
+                return Util.ConvertToInt(o);
             }
 
             #endregion
@@ -3409,7 +3424,9 @@ namespace clojure.lang
 
         public static void SortArray(Array a, IFn fn)
         {
-            Array.Sort(a, new ComparerConverter(fn));
+            // CLEAT-032: sort is guaranteed stable (Array.Sort is not); comparator exceptions propagate unwrapped
+            object[] sorted = a.Cast<object>().OrderBy(x => x, new ComparerConverter(fn)).ToArray();
+            Array.Copy(sorted, a, sorted.Length);
         }
 
 
@@ -3428,6 +3445,10 @@ namespace clojure.lang
 
         public static string CultureToString(object x)
         {
+            // CLEAT-032: doubles, floats and booleans read like the JVM's toString ("1.0", "1.0E100", "Infinity", "true")
+            string jvm = Cleat.Core.Runtime.JvmText.ToStr(x);
+            if (jvm != null)
+                return jvm;
             if (Util.IsNumeric(x))
                 return String.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}", x);
             else

@@ -162,6 +162,11 @@ namespace clojure.lang
         public bool compareAndSet(object oldv, object newv)
         {
             Validate(newv);
+            // CLEAT-032: CLR boxes of equal numbers / chars / booleans are distinct objects (the JVM caches small Longs,
+            // Characters and Booleans), so a boxed value type compares by value: (compare-and-set! (atom 0) 0 1) is true
+            object cur = _state.Get();
+            if (!ReferenceEquals(cur, oldv) && cur is ValueType && oldv is ValueType && cur.GetType() == oldv.GetType() && cur.Equals(oldv))
+                oldv = cur;
             bool ret = _state.CompareAndSet(oldv, newv);
             if (ret)
                 NotifyWatches(oldv, newv);

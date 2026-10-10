@@ -36,7 +36,7 @@
 | [cleat-029](tasks/cleat-029-phase-a-stage0-build.md) | Phase A：stage0 编译出 cleat.boot.dll | 替换（15 §5） | cleat-028、cleat-018 | 搁置 |
 | [cleat-030](tasks/cleat-030-host-and-repl.md) | 宿主 Cleat.Host 与 REPL | M5 | cleat-022、cleat-012 | 完成 |
 | [cleat-031](tasks/cleat-031-phase-b-fixpoint.md) | Phase B：自举不动点 | 并入 cleat-053 | cleat-029、cleat-030 | 搁置 |
-| [cleat-032](tasks/cleat-032-conformance-baseline.md) | 符合性基线：语料、clojure-test-suite、test_clojure | M6 | cleat-053、cleat-002 | 未开始 |
+| [cleat-032](tasks/cleat-032-conformance-baseline.md) | 符合性基线：语料、clojure-test-suite、test_clojure | M6 | cleat-053、cleat-002 | 完成 |
 | [cleat-033](tasks/cleat-033-aot-and-load-path.md) | 命名空间 AOT（.clj.dll）与加载路径 | M7 | cleat-032 | 未开始 |
 | [cleat-034](tasks/cleat-034-publish-and-repl-editing.md) | 自包含发布与 REPL 行编辑 | M7 | cleat-033 | 未开始 |
 | [cleat-035](tasks/cleat-035-embedding-and-error-goldens.md) | 嵌入 API 与错误黄金文件 | M7 | cleat-033 | 未开始 |

@@ -1,0 +1,606 @@
+;; cleat 在语料 :common 行上的已知偏离（cleat-032）。键为 [suite label]；格式同 jolt 的 known-divergences.edn。
+;; 门禁：cleat tools/conformance.clj --gate（Conformance 测试）——失败行不在表中（新失败）或表中的行已通过 / 不在语料中（过期）都失败。
+;; 改动后按实际结果有意地更新本表（每条要有 :category 与具体的 :reason）。
+{:doc "Rows of tests/conformance/corpus.edn (:common) that fail on cleat, each classified. tools/conformance.clj --gate fails on a NEW failing row and on a STALE entry."
+ :counts {:corpus/jolt-value 98, :error-model 6, :host/boxing 3, :host/class-name 17, :host/defaults 1, :host/exception-type 28, :host/hash 2, :host/jvm-api 310, :host/message 2, :host/numeric-types 10, :host/reader-features 4, :host/regex 39, :host/strings 1, :not-yet 27, :numeric 2, :printf 2, :strictness 2, :upstream/clojureclr 7}
+ :legend
+ {:host/jvm-api
+  "the row calls a Java API: java.* / javax.* classes, java.lang statics (Long/MAX_VALUE, Integer/parseInt, Double/isNaN, System/getProperty), Java method names (.getMessage, .length, .getName, .substring), java.io / clojure.java.io, or clojure.lang members by their JVM names. cleat runs on the CLR and does not emulate the Java class library (designs/03 §4); the CLR spelling (.Message, Int64/MaxValue, clojure.clr.io …) works"
+  :host/class-name
+  "the value is a class name or a printed Class: CLR names (System.String, Outer+Inner, TypedArraySeq`1) instead of java.lang.String / Outer$Inner; (str (class x)) has no \"class \" prefix"
+  :host/exception-type
+  "the JVM throws a specific java.lang exception (NullPointerException, ClassCastException, AssertionError, ArrayIndexOutOfBoundsException …) where cleat throws the CLR exception it actually raises (ArgumentNullException, a Reflector overload miss, IndexOutOfRangeException …) that the JVM-name alias does not cover, or the message is .NET's; see designs/03 §4 for the alias table"
+  :host/regex
+  "java.util.regex syntax or semantics that System.Text.RegularExpressions does not share: \\Q…\\E, possessive quantifiers, POSIX \\p{Alpha}, \\p{javaUpperCase}, (?u), class intersection [a&&b], \\R, \\x{…}, \\c edge cases, look-behind bounds"
+  :host/numeric-types
+  "CLR numeric types: byte is System.Byte (unsigned 0..255), the narrowing / unchecked casts use .NET's rules (char accepted as its code, no sign folding for byte)"
+  :host/hash
+  "Object.hashCode-based results (hash-combine's Util/hash, format %h on non-strings): ClojureCLR's Util.hash is hasheq, and CLR GetHashCode differs from Java's hashCode"
+  :host/reader-features
+  "cleat reads #? / #?@ with the :cljr feature (like ClojureCLR), so :clj branches are not taken"
+  :host/boxing
+  "identity of boxed values: CLR boxes of equal numbers / interned strings are distinct objects (the JVM caches small Longs and interns symbol names)"
+  :host/strings
+  "string predicates use .NET character classes (Char.IsWhiteSpace) rather than Java's"
+  :host/message
+  "the same exception with a ClojureCLR / .NET message text"
+  :host/defaults
+  "a default that is host-specific (*compile-path*)"
+  :printf
+  "gaps in clojure.lang.Printf, ClojureCLR's port of java.util.Formatter that format / printf use"
+  :numeric
+  "numeric printing / conversion detail that differs from the JVM (subnormal digits in %e, rationalize of a double)"
+  :strictness
+  "cleat accepts an argument the JVM rejects (a superset)"
+  :error-model
+  "compile errors are one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; ex-cause / message texts differ (cleat-055 error model)"
+  :upstream/clojureclr
+  "cleat's src/clojure is ClojureCLR's core (Clojure 1.13 alpha); the corpus is Clojure 1.12.5: *clojure-version*, select-keys via get, destructure's :or hoisting, array-map growth"
+  :corpus/jolt-value
+  "the row's :expected is jolt's own value, not reference Clojure's: listed in jolt's known-divergences.edn or in jolt's profile.edn with a non-certified bucket (:jvm-raises, :uncertifiable, :divergent, :read-error …), names that are not clojure.core (atom?, regex?, sorted-set? …), or files from jolt's repository"
+  :not-yet
+  "a gap cleat intends to close; the reason names the target task"}
+ :entries
+ [
+  {:suite "destructure / :or" :label ":keys :or default uses sibling binding (lazy eval order)" :category :upstream/clojureclr :reason "ClojureCLR's destructure hoists :or defaults into locals evaluated before the keys are bound (Clojure 1.12 evaluates each default inline, lazily)"}
+  {:suite "syntax-quote / ~@ is lazy" :label "a top-level do evaluates the forms ahead of a splice before the splice is realized" :category :not-yet :reason "a macro's top-level (do …) is expanded as a whole before its forms run, so a splice sees the def ahead of it unevaluated; target cleat-033 (top-level form splitting in the driver)"}
+  {:suite "host-interop / Var surface" :label "isMacro reads the macro flag" :category :host/jvm-api :reason "Java member Var.isMacro (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "getTag" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "setMacro marks the var and its meta" :category :host/jvm-api :reason "Java member Var.isMacro (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "toSymbol is the qualified name" :category :host/jvm-api :reason "Java member Var.toSymbol (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "a dashed spelling of a Var METHOD is a field miss" :category :host/jvm-api :reason "clojure.lang.Var members by their Java names / Java field-miss messages"}
+  {:suite "host-interop / Var surface" :label "unbindRoot puts the root back to Unbound" :category :host/jvm-api :reason "Java member Var.unbindRoot (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "fn is the deref cast to IFn" :category :host/jvm-api :reason "Java member Var.fn (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "the thread binding box names Var$TBox" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
+  {:suite "host-interop / Var surface" :label "the box's fields are package-private, so neither reads" :category :host/jvm-api :reason "Java member Var.val (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "getName is not a member of Var" :category :host/jvm-api :reason "Java member Var.getName (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "name is not a member of Var" :category :host/jvm-api :reason "Java member Var.name (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "fn answers any IFn" :category :host/jvm-api :reason "Java member Var.fn (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "fn on a non-IFn names the class in the cast" :category :host/jvm-api :reason "Java member Var.fn (no CLR counterpart under that name)"}
+  {:suite "host-interop / Var surface" :label "Thread.start conveys no bindings" :category :host/jvm-api :reason "JVM class Thread (java.lang implicit import)"}
+  {:suite "host-interop / Var surface" :label "a Thread body's set! has no binding to write" :category :host/jvm-api :reason "JVM class Thread (java.lang implicit import)"}
+  {:suite "host-interop / Var surface" :label "bound-fn carries the binding into a Thread" :category :host/jvm-api :reason "JVM class Thread (java.lang implicit import)"}
+  {:suite "host-interop / Var surface" :label "an executor task runs with no thread bindings" :category :host/jvm-api :reason "JVM class java.util.concurrent.Callable"}
+  {:suite "io / spit and writer on a URL" :label "spit through a file: URL writes its path" :category :host/jvm-api :reason "JVM class statics: java.io.File/…"}
+  {:suite "io / spit and writer on a URL" :label "io/writer and io/output-stream through a file: URL" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / spit and writer on a URL" :label "spit :append through a URL" :category :host/jvm-api :reason "JVM class statics: java.io.File/…"}
+  {:suite "io / spit and writer on a URL" :label "a non-file URL is refused with the JVM's message" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "concurrency / ExecutorService.invokeAll" :label "invokeAll blocks until every task completes and returns their futures" :category :host/jvm-api :reason "JVM class statics: Thread/…"}
+  {:suite "concurrency / ExecutorService.invokeAll" :label "a failing task is done, and its get raises ExecutionException" :category :host/jvm-api :reason "JVM class java.util.concurrent.ExecutionException"}
+  {:suite "concurrency / ExecutorService.invokeAll" :label "invokeAll of no tasks, and with a timeout" :category :host/jvm-api :reason "JVM class statics: java.util.concurrent.TimeUnit/…"}
+  {:suite "concurrency / ExecutorService.invokeAll" :label "invokeAny returns a successful result, skipping failures" :category :host/jvm-api :reason "JVM class statics: java.util.concurrent.Executors/…"}
+  {:suite "concurrency / ExecutorService.invokeAll" :label "invokeAny with every task failing, or none" :category :host/jvm-api :reason "JVM class java.util.concurrent.ExecutionException"}
+  {:suite "host-interop / Var surface" :label "only the Namespace overload of Var/intern takes a root" :category :host/jvm-api :reason "clojure.lang.Var members by their Java names / Java field-miss messages"}
+  {:suite "assert" :label "failed assert throws AssertionError" :category :host/exception-type :reason "AssertionError: the CLR has no java.lang.Error hierarchy; assert throws System.Exception"}
+  {:suite "fn / pre-post" :label ":pre failure throws AssertionError" :category :host/exception-type :reason "AssertionError: the CLR has no java.lang.Error hierarchy; assert throws System.Exception"}
+  {:suite "reader / nested syntax-quote" :label "the inner template is jolt's construction code, not the JVM's seq/concat" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :impl-detail)"}
+  {:suite "reader / nested syntax-quote" :label "a quoted template is that same construction code" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :impl-detail)"}
+  {:suite "clojure.string / replace" :label "char match, string replacement" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
+  {:suite "control / conditionals" :label "a large case over integers past the long range" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "exceptions / ex-info" :label "catch binds thrown value" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "forms / fn" :label "no param vector" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :strictness)"}
+  {:suite "clojure.core / leaf batch (complement fnil munge etc.)" :label "supers empty set" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "clojure.core / leaf batch 4" :label "shuffle non-coll throws" :category :strictness :reason "shuffle of a non-collection answers [] (ClojureCLR copies (seq coll)); the JVM's ArrayList constructor throws"}
+  {:suite "interop / String methods" :label "instance? CharSequence" :category :host/jvm-api :reason "JVM class CharSequence (java.lang implicit import)"}
+  {:suite "interop / String methods" :label "instance? CharSequence non-str" :category :host/jvm-api :reason "JVM class CharSequence (java.lang implicit import)"}
+  {:suite "host-interop / ring-codec surface" :label "extend-protocol Map" :category :host/jvm-api :reason "JVM class Map (java.lang implicit import)"}
+  {:suite "host-interop / ring-codec surface" :label "extend-protocol Map covers sorted" :category :host/jvm-api :reason "JVM class Map (java.lang implicit import)"}
+  {:suite "host-interop / class tokens & readers" :label "dispatch-only class name" :category :host/jvm-api :reason "JVM class InputStream (java.lang implicit import)"}
+  {:suite "host-interop / class tokens & readers" :label "Class str is class-prefixed" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
+  {:suite "host-interop / reader-feature toggle" :label "features default to jolt+default" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "host-interop / reader-feature toggle" :label "set + read back" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "host-interop / reader-feature toggle" :label "restore returns to default" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "host-interop / java.nio.file.Files" :label "move REPLACE_EXISTING over an undeletable target is AccessDenied on the target" :category :host/jvm-api :reason "JVM class statics: java.nio.file.Files/…"}
+  {:suite "host-interop / logging host shims" :label "pprint writes value" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "host-interop / logging host shims" :label "pprint respects *print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "reader / digit separators" :label "underscores group a long decimal" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "a run of underscores is one separator" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "a separator survives a leading sign" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "hex groups by nibble" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "octal keeps its leading zero" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "a radix literal groups its digits" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "both sides of a decimal point group" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "mantissa and exponent group independently" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "a bigint suffix follows a grouped literal" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "a ratio groups either side" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "reader / digit separators" :label "a trailing separator is an invalid number" :category :host/jvm-api :reason "Java member FormatException.getMessage (no CLR counterpart under that name)"}
+  {:suite "reader / digit separators" :label "a separator against the hex marker is an invalid number" :category :host/jvm-api :reason "Java member FormatException.getMessage (no CLR counterpart under that name)"}
+  {:suite "reader / digit separators" :label "a separator against the exponent marker is an invalid number" :category :host/jvm-api :reason "Java member FormatException.getMessage (no CLR counterpart under that name)"}
+  {:suite "reader / digit separators" :label "a separator against the decimal point is an invalid number" :category :host/jvm-api :reason "Java member FormatException.getMessage (no CLR counterpart under that name)"}
+  {:suite "reader / delimiters" :label "a mismatched close reports, it does not hang" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "reader / delimiters" :label "mismatched bracket" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "io / print-method multimethod" :label "a record method fires nested" :category :host/jvm-api :reason "Java member StringWriter.write (no CLR counterpart under that name)"}
+  {:suite "io / print-method multimethod" :label "a host class method outranks the built-in printer" :category :host/jvm-api :reason "JVM class java.net.URI"}
+  {:suite "io / print-method multimethod" :label "a host class method fires nested" :category :host/jvm-api :reason "JVM class java.net.URI"}
+  {:suite "io / print-method multimethod" :label "a host class method fires through prn" :category :host/jvm-api :reason "JVM class java.net.URI"}
+  {:suite "io / print-method multimethod" :label "str ignores print-method" :category :host/jvm-api :reason "JVM class java.net.URI"}
+  {:suite "io / print-method multimethod" :label "removing the method restores the built-in printer" :category :host/jvm-api :reason "JVM class java.net.URI"}
+  {:suite "io / print-method multimethod" :label "a direct call renders a uuid like pr" :category :host/jvm-api :reason "JVM class StringWriter (java.lang implicit import)"}
+  {:suite "io / print-method multimethod" :label "a direct call renders a regex like pr" :category :host/jvm-api :reason "JVM class StringWriter (java.lang implicit import)"}
+  {:suite "io / cold tagged types via print-method" :label "transient vector" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :printer-model)"}
+  {:suite "io / cold tagged types via print-method" :label "transient map" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :printer-model)"}
+  {:suite "macros / core-overlay" :label "assert message" :category :host/exception-type :reason "AssertionError: the CLR has no java.lang.Error hierarchy; assert throws System.Exception"}
+  {:suite "maps / insertion order" :label "assoc of the held value is identity (array)" :category :host/boxing :reason "assoc of the value already held returns the same map only when the values are identical?; CLR boxes of equal longs are distinct objects (the JVM caches small Longs)"}
+  {:suite "maps / insertion order" :label "assoc of the held value is identity (hash)" :category :host/boxing :reason "assoc of the value already held returns the same map only when the values are identical?; CLR boxes of equal longs are distinct objects (the JVM caches small Longs)"}
+  {:suite "clojure.math" :label "add-exact" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "clojure.math" :label "subtract-exact" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "clojure.math" :label "multiply-exact" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "clojure.math" :label "increment-exact / decrement-exact / negate-exact" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "clojure.math" :label "get-exponent" :category :host/jvm-api :reason "Java member Double.MAX_VALUE (no CLR counterpart under that name)"}
+  {:suite "clojure.math" :label "next-after" :category :host/jvm-api :reason "Java member Double.MAX_VALUE (no CLR counterpart under that name)"}
+  {:suite "clojure.math" :label "next-up and next-down" :category :host/jvm-api :reason "Java member Double.MAX_VALUE (no CLR counterpart under that name)"}
+  {:suite "clojure.math" :label "next-* keep NaN" :category :host/jvm-api :reason "Java member Double.isNaN (no CLR counterpart under that name)"}
+  {:suite "clojure.math" :label "ulp" :category :host/jvm-api :reason "Java member Double.MAX_VALUE (no CLR counterpart under that name)"}
+  {:suite "clojure.math" :label "Math statics behind the new clojure.math fns" :category :host/jvm-api :reason "Java member Math.IEEEremainder (no CLR counterpart under that name)"}
+  {:suite "clojure.math" :label "Math/copySign, max, min and signum on -0.0 and NaN" :category :host/jvm-api :reason "Java member Math.copySign (no CLR counterpart under that name)"}
+  {:suite "printing / doubles" :label "format starts a subnormal from the same two digits" :category :numeric :reason "%e on a subnormal starts from .NET's shortest digits (5E-324), not Double.toString's two digits (4.9E-324)"}
+  {:suite "printing / doubles" :label "a 17-digit tie rounds its last digit to even" :category :host/jvm-api :reason "Java member Double.longBitsToDouble (no CLR counterpart under that name)"}
+  {:suite "map / the stored key, not the probe key" :label "select-keys carries the source map's keys over" :category :upstream/clojureclr :reason "ClojureCLR's select-keys (Clojure 1.13) builds the result with get, so it keeps the probe key and does not go through find"}
+  {:suite "map / find's accepted types" :label "a set is not associative" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
+  {:suite "map / find's accepted types" :label "and neither is a sorted set" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
+  {:suite "map / find's accepted types" :label "nor a string, keyword or list" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
+  {:suite "map / find's accepted types" :label "a transient map and vector are, a transient set is not" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
+  {:suite "map / find's accepted types" :label "select-keys inherits find's type check" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
+  {:suite "metadata / coll literal in code keeps meta" :label "map literal meta with expr" :category :not-yet :reason "metadata on a constant collection literal is kept as data, not evaluated ((meta ^{:a (+ 1 2)} [1]) → {:a (+ 1 2)}); target cleat-033"}
+  {:suite "metadata / collection ops preserve meta" :label "vec of a map entry is a plain vector" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
+  {:suite "core / Inst protocol" :label "inst-ms on a non-inst is the protocol's miss" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "core / with-open" :label "body result" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "core / with-open" :label "close runs" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "core / with-open" :label "nested close order" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "core / with-open" :label "binding visible" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "core / with-precision" :label "rounding arg accepted" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
+  {:suite "multimethods / hierarchies" :label "explicit :hierarchy" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
+  {:suite "namespaces / designators" :label "a nil namespace designator is a NullPointerException, as on the JVM" :category :host/exception-type :reason "a nil / non-symbol namespace designator fails as ArgumentNullException / a Reflector miss, not NullPointerException / ClassCastException"}
+  {:suite "namespaces / designators" :label "a designator that is not a symbol is a failed cast to Symbol" :category :host/exception-type :reason "a nil / non-symbol namespace designator fails as ArgumentNullException / a Reflector miss, not NullPointerException / ClassCastException"}
+  {:suite "namespaces / ns operations" :label "in-ns switches" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "namespaces / ns operations" :label "standalone use" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "namespaces / unified alias store" :label "require :as registers the alias" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :namespace-model)"}
+  {:suite "namespaces / unified alias store" :label "alias fn visible to ns-aliases" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :namespace-model)"}
+  {:suite "namespaces / unified alias store" :label "ns-unalias removes both views" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :namespace-model)"}
+  {:suite "*ns* / identity & printing" :label "tracks in-ns" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "numbers / parse fns (1.11)" :label "parse-long in range is a Long" :category :host/jvm-api :reason "JVM class java.lang.Long"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong rejects an exponent" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong rejects a decimal point" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong rejects a #x radix prefix" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseInt rejects a #o radix prefix" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong rejects leading space" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong rejects trailing space" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong takes a leading plus" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong max long" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseInt max int" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseShort max short" :category :host/jvm-api :reason "JVM class statics: Short/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseByte min byte" :category :host/jvm-api :reason "Java member Byte.parseByte (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong radix 16" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "parseLong radix 36 is case-blind" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "long range message is the input-string one" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "short range message names the value" :category :host/jvm-api :reason "JVM class statics: Short/…"}
+  {:suite "interop / java.lang integer parsing" :label "byte range message names the value" :category :host/jvm-api :reason "Java member Byte.parseByte (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang integer parsing" :label "a non-ten radix is named in the message" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "radix 1 is named as below MIN_RADIX" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode hex 0x" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode hex 0X" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode hex #" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode octal" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode decimal" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode zero" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode signs the prefixed value" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode takes a leading plus" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "Long/decode max long" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "interop / java.lang integer parsing" :label "Short/decode max short" :category :host/jvm-api :reason "JVM class statics: Short/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode names the post-prefix digits and radix" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "decode of the empty string says so" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "interop / java.lang integer parsing" :label "narrow decode range message quotes the input" :category :host/jvm-api :reason "Java member Byte.decode (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parseDouble takes a hex significand" :category :host/jvm-api :reason "Java member Double.parseDouble (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parseDouble hex with a fraction" :category :host/jvm-api :reason "Java member Double.parseDouble (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parseDouble signs a hex significand" :category :host/jvm-api :reason "Java member Double.parseDouble (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parse-double signed NaN is NaN" :category :host/jvm-api :reason "Java member Double.isNaN (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parseDouble trims, unlike the integers" :category :host/jvm-api :reason "Java member Double.parseDouble (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parseDouble takes a d suffix" :category :host/jvm-api :reason "Java member Double.parseDouble (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parseDouble takes an f suffix" :category :host/jvm-api :reason "Java member Double.parseDouble (no CLR counterpart under that name)"}
+  {:suite "interop / java.lang double parsing" :label "parseDouble saturates rather than failing" :category :host/jvm-api :reason "Java member Double.parseDouble (no CLR counterpart under that name)"}
+  {:suite "numbers / bit-op operand contract" :label "Long/MIN_VALUE and Long/MAX_VALUE are in range" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / bit-op operand contract" :label "the message names the operand's class, not its value" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "numbers / bit-op operand contract" :label "every non-numeric operand kind names its class" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "numbers / bit-op operand contract" :label "a non-integer number names its class" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "numbers / bit-op operand contract" :label "an integer past long range is a BigInt, either sign" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "numbers / primitive hint coercion" :label "a ^long parameter range-checks like the long cast" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "a ^long parameter takes NaN as zero" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "a ^long RETURN truncates to the low 64 bits instead of raising" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "a ^long RETURN saturates a flonum and zeroes NaN" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "a ^long RETURN still rejects a non-number" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "a ^double RETURN widens without raising" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "bit-clear wraps to 64 bits at the sign bit" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / primitive hint coercion" :label "a ^long on the ARGLIST declares the return type, like one on the name" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "an anonymous fn's arglist hint counts too" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "each arity of a multi-arity fn carries its own" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / primitive hint coercion" :label "a ^double arglist hint widens the return" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce (truncate, saturate, reject non-numbers); target cleat-042"}
+  {:suite "numbers / char in a numeric cast" :label "double and float reject a char; the integer casts take its code point" :category :host/numeric-types :reason "ClojureCLR's double / float casts accept a char (Convert.ToDouble on its code)"}
+  {:suite "reader / anonymous fn literal" :label "a ^long return hint survives #()" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce; target cleat-042"}
+  {:suite "reader / anonymous fn literal" :label "a ^double return hint survives #() too" :category :not-yet :reason "^long / ^double on fn params and returns are hints only; the JVM's primitive fn interfaces coerce; target cleat-042"}
+  {:suite "predicates / overlay-migrated" :label "object?" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "predicates / overlay-migrated" :label "undefined?" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "predicates / overlay-migrated" :label "keyword-identical?" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "predicates / overlay-migrated" :label "keyword-identical? no" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "predicates / tagged-value" :label "atom? yes" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "predicates / tagged-value" :label "atom? no" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "protocols / defprotocol & dispatch" :label "extend-type" :category :host/jvm-api :reason "JVM class Number (java.lang implicit import)"}
+  {:suite "protocols / defprotocol & dispatch" :label "extend-protocol" :category :host/jvm-api :reason "JVM class Number (java.lang implicit import)"}
+  {:suite "protocols / dispatch miss message" :label "a receiver whose class has no implementation" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "protocols / dispatch miss message" :label "nil names its class as nil" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "protocols / dispatch miss message" :label "a record of another type, on a method with arguments" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "protocols / dispatch miss message" :label "a boxed number" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "protocols / dispatch miss message" :label "a reify of some other protocol is a miss like any other (its class name is host-minted)" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "protocols / dispatch miss message" :label "a miss on a method whose other receivers are extended" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "protocols / defprotocol options" :label "option only" :category :host/jvm-api :reason "JVM class Long (java.lang implicit import)"}
+  {:suite "reader / dispatch & sugar" :label "reader conditional" :category :host/reader-features :reason "cleat reads #? with the :cljr feature (like ClojureCLR), not :clj"}
+  {:suite "reader / dispatch & sugar" :label "reader cond :jolt" :category :host/reader-features :reason "cleat reads #? with the :cljr feature (like ClojureCLR), not :clj"}
+  {:suite "reader / dispatch & sugar" :label "reader cond no match" :category :host/reader-features :reason "cleat reads #? with the :cljr feature (like ClojureCLR), not :clj"}
+  {:suite "reader / dispatch & sugar" :label "reader cond splice no match" :category :host/reader-features :reason "cleat reads #? with the :cljr feature (like ClojureCLR), not :clj"}
+  {:suite "regex / literals & predicate" :label "regex? literal" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "regex / literals & predicate" :label "regex? non-regex" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "regex / re-pattern & string ops" :label "re-pattern is regex?" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "regex / \\p property classes" :label "p{IsHex_Digit} takes every Nd digit, as the JVM does" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{IsHex_Digit}': Unknown property 'IsHex_Digit'."}
+  {:suite "regex / \\p property classes" :label "p{IsHex_Digit} still rejects a non-hex letter and a Roman numeral" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{IsHex_Digit}': Unknown property 'IsHex_Digit'."}
+  {:suite "regex / inline flag groups" :label "an x in the ON set turns COMMENTS on whatever else the group names" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?cx)a b': Unrecognized grouping construct."}
+  {:suite "regex / \\Q quoting" :label "the quote is rewritten away before the pattern is read, so \\c sees the quoted letter" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / \\Q quoting" :label "a quantifier after \\E binds the last quoted character alone" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\Qab\\\\E*': Unrecognized escape sequence \\\\Q."}
+  {:suite "regex / \\Q quoting" :label "COMMENTS does not reach inside a quote" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?x)\\\\Qa b\\\\E': Unrecognized escape sequence \\\\Q."}
+  {:suite "regex / \\p property classes" :label "a p{name=value} key is matched without regard to case, its value with" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{GC=Lu}': Incomplete \\\\p{X} character escape."}
+  {:suite "regex / \\p property classes" :label "COMMENTS skips once after p{ and then reads the family name raw" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?x)\\\\p{ Lu}': Incomplete \\\\p{X} character escape."}
+  {:suite "regex / look-behind bounds" :label "an unbounded possessive or lazy repetition with something ahead of it cannot be measured" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / inline flag groups" :label "COMMENTS skips after \\c too, so the control letter is the next unit that survives" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?x)\\\\c A': Unrecognized control character."}
+  {:suite "regex / inline flag groups" :label "a \\c left with nothing after the run it skipped is refused, with or without one" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / inline flag groups" :label "COMMENTS reaches inside a braced escape argument and a bound" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?x)\\\\x{N N}': Insufficient or invalid hexadecimal digits."}
+  {:suite "regex / \\p property classes" :label "p{Alpha} is ASCII" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{Alpha}': Unknown property 'Alpha'."}
+  {:suite "regex / \\p property classes" :label "p{Digit} is ASCII" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{Digit}': Unknown property 'Digit'."}
+  {:suite "regex / \\p property classes" :label "p{Upper} stays ASCII" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{Upper}': Unknown property 'Upper'."}
+  {:suite "regex / \\p property classes" :label "p{Alnum} stays ASCII" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{Alnum}': Unknown property 'Alnum'."}
+  {:suite "regex / \\p property classes" :label "p{P} is Unicode punctuation, p{Punct} ASCII" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{Punct}': Unknown property 'Punct'."}
+  {:suite "regex / \\p property classes" :label "javaUpperCase/javaLowerCase are Unicode" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\p{javaUpperCase}': Unknown property 'javaUpperCase'."}
+  {:suite "regex / \\p property classes" :label "p{Z} space" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?u)^[\\\\s\\\\p{Z}]+$': Unrecognized grouping construct."}
+  {:suite "regex / escapes in and out of a character class" :label "\\c@ \\cZ \\ca are xor-64 of the raw char" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / escapes in and out of a character class" :label "octal, \\x and \\u inside a class" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / escapes in and out of a character class" :label "\\b inside a class is a pattern error" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / escapes in and out of a character class" :label "\\R is a linebreak outside a class and an error inside" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\R': Unrecognized escape sequence \\\\R."}
+  {:suite "regex / \\p property classes" :label "(?u) accepted" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?u)^hi$': Unrecognized grouping construct."}
+  {:suite "seq / lazy over infinite" :label "eduction reduces" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
+  {:suite "seq / strictness round 3" :label "shuffle on number" :category :strictness :reason "shuffle of a non-collection answers [] (ClojureCLR copies (seq coll)); the JVM's ArrayList constructor throws"}
+  {:suite "sorted / predicates" :label "sorted-map? true" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "sorted / predicates" :label "sorted-map? false" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "sorted / predicates" :label "sorted-set? true" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "sorted / predicates" :label "sorted-set? false" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "sorted / empty + empty? + rseq + printing" :label "empty set kind" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "io / slurp, spit, printf, flush (host-classified)" :label "slurp content" :category :corpus/jolt-value :reason "reads jolt's own README.md / repository layout"}
+  {:suite "io / slurp, spit, printf, flush (host-classified)" :label "spit + slurp round" :category :host/jvm-api :reason "JVM class statics: System/…"}
+  {:suite "io / slurp, spit, printf, flush (host-classified)" :label "spit append" :category :host/jvm-api :reason "JVM class statics: System/…"}
+  {:suite "io / slurp, spit, printf, flush (host-classified)" :label "file-seq finds files" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "io / slurp open failures" :label "slurp of a missing path is a FileNotFoundException that says so" :category :host/jvm-api :reason "JVM class statics: java.io.File/…"}
+  {:suite "io / slurp open failures" :label "slurp of a directory is a FileNotFoundException, not a read error" :category :host/jvm-api :reason "JVM class java.io.File"}
+  {:suite "io / slurp open failures" :label "slurp and io/reader fail a directory the same way" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / slurp open failures" :label "io/input-stream reports a missing path the way FileInputStream does" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / write open failures" :label "spit to a directory is a FileNotFoundException, not a rename error" :category :host/jvm-api :reason "JVM class java.io.File"}
+  {:suite "io / write open failures" :label "io/output-stream on a directory refuses the way FileOutputStream does" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / write open failures" :label "io/writer on a directory refuses at construction, not at close" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / write open failures" :label "io/output-stream into a missing directory names the target" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "ns / :refer-clojure exclusion" :label "an excluded name used above the ns's own def does not resolve" :category :error-model :reason "the expander resolves the excluded name at the top-level form; the error surfaces with a different message / nesting"}
+  {:suite "ns / private var references" :label "a qualified call to another ns's private fn is refused" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
+  {:suite "ns / private var references" :label "a private var reached through an alias is refused as written" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
+  {:suite "ns / private var references" :label "a private fn passed as a value is refused" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
+  {:suite "ns / private var references" :label "a private macro is refused" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
+  {:suite "ns / private var references" :label "a private clojure.core name is not referred, so a bare use does not resolve" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
+  {:suite "print / *print-length* and *print-level*" :label "pprint honors clojure.core/*print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "print / *print-length* and *print-level*" :label "pprint counts a map's entries against *print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "print / *print-length* and *print-level*" :label "pprint honors clojure.core/*print-level*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "print / *print-length* and *print-level*" :label "pprint stops an infinite seq at *print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "print / namespace maps" :label "pprint lifts a namespace map" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "ns / refer name checks" :label "refer :only a missing name throws IllegalAccessError" :category :host/jvm-api :reason "Java member RuntimeType.getSimpleName (no CLR counterpart under that name)"}
+  {:suite "ns / refer name checks" :label "refer :only a private name throws IllegalAccessError" :category :host/jvm-api :reason "Java member RuntimeType.getSimpleName (no CLR counterpart under that name)"}
+  {:suite "ns / refer name checks" :label "require :refer a missing name throws" :category :host/jvm-api :reason "Java member RuntimeType.getSimpleName (no CLR counterpart under that name)"}
+  {:suite "ns / refer name checks" :label ":refer-clojure :only a missing name throws" :category :host/jvm-api :reason "Java member RuntimeType.getSimpleName (no CLR counterpart under that name)"}
+  {:suite "eval & load-string as values" :label "load-string applies #inst literal" :category :host/jvm-api :reason "Java member DateTime.getTime (no CLR counterpart under that name)"}
+  {:suite "eval & load-string as values" :label "eval of a read-string #inst value" :category :host/jvm-api :reason "Java member DateTime.getTime (no CLR counterpart under that name)"}
+  {:suite "state / atoms" :label "atom? predicate" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "state / atoms" :label "atom? on non-atom" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "state / promises" :label "promise undelivered" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :timeout :perf/unbounded)"}
+  {:suite "string / str & basics" :label "str of integers at the edges" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "string / str & basics" :label "pr-str and Long/toString agree with str on an integer" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "clojure.string / unicode whitespace" :label "trim and blank? follow isWhitespace" :category :host/strings :reason "trim / blank? use Char.IsWhiteSpace (U+00A0 is whitespace on .NET, U+3000 too) rather than Character.isWhitespace"}
+  {:suite "clojure.string / unicode whitespace" :label "\\p{Z} covers the separator categories" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?u)^[\\\\s\\\\p{Z}]+$': Unrecognized grouping construct."}
+  {:suite "host-interop / proven string target" :label "literal target methods" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven string target" :label "^String param hint routes to the direct natives" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven string target" :label "call-site ^String tag on a local" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven keyword target" :label "literal .sym keeps the ns" :category :host/jvm-api :reason "Java member Keyword.sym (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven keyword target" :label "^Keyword param hint routes to the direct arm" :category :host/jvm-api :reason "Java member Keyword.sym (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven keyword target" :label "call-site ^Keyword tag on a local" :category :host/jvm-api :reason "Java member Keyword.sym (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven StringBuilder target" :label "unhinted let-bound builder" :category :host/jvm-api :reason "Java member StringBuilder.append (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven StringBuilder target" :label "append is fluent and renders numbers and chars" :category :host/jvm-api :reason "Java member StringBuilder.append (no CLR counterpart under that name)"}
+  {:suite "host-interop / proven StringBuilder target" :label "^StringBuilder param hint" :category :host/jvm-api :reason "Java member StringBuilder.append (no CLR counterpart under that name)"}
+  {:suite "transient / vector" :label "transient? true" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "transient / vector" :label "transient? false" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "untested / hash family" :label "hash-combine hashes its second argument" :category :host/hash :reason "hash-combine hashes its argument with Util.hash, which is hasheq in ClojureCLR (Object.hashCode on the JVM)"}
+  {:suite "untested / hash family" :label "hash-combine over a keyword" :category :host/hash :reason "hash-combine hashes its argument with Util.hash, which is hasheq in ClojureCLR (Object.hashCode on the JVM)"}
+  {:suite "untested / typed coercion views" :label "booleans" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / typed coercion views" :label "ints" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / typed coercion views" :label "longs" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / typed coercion views" :label "shorts" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / typed coercion views" :label "chars first" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / typed coercion views" :label "bytes view" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / chunk family (eager equivalents) + cat" :label "chunk round-trip" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "chunked-seq / over a vector" :label "chunk-first window past the first block" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "seq-type-model / specialized seq classes" :label "empty float range is EmptyList" :category :host/class-name :reason "JVM nested class name clojure.lang.PersistentList$EmptyList (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "bigint of a small bound is a long here" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "seq-type-model / specialized seq classes" :label "vector seq" :category :host/class-name :reason "JVM nested class name clojure.lang.PersistentVector$ChunkedSeq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "rest of a vector seq" :category :host/class-name :reason "JVM nested class name clojure.lang.PersistentVector$ChunkedSeq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "keys" :category :host/class-name :reason "JVM nested class name clojure.lang.APersistentMap$KeySeq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "vals" :category :host/class-name :reason "JVM nested class name clojure.lang.APersistentMap$ValSeq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "set seq is a KeySeq" :category :host/class-name :reason "JVM nested class name clojure.lang.APersistentMap$KeySeq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "array-map seq" :category :host/class-name :reason "JVM nested class name clojure.lang.PersistentArrayMap$Seq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "hash-map seq" :category :host/class-name :reason "JVM nested class name clojure.lang.PersistentHashMap$NodeSeq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "sorted-map seq" :category :host/class-name :reason "JVM nested class name clojure.lang.PersistentTreeMap$Seq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "rseq" :category :host/class-name :reason "JVM nested class name clojure.lang.APersistentVector$RSeq (CLR nested types use +)"}
+  {:suite "seq-type-model / specialized seq classes" :label "sort" :category :host/class-name :reason "concrete seq classes: CLR nested / generic type names (TypedArraySeq`1, Outer+Inner)"}
+  {:suite "format / rounding and flags" :label "a quoted 1.5M is a BigDecimal" :category :host/jvm-api :reason "JVM class java.math.BigDecimal"}
+  {:suite "format / the # alternate form" :label "# on %s is refused" :category :printf :reason "clojure.lang.Printf (ClojureCLR's port of java.util.Formatter) accepts # on %s"}
+  {:suite "format / argument index" :label "index 0 is refused" :category :host/jvm-api :reason "JVM class java.util.IllegalFormatArgumentIndexException"}
+  {:suite "format / argument index" :label "a leading %<s has no previous argument" :category :printf :reason "clojure.lang.Printf: a leading %<s fails with IndexOutOfRangeException, not MissingFormatArgumentException"}
+  {:suite "format / %h hashcode" :label "%h agrees with .hashCode" :category :host/jvm-api :reason "JVM class statics: Integer/…"}
+  {:suite "format / %t date-time" :label "%tF is the ISO date" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "%tT is the 24-hour time" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "%tR drops the seconds" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "%tD is the US short date" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "the hour conversions" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "minutes, seconds, millis and nanos" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "the date fields" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "epoch seconds and millis" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "%tz is the numeric offset" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "a Calendar is read on ITS zone" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "%T upcases the whole rendering" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "a non-date argument names the SUB-conversion" :category :host/jvm-api :reason "Java member IllegalFormatConversionException.getMessage (no CLR counterpart under that name)"}
+  {:suite "format / %t date-time" :label "%t takes a width" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "a precision on %t is refused" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "# on %t is refused" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "an unknown sub-conversion" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "format / %t date-time" :label "an indexed date directive renders twice" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "seq / eager argument checks" :label "repeat with a nil count throws at the call" :category :host/exception-type :reason "repeat with a nil / non-number count fails as a Reflector overload miss (InvalidOperationException), not NPE / ClassCastException"}
+  {:suite "seq / eager argument checks" :label "repeat with a non-number count throws at the call" :category :host/exception-type :reason "repeat with a nil / non-number count fails as a Reflector overload miss (InvalidOperationException), not NPE / ClassCastException"}
+  {:suite "chunking-model / unchunked realization granularity" :label "dedupe is fully lazy at construction" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :chunking-model)"}
+  {:suite "integer-box-model / narrow ints behave as integers" :label "byte is a Number" :category :host/jvm-api :reason "JVM class Number (java.lang implicit import)"}
+  {:suite "integer-box-model / narrow int class collapses to Long" :label "byte class" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "integer-box-model / narrow int class collapses to Long" :label "short class" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "integer-box-model / narrow int class collapses to Long" :label "int class" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "integer-box-model / narrow int class collapses to Long" :label "bigint of a small value collapses" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "integer-box-model / narrow int class collapses to Long" :label "instance? Long is true" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "integer-box-model / narrow int class collapses to Long" :label "float class is Float" :category :host/jvm-api :reason "JVM class java.lang.Float"}
+  {:suite "integer-box-model / narrow int class collapses to Long" :label "a double is not a Float" :category :host/jvm-api :reason "JVM class Float (java.lang implicit import)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "class number" :category :host/jvm-api :reason "JVM class java.lang.Long"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "class string" :category :host/jvm-api :reason "JVM class java.lang.String"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "init-proxy" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "update-proxy" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "memfn upper" :category :host/jvm-api :reason "Java member String.toUpperCase (no CLR counterpart under that name)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "memfn with args" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "memfn length" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "iterator-seq" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "seque passthrough" :category :not-yet :reason "seque (a BlockingQueue-backed seq) is not in ClojureCLR's core; target cleat-043"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label ".. threads members" :category :host/jvm-api :reason "Java member String.toUpperCase (no CLR counterpart under that name)"}
+  {:suite "untested / protocols: extend + extends?" :label "extend registers" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / protocols: extend + extends?" :label "extend two methods" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / protocols: extend + extends?" :label "extends? after extend" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / protocols: extend + extends?" :label "extends? without" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / ns + REPL machinery" :label "ns-imports empty user" :category :host/jvm-api :reason "the default imports are the System namespace's types (plus cleat's JVM exception aliases), not java.lang's 96 classes"}
+  {:suite "conformance / numbers / bits" :label "Double/doubleToLongBits and doubleToRawLongBits" :category :host/jvm-api :reason "Java member Double.MAX_VALUE (no CLR counterpart under that name)"}
+  {:suite "conformance / numbers / bits" :label "Double/longBitsToDouble round-trips" :category :host/jvm-api :reason "Java member Double.longBitsToDouble (no CLR counterpart under that name)"}
+  {:suite "conformance / numbers / bits" :label "Float/floatToIntBits rounds to single precision first" :category :host/jvm-api :reason "JVM class statics: Float/…"}
+  {:suite "conformance / numbers / bits" :label "Float/floatToIntBits range-checks like (float x)" :category :host/jvm-api :reason "JVM class statics: Float/…"}
+  {:suite "conformance / numbers / bits" :label "Float/intBitsToFloat has the float's value" :category :host/jvm-api :reason "JVM class statics: Float/…"}
+  {:suite "conformance / defmacro surface + syntax-quote/ns (enabling real clojure libs)" :label "syntax-quote resolves alias" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "interop / reader classes" :label "LineNumberingPushbackReader reports its own class" :category :host/jvm-api :reason "clojure.lang.LineNumberingPushbackReader / java.io readers: ClojureCLR has LineNumberingTextReader"}
+  {:suite "interop / reader classes" :label "a plain PushbackReader reports its own class" :category :host/jvm-api :reason "JVM class java.io.PushbackReader"}
+  {:suite "interop / reader classes" :label "LineNumberingPushbackReader is a PushbackReader" :category :host/jvm-api :reason "JVM class java.io.PushbackReader"}
+  {:suite "interop / reader classes" :label "a PushbackReader is not line-numbering" :category :host/jvm-api :reason "clojure.lang.LineNumberingPushbackReader / java.io readers: ClojureCLR has LineNumberingTextReader"}
+  {:suite "records / literal data" :label "a list value is data, not code" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "records / literal data" :label "a symbol value is the symbol, not its binding" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "records / literal data" :label "nested record literal still constructs" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "records / literal data" :label "a data list of strings is a list, not a call" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
+  {:suite "conformance / host interop dot form" :label "list-member 0-arg (. target (method)) equals bare form" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
+  {:suite "conformance / host interop dot form" :label "list-member with args (. target (method args))" :category :host/jvm-api :reason "Java member String.substring (no CLR counterpart under that name)"}
+  {:suite "conformance / host interop dot form" :label "list-member desugars identically to the bare form" :category :host/jvm-api :reason "Java member String.substring (no CLR counterpart under that name)"}
+  {:suite "collections / conj a map onto a map" :label "a non-pair vector is rejected as an entry" :category :host/message :reason "ClojureCLR's message says \"map cons\" (the JVM's says \"map conj\")"}
+  {:suite "symbols / interning" :label "equal symbols share an interned name string" :category :host/boxing :reason "symbol names are not interned strings on the CLR, so (identical? (name a) (name b)) is false"}
+  {:suite "numbers / unsigned-bit-shift-right is logical over 64 bits" :label "a zero shift (or a multiple of 64) leaves a negative long unchanged" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / rationalize" :label "doubles go through shortest decimal print" :category :numeric :reason "rationalize uses the double's exact binary value (ClojureCLR), not BigDecimal of Double.toString; whole values come back as BigInt"}
+  {:suite "hierarchy / derive asserts" :label "tag and parent must be namespaced Named (or a class)" :category :host/exception-type :reason "AssertionError: the CLR has no java.lang.Error hierarchy; assert throws System.Exception"}
+  {:suite "iref / atom ctor options" :label "non-map :meta is a ClassCastException" :category :host/exception-type :reason "a non-map :meta fails as a Reflector overload miss, not ClassCastException"}
+  {:suite "casts / checked narrow" :label "out-of-range values throw IllegalArgumentException" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
+  {:suite "casts / checked narrow" :label "the throw carries the JVM message" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
+  {:suite "casts / checked narrow" :label "ratios and bigdecs truncate; non-numbers are CCE" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
+  {:suite "casts / unchecked wrap" :label "unchecked casts wrap and sign-fold; doubles saturate" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
+  {:suite "casts / fixnum fast path" :label "checked casts pass at their bounds" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
+  {:suite "casts / fixnum fast path" :label "byte/short/long throw IllegalArgumentException one past their bounds" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
+  {:suite "casts / int overflow class" :label "int overflows on an INTEGER as ArithmeticException, on a DOUBLE as IllegalArgumentException" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
+  {:suite "string / toString coercion" :label "case fns and searches take any Object through toString" :category :host/exception-type :reason "clojure.string fns take String parameters (no toString coercion of keywords / numbers)"}
+  {:suite "contracts / numbers" :label "number?/rational?/num accept BigDecimal; NaN quotient throws" :category :host/exception-type :reason "quot of NaN throws ArithmeticException (BigDecimal path), not NumberFormatException"}
+  {:suite "contracts / misc" :label "nth of nil honors notFound; a nil index throws; the starred specials are special" :category :host/exception-type :reason "nth with a nil index fails as a Reflector overload miss, not NullPointerException"}
+  {:suite "instance? / bound-class" :label "instance? through a var" :category :host/jvm-api :reason "JVM class java.util.Map"}
+  {:suite "instance? / bound-class" :label "instance? through a var negative" :category :host/jvm-api :reason "JVM class java.util.Map"}
+  {:suite "instance? / bound-class" :label "instance? with a local class-var (java.util.Map on a jrec)" :category :host/jvm-api :reason "JVM class java.util.Map"}
+  {:suite "pprint / line-breaks" :label "broken lines carry no trailing spaces" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
+  {:suite "core / dynamic-vars" :label "*compile-path* default" :category :host/defaults :reason "*compile-path* defaults to \".\" (ClojureCLR; CLOJURE_COMPILE_PATH), not \"classes\""}
+  {:suite "refs / ref" :label "ref creates a ref" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "refs / loaded-libs" :label "*loaded-libs* is a ref" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "refs / loaded-libs-dosync" :label "*loaded-libs* can be altered inside dosync" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
+  {:suite "conformance / core misc" :label "bases of Long includes Number" :category :host/jvm-api :reason "JVM class java.lang.Long"}
+  {:suite "interop / class model" :label "an unbound var value is clojure.lang.Var$Unbound (not :object)" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
+  {:suite "interop / class model" :label "print of a Class is the bare name (str keeps 'class X')" :category :host/jvm-api :reason "JVM class java.util.Date"}
+  {:suite "conformance / r3" :label "conj on non-coll is CCE" :category :host/exception-type :reason "conj on a number fails as a Reflector overload miss, not ClassCastException"}
+  {:suite "regex / V2 sre-parser" :label "p{L} supplementary" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / V2 sre-parser" :label "intersection class" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex / V2 sre-parser" :label "\\Q..\\E literal quote" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\Q.+*?\\\\E': Unrecognized escape sequence \\\\Q."}
+  {:suite "regex / V2 sre-parser" :label "\\x{1F600} supplementary hex" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\x{NFN}': Insufficient or invalid hexadecimal digits."}
+  {:suite "interop / java.util.Random seeded LCG" :label "nextInt matches Java" :category :host/jvm-api :reason "JVM class java.util.Random"}
+  {:suite "interop / java.util.Random seeded LCG" :label "nextInt bound matches Java" :category :host/jvm-api :reason "JVM class java.util.Random"}
+  {:suite "interop / java.util.Random seeded LCG" :label "nextLong matches Java" :category :host/jvm-api :reason "JVM class java.util.Random"}
+  {:suite "interop / java.util.Random seeded LCG" :label "nextDouble matches Java" :category :host/jvm-api :reason "JVM class java.util.Random"}
+  {:suite "interop / java.util.Random seeded LCG" :label "nextBoolean matches Java" :category :host/jvm-api :reason "JVM class java.util.Random"}
+  {:suite "interop / qualified instance method" :label "(String/.length \"hello\")" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
+  {:suite "interop / qualified instance method" :label "(String/.toUpperCase \"abc\")" :category :host/jvm-api :reason "Java member String.toUpperCase (no CLR counterpart under that name)"}
+  {:suite "interop / qualified instance method" :label "(String/.substring \"hello\" 1 3)" :category :host/jvm-api :reason "Java member String.substring (no CLR counterpart under that name)"}
+  {:suite "interop / qualified instance method" :label "fully-qualified class (java.util.List/.size coll)" :category :host/jvm-api :reason "JVM class statics: java.util.List/…"}
+  {:suite "assert / message" :label "message expression evaluates at failure time" :category :host/jvm-api :reason "Java member Exception.getMessage (no CLR counterpart under that name)"}
+  {:suite "interop / qualified instance method" :label "fully-qualified class (java.util.List/.size coll)" :category :host/jvm-api :reason "JVM class statics: java.util.List/…"}
+  {:suite "regex / \\Q..\\E quantifier" :label "quantifier after \\Q..\\E scopes only last char" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\Qab\\\\E+': Unrecognized escape sequence \\\\Q."}
+  {:suite "regex / brace-less \\pL" :label "\\pL matches Unicode letter" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\pL': Incomplete \\\\p{X} character escape."}
+  {:suite "regex / possessive *+" :label "a*+ is possessive (no backtracking)" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: 'a*+ab': Nested quantifier '+'."}
+  {:suite "regex / possessive ++" :label "a++ is possessive" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: 'a++': Nested quantifier '+'."}
+  {:suite "regex / possessive {n,m}+" :label "bounded possessive {n,m}+" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: 'a{N,N}+': Nested quantifier '+'."}
+  {:suite "reader / radix N suffix" :label "2r1010N reads as integer 10" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :reader-model)"}
+  {:suite "reduce / user ^double hint survives seeding" :label "reduce with ^double param hints and num init coerces and unboxes" :category :not-yet :reason "^double on fn params is a hint only (no primitive fn coercion); target cleat-042"}
+  {:suite "reader / surrogate in string" :label "\\ud800 in string throws Invalid character constant" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :string-model)"}
+  {:suite "reader / EOF errors" :label "trailing backslash in string is a positioned EOF error" :category :host/jvm-api :reason "Java member EndOfStreamException.getMessage (no CLR counterpart under that name)"}
+  {:suite "binding / no-auto-deref" :label "binding does not auto-deref var-cell value" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "string / scan parity" :label "indexOf contains replace case batch" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
+  {:suite "core / extenders" :label "extends? on inline defrecord impl" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "resolution / file load" :label "loading file with unresolved symbol throws" :category :corpus/jolt-value :reason "loads a file from jolt's repository (test/chez/…)"}
+  {:suite "errors / host operations carry a JVM class" :label "format rejects a non-number with the JVM class and message" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "errors / host operations carry a JVM class" :label "a ^double hint rejects a non-number" :category :not-yet :reason "^long / ^double on fn params are hints only (no primitive fn coercion); target cleat-042"}
+  {:suite "errors / host operations carry a JVM class" :label "a ^long hint rejects a non-number" :category :not-yet :reason "^long / ^double on fn params are hints only (no primitive fn coercion); target cleat-042"}
+  {:suite "errors / host operations carry a JVM class" :label "a ^double hint rejects nil" :category :not-yet :reason "^long / ^double on fn params are hints only (no primitive fn coercion); target cleat-042"}
+  {:suite "errors / host operations carry a JVM class" :label "a Math static rejects a non-number" :category :host/jvm-api :reason "Java member Math.sqrt (no CLR counterpart under that name)"}
+  {:suite "errors / host operations carry a JVM class" :label "keyword rejects a non-string name" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
+  {:suite "errors / host operations carry a JVM class" :label "re-seq rejects a non-string" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
+  {:suite "errors / host operations carry a JVM class" :label "split rejects a non-string" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
+  {:suite "errors / host operations carry a JVM class" :label "a System static rejects a non-string" :category :host/jvm-api :reason "JVM class statics: System/…"}
+  {:suite "errors / host operations carry a JVM class" :label "format rejects a non-string format" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
+  {:suite "charsets / named encodings" :label "URL encode honors the charset" :category :host/jvm-api :reason "JVM class statics: java.net.URLEncoder/…"}
+  {:suite "charsets / named encodings" :label "URL decode honors the charset" :category :host/jvm-api :reason "JVM class statics: java.net.URLDecoder/…"}
+  {:suite "charsets / named encodings" :label "URL encode converts per escaped run, not per string" :category :host/jvm-api :reason "JVM class statics: java.net.URLEncoder/…"}
+  {:suite "charsets / named encodings" :label "URL decode reads one escaped run at a time" :category :host/jvm-api :reason "JVM class statics: java.net.URLDecoder/…"}
+  {:suite "charsets / named encodings" :label "URL codec round-trips through UTF-8" :category :host/jvm-api :reason "JVM class statics: java.net.URLEncoder/…"}
+  {:suite "charsets / named encodings" :label "a stateful charset closes back to ASCII" :category :host/jvm-api :reason "Java member String.getBytes (no CLR counterpart under that name)"}
+  {:suite "charsets / named encodings" :label "a stateful charset shifts back mid-string too" :category :host/jvm-api :reason "Java member String.getBytes (no CLR counterpart under that name)"}
+  {:suite "charsets / named encodings" :label "a stateful charset leaves pure ASCII unescaped" :category :host/jvm-api :reason "Java member String.getBytes (no CLR counterpart under that name)"}
+  {:suite "streams / pipes and stream targets" :label "a piped pair streams from another thread" :category :host/jvm-api :reason "JVM class java.io.PipedOutputStream"}
+  {:suite "streams / pipes and stream targets" :label "a pipe connects through the constructor" :category :host/jvm-api :reason "JVM class java.io.PipedInputStream"}
+  {:suite "streams / pipes and stream targets" :label "reading a closed pipe is an IOException" :category :host/jvm-api :reason "JVM class java.io.PipedOutputStream"}
+  {:suite "streams / pipes and stream targets" :label "spit writes into an output stream" :category :host/jvm-api :reason "JVM class java.io.ByteArrayOutputStream"}
+  {:suite "streams / pipes and stream targets" :label "spit writes into a writer" :category :host/jvm-api :reason "JVM class StringWriter (java.lang implicit import)"}
+  {:suite "streams / pipes and stream targets" :label "a thread finds itself in getAllStackTraces" :category :host/jvm-api :reason "JVM class statics: Thread/…"}
+  {:suite "charsets / named encodings" :label "getBytes honors a charset outside the Unicode family" :category :host/jvm-api :reason "Java member String.getBytes (no CLR counterpart under that name)"}
+  {:suite "charsets / named encodings" :label "String decodes a charset outside the Unicode family" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / named encodings" :label "an unknown charset is an UnsupportedEncodingException, not silent UTF-8" :category :host/jvm-api :reason "JVM class java.io.UnsupportedEncodingException"}
+  {:suite "charsets / malformed UTF-8" :label "an overlong two-byte sequence is two replacements, not one" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "an overlong three-byte sequence is three replacements" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "an overlong four-byte sequence is four replacements" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "a lead past U+10FFFF is one replacement then its strays" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "an encoded surrogate costs one replacement for all three bytes" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "a valid but incomplete sequence at the end is one replacement" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "a leading BOM decodes to U+FEFF rather than being dropped" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "the no-charset constructor decodes the same way" :category :host/jvm-api :reason "java.lang.String constructor over bytes + charset name"}
+  {:suite "charsets / malformed UTF-8" :label "slurp of a path and slurp of a stream agree on malformed bytes" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "charsets / malformed UTF-8" :label "a BOM survives a path read, a reader read and a byte read alike" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "charsets / malformed UTF-8" :label "a three-byte overlong is three replacements through every door" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "charsets / malformed UTF-8" :label "a reader decodes a multibyte character split across its own buffer" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "charsets / malformed UTF-8" :label "a URI accessor decodes its escape runs through the same decoder" :category :host/jvm-api :reason "JVM class java.net.URI"}
+  {:suite "charsets / malformed UTF-8" :label "slurp of a file: URL agrees with slurp of the path" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "charsets / malformed UTF-8" :label "well-formed multibyte text is untouched by any of it" :category :host/jvm-api :reason "Java member String.getBytes (no CLR counterpart under that name)"}
+  {:suite "string-model / codepoint strings" :label "count of astral string" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :string-model)"}
+  {:suite "string-model / codepoint strings" :label "seq counts codepoints" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :string-model)"}
+  {:suite "string-model / codepoint strings" :label "subs across astral boundary" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :string-model)"}
+  {:suite "reader-model / nested fn literals" :label "nested #() reads" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :reader-model)"}
+  {:suite "permissive / keys on pair vector" :label "keys works on vector of pairs" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
+  {:suite "permissive / empty MapEntry" :label "empty of a map entry" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
+  {:suite "typed-throws / collections" :label "iterator past end throws NoSuchElementException" :category :host/jvm-api :reason "JVM class java.util.NoSuchElementException"}
+  {:suite "arrays / oob exception" :label "aget OOB class name" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
+  {:suite "arrays / oob exception" :label "aget OOB carries the JVM message" :category :host/exception-type :reason "array bounds: IndexOutOfRangeException with .NET's message (\"Index was outside the bounds of the array.\"), which IndexOutOfBoundsException (→ ArgumentOutOfRangeException) does not catch"}
+  {:suite "arrays / oob exception" :label "negative index message" :category :host/exception-type :reason "array bounds: IndexOutOfRangeException with .NET's message (\"Index was outside the bounds of the array.\"), which IndexOutOfBoundsException (→ ArgumentOutOfRangeException) does not catch"}
+  {:suite "arrays / oob exception" :label "aset OOB caught by parent IndexOutOfBoundsException" :category :host/exception-type :reason "array bounds: IndexOutOfRangeException with .NET's message (\"Index was outside the bounds of the array.\"), which IndexOutOfBoundsException (→ ArgumentOutOfRangeException) does not catch"}
+  {:suite "numbers / unsigned string conversions" :label "a negative long takes the narrowest width holding it" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "numbers / unsigned string conversions" :label "past 64 bits it is a signed magnitude, not a wrap" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}
+  {:suite "regex-parity / flag groups" :label "empty flag group (?) matches empty" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?)': Quantifier '?' following nothing."}
+  {:suite "regex-parity / flag groups" :label "empty flag group quantified {0,0} inside a capture" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '((?){N,N})': Quantifier '?' following nothing."}
+  {:suite "regex-parity / flag groups" :label "unknown flag c is a no-op flag char" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?c:Z)': Unrecognized grouping construct."}
+  {:suite "regex-parity / intersection" :label "[a-z&&[^aeiou]] keeps consonants" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "regex-parity / intersection" :label "[x&&y] disjoint intersection matches nothing" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
+  {:suite "murmur3 / statics" :label "Murmur3/hashLong 0 is 0" :category :host/jvm-api :reason "Java member MurmurN.hashLong (no CLR counterpart under that name)"}
+  {:suite "murmur3 / statics" :label "Murmur3/hashLong of a small long" :category :host/jvm-api :reason "Java member MurmurN.hashLong (no CLR counterpart under that name)"}
+  {:suite "murmur3 / statics" :label "Murmur3/hashInt" :category :host/jvm-api :reason "Java member MurmurN.hashInt (no CLR counterpart under that name)"}
+  {:suite "murmur3 / statics" :label "Murmur3/hashUnencodedChars" :category :host/jvm-api :reason "Java member MurmurN.hashUnencodedChars (no CLR counterpart under that name)"}
+  {:suite "murmur3 / statics" :label "Murmur3/mixCollHash" :category :host/jvm-api :reason "Java member MurmurN.mixCollHash (no CLR counterpart under that name)"}
+  {:suite "murmur3 / statics" :label "Murmur3/hashOrdered over a vector" :category :host/jvm-api :reason "Java member MurmurN.hashOrdered (no CLR counterpart under that name)"}
+  {:suite "murmur3 / statics" :label "Murmur3/hashUnordered over a vector" :category :host/jvm-api :reason "Java member MurmurN.hashUnordered (no CLR counterpart under that name)"}
+  {:suite "map / transient promotion" :label "promotion is one-way" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "map / transient promotion" :label "a transient of a large array map promotes on first write" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "maps / array-map 1.13" :label "into {} promotes to hash at 9 entries even with keyword keys" :category :upstream/clojureclr :reason "ClojureCLR's core (Clojure 1.13) keeps keyword-keyed maps as array maps past 8 entries; Clojure 1.12 promotes to a hash map"}
+  {:suite "maps / array-map 1.13" :label "zipmap promotes to hash at 9 entries" :category :upstream/clojureclr :reason "ClojureCLR's core (Clojure 1.13) keeps keyword-keyed maps as array maps past 8 entries; Clojure 1.12 promotes to a hash map"}
+  {:suite "maps / array-map 1.13" :label "into {} of 9 keyword pairs is a PersistentHashMap" :category :upstream/clojureclr :reason "ClojureCLR's core (Clojure 1.13) keeps keyword-keyed maps as array maps past 8 entries; Clojure 1.12 promotes to a hash map"}
+  {:suite "maps / array-map 1.13" :label "transient assoc! promotes at capacity regardless of key type" :category :upstream/clojureclr :reason "ClojureCLR's core (Clojure 1.13) keeps keyword-keyed maps as array maps past 8 entries; Clojure 1.12 promotes to a hash map"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-add wraps MAX+1" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-inc wraps MAX" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-dec wraps MIN" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-subtract wraps MIN-1" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-multiply wraps" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-negate of MIN is MIN" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-add MAX+MAX" :category :host/jvm-api :reason "JVM class statics: Long/…"}
+  {:suite "numbers / unchecked wrap at the 64-bit boundary" :label "unchecked-long of a char raises (only the int cast has a char overload)" :category :host/numeric-types :reason "ClojureCLR's unchecked-long accepts a char (its code)"}
+  {:suite "collections / nth tail and trie" :label "nil index throws NPE" :category :host/exception-type :reason "nth with a nil index fails as a Reflector overload miss, not NullPointerException"}
+  {:suite "numbers / unchecked lowering" :label "hinted char scan sums code points" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
+  {:suite "numbers / unchecked lowering" :label "unchecked-long of a char in a let raises" :category :host/numeric-types :reason "ClojureCLR's unchecked-long accepts a char (its code)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".length on a string from a map" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".charAt on a string from a vector" :category :host/jvm-api :reason "Java member String.charAt (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".indexOf with a from-index on an unhinted string" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".substring on an unhinted string" :category :host/jvm-api :reason "Java member String.substring (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".startsWith / .endsWith on an unhinted string" :category :host/jvm-api :reason "Java member String.startsWith (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".toUpperCase on an unhinted string" :category :host/jvm-api :reason "Java member String.toUpperCase (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".length on an unhinted StringBuilder still dispatches" :category :host/jvm-api :reason "Java member StringBuilder.append (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label ".toString on an unhinted keyword" :category :host/jvm-api :reason "Java member Keyword.toString (no CLR counterpart under that name)"}
+  {:suite "host-interop / unhinted receiver guard" :label "receiver then args, each once" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
+  {:suite "collections / first without a seq cell" :label "a directory stream seqs to paths" :category :host/jvm-api :reason "JVM class java.nio.file.Path"}
+  {:suite "collections / first without a seq cell" :label "a path seqs to its components" :category :host/jvm-api :reason "JVM class statics: java.nio.file.Paths/…"}
+  {:suite "exceptions / host faults are throwables" :label "a caught host fault is a typed throwable" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "exceptions / host faults are throwables" :label "catch clauses dispatch a host fault by its class" :category :host/jvm-api :reason "Java member String.concat (no CLR counterpart under that name)"}
+  {:suite "exceptions / host faults are throwables" :label "a host fault passes a catch of an unrelated class" :category :host/jvm-api :reason "Java member String.concat (no CLR counterpart under that name)"}
+  {:suite "exceptions / host faults are throwables" :label "a wrong-typed argument to a host method is a ClassCastException" :category :host/jvm-api :reason "Java member String.concat (no CLR counterpart under that name)"}
+  {:suite "exceptions / host faults are throwables" :label "a bad string index is a StringIndexOutOfBoundsException" :category :host/jvm-api :reason "Java member String.charAt (no CLR counterpart under that name)"}
+  {:suite "exceptions / host faults are throwables" :label "a rethrown host fault keeps its class" :category :host/jvm-api :reason "Java member String.concat (no CLR counterpart under that name)"}
+  {:suite "exceptions / host faults are throwables" :label "a caught host fault prints as an #error map naming its class" :category :host/exception-type :reason "the host fault is a NullReferenceException (the #error map names that CLR class)"}
+  {:suite "exceptions / host faults are throwables" :label "the Throwable surface of a caught host fault" :category :host/jvm-api :reason "Java member MissingMethodException.getMessage (no CLR counterpart under that name)"}
+  {:suite "exceptions / host faults are throwables" :label "a host fault inside a future is the ExecutionException's typed cause" :category :host/jvm-api :reason "JVM class java.util.concurrent.ExecutionException"}
+  {:suite "exceptions / host faults are throwables" :label "clojure.string on nil is a NullPointerException" :category :host/exception-type :reason "clojure.string on nil throws ArgumentNullException, which NullPointerException (→ NullReferenceException) does not catch"}
+  {:suite "exceptions / wrong-class throws" :label "ArrayList get out of range" :category :host/jvm-api :reason "JVM class java.util.ArrayList"}
+  {:suite "exceptions / wrong-class throws" :label "unary + and * pass nil through and cast anything else" :category :host/exception-type :reason "unary + / * cast with Numbers (\"Expected a number\"), and nil is not passed through"}
+  {:suite "protocols / satisfies?" :label "satisfies? on a class or interface answers instance?" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "reflect / RT statics" :label "RT/classForName resolves like Class/forName" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
+  {:suite "strings / nil arguments" :label "String methods refuse a nil argument with NullPointerException" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
+  {:suite "strings / nil arguments" :label "clojure.string/replace with a nil replacement or a non-string one" :category :host/exception-type :reason "nil string arguments: .NET throws ArgumentNullException or accepts nil (StringBuilder(null)), not NullPointerException"}
+  {:suite "strings / nil arguments" :label "a StringBuilder over nil" :category :host/exception-type :reason "nil string arguments: .NET throws ArgumentNullException or accepts nil (StringBuilder(null)), not NullPointerException"}
+  {:suite "time / default zone" :label "SimpleDateFormat honors setTimeZone, names and offsets included" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "time / default zone" :label "SimpleDateFormat parses in the zone it was given" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "time / default zone" :label "the default zone is one zone everywhere" :category :host/jvm-api :reason "JVM class statics: java.util.Calendar/…"}
+  {:suite "reflect / AFunction supers" :label "AFunction's direct supers" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "reflect / AFunction supers" :label "a fn is an IObj, an IMeta and Serializable, by supers and by instance?" :category :host/jvm-api :reason "JVM class java.io.Serializable"}
+  {:suite "collections / vector-of" :label "a primitive vector behaves as a vector" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "collections / vector-of" :label "elements are coerced to the element type" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
+  {:suite "collections / vector-of" :label "transient-free edits: assoc past the end, pop to empty, subvec" :category :host/exception-type :reason "vector-of's assoc past the end throws IndexOutOfRangeException, not caught as IndexOutOfBoundsException (→ ArgumentOutOfRangeException)"}
+  {:suite "time / default zone" :label "TimeZones with one id are equal and hash alike" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "a trailing @ after a token throws instead of truncating the read" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "an @ mid-token throws, rather than dropping everything from it on" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "a token that starts like a number takes the @ in and fails as a number" :category :host/jvm-api :reason "Java member FormatException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "@ where a form should start is a leading-character error, not a deref form" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "` and ~ are non-constituent on the same terms" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "a keyword's token is judged the same way" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "and so is a token inside a collection" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / non-constituent @ ` ~" :label "a character literal's name is a token too" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / closed dispatch table" :label "the dispatch characters edn does not have" :category :host/jvm-api :reason "Java member InvalidOperationException.getMessage (no CLR counterpart under that name)"}
+  {:suite "clojure.edn / closed dispatch table" :label "#< is unreadable in both readers" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
+  {:suite "io / reader mark and reset" :label "reset replays what was read since the mark, twice over" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "a peek loop (mark, read, reset before every char) terminates at EOF" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "the LF owed to a CR-ended readLine is saved with the mark" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "a block read after a reset delivers the replayed chars first" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "reset with no mark is the JVM's IOException" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "markSupported on the file reader" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "reading past what a mark keeps drops the mark, and the reader keeps going" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "a fresh mark after an invalidated one works again" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "io / reader mark and reset" :label "the same over a StringReader" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
+  {:suite "take / non-integer count" :label "dropping a count past the long range from a vector is out of range, as IDrop casts it" :category :host/message :reason "the message prints the double with .NET formatting inside a ClojureCLR message (1E+30, ∞)"}
+  {:suite "clojure 1.12 / version" :label "*clojure-version* is 1.12" :category :upstream/clojureclr :reason "ClojureCLR's core.clj is Clojure 1.13 (alpha)"}
+  {:suite "clojure 1.12 / reader" :label "a bad arg literal" :category :host/exception-type :reason "a bad %-arg literal throws ArgumentException, not IllegalStateException"}
+ ]}

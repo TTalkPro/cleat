@@ -862,7 +862,9 @@ public sealed class Expander
             }
             else if (CatchSym.Equals(op))
             {
-                var t = MaybeType(RT.second(f)) ?? throw Error("Unable to resolve classname: " + RT.second(f));
+                // (catch :default e …) catches everything (cljc spelling, cleat-032)
+                var t = (RT.second(f) is Keyword dk && dk.Namespace == null && dk.Name == "default" ? typeof(Exception) : MaybeType(RT.second(f)))
+                        ?? throw Error("Unable to resolve classname: " + RT.second(f));
                 var sym = RT.third(f) as Symbol ?? throw Error("Bad binding form, expected symbol, got: " + RT.third(f));
                 if (sym.Namespace != null) throw Error("Can't bind qualified name: " + sym);
                 var handler = WithEnv(() =>

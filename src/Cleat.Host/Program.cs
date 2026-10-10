@@ -195,7 +195,7 @@ public static class Program
     {
         var ns = Namespace.findOrCreate(Symbol.intern("user"));
         ReferClojureCore(ns);
-        Var.pushThreadBindings(RT.map(RT.CurrentNSVar, ns, RT.CmdLineArgsVar, RT.seq(o.ScriptArgs)));
+        Var.pushThreadBindings(MainBindings(ns, o));
         try
         {
             if (o.CompileBoot != null) return CompileBootImage(o);
@@ -222,6 +222,25 @@ public static class Program
             return 0;
         }
         finally { Var.popThreadBindings(); }
+    }
+
+    /// <summary>
+    /// clojure.main/with-bindings 的绑定（cleat-032）：脚本、-e、-m 与 REPL 都在其中运行，*1 *2 *3 *e 为 nil、
+    /// *print-namespace-maps* 为 true、其余可 set! 的 Var 绑定为当前值（*compile-path* 不绑：.clj.dll 的输出位置由 cleat-033 定）。clojure.core 未加载（--no-boot）时只绑 *ns* 与 *command-line-args*。
+    /// </summary>
+    private static IPersistentMap MainBindings(Namespace ns, Options o)
+    {
+        var m = RT.map(RT.CurrentNSVar, ns, RT.CmdLineArgsVar, RT.seq(o.ScriptArgs));
+        var core = Namespace.find(Symbol.intern("clojure.core"));
+        if (core?.FindInternedVar(Symbol.intern("*print-namespace-maps*")) == null) return m;
+        Var V(string n) => core.FindInternedVar(Symbol.intern(n));
+        foreach (var n in new[] { "*warn-on-reflection*", "*math-context*", "*print-meta*", "*print-length*", "*print-level*",
+                                  "*data-readers*", "*default-data-reader-fn*", "*unchecked-math*", "*assert*" })
+            if (V(n) is Var v) m = m.assoc(v, v.deref());
+        m = m.assoc(V("*print-namespace-maps*"), true);
+        foreach (var n in new[] { "*1", "*2", "*3", "*e" })
+            if (V(n) is Var v && v.isDynamic()) m = m.assoc(v, null);
+        return m;
     }
 
     /// <summary>

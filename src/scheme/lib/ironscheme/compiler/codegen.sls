@@ -1707,7 +1707,7 @@ See docs/license.txt. |#
 
 ;; ———————————————— Clojure 的 fn* → AFunction / RestFn 子类（cleat-051）————————————————
   ;;
-  ;; 与 Procedure 子类同构：自由变量为实例字段 c0 …，没有自由变量的是单例（静态字段 Instance，.cctor 创建），
+  ;; 与 Procedure 子类同构：自由变量为实例字段 c0 …（没有自由变量的也每次 new，cleat-032），
   ;; letrec 的自引用为 this。固定参数子句 = invoke(k) 的覆盖；变长子句（最后一个，形参为"必需参数 + 剩余 seq"）
   ;; = RestFn.doInvoke 的覆盖 + getRequiredArity（RestFn 负责打包剩余参数与 applyTo）；HasArity 按子句。
   ;; 类名是 Clojure 的 ns$name（AFn.WrongArityException 用类型全名，ArityException 的文本因此与 Clojure 相同），单元内重名加 __N
@@ -1723,7 +1723,9 @@ See docs/license.txt. |#
   (define (clj-fn-class! mc nm x1* cl* self)
     (let* ((u (mctx-unit mc))
            (fields (if self (remq self x1*) x1*))
-           (static? (null? fields))
+           ;; cleat-032：Clojure 的 fn 每次求值都是新对象（JVM 的 FnExpr 总是 new；(identical? (mk) (mk)) 为 false，
+           ;; 两次求值得到的 fn 是 set / map 里的两个键），没有自由变量的也不做单例
+           (static? #f)
            (name (unique-type-name! u (clj-fn-name-class nm)))
            (variadic (clj-fn-name-variadic nm))
            (n (length cl*))
@@ -1818,10 +1820,11 @@ See docs/license.txt. |#
                  ,@tail
                  (call ,name ".ctor" ,(objs n) ,void-type)
                  (ret))))
-      (if (or (= drops 0) (null? keys))
+      ;; 没有基本字段的记录（(defrecord R [])）也要无参构造函数与 create（cleat-032：原来 keys 为空时整个跳过）
+      (if (= drops 0)
           '()
           (append
-            (if (and (> nb 0) (= drops 4)) (list (alt-ctor nb `((ldnull) (ldnull) ,@zero ,@zero))) '())
+            (if (= drops 4) (list (alt-ctor nb `((ldnull) (ldnull) ,@zero ,@zero))) '())
             (if (and (> (- n 2) 0) (= drops 4)) (list (alt-ctor (- n 2) `(,@zero ,@zero))) '())
             (list
               `(method "create" (attrs static) (params "clojure.lang.IPersistentMap") (ret ,name)

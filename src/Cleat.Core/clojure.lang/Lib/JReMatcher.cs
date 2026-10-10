@@ -23,6 +23,7 @@ namespace clojure.lang
 
         Regex _regex;
         Match _match;
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Regex, Regex> s_whole = new();
         String _s;
 
         #endregion
@@ -100,16 +101,9 @@ namespace clojure.lang
             if (_regex == null)
                 return false;
 
-            string pattern = _regex.ToString();
-            bool needFront = pattern.Length == 0 || pattern[0] != '^';
-            bool needRear = pattern.Length == 0 || pattern[pattern.Length - 1] != '$';
-
-            if (needFront || needRear)
-            {
-                pattern = (needFront ? "^" : String.Empty) + pattern + (needRear ? "$" : String.Empty);
-                _regex = new Regex(pattern);
-            }
-
+            // CLEAT-032: Matcher.matches() is a match of the whole input: \A(?:p)\z (the old ^p$ wrapping let
+            // "a|b" become "^a|b$" and $ match before a final newline)
+            _regex = s_whole.GetValue(_regex, r => new Regex(@"\A(?:" + r.ToString() + @")\z", r.Options));
             return find();
         }
 
@@ -142,7 +136,9 @@ namespace clojure.lang
             if ( groupIndex < 0 || groupIndex >= _match.Groups.Count)
                 throw new ArgumentOutOfRangeException("groupIndex", "Attempt to call group with an index out of bounds.");
 
-            return _match.Groups[groupIndex].Value;
+            // CLEAT-032: a group that did not participate in the match is null (Matcher.group), not ""
+            var g = _match.Groups[groupIndex];
+            return g.Success ? g.Value : null;
         }
 
 

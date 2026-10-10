@@ -20,6 +20,10 @@
 //   conformance [--stats] 语料统计（cleat-002）
 //   conformance --run [--portability common|jvm|all] [--timeout ms] [--report out.edn] [--limit n]
 //                         在宿主（Clojure 镜像）上运行语料，按 = 比较，报告通过数与失败分组（tools/conformance.clj）  [cleat-053]
+//                         [--results out.edn] 每行结果；[--gate] 按 tests/conformance/cleat-divergences.edn 门禁       [cleat-032]
+//   cts cts|test-clojure [--write] [--only 正则]
+//                         逐命名空间跑 clojure-test-suite / test_clojure，与 tests/cts-baseline.edn /
+//                         tests/test-clojure-baseline.edn 比较（--write 重写基线）（tools/cts.clj）                 [cleat-032]
 //   compile-libs          预编译随附命名空间为 .clj.dll                                                [cleat-033]
 using System.Diagnostics;
 
@@ -56,6 +60,9 @@ try
         case "conformance":
             Conformance(rest);
             break;
+        case "cts":
+            Run("dotnet", new[] { Bin("Cleat.Host", "cleat.dll"), Path.Combine(root, "tools", "cts.clj") }.Concat(rest).ToArray(), root);
+            break;
         case "compile-libs":
             NotYet("compile-libs", "cleat-033");
             break;
@@ -72,7 +79,7 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance | compile-libs");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }

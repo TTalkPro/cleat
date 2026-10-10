@@ -57,7 +57,7 @@ Design notes for clojure.string:
    necessary escaping of special characters in the replacement."
   {:added "1.5"}
   [^String replacement]                                           ;;; ^CharSequence
-  replacement)                                                    ;;; TODO:  a no-op until I figure out the CLR equivalent -- (Matcher/quoteReplacement (.toString ^CharSequence replacement)))
+  (Cleat.Core.Runtime.JvmText/QuoteReplacement (.ToString ^Object replacement)))      ;;; CLEAT-032: replacements use Java's syntax (JvmText/RegexReplace) -- (Matcher/quoteReplacement (.toString ^CharSequence replacement)))
 
 (defn- replace-by
   [^String s re f]
@@ -101,9 +101,9 @@ Design notes for clojure.string:
   (let []   ;                                                                                  ;;; [s (.toString s)]
     (cond 
      (instance? Char match) (.Replace s ^Char match ^Char replacement)                         ;;;  Character  .replace
-     (instance? String match) (.Replace s ^String match ^String replacement)                   ;;; .replace
+     (instance? String match) (Cleat.Core.Runtime.JvmText/Replace s ^String match ^String replacement) ;;; .replace  CLEAT-032: an empty match inserts everywhere, like Java
      (instance? Regex match) (if (string? replacement)                                         ;;; Pattern
-                               (.Replace ^Regex match s ^String replacement)                                  ;;; (.replaceAll (re-matcher ^Pattern match s)
+                               (Cleat.Core.Runtime.JvmText/RegexReplace ^Regex match s ^String replacement -1) ;;; (.replaceAll (re-matcher ^Pattern match s)  CLEAT-032: Java replacement syntax
 							                                                                   ;;;     (.toString ^CharSequence replacement))
                                (replace-by s match replacement))
      :else (throw (ArgumentException. (str "Invalid match arg: " match))))))                   ;;; IllegalArgumentException
@@ -172,7 +172,7 @@ Design notes for clojure.string:
 	                    replacement)                                                ;;; (.toString ^CharSequence replacement)
      (instance? Regex match)                                                        ;;; Pattern
       (if (string? replacement)
-       (.Replace ^Regex match s ^String replacement 1)                              ;;; (.replaceFirst (re-matcher ^Pattern match s) ^String replacement)
+       (Cleat.Core.Runtime.JvmText/RegexReplace ^Regex match s ^String replacement 1) ;;; (.replaceFirst (re-matcher ^Pattern match s) ^String replacement)  CLEAT-032
        (replace-first-by s match replacement))
    :else (throw (ArgumentException. (str "Invalid match arg: " match)))))           ;;; IllegalArgumentException
 
@@ -221,10 +221,11 @@ Design notes for clojure.string:
   the maximum number of parts. Not lazy. Returns vector of the parts.
   Trailing empty strings are not returned - pass limit of -1 to return all."
   {:added "1.2"}
+  ;; CLEAT-032: java.util.regex.Pattern.split semantics (no capture groups in the result, limit 0 trims, "" → [""])
   ([^String s ^Regex re]                                                                                              ;;; ^Pattern 
-     (LazilyPersistentVector/createOwning (clojure.lang.RT/TrimTrailingEmptyStrings (.Split re s))))                  ;;; .split
+     (LazilyPersistentVector/createOwning (Cleat.Core.Runtime.JvmText/Split re s 0)))                                 ;;; .split
   ([^String s ^Regex re limit]                                                                                        ;;; ^Pattern 
-     (LazilyPersistentVector/createOwning (if (< limit 0) (.Split re s) (.Split re s limit)))))                       ;;; .split
+     (LazilyPersistentVector/createOwning (Cleat.Core.Runtime.JvmText/Split re s (long limit)))))                     ;;; .split
  
 (defn split-lines
   "Splits s on \\n or \\r\\n. Trailing empty lines are not returned."
@@ -320,7 +321,7 @@ Design notes for clojure.string:
 (defn- re-groups-direct
   "similar to re-groups, but works on a Match directly, rather than JReMatcher"
   [^Match m]
-  (let [strs (map #(.Value ^Group %) (.Groups ^Match m))
+  (let [strs (map #(when (.Success ^Group %) (.Value ^Group %)) (.Groups ^Match m))   ;;; CLEAT-032: a non-participating group is nil
         cnt (count strs)]
 	 (if (<= cnt 1) 
 	   (first strs)
@@ -339,13 +340,7 @@ Design notes for clojure.string:
       nil
       result)))
   ([^String s value ^long from-index]                                                        ;;; ^CharSequence
-  (let [result ^long
-        (if (instance? Char value)                                                           ;;; ^Character
-          (.IndexOf s ^Char value (unchecked-int from-index))                                ;;; (.toString s)  ^int (.charValue ^Character value) (This overload is ordinal-based)
-          (.IndexOf s ^String value (unchecked-int from-index) StringComparison/Ordinal))]   ;;; (.toString s) + added StringComparison/Ordinal
-    (if (= result -1)
-      nil
-      result))))
+   (Cleat.Core.Runtime.JvmText/IndexOf s value from-index)))                                 ;;; CLEAT-032: from-index clamps like String.indexOf
 
 (defn last-index-of
   "Return last index of value (string or char) in s, optionally
@@ -360,13 +355,7 @@ Design notes for clojure.string:
       nil
       result)))
   ([^String s value ^long from-index]                                                              ;;; ^CharSequence
-  (let [result ^long
-        (if (instance? Char value)                                                                 ;;; ^Character
-          (.LastIndexOf s ^Char value (unchecked-int from-index))                                  ;;; (.toString s) ^int (.charValue ^Character value)  (This overload is ordinal-based)
-          (.LastIndexOf s ^String value (unchecked-int from-index) StringComparison/Ordinal))]     ;;; (.toString s) + added StringComparison/Ordinal
-    (if (= result -1)
-      nil
-      result))))
+   (Cleat.Core.Runtime.JvmText/LastIndexOf s value from-index)))                                   ;;; CLEAT-032: a match may START at from-index, like String.lastIndexOf
 
 (defn starts-with?
   "True if s starts with substr."

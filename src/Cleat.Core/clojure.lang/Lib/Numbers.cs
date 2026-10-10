@@ -3803,8 +3803,12 @@ namespace clojure.lang
                         return RATIO_OPS;
                     else if (xc == typeof(BigDecimal))
                         return BIGDECIMAL_OPS;
-                    else
+                    else if (xc == typeof(char))
                         return LONG_OPS;
+                    else
+                        // CLEAT-032: a non-number operand is a ClassCastException (InvalidCastException), as on the JVM,
+                        // not a FormatException from Convert.ToInt64 (and "1" is no longer silently parsed)
+                        throw new InvalidCastException($"Unable to cast object of type '{xc.FullName}' to type 'Number'.");
             }
         }
 

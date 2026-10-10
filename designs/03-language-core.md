@@ -70,6 +70,38 @@ e ::= (const d)                                   ; 字面量 / quote；d 为任
 | `*compiler-options*` `:disable-locals-clearing` 等 | 支持 | 局部变量清除第一版不做（`^:once` 做） |
 | `ParseEval`、`await*` | ClojureCLR 专有 | 不支持 |
 | 尾调用 | 无 | 无（00 D14） |
+| JVM 异常类名 | JVM：java.lang 隐式导入；ClojureCLR：不认 | 作为隐式导入映射到 Cleat.Core 实际抛出的 CLR 类型（下表，cleat-032） |
+| `str` / 打印的浮点数与布尔 | JVM：`1.0`、`1.0E100`、`Infinity`、`true`；ClojureCLR：`1`、`1E+100`、`∞`、`True` | 照 JVM（`Cleat.Core.Runtime.JvmText`，cleat-032） |
+| 字符串 / 字符 / 布尔 / 符号的 `hash` | JVM：`Murmur3.hashInt(String.hashCode)` 等；ClojureCLR：Murmur3 字符串哈希（命名空间部分用随进程变化的 .NET 字符串哈希） | 照 JVM：值与 JVM 相同、跨进程稳定，哈希集合 / 映射的遍历顺序与 JVM 相同（cleat-032） |
+| `format` 的 `%e %f %g %a` | java.util.Formatter（最短十进制数字、HALF_UP、两位指数） | clojure.lang.Printf 照 Formatter 重写（cleat-032）；`%h` 对字符串为 String.hashCode |
+| clojure.string 的 `split` / `replace` / `index-of` / `last-index-of` | java.lang.String / Pattern 语义 | 照 JVM：结果不含捕获组、limit 0 去尾空串、Java 的替换串语法（`\$`、`$1`）、from 下标按 Java 截断（cleat-032） |
+| `re-matches` / 未参与匹配的组 | 整个输入匹配；组为 nil | 照 JVM（原来 `^p$` 包裹、组为 ""，cleat-032） |
+| `#?` 读条件 | JVM 取 `:clj` | 取 `:cljr`（与 ClojureCLR 相同） |
+| Clojure fn 对象 | 每次求值新建 | 同 JVM（没有自由变量的 fn 不再是单例，cleat-032） |
+| Java API（`.getMessage`、`Long/MAX_VALUE`、`java.io.File` …） | JVM 类库 | 不模拟；写 CLR 的名字（`.Message`、`Int64/MaxValue`、clojure.clr.io）。语料里这些行记为 `:host/jvm-api`（tests/conformance/cleat-divergences.edn） |
+
+### 4.1 JVM 异常类名（cleat-032，`Cleat.Core.Runtime.JvmNames`）
+
+短名进每个命名空间的默认导入（`RT.DefaultImports`，不覆盖 System 里同名的类型），全名（`java.lang.X` 等）经 `RT.classForName`。`catch` 与构造（`(IllegalArgumentException. "…")`）都用映射后的 CLR 类型；`(catch :default e …)` 捕获 `System.Exception`。
+
+| JVM 名 | CLR 类型 | 依据（Cleat.Core 在此情形实际抛出的） |
+|---|---|---|
+| `Throwable`、`Exception`、`RuntimeException` | `System.Exception` | CLR 没有 Error / RuntimeException 层次；`ex-info` 是 `ExceptionInfo : Exception` |
+| `IllegalArgumentException` | `System.ArgumentException` | 参数错误、`case` 无匹配、`ArityException`、format 的异常都派生自它 |
+| `IllegalStateException`、`UnsupportedOperationException` | `System.InvalidOperationException` | `nth not supported`、`count not supported`、事务状态等 |
+| `ClassCastException` | `System.InvalidCastException` | 强制转换失败；非数值操作数（`(+ 1 "a")`） |
+| `NullPointerException` | `System.NullReferenceException` | 对 nil 调成员 |
+| `ArithmeticException` | `System.ArithmeticException` | 除零、`*-exact` 溢出（含 `DivideByZeroException`、`OverflowException` 子类） |
+| `NumberFormatException` | `System.FormatException` | 数字解析失败 |
+| `IndexOutOfBoundsException`、`StringIndexOutOfBoundsException` | `System.ArgumentOutOfRangeException` | `nth` / `assoc` 越界、`subs` |
+| `ArrayIndexOutOfBoundsException` | `System.IndexOutOfRangeException` | 数组下标越界（与上一行没有公共基类：`(catch IndexOutOfBoundsException …)` 接不住数组越界，语料记为偏离） |
+| `InterruptedException` | `System.Threading.ThreadInterruptedException` | |
+| `java.util.concurrent.TimeoutException` | `System.TimeoutException` | |
+| `java.util.regex.PatternSyntaxException` | `System.Text.RegularExpressions.RegexParseException` | |
+| `java.io.IOException` / `FileNotFoundException` / `EOFException` | `System.IO.IOException` / `FileNotFoundException` / `EndOfStreamException` | |
+| `java.util.IllegalFormatException` 及其子类（`IllegalFormatConversionException`、`MissingFormatArgumentException` …） | `clojure.lang.IllegalFormatException` 及同名子类（Printf.cs；基类为 cleat-032 新增，派生自 `ArgumentException`） | format |
+
+不映射：`Error`、`AssertionError`（`assert` 抛 `System.Exception`，与 ClojureCLR 相同）、`IllegalAccessError` 等 java.lang.Error 一支。
 
 ## 5. core 库的组织（00 D15）
 

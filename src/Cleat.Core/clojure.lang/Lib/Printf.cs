@@ -564,7 +564,8 @@ namespace clojure.lang
 
             private void PrintHashCode(StringBuilder sb, object arg)
             {
-                string s = arg == null ? "null" : Convert.ToString(arg.GetHashCode(),16);
+                // CLEAT-032: a string's %h is Java's String.hashCode (stable; .NET's string hash is randomized per process)
+                string s = arg == null ? "null" : Convert.ToString(arg is string str ? Util.JavaStringHash(str) : arg.GetHashCode(), 16);
                 PrintString(sb,s);
             }
 
@@ -621,6 +622,9 @@ namespace clojure.lang
 
             #region Float spec printing
 
+            // CLEAT-032: %e %f %g %a follow java.util.Formatter: the digits are the shortest round-trip decimal
+            // (Double.toString's), rounded HALF_UP; two-digit exponents; Infinity/NaN spelled out and never zero-padded;
+            // -0.0 is negative; %g keeps trailing zeros; BigDecimal is accepted by %e %f %g; %a is Double.toHexString.
             private void PrintFloat(StringBuilder sb, object arg)
             {
                 if (arg == null)
@@ -629,78 +633,279 @@ namespace clojure.lang
                     return;
                 }
 
-                switch (Type.GetTypeCode(arg.GetType()))
+                switch (arg)
                 {
-                    case TypeCode.Single:
-                        PrintDouble(sb,(double)(float)arg);
+                    case float f:
+                        PrintDouble(sb, (double)f);
                         break;
-                    case TypeCode.Double:
-                        PrintDouble(sb,(double)arg);
+                    case double d:
+                        PrintDouble(sb, d);
                         break;
-                    case TypeCode.Decimal:
-                        PrintDecimal(sb,(decimal)arg);
+                    case BigDecimal bd when _conversion != ConversionAux.HexFloat:
+                        {
+                            string str = bd.ToString();
+                            bool neg = str.StartsWith('-');
+                            PrintDecimalDigits(sb, neg, neg ? str.Substring(1) : str);
+                        }
+                        break;
+                    case decimal m when _conversion != ConversionAux.HexFloat:
+                        {
+                            string str = m.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            bool neg = str.StartsWith('-');
+                            PrintDecimalDigits(sb, neg, neg ? str.Substring(1) : str);
+                        }
                         break;
                     default:
                         FailConversion(_conversion, arg);
                         break;
                 }
-
-            }
-
-            private void PrintDecimal(StringBuilder sb, decimal p)
-            {
-                throw new NotImplementedException();
             }
 
             private void PrintDouble(StringBuilder sb, double d)
             {
-                char bclFormatFlag;
-                int precision;
+                bool upper = (_flags & FormatFlags.UpperCase) != 0;
+                if (double.IsNaN(d))
+                {
+                    PrintWithJustification(sb, upper ? "NAN" : "NaN");
+                    return;
+                }
+                bool neg = d < 0.0 || (d == 0.0 && double.IsNegative(d));
+                double v = Math.Abs(d);
+                if (double.IsInfinity(v))
+                {
+                    var sbi = new StringBuilder();
+                    PrintLeadingSign(sbi, neg);
+                    sbi.Append(upper ? "INFINITY" : "Infinity");
+                    PrintTrailingSign(sbi, neg);
+                    PrintWithJustification(sb, sbi.ToString());
+                    return;
+                }
+                if (_conversion == ConversionAux.HexFloat)
+                {
+                    PrintHexDouble(sb, v, neg);
+                    return;
+                }
+                PrintDecimalDigits(sb, neg, v.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+            }
 
-                switch ( _conversion )
+            /// <summary>Decimal text of a non-negative finite number (plain or with E exponent) → digits and exponent:
+            /// value = d[0].d[1..] × 10^exp; zero is ("0", 0).</summary>
+            private static (string Digits, int Exp) SciDigits(string text)
+            {
+                int ePos = text.IndexOfAny(new[] { 'E', 'e' });
+                int e10 = 0;
+                string mant = text;
+                if (ePos >= 0)
+                {
+                    e10 = int.Parse(text.Substring(ePos + 1), System.Globalization.CultureInfo.InvariantCulture);
+                    mant = text.Substring(0, ePos);
+                }
+                int dot = mant.IndexOf('.');
+                string intPart = dot < 0 ? mant : mant.Substring(0, dot);
+                string frac = dot < 0 ? "" : mant.Substring(dot + 1);
+                string all = intPart + frac;
+                int pointPos = intPart.Length + e10;
+                int lz = 0;
+                while (lz < all.Length && all[lz] == '0') lz++;
+                if (lz == all.Length) return ("0", 0);
+                all = all.Substring(lz).TrimEnd('0');
+                pointPos -= lz;
+                return (all, pointPos - 1);
+            }
+
+            /// <summary>Keep the first keep significant digits, rounding HALF_UP; ("0", 0) when nothing survives.</summary>
+            private static (string Digits, int Exp) RoundDigits(string ds, int exp, int keep)
+            {
+                if (ds == "0") return ("0", 0);
+                if (keep >= ds.Length) return (ds, exp);
+                if (keep < 0) return ("0", 0);
+                if (keep == 0) return ds[0] >= '5' ? ("1", exp + 1) : ("0", 0);
+                char[] d = ds.Substring(0, keep).ToCharArray();
+                if (ds[keep] >= '5')
+                {
+                    int i = keep - 1;
+                    while (i >= 0)
+                    {
+                        if (d[i] == '9') { d[i] = '0'; i--; }
+                        else { d[i]++; break; }
+                    }
+                    if (i < 0) return ("1", exp + 1);
+                }
+                string r = new string(d).TrimEnd('0');
+                return r.Length == 0 ? ("0", 0) : (r, exp);
+            }
+
+            private static string FixedText(string ds, int exp, int prec, bool alternate)
+            {
+                (ds, exp) = RoundDigits(ds, exp, exp + 1 + prec);
+                string intPart, frac;
+                if (ds == "0") { intPart = "0"; frac = ""; }
+                else if (exp >= 0)
+                {
+                    string padded = ds.Length < exp + 1 ? ds + new string('0', exp + 1 - ds.Length) : ds;
+                    intPart = padded.Substring(0, exp + 1);
+                    frac = padded.Substring(exp + 1);
+                }
+                else
+                {
+                    intPart = "0";
+                    frac = new string('0', -exp - 1) + ds;
+                }
+                if (frac.Length < prec) frac += new string('0', prec - frac.Length);
+                else if (frac.Length > prec) frac = frac.Substring(0, prec);
+                return prec > 0 || alternate ? intPart + "." + frac : intPart;
+            }
+
+            private static string SciText(string ds, int exp, int prec, bool alternate, bool upper)
+            {
+                (ds, exp) = RoundDigits(ds, exp, prec + 1);
+                var t = new StringBuilder();
+                t.Append(ds[0]);
+                if (prec > 0 || alternate) t.Append('.');
+                string frac = ds.Length > 1 ? ds.Substring(1) : "";
+                t.Append(frac);
+                if (frac.Length < prec) t.Append('0', prec - frac.Length);
+                t.Append(upper ? 'E' : 'e').Append(exp < 0 ? '-' : '+');
+                int ae = Math.Abs(exp);
+                if (ae < 10) t.Append('0');
+                t.Append(ae.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                return t.ToString();
+            }
+
+            private static string Group(string fixedText)
+            {
+                int dot = fixedText.IndexOf('.');
+                string ip = dot < 0 ? fixedText : fixedText.Substring(0, dot);
+                string rest = dot < 0 ? "" : fixedText.Substring(dot);
+                var g = new StringBuilder();
+                for (int i = 0; i < ip.Length; i++)
+                {
+                    if (i > 0 && (ip.Length - i) % 3 == 0) g.Append(',');
+                    g.Append(ip[i]);
+                }
+                return g.Append(rest).ToString();
+            }
+
+            private void PrintDecimalDigits(StringBuilder sb, bool neg, string text)
+            {
+                var (ds, exp) = SciDigits(text);
+                bool alternate = (_flags & FormatFlags.Alternate) != 0;
+                bool upper = (_flags & FormatFlags.UpperCase) != 0;
+                bool group = (_flags & FormatFlags.Group) != 0;
+                string mag;
+                switch (_conversion)
                 {
                     case ConversionAux.Scientific:
-                        // TODO: Decide if we want to make this match the number of digits in the exponent.
-                        // The java version uses two digits.  This flag uses three.
-                        // We could get rid of the extra leading 0 in the exponent if necessary
-                        bclFormatFlag = 'e';
-                        precision = _precision == -1 ? 6 : _precision;
+                        mag = SciText(ds, exp, _precision == -1 ? 6 : _precision, alternate, upper);
                         break;
                     case ConversionAux.DecimalFloat:
-                        bclFormatFlag = 'f';
-                        precision = _precision == -1 ? 6 : _precision;
-                        if ((_flags & FormatFlags.Group) != 0)
-                            bclFormatFlag = 'n';
+                        mag = FixedText(ds, exp, _precision == -1 ? 6 : _precision, alternate);
+                        if (group) mag = Group(mag);
                         break;
                     case ConversionAux.General:
-                        // TODO: Implement grouping for General Float.
-                        // This would require detecting the Fixed/Float split and
-                        // switching to N format if fixed range and grouping.
-                        bclFormatFlag = 'g';
-                        precision = _precision == -1 ? 6 : _precision == 0 ? 1 : _precision;
+                        {
+                            int prec = _precision == -1 ? 6 : _precision == 0 ? 1 : _precision;
+                            if (ds == "0")
+                                mag = FixedText(ds, exp, prec - 1, false);
+                            else
+                            {
+                                int rexp = RoundDigits(ds, exp, prec).Exp;
+                                if (rexp >= -4 && rexp < prec)
+                                {
+                                    mag = FixedText(ds, exp, prec - rexp - 1, false);
+                                    if (group) mag = Group(mag);
+                                }
+                                else
+                                    mag = SciText(ds, exp, prec - 1, false, upper);
+                            }
+                        }
                         break;
-                    case ConversionAux.HexFloat:
-                        // TODO: Implement HexFloat.
-                        throw new NotSupportedException("HexFloat conversion not supported (yet)");
                     default:
                         throw Util.UnreachableCode();
                 }
+                PrintSignedPadded(sb, neg, mag);
+            }
 
-                if ((_flags & FormatFlags.UpperCase) != 0)
-                    bclFormatFlag = Char.ToUpper(bclFormatFlag);
+            /// <summary>sign, zero padding (when the 0 flag is given), magnitude, trailing ')'; then justified.</summary>
+            private void PrintSignedPadded(StringBuilder sb, bool neg, string mag)
+            {
+                var head = new StringBuilder();
+                PrintLeadingSign(head, neg);
+                var tail = new StringBuilder();
+                PrintTrailingSign(tail, neg);
+                int pad = _width - head.Length - mag.Length - tail.Length;
+                var all = new StringBuilder();
+                all.Append(head);
+                if ((_flags & FormatFlags.ZeroPad) != 0 && pad > 0) all.Append('0', pad);
+                all.Append(mag).Append(tail);
+                PrintWithJustification(sb, all.ToString());
+            }
 
+            /// <summary>Double.toHexString without the sign and the 0x (v ≥ 0, finite).</summary>
+            private static string HexString(double v)
+            {
+                if (v == 0.0) return "0.0p0";
+                long bits = BitConverter.DoubleToInt64Bits(v);
+                bool subnormal = v < 2.2250738585072014E-308;
+                long signif = (bits & 0x000FFFFFFFFFFFFFL);
+                string h = signif.ToString("x13", System.Globalization.CultureInfo.InvariantCulture);
+                h = h == "0000000000000" ? "0" : h.TrimEnd('0');
+                int e = subnormal ? -1022 : (int)((bits >> 52) & 0x7FF) - 1023;
+                return (subnormal ? "0." : "1.") + h + "p" + e.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
 
-                string bclFormat = String.Format("{0}{1}", bclFormatFlag, precision);
-                string val = Math.Abs(d).ToString(bclFormat);
-                bool isNeg = d < 0.0;
+            /// <summary>java.util.Formatter.hexDouble: round to prec hex digits (round half even).</summary>
+            private static string HexDouble(double d, int prec)
+            {
+                if (d == 0.0 || prec == 0 || prec >= 13) return HexString(d);
+                long bits0 = BitConverter.DoubleToInt64Bits(d);
+                bool subnormal = ((bits0 >> 52) & 0x7FF) == 0;
+                if (subnormal) d *= Math.Pow(2, 54);
+                int precision = 1 + prec * 4;
+                int shift = 53 - precision;
+                long doppel = BitConverter.DoubleToInt64Bits(d);
+                long newSignif = (doppel & 0x7FFFFFFFFFFFFFFFL) >> shift;
+                long roundingBits = doppel & ~(~0L << shift);
+                bool leastZero = (newSignif & 1L) == 0L;
+                bool round = ((1L << (shift - 1)) & roundingBits) != 0L;
+                bool sticky = shift > 1 && (~(1L << (shift - 1)) & roundingBits) != 0;
+                if ((leastZero && round && sticky) || (!leastZero && round)) newSignif++;
+                double result = BitConverter.Int64BitsToDouble(newSignif << shift);
+                if (double.IsInfinity(result)) return "1.0p1024";
+                string res = HexString(result);
+                if (!subnormal) return res;
+                int idx = res.IndexOf('p');
+                int iexp = int.Parse(res.Substring(idx + 1), System.Globalization.CultureInfo.InvariantCulture) - 54;
+                return res.Substring(0, idx) + "p" + iexp.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
 
-                StringBuilder sb1 = new StringBuilder();
-
-                PrintLeadingSign(sb1,isNeg);
-                PrintMagnitude(sb1, isNeg, val);
-                PrintTrailingSign(sb1, isNeg);
-
-                PrintWithJustification(sb, sb1.ToString());
+            private void PrintHexDouble(StringBuilder sb, double v, bool neg)
+            {
+                int prec = _precision == -1 ? 0 : _precision == 0 ? 1 : _precision;
+                bool upper = (_flags & FormatFlags.UpperCase) != 0;
+                string s = HexDouble(v, prec);
+                var t = new StringBuilder();
+                PrintLeadingSign(t, neg);
+                t.Append(upper ? "0X" : "0x");
+                if ((_flags & FormatFlags.ZeroPad) != 0)
+                {
+                    int lead = (neg || (_flags & (FormatFlags.LeadingSpace | FormatFlags.Plus)) != 0) ? 3 : 2;
+                    int z = _width - s.Length - lead;
+                    if (z > 0) t.Append('0', z);
+                }
+                int idx = s.IndexOf('p');
+                string va = s.Substring(0, idx);
+                if (upper) va = va.ToUpperInvariant();
+                if (prec != 0)
+                {
+                    int dot = va.IndexOf('.');
+                    int have = dot < 0 ? 0 : va.Length - dot - 1;
+                    if (dot < 0) va += ".";
+                    if (have < prec) va += new string('0', prec - have);
+                }
+                t.Append(va).Append(upper ? 'P' : 'p').Append(s, idx + 1, s.Length - idx - 1);
+                PrintTrailingSign(t, neg);
+                PrintWithJustification(sb, t.ToString());
             }
 
             #endregion
@@ -1494,8 +1699,32 @@ namespace clojure.lang
 
     #region Exceptions
 
+    // CLEAT-032: common base, like java.util.IllegalFormatException (an IllegalArgumentException)
     [Serializable]
-    public class UnknownFormatFlagsException : ArgumentException
+    public class IllegalFormatException : ArgumentException
+    {
+        public IllegalFormatException()
+        {
+        }
+
+        public IllegalFormatException(string message)
+            : base(message)
+        {
+        }
+
+        public IllegalFormatException(String message, Exception innerException)
+            : base(message, innerException)
+        {
+        }
+
+        protected IllegalFormatException(SerializationInfo info, StreamingContext context)
+            : base(info, context)
+        {
+        }
+    }
+
+    [Serializable]
+    public class UnknownFormatFlagsException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public UnknownFormatFlagsException()
         {
@@ -1518,7 +1747,7 @@ namespace clojure.lang
     }
 
     [Serializable]
-    public class IllegalFormatFlagsException : ArgumentException
+    public class IllegalFormatFlagsException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public IllegalFormatFlagsException()
         {
@@ -1542,7 +1771,7 @@ namespace clojure.lang
 
 
     [Serializable]
-    public class IllegalFormatConversionException : ArgumentException
+    public class IllegalFormatConversionException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
 
         public IllegalFormatConversionException()
@@ -1571,7 +1800,7 @@ namespace clojure.lang
     }
 
     [Serializable]
-    public class FormatFlagsConversionMismatchException : ArgumentException
+    public class FormatFlagsConversionMismatchException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public FormatFlagsConversionMismatchException()
         {
@@ -1600,7 +1829,7 @@ namespace clojure.lang
 
 
     [Serializable]
-    public class DuplicateFormatFlagsException : ArgumentException
+    public class DuplicateFormatFlagsException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public DuplicateFormatFlagsException()
         {
@@ -1623,7 +1852,7 @@ namespace clojure.lang
     }
 
     [Serializable]
-    public class UnknownFormatConversionException : ArgumentException
+    public class UnknownFormatConversionException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public UnknownFormatConversionException()
         {
@@ -1646,7 +1875,7 @@ namespace clojure.lang
     }
 
     [Serializable]
-    public class IllegalFormatWidthException : ArgumentException
+    public class IllegalFormatWidthException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public IllegalFormatWidthException()
         {
@@ -1674,7 +1903,7 @@ namespace clojure.lang
     }
 
     [Serializable]
-    public class MissingFormatWidthException : ArgumentException
+    public class MissingFormatWidthException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public MissingFormatWidthException()
         {
@@ -1697,7 +1926,7 @@ namespace clojure.lang
     }
 
     [Serializable]
-    public class IllegalFormatPrecisionException : ArgumentException
+    public class IllegalFormatPrecisionException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public IllegalFormatPrecisionException()
         {
@@ -1725,7 +1954,7 @@ namespace clojure.lang
     }
 
     [Serializable]
-    public class MissingFormatArgumentException : ArgumentException
+    public class MissingFormatArgumentException : IllegalFormatException  // CLEAT-032: was ArgumentException
     {
         public MissingFormatArgumentException()
         {

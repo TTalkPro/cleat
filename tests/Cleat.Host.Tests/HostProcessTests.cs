@@ -34,7 +34,10 @@ public class HostProcessTests
     /// <summary>运行 cleat；stdin 为 null 时标准输入立即关闭。</summary>
     private Result Cleat(string stdin, params string[] args) => CleatIn(_dir, stdin, null, args);
 
-    internal static Result CleatIn(string dir, string stdin, (string, string)[] env, params string[] args)
+    internal static Result CleatIn(string dir, string stdin, (string, string)[] env, params string[] args) =>
+        CleatInWithTimeout(dir, stdin, env, 180_000, args);
+
+    internal static Result CleatInWithTimeout(string dir, string stdin, (string, string)[] env, int timeoutMs, params string[] args)
     {
         Assert.That(File.Exists(HostDll), Is.True, "host not built: " + HostDll);
         var psi = new ProcessStartInfo("dotnet")
@@ -53,7 +56,7 @@ public class HostProcessTests
         var errTask = p.StandardError.ReadToEndAsync();
         if (stdin != null) p.StandardInput.Write(stdin);
         p.StandardInput.Close();
-        if (!p.WaitForExit(180_000))
+        if (!p.WaitForExit(timeoutMs))
         {
             try { p.Kill(true); } catch (Exception) { }
             Assert.Fail("cleat timed out: " + string.Join(" ", args));

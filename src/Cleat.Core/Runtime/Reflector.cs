@@ -584,6 +584,13 @@ public static class Reflector
             && best.All(b => b.Method.GetParameters().All(p => !p.ParameterType.IsValueType)))
             return best[0];
 
+        // 互不支配的候选里有不需要数值转换的（各参数精确或可赋值）：Util.equiv(long, Object) 与 equiv(Object, double) 对实参
+        // (Int64, Double)；(Char, Int64) 时 equiv(long, long) 要把 char 拓宽，JVM 根本不认它。JVM 的 Reflector 取第一个相容的
+        // 重载（后来者只在 subsumes 时替换），不报歧义；这里取第一个无需转换的（cleat-032）
+        var direct = best.Where(b => b.Levels.All(l => l <= 1)).ToList();
+        if (direct.Count > 0)
+            return direct[0];
+
         throw new InvalidOperationException(
             $"More than one matching {what} found: {methods[0].Name} for type {Util.NameForType(type)} with argument types ({ArgTypeNames(argTypes)}): "
             + string.Join("; ", best.Select(c => Describe(c.Method))));

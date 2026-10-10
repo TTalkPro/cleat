@@ -570,7 +570,11 @@
                     (syntax-case f ()
                       ((_ tsym bsym hform ...)
                        (let* ((td (syntax->clj #'tsym))
-                              (t (maybe-type td)))
+                              ;; (catch :default e …)（ClojureScript / cljc 写法，cleat-032）：捕获一切，即 System.Exception
+                              (t (if (and (keyword? td) (not (nil->f (clr-call clojure.lang.Keyword get_Namespace td)))
+                                          (string=? (clr-call clojure.lang.Keyword get_Name td) "default"))
+                                     (class-for-name "System.Exception")
+                                     (maybe-type td))))
                          (unless t (err e (string-append "Unable to resolve classname: " (->string td))))
                          (let ((b (syntax->clj #'bsym)))
                            (unless (clj-symbol? b) (err e (string-append "Bad binding form, expected symbol, got: " (->string b))))

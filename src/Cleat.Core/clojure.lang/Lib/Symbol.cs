@@ -392,7 +392,7 @@ namespace clojure.lang
         {
             if (_hasheq == 0)
             {
-                _hasheq = Util.hashCombine(Murmur3.HashString(_name), Util.hasheq(_ns));
+                _hasheq = Util.hashCombine(Murmur3.HashString(_name), _ns == null ? 0 : Util.JavaStringHash(_ns));  // CLEAT-032: JVM's Util.hash(ns) is String.hashCode
             }
             return _hasheq;
         }

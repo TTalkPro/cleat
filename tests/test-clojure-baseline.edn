@@ -1,0 +1,60 @@
+;; 生成：cleat tools/cts.clj test-clojure --write（cleat-032）。每个命名空间的 clojure.test 计数；门禁要求与此完全相同。
+;; :load-error = 加载或运行时抛出（消息截断）；:timeout = 超时。
+{:date "2026-10-10" :totals {:test 339, :pass 3443, :fail 34, :error 144} :not-run 15
+ :skipped {clojure.test-clojure.attributes "needs ClojureCLR's compiled test-support assemblies (Clojure.Tests.Support.dll / Clojure.Tests.dll)", clojure.test-clojure.clojure-xml "clojure.xml is not in cleat's src/clojure", clojure.test-clojure.clr.added "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)", clojure.test-clojure.clr.async.task "clojure.clr.async.task.alpha is not in cleat's src/clojure", clojure.test-clojure.clr.interop "needs ClojureCLR's compiled test-support assemblies (Clojure.Tests.Support.dll / Clojure.Tests.dll)", clojure.test-clojure.clr.process "clojure.clr.process is not in cleat's src/clojure", clojure.test-clojure.compilation.examples "helper namespace loaded by another test file", clojure.test-clojure.compilation.line-number-examples "helper namespace loaded by another test file", clojure.test-clojure.compilation.load-ns "helper namespace loaded by another test file", clojure.test-clojure.data-structures "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)", clojure.test-clojure.data-structures-interop "needs clojure.test.check (external lib)", clojure.test-clojure.edn "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)", clojure.test-clojure.genclass.examples "helper namespace loaded by another test file", clojure.test-clojure.generators "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)", clojure.test-clojure.ns-libs-load-later "helper namespace loaded by another test file", clojure.test-clojure.numbers "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)", clojure.test-clojure.parse "needs clojure.test.check (external lib)", clojure.test-clojure.pprint.test-cl-format "loaded by clojure.test-clojure.pprint", clojure.test-clojure.pprint.test-helper "helper namespace loaded by another test file", clojure.test-clojure.pprint.test-pretty "loaded by clojure.test-clojure.pprint", clojure.test-clojure.protocols.examples "helper namespace loaded by another test file", clojure.test-clojure.protocols.more-examples "helper namespace loaded by another test file", clojure.test-clojure.proxy.examples "helper namespace loaded by another test file", clojure.test-clojure.reader "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)", clojure.test-clojure.reducers "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)", clojure.test-clojure.repl.deps "clojure.repl.deps needs clojure.clr.basis (tools.deps)", clojure.test-clojure.repl.example "helper namespace loaded by another test file", clojure.test-clojure.run-single-test "driver script, not a test namespace", clojure.test-clojure.sequences "needs clojure.test.check (external lib)", clojure.test-clojure.test-helper "loaded as clojure.test-helper", clojure.test-clojure.transducers "needs clojure.test.check (external lib)", clojure.test-clojure.try-catch "needs ClojureCLR's compiled test-support assemblies (Clojure.Tests.Support.dll / Clojure.Tests.dll)"}
+ :namespaces
+ {
+  clojure.test-clojure.agents {:test 7, :pass 16, :fail 0, :error 0}
+  clojure.test-clojure.api {:load-error "ExpanderException: Syntax error (clojure/test_clojure/api.clj:0:0) Unable to resolve classname: clojure.clr.api.Clojure"}
+  clojure.test-clojure.array-symbols {:load-error "ExpanderException: Syntax error (clojure/test_clojure/array_symbols.clj:0:0) Cannot invoke member MakeArrayType on nil"}
+  clojure.test-clojure.atoms {:test 4, :pass 12, :fail 0, :error 0}
+  clojure.test-clojure.clearing {:load-error "ExpanderException: Syntax error (clojure/test_clojure/clearing.clj:0:0) Unable to resolve classname: java.lang.reflect.Field"}
+  clojure.test-clojure.clojure-set {:test 12, :pass 111, :fail 0, :error 0}
+  clojure.test-clojure.clojure-walk {:test 9, :pass 31, :fail 0, :error 0}
+  clojure.test-clojure.clojure-zip {:test 0, :pass 0, :fail 0, :error 0}
+  clojure.test-clojure.clr.io {:test 9, :pass 83, :fail 0, :error 0}
+  clojure.test-clojure.compilation {:load-error "ExpanderException: Syntax error (clojure/test_clojure/compilation.clj:0:0) Unable to resolve classname: clojure.lang.Compiler"}
+  clojure.test-clojure.compilation2 {:load-error "FileNotFoundException: Could not load file or assembly 'clojure.test_clojure.compilation.line_number_examples.clj.dll'. The system cannot find the file specified."}
+  clojure.test-clojure.control {:load-error "ExpanderException: Syntax error (clojure/test_clojure/control.clj:0:0) Unable to resolve classname: clojure.lang.Compiler+CompilerException"}
+  clojure.test-clojure.data {:test 1, :pass 16, :fail 0, :error 0}
+  clojure.test-clojure.def {:load-error "ExpanderException: Syntax error (clojure/test_clojure/protocols.clj:0:0) Unable to resolve classname: clojure.test_clojure.protocols.examples.ExampleInterface"}
+  clojure.test-clojure.delays {:test 2, :pass 6, :fail 0, :error 0}
+  clojure.test-clojure.errors {:load-error "ExpanderException: Syntax error (clojure/test_clojure/errors.clj:0:0) Unable to resolve classname: clojure.lang.Compiler+CompilerException"}
+  clojure.test-clojure.evaluation {:load-error "ExpanderException: Syntax error (clojure/test_clojure/evaluation.clj:0:0) Unable to resolve classname: clojure.lang.Compiler"}
+  clojure.test-clojure.fn {:test 1, :pass 0, :fail 8, :error 0}
+  clojure.test-clojure.for {:test 17, :pass 51, :fail 0, :error 0}
+  clojure.test-clojure.genclass {:load-error "FileNotFoundException: Could not load file or assembly 'clojure.test_clojure.genclass.examples.ExampleClass, Culture=neutral, PublicKeyToken=null'. The system cannot find the file spe"}
+  clojure.test-clojure.java-interop {:test 26, :pass 238, :fail 1, :error 4}
+  clojure.test-clojure.keywords {:test 2, :pass 11, :fail 0, :error 0}
+  clojure.test-clojure.logic {:test 6, :pass 124, :fail 0, :error 0}
+  clojure.test-clojure.macros {:test 10, :pass 36, :fail 0, :error 0}
+  clojure.test-clojure.main {:test 4, :pass 13, :fail 0, :error 0}
+  clojure.test-clojure.math {:test 25, :pass 139, :fail 6, :error 0}
+  clojure.test-clojure.metadata {:test 6, :pass 53, :fail 0, :error 0}
+  clojure.test-clojure.method-thunks {:load-error "InvalidOperationException: No matching static method Parse found for type Guid with argument types (); candidates: Guid.Parse(String); Guid.Parse(ReadOnlySpan`1); Guid.Parse(ReadOnlySpan`"}
+  clojure.test-clojure.multimethods {:test 11, :pass 129, :fail 0, :error 0}
+  clojure.test-clojure.ns-libs {:load-error "ExpanderException: Syntax error (clojure/test_clojure/ns_libs.clj:0:0) Unable to resolve classname: clojure.test_clojure.ns_libs.String"}
+  clojure.test-clojure.other-functions {:test 15, :pass 261, :fail 0, :error 0}
+  clojure.test-clojure.parallel {:test 2, :pass 2, :fail 0, :error 0}
+  clojure.test-clojure.param-tags {:load-error "ExpanderException: Syntax error (clojure/test_clojure/param_tags.clj:0:0) Unable to resolve classname: clojure.lang.Compiler"}
+  clojure.test-clojure.pprint {:test 58, :pass 349, :fail 1, :error 124}
+  clojure.test-clojure.predicates {:test 4, :pass 1084, :fail 0, :error 0}
+  clojure.test-clojure.printer {:test 12, :pass 58, :fail 0, :error 12}
+  clojure.test-clojure.protocols {:load-error "ExpanderException: Syntax error (clojure/test_clojure/protocols.clj:0:0) Unable to resolve classname: clojure.test_clojure.protocols.examples.ExampleInterface"}
+  clojure.test-clojure.protocols.hash-collisions {:test 2, :pass 17, :fail 0, :error 0}
+  clojure.test-clojure.refs {:test 0, :pass 0, :fail 0, :error 0}
+  clojure.test-clojure.repl {:test 7, :pass 18, :fail 0, :error 4}
+  clojure.test-clojure.rt {:test 4, :pass 12, :fail 18, :error 0}
+  clojure.test-clojure.serialization {:test 0, :pass 0, :fail 0, :error 0}
+  clojure.test-clojure.server {:test 1, :pass 12, :fail 0, :error 0}
+  clojure.test-clojure.special {:load-error "ExpanderException: Syntax error (clojure/test_clojure/special.clj:0:0) Unable to resolve classname: clojure.lang.Compiler+CompilerException"}
+  clojure.test-clojure.streams {:test 5, :pass 27, :fail 0, :error 0}
+  clojure.test-clojure.string {:test 22, :pass 107, :fail 0, :error 0}
+  clojure.test-clojure.tap {:test 2, :pass 4, :fail 0, :error 0}
+  clojure.test-clojure.test {:test 14, :pass 58, :fail 0, :error 0}
+  clojure.test-clojure.test-fixtures {:test 6, :pass 8, :fail 0, :error 0}
+  clojure.test-clojure.transients {:test 9, :pass 35, :fail 0, :error 0}
+  clojure.test-clojure.vars {:test 9, :pass 25, :fail 0, :error 0}
+  clojure.test-clojure.vectors {:test 13, :pass 287, :fail 0, :error 0}
+  clojure.test-clojure.volatiles {:test 2, :pass 10, :fail 0, :error 0}
+ }}

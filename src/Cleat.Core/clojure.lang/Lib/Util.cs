@@ -37,10 +37,27 @@ namespace clojure.lang
             if (Util.IsNumeric(o))
                 return Numbers.hasheq(o);
 
+            // CLEAT-032: the JVM's values (stable across processes, unlike .NET's randomized string hash; same set/map order):
+            // String -> Murmur3.hashInt(String.hashCode()), Character -> its code, Boolean -> 1231 / 1237
             if (o is string s)
-                return Murmur3.HashString(s);
+                return Murmur3.HashInt(JavaStringHash(s));
+
+            if (o is char c)
+                return c;
+
+            if (o is bool b)
+                return b ? 1231 : 1237;
 
             return o.GetHashCode();
+        }
+
+        /// <summary>CLEAT-032: java.lang.String.hashCode (s[0]*31^(n-1) + ... + s[n-1], UTF-16 units).</summary>
+        public static int JavaStringHash(string s)
+        {
+            int h = 0;
+            foreach (char ch in s)
+                h = unchecked(31 * h + ch);
+            return h;
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]

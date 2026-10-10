@@ -38,6 +38,7 @@
   {:ns clojure.pprint          :path "clojure/pprint/dispatch.clj"      :boot true :loaded-by clojure.pprint}
   {:ns clojure.pprint          :path "clojure/pprint/print_table.clj"   :boot true :loaded-by clojure.pprint}
   {:ns clojure.zip             :path "clojure/zip.clj"               :boot true}
+  {:ns clojure.math            :path "clojure/math.clj"              :boot true}   ; cleat-032
   {:ns clojure.clr.io          :path "clojure/clr/io.clj"            :boot true}
   {:ns clojure.clr.shell       :path "clojure/clr/shell.clj"         :boot true}
   {:ns clojure.reflect         :path "clojure/reflect.clj"           :boot true}

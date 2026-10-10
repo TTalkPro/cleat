@@ -31,6 +31,8 @@ public static class HostSyntax
 
     private static Type ClassForName(string name)
     {
+        // 正在展开的 deftype 的桩优先于同名的旧定义（重定义同名类型时 this 的提示不能指向旧类型，cleat-032）
+        lock (s_pendingStubs) if (s_pendingStubs.TryGetValue(name, out var pending)) return pending;
         try { return clojure.lang.RT.classForName(name); }
         catch (Exception) { return null; }
     }
@@ -43,9 +45,9 @@ public static class HostSyntax
         string n = sym.Name;
         if (n.IndexOf('.') > 0 || n[^1] == ']' || n.IndexOfAny(s_triggerTypeChars) >= 0)
             // Scheme 的解析器认得桩与本进程生成的类型；ClojureCLR 的泛型语法（BlockingCollection`1[System.Object]）由 Cleat.Core 的解析（cleat-053）
-            return TypeResolver.Resolve(n, Array.Empty<string>()) ?? Cleat.Core.Runtime.TypeResolver.Resolve(n, Array.Empty<string>());
+            return PendingStub(n) ?? TypeResolver.Resolve(n, Array.Empty<string>()) ?? Cleat.Core.Runtime.TypeResolver.Resolve(n, Array.Empty<string>());
         if (isLocal) return null;
-        if (CurrentNs.GetMapping(sym) is Type t) return t;
+        if (CurrentNs.GetMapping(sym) is Type t) return PendingStub(t.FullName) ?? t;
         return StubForTag(n) ?? ClassForName(n);
     }
 
@@ -88,7 +90,7 @@ public static class HostSyntax
         var at = MaybeArrayType(tag);
         if (at != null) return at;
         if (tag.Namespace != null) return null;
-        if (CurrentNs?.GetMapping(tag) is Type mapped) return mapped;
+        if (CurrentNs?.GetMapping(tag) is Type mapped) return PendingStub(mapped.FullName) ?? mapped;
         return StubForTag(tag.Name) ?? ClassForName(tag.Name);
     }
 
@@ -153,6 +155,19 @@ public static class HostSyntax
     // 只在定义它的命名空间里解析；deftype 宏随后 import 真正的类型，命名空间映射优先（cleat-053）
     private static readonly Dictionary<string, Type> s_stubTags = new Dictionary<string, Type>();
 
+    // 全名 → 正在展开的 deftype 的桩；deftype* 求值登记真正的类型时去掉（ClojureOps.DefineType，cleat-032）
+    private static readonly Dictionary<string, Type> s_pendingStubs = new Dictionary<string, Type>();
+
+    private static Type PendingStub(string fullName)
+    {
+        lock (s_pendingStubs) return s_pendingStubs.TryGetValue(fullName, out var t) ? t : null;
+    }
+
+    public static void ClearPendingStub(string fullName)
+    {
+        lock (s_pendingStubs) s_pendingStubs.Remove(fullName);
+    }
+
     private static Type StubForTag(string name)
     {
         var ns = CurrentNs;
@@ -163,6 +178,7 @@ public static class HostSyntax
     public static Type DefineStub(string name, object fieldNames, string tagName)
     {
         var t = DefineStub(name, fieldNames);
+        lock (s_pendingStubs) s_pendingStubs[name] = t;
         if (CurrentNs != null && !string.IsNullOrEmpty(tagName))
             lock (s_stubTags) s_stubTags[CurrentNs.Name.Name + "/" + tagName] = t;
         return t;
@@ -237,6 +253,11 @@ public static class HostSyntax
     /// （含继承的接口与 Object 的虚方法）中选定方法。返回 object[] { 接口名|null, 方法名, 返回类型名, 参数类型名数组 }，
     /// 或错误字符串（文本与 C# 展开器相同）。
     /// </summary>
+    private static readonly Dictionary<string, string> s_objectMethodNames = new Dictionary<string, string>
+    {
+        ["toString"] = "ToString", ["hashCode"] = "GetHashCode", ["equals"] = "Equals",
+    };
+
     public static object TypeMethod(object ifaces, object nameSym, object parms)
     {
         if (nameSym is not clojure.lang.Symbol dotName) return "Method name must be a symbol: " + nameSym;
@@ -257,6 +278,10 @@ public static class HostSyntax
         var candidates = GatherMethods(((object[])ifaces).Cast<Type>());
         var matches = (candidates.TryGetValue(methodName, out var list) ? list : new List<Candidate>())
           .Where(c => c.Method.GetParameters().Length == argc && (explicitIface == null || c.Interface == explicitIface)).ToList();
+        // java.lang.Object 的三个方法的 JVM 名字（Object (toString [_] …)，可移植代码的常见写法）→ System.Object 的同名虚方法（cleat-032）
+        if (matches.Count == 0 && explicitIface == null && s_objectMethodNames.TryGetValue(methodName, out var clrName)
+            && candidates.TryGetValue(clrName, out var objList))
+            matches = objList.Where(c => c.Interface == null && c.Method.GetParameters().Length == argc).ToList();
         if (matches.Count == 0) return $"Can't define method not in interfaces: {dotName.Name}";
         // 不同接口里签名相同（参数与返回类型）的方法是同一个方法（ClojureCLR 按签名收集）：取第一个，其余接口的由桩转调
         // （cleat-053：gvec 的 count 同时来自 IPersistentCollection 与 Counted）
@@ -276,7 +301,17 @@ public static class HostSyntax
             }
         }
         Candidate chosen;
+        // 只差在返回类型、且其中一个的返回类型可赋给其余全部（ISeq.cons 返回 ISeq，IPersistentCollection.cons 返回
+        // IPersistentCollection）：JVM 上是协变返回加桥接方法，不需要提示；取最具体的那个，其余接口方法由桩转调（cleat-032）
+        Candidate covariant = null;
+        if (matches.Count > 1 && !anyHint)
+        {
+            var sig0 = matches[0].Method.GetParameters().Select(p => p.ParameterType).ToArray();
+            if (matches.All(c => c.Method.GetParameters().Select(p => p.ParameterType).SequenceEqual(sig0)))
+                covariant = matches.FirstOrDefault(c => matches.All(o => o.Method.ReturnType.IsAssignableFrom(c.Method.ReturnType)));
+        }
         if (matches.Count == 1) chosen = matches[0];
+        else if (covariant != null) chosen = covariant;
         else
         {
             if (!anyHint) return "Must hint overloaded method: " + dotName.Name;

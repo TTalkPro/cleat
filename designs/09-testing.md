@@ -7,7 +7,7 @@
 | **语料** `corpus.edn` | jolt `test/chez/corpus.edn`（EPL-2.0，复制到 `tests/conformance/`，保留来源说明）；约 5000 条 `{:suite :label :actual :expected :portability}`，`:expected` 由 JVM Clojure 取证 | 按 `=` 比较值；`:throws` | **主判据**。`:portability :common` 必须全过；`:jvm` 跳过；另加 `:clr` 行（我们自己写的 CLR 互操作用例） |
 | clojure-test-suite | jank `jank/clojure-test-suite`（子模块 `tests/clojure-test-suite/`） | `clojure.test`，按命名空间 | 库覆盖；逐命名空间基线（与 jolt 相同：优于基线也要更新基线） |
 | test_clojure | ClojureCLR `Clojure.Tests/clojure/test_clojure/`（EPL） | `clojure.test` | CLR 互操作、reader、打印、数值细节 |
-| 已知偏离表 | `tests/conformance/known-divergences.edn` | 分类白名单（`:legend`） | 门禁只在**新增**或**过期**偏离时失败 |
+| 已知偏离表 | `tests/conformance/cleat-divergences.edn`（cleat-032；jolt 的 `known-divergences.edn` 只作分类用词的参照） | 分类白名单（`:legend`） | 门禁只在**新增**或**过期**偏离时失败 |
 
 认证流程照搬 jolt：`regen-corpus` 不在本仓库运行（我们没有 JVM）；语料视为冻结契约，新增用例直接写 `:expected`，并在偏离表里注明未经 JVM 取证。
 
@@ -36,9 +36,13 @@ M6 建立并记入本文：语料通过数 / 偏离数；clojure-test-suite 逐�
 | 日期 | 来源 | 项 | 值 |
 |---|---|---|---|
 | 2026-10-10 | cleat-053 | 语料 `:common`（`dotnet run tools/build.cs -- conformance --run`，宿主 + Clojure 镜像，`=` 比较） | 4842 行：通过 3913（80.8%），不等 179，异常 749，超时 1 |
+| 2026-10-10 | cleat-032 | 语料 `:common`（同上；每行在新的 `user` 命名空间，`--gate` 按 `tests/conformance/cleat-divergences.edn`） | 4842 行：通过 **4281（88.4%）**，不等 98，异常 462，超时 1；其余 561 行（560 个 id）全部分类：`:host/jvm-api` 310、`:corpus/jolt-value` 98、`:host/regex` 39、`:host/exception-type` 28、`:not-yet` 27、`:host/class-name` 17、`:host/numeric-types` 10、`:upstream/clojureclr` 7、`:error-model` 6、其余 19。去掉 `:host/*` 与 `:corpus/jolt-value`（宿主相关或取证值不是 JVM 的）后的 4327 行通过 98.9% |
+| 2026-10-10 | cleat-032 | clojure-test-suite（`tools/cts.clj cts`，247 个命名空间，`tests/cts-baseline.edn`） | 247 个全部加载运行；247 个 deftest，断言通过 6865、失败 32、错误 6 |
+| 2026-10-10 | cleat-032 | test_clojure（`tools/cts.clj test-clojure`，`tests/test-clojure-baseline.edn`） | 85 个命名空间：跳过 32（外部库 test.generative / test.check、ClojureCLR 的测试支持程序集、辅助命名空间）；运行 53 个，其中 15 个加载失败（`clojure.lang.Compiler`、反射警告、gen-class 等）；339 个 deftest，断言通过 3443、失败 34、错误 144（pprint 124） |
 | 2026-10-10 | cleat-053 | Clojure 镜像 `cleat.boot.dll`（`GenerateBootImage`） | 构建约 18 ~ 20 秒；dll 1.8 MB，Lcil 14 MB，2308 个类型，2189 个顶层形式；不动点 B == C |
 
 ## 4. 运行方式
 
 - `dotnet test`（全部 C# 测试 + 以进程方式驱动 `Cleat.Host` / `Cleat.Stage0` 的 Clojure 测试，每个套件一个进程）；`--filter Category=Bootstrap` / `Conformance`。
-- `tools/build.cs conformance [--target llvm]`。
+- `tools/build.cs conformance --run [--gate] [--results tests/conformance/cleat-results.edn]`（语料）、`tools/build.cs cts cts|test-clojure [--write]`（两个 clojure.test 套件；与基线不同——更好或更差——都失败，`--write` 有意地更新基线）；`dotnet test --filter Category=Conformance` 跑这三个门禁（cleat-032）。
+- `tools/build.cs conformance --target llvm`（搁置）。

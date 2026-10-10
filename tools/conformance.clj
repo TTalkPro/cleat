@@ -2,16 +2,18 @@
 ;; tests/conformance/corpus.edn 的行求值并按 = 比较。
 ;;
 ;;   cleat tools/conformance.clj [corpus.edn] [--portability common|jvm|all] [--timeout ms] [--report out.edn] [--limit n]
+;;                               [--results out.edn] [--gate [--divergences tests/conformance/cleat-divergences.edn]]
 ;;
-;; 每行在新的命名空间里（refer clojure.core）求值 :actual，再在同一命名空间里求值 :expected 并比较；:expected 为 :throws
+;; 每行在新的 user 命名空间里（refer clojure.core）先读 :expected、再求值 :actual，再在同一命名空间里求值 :expected 并比较；:expected 为 :throws
 ;; 时 :actual 必须抛异常。每行在一个 256 MB 栈的线程上运行（展开器递归深），超时的行记为 :timeout（线程放弃，后台线程不阻止退出）。
-;; 输出：通过数、失败 / 错误 / 超时数、按套件（suite 的 " / " 前缀）与按异常消息分组的前若干组；--report 写出每行结果。
+;; 输出：通过数、失败 / 错误 / 超时数、按套件（suite 的 " / " 前缀）与按异常消息分组的前若干组；--report 写出失败行的详情，
+;; --results 写出每行的结果（tests/conformance/cleat-results.edn），--gate 按偏离表门禁（新失败或过期条目 → 退出码 1）。
 (ns cleat.conformance
   (:require [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (defn- arg [args flag default]
-  (let [m (apply hash-map (drop-while #(not (str/starts-with? % "--")) args))]
+  (let [m (apply hash-map (drop-while #(not (str/starts-with? % "--")) (remove #{"--gate"} args)))]
     (get m flag default)))
 
 (defn- run-thread
@@ -27,25 +29,37 @@
 
 (def ^:private counter (atom 0))
 
-(defn- eval-in [ns src]
+(defn- read-in [ns src]
   (binding [*ns* ns]
-    (eval (read-string {:read-cond :allow :features #{:cljr :cleat}} (str "(do " src "\n)")))))
+    (read-string {:read-cond :allow :features #{:cljr :cleat}} (str "(do " src "\n)"))))
+
+(defn- eval-in [ns src]
+  (binding [*ns* ns] (eval (if (string? src) (read-in ns src) src))))
+
+(defn- fresh-user-ns
+  "语料按 JVM 取证的方式运行：每行在新的 user 命名空间里求值（SPEC.md：fresh user namespace）"
+  []
+  (remove-ns 'user)
+  (let [ns (create-ns 'user)]
+    (binding [*ns* ns] (refer 'clojure.core))
+    ns))
 
 (defn- run-row [row ms]
-  (let [ns (create-ns (symbol (str "conformance.row" (swap! counter inc))))
-        _ (binding [*ns* ns] (refer 'clojure.core))
+  (let [ns (fresh-user-ns)
         expected (:expected row)
         throws? (= expected :throws)
         r (run-thread
             (fn []
-              (let [a (try {:val (eval-in ns (:actual row))} (catch Exception e {:ex e}))]
+              ;; JVM 的取证进程先读入整份语料：:expected 里的关键字（find-keyword）在求值 :actual 之前就已 intern。
+              ;; 先读 :expected（读不了——例如要用 :actual 建立的别名——就留到求值之后再读）
+              (let [expected (if throws? expected (try (read-in ns expected) (catch Exception _ expected)))
+                    a (try {:val (eval-in ns (:actual row))} (catch Exception e {:ex e}))]
                 (cond
                   throws? (if (:ex a) :pass {:fail :no-throw :got (pr-str (:val a))})
                   (:ex a) {:error (:ex a)}
                   :else (let [e (eval-in ns expected)]
                           (if (= (:val a) e) :pass {:fail :not-equal :got (pr-str (:val a))})))))
             ms)]
-    (remove-ns (ns-name ns))
     (cond
       (= r :timeout) {:status :timeout}
       (:ex r) {:status :error :ex (:ex r)}
@@ -92,6 +106,40 @@
                     (prn {:suite (:suite (:row r)) :label (:label (:row r)) :status (:status r)
                           :actual (:actual (:row r)) :expected (:expected (:row r))
                           :got (:got r) :ex (when (:ex r) (ex-key (:ex r)))}))))
-      (println "\nreport:" out))))
+      (println "\nreport:" out))
+    ;; 每行结果（cleat-032）：[[suite label] 状态 原因]，状态 :pass / :fail（值不等或该抛未抛）/ :throw / :timeout
+    (when-let [out (arg args "--results" nil)]
+      (spit out (with-out-str
+                  (println ";; 生成：cleat tools/conformance.clj --results（cleat-032）。语料每行在 cleat 上的结果：")
+                  (println ";; [[suite label] :pass] | [[suite label] :fail \"得到的值\"] | [[suite label] :throw \"异常\"] | [[suite label] :timeout]")
+                  (println (str "{:portability " portability " :rows " (count rows) " :pass " (get by-status :pass 0)
+                                " :fail " (get by-status :fail 0) " :throw " (get by-status :error 0) " :timeout " (get by-status :timeout 0)))
+                  (println " :results")
+                  (println " [")
+                  (doseq [r results]
+                    (let [id [(:suite (:row r)) (:label (:row r))]
+                          g (fn [s] (let [s (str s)] (subs s 0 (min 120 (count s)))))]
+                      (prn (case (:status r)
+                             :pass [id :pass]
+                             :fail [id :fail (g (if (= (:fail r) :no-throw) (str "no throw: " (:got r)) (:got r)))]
+                             :error [id :throw (g (ex-key (:ex r)))]
+                             :timeout [id :timeout]))))
+                  (println " ]}")))
+      (println "results:" out))
+    ;; 门禁（cleat-032，与 jolt 的 certify 相同）：每个失败行都要在偏离表里；表里的行都要仍然失败、仍在语料中
+    (when (some #{"--gate"} args)
+      (let [dpath (arg args "--divergences" "tests/conformance/cleat-divergences.edn")
+            entries (:entries (edn/read-string (slurp dpath)))
+            listed (into {} (map (fn [e] [[(:suite e) (:label e)] e]) entries))
+            ids (set (map (fn [r] [(:suite r) (:label r)]) rows))
+            failing (set (map (fn [r] [(:suite (:row r)) (:label (:row r))]) bad))
+            fresh (sort (remove listed failing))
+            stale (sort (remove failing (keys listed)))]
+        (println "\ngate:" (count listed) "classified divergences," (count failing) "failing rows")
+        (doseq [[s l] fresh] (println "  NEW failure (not in" dpath "):" (pr-str s) (pr-str l)))
+        (doseq [[s l] stale] (println (if (ids [s l]) "  STALE entry (row passes now):" "  STALE entry (no such row):") (pr-str s) (pr-str l)))
+        (if (and (empty? fresh) (empty? stale))
+          (println "gate: OK")
+          (do (println "gate: FAILED") (System.Environment/Exit 1)))))))
 
 (apply -main *command-line-args*)

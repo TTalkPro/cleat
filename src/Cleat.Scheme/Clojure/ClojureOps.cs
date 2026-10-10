@@ -263,7 +263,10 @@ public static class ClojureOps
 
     public static object ImportOf(object t)
     {
-        ((Namespace)clojure.lang.RT.CurrentNSVar.deref()).importClass(HostSyntax.Real((Type)t));
+        // 按名字取最新的定义（cleat-032）：defrecord 展开里的 (import user.R) 在 deftype* 求值之前就解析了类型名，
+        // 重定义同名类型时展开期拿到的是旧定义
+        var real = HostSyntax.Real((Type)t);
+        ((Namespace)clojure.lang.RT.CurrentNSVar.deref()).importClass(Cleat.Core.Runtime.Loader.FindType(real.FullName) ?? real);
         return null;
     }
 
@@ -273,6 +276,7 @@ public static class ClojureOps
         // 两个类型名解析器都要看到最新的定义：Clojure 侧（classForName → Loader）与展开期的 HostSyntax（Scheme 的 TypeResolver）
         Cleat.Core.Runtime.Loader.RegisterType((Type)t);
         Cleat.Scheme.TypeResolver.AddCompileTimeType((Type)t);
+        HostSyntax.ClearPendingStub(((Type)t).FullName);
         return t;
     }
 

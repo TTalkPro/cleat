@@ -360,7 +360,9 @@
    (case
     (:type m)
     :fail (merge (stacktrace-file-and-line (drop-while
-                                              #(let [cl-name (.FullName (.DeclaringType (.GetMethod ^System.Diagnostics.StackFrame %)))]    ;;; .getClassName ^StackTraceElement
+                                              #(let [m (.GetMethod ^System.Diagnostics.StackFrame %)                                         ;;; CLEAT-032: dynamic methods
+                                                     t (when m (.DeclaringType m))                                                             ;;;   (lambda_method …) have no
+                                                     cl-name (if t (.FullName t) "System.")]                                                  ;;;   declaring type: skip them  .getClassName ^StackTraceElement
                                                  (or (str/starts-with? cl-name "System.")                                                   ;;; "java.lang.""
                                                     (str/starts-with? cl-name "clojure.test$")
                                                     (str/starts-with? cl-name "clojure.core$ex_info")))
