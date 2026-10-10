@@ -24,7 +24,7 @@ cleat-003 实测（2026-10-10）：以上扩展在内存与持久化两条路径
 
 ## 3. 常量编码
 
-编译器 `cleat.compiler.constants/encode` 输出中立编码，发射器 `FaslEncoder` 转二进制并嵌入 `$Constants` 的 RVA 数据（与 IronScheme 相同），运行时 `Cleat.Core.Runtime.Fasl` 读回：
+编译器 `cleat.compiler.constants/encode` 输出中立编码，发射器 `FaslEncoder` 转二进制并嵌入 `$Constants` 的 RVA 数据（与 IronScheme 相同），运行时 `Cleat.Scheme.Fasl` 读回（cleat-045 起 fasl 是 IronScheme 编码与 Clojure 标签的并集，由元层运行时统一实现；`Cleat.Core.Runtime.Fasl` 已退役）：
 
 | 编码 | 含义 |
 |---|---|
