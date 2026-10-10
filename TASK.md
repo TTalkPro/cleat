@@ -35,8 +35,8 @@
 | [cleat-028](tasks/cleat-028-compiler-driver.md) | 编译驱动：compile-form / eval、compile、构建脚本 | 替换（15 §5） | cleat-027、cleat-022 | 搁置 |
 | [cleat-029](tasks/cleat-029-phase-a-stage0-build.md) | Phase A：stage0 编译出 cleat.boot.dll | 替换（15 §5） | cleat-028、cleat-018 | 搁置 |
 | [cleat-030](tasks/cleat-030-host-and-repl.md) | 宿主 Cleat.Host 与 REPL | M5 | cleat-022、cleat-012 | 进行中（骨架完成） |
-| [cleat-031](tasks/cleat-031-phase-b-fixpoint.md) | Phase B：自举不动点 | M6 | cleat-029、cleat-030 | 未开始 |
-| [cleat-032](tasks/cleat-032-conformance-baseline.md) | 符合性基线：语料、clojure-test-suite、test_clojure | M6 | cleat-031、cleat-002 | 未开始 |
+| [cleat-031](tasks/cleat-031-phase-b-fixpoint.md) | Phase B：自举不动点 | 并入 cleat-053 | cleat-029、cleat-030 | 搁置 |
+| [cleat-032](tasks/cleat-032-conformance-baseline.md) | 符合性基线：语料、clojure-test-suite、test_clojure | M6 | cleat-053、cleat-002 | 未开始 |
 | [cleat-033](tasks/cleat-033-aot-and-load-path.md) | 命名空间 AOT（.clj.dll）与加载路径 | M7 | cleat-032 | 未开始 |
 | [cleat-034](tasks/cleat-034-publish-and-repl-editing.md) | 自包含发布与 REPL 行编辑 | M7 | cleat-033 | 未开始 |
 | [cleat-035](tasks/cleat-035-embedding-and-error-goldens.md) | 嵌入 API 与错误黄金文件 | M7 | cleat-033 | 未开始 |
@@ -49,7 +49,7 @@
 | [cleat-042](tasks/cleat-042-performance.md) | 性能：拆箱、协议内联缓存、跨单元直接链接 | 后续 | cleat-032 | 未开始 |
 | [cleat-043](tasks/cleat-043-genclass-proxy-async.md) | gen-class、proxy 全量与异步 | 后续 | cleat-033 | 未开始 |
 | [cleat-044](tasks/cleat-044-spike-clojure-on-ironscheme.md) | PoC：Clojure on IronScheme | 决策前 | cleat-017 | 并入 cleat-049 |
-| [cleat-045](tasks/cleat-045-vendor-scheme-runtime.md) | 纳入并更名 C# 元层：Cleat.Scheme、Cleat.Stage0、Emit / PrimGen 合并 | M2′ | cleat-017 | 未开始 |
+| [cleat-045](tasks/cleat-045-vendor-scheme-runtime.md) | 纳入并更名 C# 元层：Cleat.Scheme、Cleat.Stage0、Emit / PrimGen 合并 | M2′ | cleat-017 | 进行中 |
 | [cleat-046](tasks/cleat-046-vendor-scheme-boot.md) | 纳入 Scheme 元层：boot、展开器、编译器、nanopass、种子；本仓库自举不动点 | M2′ | cleat-045 | 未开始 |
 | [cleat-047](tasks/cleat-047-try-catch-model.md) | 异常模型简化：删 call/cc 与处理器栈，加 `$try/catch`，重生成种子 | M2′ | cleat-046 | 未开始 |
 | [cleat-048](tasks/cleat-048-extensible-syntax-objects.md) | 可扩展语法对象：三张扩展表、8 处改造、Clojure 集合注册 | M2′ | cleat-047 | 未开始 |
@@ -59,6 +59,8 @@
 | [cleat-052](tasks/cleat-052-compile-driver-on-scheme.md) | 编译驱动：eval、load / compile 钩子、.clj.dll 与接口文件、宿主接入 | M4′ | cleat-051 | 未开始 |
 | [cleat-053](tasks/cleat-053-clojure-boot-image.md) | Clojure 自举：Scheme 镜像编译 core.clj → cleat.boot.dll，镜像不动点 | M5′ | cleat-052 | 未开始 |
 | [cleat-054](tasks/cleat-054-rename-scheme-libraries.md) | Scheme 库名 `(ironscheme …)` → `(cleat scheme …)`，同步重生成种子 | 后续 | cleat-053 | 未开始 |
+| [cleat-055](tasks/cleat-055-scheme-invisibility-boundaries.md) | "看不到 Scheme"的三道边界：macroexpand 停止点、值边界、诊断边界的测试与黄金文件 | M4′ | cleat-052 | 未开始 |
+| [cleat-056](tasks/cleat-056-nanopass-clojure-surface.md) | Clojure 表面的 nanopass：在 defsyntax 上给原版 nanopass 套 Clojure 语法 | 后续 | cleat-053 | 未开始 |
 
 ## 里程碑
 
@@ -70,15 +72,27 @@
 | M2′ 纳入元层 | cleat-045 ~ cleat-048 | Scheme 镜像在本仓库自举、try / catch 模型、可扩展语法对象 |
 | M3 Lcil 与发射器 | cleat-019 ~ cleat-022 | 手写 Lcil → dll 可运行 |
 | M4 nanopass 与编译器 | 替换（15 §5） | — |
-| M4′ Clojure 在元层上 | cleat-049 ~ cleat-052 | 命名空间模型、(clojure syntax)、编译器 Clojure 节点、驱动 |
+| M4′ Clojure 在元层上 | cleat-049 ~ cleat-052、cleat-055 | 命名空间模型、(clojure syntax)、编译器 Clojure 节点、驱动、Scheme 不可见边界 |
 | M5 首次自举 | 029 替换；030 骨架完成 | — |
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
-| M6 自举闭合与符合性 | cleat-031 ~ cleat-032 | 不动点、三个基线 |
-| M7 工程 | cleat-033 ~ cleat-036 | AOT、发布、REPL、嵌入、种子 |
-| 后续 | cleat-042 ~ cleat-043 | 性能、gen-class / proxy / 异步 |
+| M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
+| M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
+| 后续 | cleat-042、043、054、056 | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-cleat-001 → 005 → 006 → 008 → 013 → 015 →（019 → 020 →）016 → 018 → 023 → 024 → 025 → 026 → 027 → 028 → 029 → 031 → 032。
-新关键路径：cleat-045 → 046 → 047 → 048 → 049 → 050 → 051 → 052 → 053 → 032。LLVM 相关任务搁置，不在当前计划内。
+cleat-045 → 046 → 047 → 048 → 049 → 050 → 051 → 052 → 055 → 053 → 032（原路径 013 → 015 → … → 029 → 031 已由此取代）。LLVM 相关任务搁置，不在当前计划内。
+
+## 本轮讨论落实到任务的对应
+
+| 讨论结论 | 任务 |
+|---|---|
+| 纳入 IronScheme 代码并更名，不作依赖（14 §7、15 §1） | 045、046、054 |
+| 编译器用 Scheme 写，但语法对象必须可扩展（15 §2） | 048 |
+| 尽量不改 nanopass（15 §4）：以快照与不动点为证据 | 046、048 的验收 |
+| 异常模型简化为 try / catch，无 call/cc（15 §3） | 047 |
+| 命名空间模型是通过 / 不通过判据（14 §8） | 049 |
+| Clojure 完全看不到 Scheme 的三道边界（13 §7） | 055 |
+| defmacro 兼容 + defsyntax 卫生宏 | 050 |
+| Clojure 用户也能用 nanopass（可选） | 056 |
