@@ -90,6 +90,8 @@ codegen 只经表项取类名、原语符号、互操作指令名；驱动的 `*
 | 构建脚本 `src/boot/build-boot.clj` | 按 03 §5 的顺序编译全部 boot 命名空间 → `cleat.boot.dll`；写出 Lcil 文本用于比较不动点 |
 | `--target llvm` | 同样的驱动，产物是 `.ll`（06 §6） |
 
+**REPL / `eval` 的简单形式不编译**（借 Chez 的 `compile-interpret-simple`，`s/compile.ss:1820`：Chez 的 `current-eval` 缺省就是 `compile`，每个顶层形式跑完整的 nanopass 管线生成机器码，但不创建过程的简单表达式改走解释器）：`compile-form` 对不含 `fn` / `deftype` 的 Lcore（常量、Var 引用、直接调用、`def` 常量）不生成程序集，直接解释求值——内存模式每次 `Reflection.Emit` 几百微秒且类型数有平方级开销（cleat-003）。解释器在方案 A 是 stage0，在方案 C 是 IronScheme 的 `compile-core`，在方案 B 要单写一个小的。
+
 ## 10. 第一版不做、后续做
 
 - 类型推断与拆箱（`^long` 局部、原始类型 `IFn.LL` 签名）；局部变量清除；协议调用内联缓存；`:inline` 之外的内联；跨单元直接链接到用户 `.clj.dll`（第一版只对 boot 镜像）。
