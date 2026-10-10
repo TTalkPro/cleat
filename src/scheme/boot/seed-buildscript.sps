@@ -1733,6 +1733,8 @@
     (register-binding-extension!                  isx)
     (binding-extension-of                         isx)
     (syntax-error-hook                            isx)
+    (make-lookup-environment                      isx)
+    (environment-macroexpand-1                    isx)
     ))
 
 

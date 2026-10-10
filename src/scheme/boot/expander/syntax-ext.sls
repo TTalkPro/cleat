@@ -34,8 +34,9 @@
 ;;;   kind               绑定种类符号（绑定是 (kind . value)）
 ;;;   expand-reference   (e value expand) → 核心表达式：标识符引用 e
 ;;;   expand-set!        (e value expand) → 核心表达式：(set! id v)，#f 表示不可赋值
-;;;   expand-form        (e value expand) → 核心表达式：以该标识符开头的形式；#f 则按过程调用展开
-;;;   macroexpand-1?     macroexpand-1 是否展开它（cleat-049 使用）
+;;;   expand-form        (e value expand) → 核心表达式：以该标识符开头的形式；#f 则按过程调用展开；
+;;;                      #t 表示绑定值 value 是转换器：与 macro 一样经 do-macro-call 展开（卫生标记照旧，cleat-049）
+;;;   macroexpand-1?     expand-form 为 #t 时，environment-macroexpand-1 是否展开它（Clojure 的特殊形式为 #f）
 ;;; expand 是 (lambda (stx) 核心表达式)：在当前环境里展开子表达式。
 
 (library (boot expander syntax-ext)

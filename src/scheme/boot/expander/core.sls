@@ -35,6 +35,7 @@
           interaction-environment
           expand->core
           new-interaction-environment
+          make-lookup-environment environment-macroexpand-1
           interaction-environment-symbols environment-bindings
           ellipsis-map assertion-error syntax-transpose
 		      environment environment? environment-symbols
@@ -179,13 +180,24 @@
     (lambda ()
       (make-rib '() '() '() #f (make-eq-hashtable)))) 
       
+  ;;; 查找 rib（cleat-049）：cache 字段是过程 (sym mark*) → label | #f，rib 本身没有条目，
+  ;;; 标识符到标签的映射由过程从外部的表（Clojure 的 Namespace）现查。不能 extend-rib!。
+  (define (make-lookup-rib proc)
+    (make-rib '() '() '() #f proc))
+
+  (define (lookup-rib? rib)
+    (procedure? (rib-cache rib)))
+
   (define (find-label rib sym mark*)
     (let ((ht (rib-cache rib)))
-      (and ht
-        (let ((cv (hashtable-ref ht sym #f)))
-          (cond
-            ((and cv (assp (lambda (m) (same-marks? mark* m)) cv)) => cdr)
-            (else #f))))))
+      (cond
+        ((not ht) #f)
+        ((procedure? ht) (ht sym mark*))
+        (else
+         (let ((cv (hashtable-ref ht sym #f)))
+           (cond
+             ((and cv (assp (lambda (m) (same-marks? mark* m)) cv)) => cdr)
+             (else #f)))))))
   
   ;;; For example, when processing a lambda's internal define, a new rib
   ;;; is created and is added to the body of the lambda expression.
@@ -200,7 +212,7 @@
            (if (and (eq? sym (car sym*)) (same-marks? mark* (car mark**)))
                label*
                (find sym mark* (cdr sym*) (cdr mark**) (cdr label*)))))
-    (when (rib-sealed/freq rib)
+    (when (or (rib-sealed/freq rib) (lookup-rib? rib))
       (assertion-violation 'extend-rib! "BUG: rib is sealed" rib))
     (let ((sym (id->sym id))
           (mark* (stx-mark* id)))
@@ -604,8 +616,10 @@
     (lambda (x) 
       (and (stx? x) 
         (let ((expr (stx-expr x)))
+          ;;; 注解看 expression：Scheme reader 的原子注解 expression 与 stripped 相同；
+          ;;; Clojure 的符号注解 stripped 是原 Clojure 符号（带元数据），expression 是 Scheme 符号（cleat-049）
           (symbol? (if (annotation? expr)
-                       (annotation-stripped expr)
+                       (annotation-expression expr)
                        expr))))))
   
   (define id->sym
@@ -614,7 +628,7 @@
         (error 'id->sym "BUG in ikarus: not an id" x))
       (let ((expr (stx-expr x)))
         (let ((sym (if (annotation? expr) 
-                       (annotation-stripped expr)
+                       (annotation-expression expr)
                        expr)))
           (if (symbol? sym) 
               sym
@@ -3047,11 +3061,38 @@
            ;(assertion-violation 'chi-expr "invalid type " type (strip e '()))
            (let ((x (binding-extension-of type)))
              (if x
-                 (let ((expand (lambda (e) (chi-expr e r mr))))
-                   (if (syntax-pair? e)
-                       ((binding-extension-expand-form x) e value expand)
-                       ((binding-extension-expand-reference x) e value expand)))
+                 (let ((expand (lambda (e) (chi-expr e r mr)))
+                       (form (binding-extension-expand-form x))
+                       (ref (binding-extension-expand-reference x)))
+                   (cond
+                     ((not (syntax-pair? e))
+                      (if ref (ref e value expand) (stx-error e "invalid expression")))
+                     ;;; expand-form 为 #t：绑定值是转换器，与 macro 一样经 do-macro-call（cleat-049）
+                     ((eq? form #t)
+                      (chi-expr (do-macro-call value e r #f) r mr))
+                     (else (form e value expand))))
                  (stx-error e "invalid expression"))))))))
+
+  ;;; macroexpand-1（cleat-049，designs/14 §6）：e 是宏调用（含 expand-form 为 #t 且 macroexpand-1? 为真的
+  ;;; 绑定扩展）时展开一步，返回结果语法对象；否则返回 #f。头部标识符未绑定时也返回 #f（不报错）。
+  (define (macro-step e r)
+    (define (unbound? id) (and (id? id) (not (id->label id))))
+    (cond
+      ((unbound? e) #f)
+      ((and (syntax-pair? e) (unbound? (syntax-car e))) #f)
+      (else
+       (let-values (((type value kwd) (syntax-type e r)))
+         (case type
+           ((macro macro!) (chi-macro value e r #f))
+           ((local-macro local-macro!) (chi-local-macro value e r #f))
+           ((global-macro global-macro!) (chi-global-macro value e r #f))
+           (else
+            (let ((x (binding-extension-of type)))
+              (and x
+                   (syntax-pair? e)
+                   (eq? (binding-extension-expand-form x) #t)
+                   (binding-extension-macroexpand-1? x)
+                   (do-macro-call value e r #f)))))))))
 
   (define chi-set!
     (lambda (e r mr)
@@ -3965,6 +4006,17 @@
   (define-record interaction-env (rib r locs)
     (lambda (x p wr)
       (display "#<interactive-environment>" p)))
+
+  ;;; 查找环境（cleat-049）：顶层标识符经查找 rib 的过程解析（Clojure 的命名空间）；
+  ;;; 没有 interaction-env 的"伪造绑定"，未解析的标识符报 unbound identifier。
+  (define-record lookup-env (rib)
+    (lambda (x p wr)
+      (display "#<lookup-environment>" p)))
+
+  (define (make-lookup-environment proc)
+    (unless (procedure? proc)
+      (assertion-violation 'make-lookup-environment "not a procedure" proc))
+    (make-lookup-env (make-lookup-rib proc)))
       
   (define (interaction-environment-symbols)
     (environment-symbols (interaction-environment)))
@@ -3992,13 +4044,14 @@
                 'unknown))))))            
   
   (define environment?
-    (lambda (x) (or (env? x) (interaction-env? x))))
+    (lambda (x) (or (env? x) (interaction-env? x) (lookup-env? x))))
   
   (define (environment-symbols x)
     (cond
       ((env? x) (vector->list (env-names x)))
       ((interaction-env? x) 
        (map values (rib-sym* (interaction-env-rib x))))
+      ((lookup-env? x) '())
       (else
        (assertion-violation 'environment-symbols "not an environment" x))))
 
@@ -4058,8 +4111,33 @@
                              (chi-interaction-expr x rib r))))
                (set-interaction-env-r! env r^)
                (values e (rtc))))))
+        ((lookup-env? env)
+         (let ((x (make-stx x top-mark* (list (lookup-env-rib env)) '()))
+               (rtc (make-collector)))
+           (let ((x (parameterize ((top-level-context #f)
+                                   (inv-collector rtc)
+                                   (vis-collector (make-collector))
+                                   (imp-collector (make-collector)))
+                      (chi-expr x '() '()))))
+             (values x (rtc)))))
         (else
          (assertion-violation 'expand "not an environment" env)))))
+
+  ;;; (environment-macroexpand-1 x env)：x 在 env 顶层是宏调用时展开一步，返回结果的 datum；
+  ;;; 否则返回 x 本身（eq?）。见 macro-step。
+  (define (environment-macroexpand-1 x env)
+    (let-values (((rib top r)
+                  (cond
+                    ((env? env) (values (make-top-rib (env-names env) (env-labels env)) #f '()))
+                    ((interaction-env? env) (values (interaction-env-rib env) env (interaction-env-r env)))
+                    ((lookup-env? env) (values (lookup-env-rib env) #f '()))
+                    (else (assertion-violation 'macroexpand-1 "not an environment" env)))))
+      (let ((y (parameterize ((top-level-context top)
+                              (inv-collector (make-collector))
+                              (vis-collector (make-collector))
+                              (imp-collector (if (env? env) (env-itc env) (make-collector))))
+                 (macro-step (make-stx x top-mark* (list rib) '()) r))))
+        (if y (strip y '()) x))))
 
 
   ;;; This is R6RS's eval.  It takes an expression and an environment,

@@ -16,26 +16,34 @@ namespace Cleat.Scheme.Tests;
 [Category("SchemeScript")]
 public class SchemeScriptTests
 {
-    private static string ScriptsDir(string repo) => Path.Combine(repo, "tests", "scheme", "compiler");
+    /// <summary>脚本目录：compiler（元层与编译器）、clojure（Clojure 在元层上的库，cleat-049 起）。</summary>
+    private static readonly string[] s_dirs = { "compiler", "clojure" };
 
-    /// <summary>tests/scheme/compiler/*.sps；slow- 开头的归入 Slow 类别，可用 --filter "TestCategory!=Slow" 跳过。</summary>
+    private static string ScriptsDir(string repo, string dir) => Path.Combine(repo, "tests", "scheme", dir);
+
+    /// <summary>tests/scheme/{compiler,clojure}/*.sps（测试名为 clojure/ 下的加目录前缀）；slow- 开头的归入 Slow 类别，可用 --filter "TestCategory!=Slow" 跳过。</summary>
     public static IEnumerable<TestCaseData> Scripts()
     {
         string repo = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory ?? ".", "..", "..", "..", "..", ".."));
-        return Directory.GetFiles(ScriptsDir(repo), "*.sps").Select(Path.GetFileName).OrderBy(n => n)
-          .Select(n => { var d = new TestCaseData(n).SetName(n); return n.StartsWith("slow-") ? d.SetCategory("Slow") : d; });
+        return s_dirs.SelectMany(dir => Directory.GetFiles(ScriptsDir(repo, dir), "*.sps").Select(Path.GetFileName).OrderBy(n => n)
+          .Select(n =>
+          {
+              string name = dir == "compiler" ? n : dir + "/" + n;
+              var d = new TestCaseData(dir, n).SetName(name);
+              return n.StartsWith("slow-") ? d.SetCategory("Slow") : d;
+          }));
     }
 
     /// <summary>在 stage0 + 文本种子上运行的脚本（其余在镜像上）。</summary>
     private static readonly string[] s_onStage0 = { "compile-library.sps" };
 
     [TestCaseSource(nameof(Scripts))]
-    public void Script(string name)
+    public void Script(string dir, string name)
     {
         Assert.That(File.Exists(SchemePaths.Stage0), Is.True, "stage0 not built: " + SchemePaths.Stage0);
         bool onStage0 = s_onStage0.Contains(name);
         if (!onStage0 && !File.Exists(SchemePaths.Boot)) Assert.Ignore("Scheme boot image not built: " + SchemePaths.Boot + " (dotnet build, or the Bootstrap tests)");
-        string script = Path.GetRelativePath(SchemePaths.SchemeDir, Path.Combine(ScriptsDir(SchemePaths.RepoDir), name)).Replace('\\', '/');
+        string script = Path.GetRelativePath(SchemePaths.SchemeDir, Path.Combine(ScriptsDir(SchemePaths.RepoDir, dir), name)).Replace('\\', '/');
         string[] host = onStage0 ? new[] { "boot/boot-seed.core" } : new[] { "--boot", SchemePaths.Boot };
         var r = SchemePaths.Run("dotnet", new[] { SchemePaths.Stage0 }.Concat(SchemePaths.IncludeArgs).Concat(host).Concat(new[] { script }).ToArray(),
                                 SchemePaths.SchemeDir, checkExitCode: false);
