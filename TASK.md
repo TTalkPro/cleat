@@ -54,13 +54,14 @@
 | [cleat-047](tasks/cleat-047-try-catch-model.md) | 异常模型简化：删 call/cc 与处理器栈，加 `$try/catch`，重生成种子 | M2′ | cleat-046 | 未开始 |
 | [cleat-048](tasks/cleat-048-extensible-syntax-objects.md) | 可扩展语法对象：三张扩展表、8 处改造、Clojure 集合注册 | M2′ | cleat-047 | 未开始 |
 | [cleat-049](tasks/cleat-049-psyntax-clojure-extensions.md) | psyntax 的 Clojure 扩展：命名空间模型、rib 索引、macroexpand-1、错误钩子（含原 PoC 判据） | M4′ | cleat-048 | 未开始 |
-| [cleat-050](tasks/cleat-050-clojure-syntax-library.md) | `(clojure syntax)` 库：特殊形式、defmacro 垫片、语法引用、defsyntax、&env | M4′ | cleat-049 | 未开始 |
+| [cleat-050](tasks/cleat-050-clojure-syntax-library.md) | `(clojure syntax)` 库：特殊形式、defmacro 垫片、语法引用、&env（不含 defsyntax） | M4′ | cleat-049 | 未开始 |
 | [cleat-051](tasks/cleat-051-compiler-clojure-nodes.md) | 编译器的 Clojure 节点：Var、IFn 约定、多类型 try/catch、deftype、switch、keyword-invoke | M4′ | cleat-050 | 未开始 |
 | [cleat-052](tasks/cleat-052-compile-driver-on-scheme.md) | 编译驱动：eval、load / compile 钩子、.clj.dll 与接口文件、宿主接入 | M4′ | cleat-051 | 未开始 |
 | [cleat-053](tasks/cleat-053-clojure-boot-image.md) | Clojure 自举：Scheme 镜像编译 core.clj → cleat.boot.dll，镜像不动点 | M5′ | cleat-052 | 未开始 |
 | [cleat-054](tasks/cleat-054-rename-scheme-libraries.md) | Scheme 库名 `(ironscheme …)` → `(cleat scheme …)`，同步重生成种子 | 后续 | cleat-053 | 未开始 |
 | [cleat-055](tasks/cleat-055-scheme-invisibility-boundaries.md) | "看不到 Scheme"的三道边界：macroexpand 停止点、值边界、诊断边界的测试与黄金文件 | M4′ | cleat-052 | 未开始 |
-| [cleat-056](tasks/cleat-056-nanopass-clojure-surface.md) | Clojure 表面的 nanopass：在 defsyntax 上给原版 nanopass 套 Clojure 语法 | 后续 | cleat-053 | 未开始 |
+| [cleat-056](tasks/cleat-056-nanopass-clojure-surface.md) | Clojure 表面的 nanopass：在 defsyntax 上给原版 nanopass 套 Clojure 语法 | 后续 | cleat-057 | 未开始 |
+| [cleat-057](tasks/cleat-057-clojure-defsyntax.md) | Clojure 的用户级卫生宏（defsyntax / syntax-rules） | 后续 | cleat-053 | 未开始 |
 
 ## 里程碑
 
@@ -77,7 +78,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、056 | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、057、056 | 性能、gen-class / proxy / 异步、库名更名、用户级卫生宏、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
@@ -94,5 +95,5 @@ cleat-045 → 046 → 047 → 048 → 049 → 050 → 051 → 052 → 055 → 05
 | 异常模型简化为 try / catch，无 call/cc（15 §3） | 047 |
 | 命名空间模型是通过 / 不通过判据（14 §8） | 049 |
 | Clojure 完全看不到 Scheme 的三道边界（13 §7） | 055 |
-| defmacro 兼容 + defsyntax 卫生宏 | 050 |
+| defmacro 完全兼容（2026-10-10：先保证 Clojure 语法兼容，用户级卫生宏不急） | 050；卫生宏推迟到 057 |
 | Clojure 用户也能用 nanopass（可选） | 056 |
