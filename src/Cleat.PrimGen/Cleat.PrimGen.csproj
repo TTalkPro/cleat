@@ -8,4 +8,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
   </ItemGroup>
+  <!-- 构建后生成 src/boot/primitives.edn（内容不变时不写文件） -->
+  <Target Name="GeneratePrimitives" AfterTargets="Build" Condition="'$(GeneratePrimitives)' != 'false'">
+    <Exec Command="dotnet &quot;$(TargetPath)&quot; &quot;$(MSBuildThisFileDirectory)../boot/primitives.edn&quot;" />
+  </Target>
 </Project>
