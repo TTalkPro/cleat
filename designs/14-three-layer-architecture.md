@@ -73,3 +73,40 @@
 | `defmacro` 的输出 | `do-macro-call` 的 `return` 拒绝输出里的裸符号（"raw symbol encountered in output of macro"） | 垫片用 `datum->syntax` 挂使用处上下文后再返回，自然满足；Clojure 集合要进入 `return` 的遍历 | 含在上两项里 |
 
 结论：五个风险里四个在 psyntax 的既有挂钩点上扩展即可，总量约 600 ~ 900 行 Scheme；"展开速度"的真正隐患不是标记 / rib 本身，而是交互 rib 的线性查找，加索引即可消除。PoC（cleat-044）据此可以把工作内容写得更具体。
+
+## §7 把 IronScheme 的代码直接纳入仓库（不作为依赖）：与原计划（方案 A）的比较
+
+用户决定：元层不以依赖引用，而是把 IronScheme 中能用的代码直接拿进 cleat。实测规模（`~/workspace/IronScheme`）：
+
+| 纳入 | 行数 | 丢弃 | 行数 |
+|---|---|---|---|
+| `IronScheme.Core`（C# 运行时：过程、符号、数值塔、记录、条件、端口、互操作、fasl、钩子） | 11,579 | `src/scheme/lib/`（std、srfi、clr 包装、async、debugger…） | 49,481 |
+| `IronScheme.Emit`（cleat 已移植并扩展，合并即可） | 1,996 | R6RS 的宿主 / REPL / Hosting（cleat 有自己的） | 1,156 |
+| `IronScheme.Stage0`（Lcore 解释器） | 1,050 | | |
+| boot 源码（含展开器 6,008、数值、unicode、端口…） | 14,686 | | |
+| 编译器（nanopass pass 链 + codegen + Lcil 写出） | 3,925 | | |
+| nanopass | 4,939 | | |
+| 文本种子 `boot-seed.core` | 1.5 MB | | |
+| C# 测试 | 4,347 | | |
+
+纳入约 3.8 万行（其中 C# 1.5 万、Scheme 2.3 万）+ 种子；丢弃 5 万行。
+
+**纳入而不是依赖的得失**：得——可以裁剪 rnrs 与 boot（只保 13 §8 的下限）、自由改 psyntax（§6 的扩展）而不受 R6RS 表面约束、一个构建、一个仓库自举（"只依赖本仓库与 .NET SDK"仍成立）；失——与 IronScheme 仓库分叉，修复要两边手工同步（两者同一作者，可接受）；改动 boot 源码后要用 cleat 自己的 stage0 重生成种子（IronScheme 05 §5 的流程照搬）。
+
+**与方案 A（编译器用 Clojure、cleat 自己的 stage0 与 nanopass 移植）比较**
+
+| | 方案 A | 纳入 IronScheme 的方案 C |
+|---|---|---|
+| 剩余工作 | stage0 解释器（015 / 016）、在 stage0 上加载 core（018）、nanopass 移植（023）、L0 ~ L3 与全部 pass（024 ~ 027）、驱动（028）、自举（029 / 031） | 纳入与裁剪、psyntax 四项扩展（§6，约 600 ~ 900 行）、`(clojure syntax)` 库（约 800 行）、编译器的 Clojure 节点（`var-ref`、`IFn` 调用约定、`try/catch`、`deftype`、`switch`、`keyword-invoke`，约 1,500 行）、自举脚本 |
+| 已验证的部分 | 运行时、reader、展开器、发射器、fasl、Loader、宿主（cleat 现有） | 同上，**再加**已自举的展开器、nanopass、编译器、stage0 与种子（IronScheme 现有） |
+| 不确定性 | stage0 解释 8,500 行 `core.clj` + 宏密集 nanopass 的速度与正确性；移植 nanopass 的语义等价 | 命名空间模型、交互 rib 的查找速度、两套对象模型的接缝、诊断边界（§4，有挂钩点与判据） |
+| 目标达成 | 编译器用 Clojure ✓；nanopass 移植到 Clojure ✓；卫生宏 ✗（另需约 3,000 行） | 编译器用 Scheme ✗；nanopass 原版 ✓；**卫生宏 ✓**（`defmacro` 兼容 + `defsyntax`） |
+| REPL / `eval` | M5 之后才有 | 纳入即有（`compile-core`、内存发射） |
+| 生成代码质量 | 第一版全装箱、无直接链接（04 §10 后续） | 继承 IronScheme 的拆箱、已知过程直接调用、跨库直接链接（iron-034）；但 Clojure 的 `IFn` 约定与 Var 读要新做，初期可能不如专用 codegen 紧 |
+| 进程内的运行时 | 一套（Cleat.Core） | 两套（IronScheme.Core 供元层 + Cleat.Core 供 Clojure）：启动与内存开销，数值塔 / 字符串 / 哈希表各一份；靠值边界避免混用 |
+| 自举链 | stage0 → stage1 → stage2 == stage3 | 文本种子 → Scheme stage0 → Scheme boot 镜像 → 编译 `core.clj` → Clojure boot；不动点分两段，都已有判据 |
+| LLVM（搁置） | 06 原样 | IronScheme 已有 `target` 表与 `host-*` 中性节点，更近 |
+| 团队门槛 | Clojure + C# | Clojure + C# + Scheme / psyntax（改编译器要懂 Scheme） |
+| 沉没成本 | — | cleat-013 / 014 的 C# 展开器退役为规格与测试（约 1,000 行）；cleat 的 fasl 与 IronScheme 的 fasl 要合并成一种编码 |
+
+**判断**：纳入方案用"工程量换不确定性"——剩余工作量明显更少（约 4,000 行新 Scheme 对比 A 的解释器 + 移植 + 整条 pass 链），卫生宏与 REPL 是额外收益；代价是编译器语言换成 Scheme、进程内两套运行时、以及四个要靠 PoC 回答的接缝。四个接缝都有定位好的挂钩点（§6），所以建议把 cleat-044 从"是否可行"改成"按 §6 的挂钩点做出最小可运行的 Clojure 编译"，通过后直接转入正式任务。
