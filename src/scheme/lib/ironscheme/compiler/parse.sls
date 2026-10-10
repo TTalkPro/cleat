@@ -9,7 +9,7 @@ See docs/license.txt. |#
 ;;; - 符号三分类（§3）：被外层绑定的是词法变量（library-letrec* 绑定的是库变量）；
 ;;;   否则在原语表中的是原语；其余是全局位置（符号值槽）。不查运行时；
 ;;; - case-lambda 各变体统一为 (lambda 名字 (clause (形参 …) 剩余形参 体) …)，类型说明忽略；
-;;;   (async-lambda fmls body) → (async-lambda 名字 (clause …))；特殊原语 await → (await e)（10 §3.1）；
+;;;   async-lambda 不支持（cleat-046）；特殊原语 $try/catch → (try-catch e (d* e*) …)（designs/15 §3）；
 ;;; - 注解（annotated-*）剥离。第一版不保留源位置。
 (library (ironscheme compiler parse)
   (export parse-core typed-clauses-made)
@@ -246,9 +246,17 @@ See docs/license.txt. |#
                          ((try-finally)
                           (unless (= (length args) 2) (bad-form "$try/finally" x))
                           `(try-finally ,(car args) ,(cadr args)))
-                         ((await)
-                          (unless (= (length args) 1) (bad-form "await" x))
-                          `(await ,(car args)))
+                         ((try-catch)
+                          ;; ($try/catch body '类型 处理器 …)：类型是引用的字符串或 #f，成对出现
+                          (unless (and (pair? args) (odd? (length args))) (bad-form "$try/catch" x))
+                          (let loop ((rest (cdr x)) (d* '()) (h* '()))
+                            (if (null? (cdr rest))
+                                `(try-catch ,(car args) (,(reverse d*) ,(reverse h*)) ...)
+                                (let ((t (cadr rest)))
+                                  (unless (and (pair? t) (eq? (car t) 'quote) (pair? (cdr t)) (null? (cddr t))
+                                               (or (string? (cadr t)) (not (cadr t))))
+                                    (bad-form "$try/catch: type must be a quoted string or #f" x))
+                                  (loop (cddr rest) (cons (cadr t) d*) (cons (Expr (caddr rest)) h*))))))
                          (else
                           (if (pair? (primitive-overloads p))
                               `(primcall ,h ,args ...)
@@ -272,12 +280,6 @@ See docs/license.txt. |#
       ;; async-lambda 不纳入 cleat（designs/15 §1：运行时没有 AsyncFrame，lower-async 不纳入）：到这里就报错
       (define (no-async x)
         (syntax-violation (quote parse-core) "async-lambda is not supported in cleat (async was not vendored)" x))
-
-      ;; (async-lambda 形参 体 …)：单子句（保留，未使用）
-      (define (AsyncLambda x name)
-        (unless (and (pair? (cdr x)) (list? (cddr x))) (bad-form "async-lambda" x))
-        (with-output-language (L0 Expr)
-          `(async-lambda ,name ,(Clause (cdr x) #f x))))
 
       ;; clauses：((形参 体 …) …)；typed 时为 ((形参 类型说明 体 …) …)
       (define (Lambda clauses typed? name form)

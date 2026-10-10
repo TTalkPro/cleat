@@ -34,14 +34,8 @@ See docs/license.txt. |#
            (let ((fv (union* (map Clause cl*))))
              (hashtable-set! fvt e fv)
              fv)]
-          [(async-lambda ,nm ,cl)
-           (let ((fv (Clause cl)))
-             (hashtable-set! fvt e fv)
-             fv)]
-          [(await ,e) (Expr e)]
           [(label ,x (,x* ...) ,body0 ,body1) (set-minus (set-union (Expr body0) (Expr body1)) (cons x x*))]
           [(jump ,x ,e* ...) (set-add x (union* (map Expr e*)))]
-          [(escape-frame ,x ,body) (set-minus (Expr body) (list x))]
           [(letrec ([,x* ,le*] ...) ,body) (set-minus (union* (cons (Expr body) (map Expr le*))) x*)]
           [(let ([,x* ,e*] ...) ,body) (set-union (union* (map Expr e*)) (set-minus (Expr body) x*))]
           [(library ,d ([,x* ,s* ,e*] ...) ,body) (union* (cons (Expr body) (map Expr e*)))]
@@ -51,6 +45,7 @@ See docs/license.txt. |#
           [(throw ,e) (Expr e)]
           [(break) '()]
           [(try-finally ,e0 ,e1) (set-union (Expr e0) (Expr e1))]
+          [(try-catch ,e (,d* ,e*) ...) (union* (cons (Expr e) (map Expr e*)))]
           [(host-call ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-get ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-set ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
@@ -75,6 +70,4 @@ See docs/license.txt. |#
   (define-pass attach : L2 (ir fvt) -> L3 ()
     (LambdaExpr : LambdaExpr (ir) -> LambdaExpr ()
       [(lambda ,nm ,[cl*] ...)
-       `(lambda ,nm (,(hashtable-ref fvt ir '()) ...) ,cl* ...)]
-      [(async-lambda ,nm ,[cl])
-       `(async-lambda ,nm (,(hashtable-ref fvt ir '()) ...) ,cl)])))
+       `(lambda ,nm (,(hashtable-ref fvt ir '()) ...) ,cl* ...)])))

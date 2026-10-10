@@ -26,7 +26,7 @@ public sealed class Analyzer
       s_typedCaseLambda = S("typed-case-lambda"), s_annTypedCaseLambda = S("annotated-typed-case-lambda"),
       s_lambdaS = S("lambda"), s_letrecS = S("letrec"), s_letrecStar = S("letrec*"), s_libraryLetrecStar = S("library-letrec*"),
       s_annotatedCall = S("annotated-call"),
-      s_andP = S("$and?"), s_orP = S("$or?"), s_throwP = S("$throw"), s_breakP = S("$break"), s_tryFinallyP = S("$try/finally"),
+      s_andP = S("$and?"), s_orP = S("$or?"), s_throwP = S("$throw"), s_breakP = S("$break"), s_tryFinallyP = S("$try/finally"), s_tryCatchP = S("$try/catch"),
       s_clrCallI = S("clr-call-internal"), s_clrFieldGetI = S("clr-field-get-internal"), s_clrFieldSetI = S("clr-field-set!-internal"),
       s_clrNewI = S("clr-new-internal"), s_clrNewArrayI = S("clr-new-array-internal"), s_clrCastI = S("clr-cast-internal"),
       s_clrIsI = S("clr-is-internal"), s_clrTypeOfI = S("clr-type-of-internal"), s_clrUsingI = S("clr-using-internal"),
@@ -107,11 +107,30 @@ public sealed class Analyzer
             if (h == s_throwP) return new Throw(Analyze(Nth(args, 0), sc, false));
             if (h == s_breakP) return new Break();
             if (h == s_tryFinallyP) return new TryFinally(Analyze(Nth(args, 0), sc, false), Analyze(Nth(args, 1), sc, false));
+            if (h == s_tryCatchP) return MakeTryCatch(args, sc);
             var clr = AnalyzeClr(h, args, sc);
             if (clr != null) return clr;
             if (s_unsupportedForms.Contains(h)) return new Unsupported(h.Name);
         }
         return new App(Analyze(head, sc, false), AnalyzeList(c.cdr, sc), tail);
+    }
+
+    /// <summary>($try/catch body '类型 处理器 …)：类型是引用的字符串（CLR 类型名）或 #f（SchemeException，处理器收到条件）。</summary>
+    private Node MakeTryCatch(object args, Scope sc)
+    {
+        var body = Analyze(Nth(args, 0), sc, false);
+        var types = new List<TypeRef>();
+        var handlers = new List<Node>();
+        for (object p = Drop(args, 1); p is Cons c; p = ((Cons)c.cdr).cdr)
+        {
+            if (c.cdr is not Cons) return new Unsupported("$try/catch: type without handler");
+            object t = Quoted(c.car);
+            if (t is bool b && !b) types.Add(null);
+            else if (t is string name) types.Add(new TypeRef(name, _namespaces.ToArray()));
+            else return new Unsupported("$try/catch: type must be a quoted string or #f");
+            handlers.Add(Analyze(((Cons)c.cdr).car, sc, false));
+        }
+        return new TryCatch(body, types.ToArray(), handlers.ToArray());
     }
 
     private Node Assign(Symbol s, Node value, Scope sc) =>

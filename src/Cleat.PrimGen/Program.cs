@@ -20,7 +20,7 @@ namespace Cleat.PrimGen;
 /// </summary>
 public static class Program
 {
-    /// <summary>编译器专门处理的原语（IronScheme 03 §6）。种类名供编译器分派使用。async 的 await 已随 async 删除；call/cc 待 cleat-047 删除。</summary>
+    /// <summary>编译器专门处理的原语（IronScheme 03 §6）。种类名供编译器分派使用。async 的 await 已随 async 删除；call/cc 已随逃逸续延删除（cleat-047）。</summary>
     private static readonly (string Name, string Kind, string Note)[] s_specials =
     {
         ("$and?", "and", "短路与，参数为未求值表达式，结果为 CLR bool"),
@@ -28,8 +28,7 @@ public static class Program
         ("$break", "break", "调用 Debugger.Break"),
         ("$throw", "throw", "抛出参数（一个 .NET 异常对象）"),
         ("$try/finally", "try-finally", "($try/finally body finalizer)：finalizer 在 finally 中求值"),
-        ("call/cc", "escape-frame", "逃逸续延捕获帧（IronScheme 02 §6；cleat-047 删除）"),
-        ("call-with-current-continuation", "escape-frame", "同 call/cc"),
+        ("$try/catch", "try-catch", "($try/catch body '类型 处理器 …)：按 CLR 类型捕获；类型 #f 即 SchemeException，处理器收到其条件（designs/15 §3）"),
         ("call-with-values", "call-with-values", "消费者为字面 lambda 时可内联"),
         ("apply", "apply", "展开最后一个列表参数"),
         ("values", "values", "在 Scheme 中定义（boot/exceptions.sls）；作为原语出现时编译为多值构造"),

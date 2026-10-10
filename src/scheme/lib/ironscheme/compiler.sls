@@ -35,7 +35,7 @@ See docs/license.txt. |#
     (ironscheme compiler codegen)
     (ironscheme compiler targets)
     (ironscheme compiler lcil)
-    (only (ironscheme unsafe) $set-compile-target!))
+    (only (ironscheme unsafe) $set-compile-target! $try/catch $throw))
 
   (clr-reference cleat-emit)
 
@@ -113,9 +113,8 @@ See docs/license.txt. |#
           (close-port p)))))
 
   (define (compile-core e)
-    (with-exception-handler
-      (lambda (c) (dump-failed-core e) (raise-continuable c))
-      (lambda () (compile-core* e))))
+    ($try/catch (compile-core* e)
+      '"System.Exception" (lambda (ex) (dump-failed-core e) ($throw ex))))
 
   (define (compile-core* e)
     (set! eval-counter (+ eval-counter 1))

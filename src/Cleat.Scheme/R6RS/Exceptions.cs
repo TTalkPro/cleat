@@ -14,7 +14,8 @@ namespace Cleat.Scheme;
 public class Exceptions : Builtins
 {
     /// <summary>
-    /// 捕获任意 .NET 异常交给 handler；续延控制流（<see cref="ContinuationException"/>）必须放行。
+    /// 捕获任意 .NET 异常交给 handler（异常对象本身，不转成条件）。Scheme 条件以 <see cref="SchemeException"/> 传播，
+    /// 按类型捕获用核心形式 $try/catch（cleat-047）。
     /// </summary>
     [Primitive("with-clr-exception-handler")]
     public static object WithClrExceptionHandler(object handler, object thunk)
@@ -24,10 +25,6 @@ public class Exceptions : Builtins
         try
         {
             return t.Call();
-        }
-        catch (ContinuationException)
-        {
-            throw;
         }
         catch (Exception ex)
         {

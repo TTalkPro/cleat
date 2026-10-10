@@ -183,8 +183,6 @@ See docs/license.txt. |#
     assert
     
     apply
-    call-with-current-continuation
-    call/cc
     call-with-values
     dynamic-wind
     procedure?

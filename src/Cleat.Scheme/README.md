@@ -15,7 +15,9 @@ Copyright (c) 2026 the IronScheme contributors。许可全文见本目录 LICENS
 
 - 删除：`AsyncFrame.cs`、`Tasks.cs`（async-lambda 与 task 原语）、`Interop/Ffi.cs`（ffi-callout / pinvoke-call / ffi-callback）、
   `ClrHelpers.cs` 的 FFI 转换辅助、`Interop.cs` 的 Task 装箱、`ConstantPool.cs`（用 `Cleat.Core.Runtime.ConstantPool`）。
-- `Parameters.cs`：`ExceptionHandlers` 改为线程静态的处理器栈；`ParamSlot` 不再区分 async 帧。
+- `Parameters.cs`：`ParamSlot` 不再区分 async 帧。
 - `ModuleLoader.cs`：删 `SchemeModuleAttribute`，入口属性改用 `Cleat.Core.CleatModuleAttribute`。
 - `Fasl.cs`：联合编码（IronScheme 的标签 + cleat 的 Clojure 标签），magic `CLFASL`。
-- 逃逸续延（`Control.cs`）与处理器栈暂留，cleat-047 删除。
+- 逃逸续延（`Control.cs` 的 `call/cc`、`EscapeContinuation`、`ContinuationException`）与处理器栈（`ExceptionHandlers`、
+  `$current-handlers`）已删除（cleat-047，designs/15 §3）：`raise` 抛 `SchemeException(条件)`，捕获用核心形式 `$try/catch`
+  （stage0 的 `TryCatch` 节点、编译器的 `try-catch` 节点 → Lcil `try`/`catch`）。

@@ -62,20 +62,14 @@ See docs/license.txt. |#
            (let ((fv (union* (map Clause cl*))))
              (for-each (lambda (x) (hashtable-set! captured x #t)) fv)
              fv)]
-          [(async-lambda ,nm ,cl)
-           (let ((fv (Clause cl)))
-             (for-each (lambda (x) (hashtable-set! captured x #t)) fv)
-             fv)]
           [(letrec ([,x* ,e*] ...) ,body)
            (let ((fvs (map Expr e*)))
              (for-each (lambda (rhs fv) (hashtable-set! letrec-refs rhs (filter (lambda (x) (memq x x*)) fv))) e* fvs)
              (set-minus (union* (cons (Expr body) fvs)) x*))]
           [(let ([,x* ,e*] ...) ,body) (set-union (union* (map Expr e*)) (set-minus (Expr body) x*))]
-          ;; 异步节点（lower-async 的输出，10 §3）：label 绑定 x 与 x*；escape-frame 绑定 x
-          [(await ,e) (Expr e)]
+          ;; 局部循环（lower-loops 的输出）：label 绑定 x 与 x*
           [(label ,x (,x* ...) ,body0 ,body1) (set-minus (set-union (Expr body0) (Expr body1)) (cons x x*))]
           [(jump ,x ,e* ...) (set-add x (union* (map Expr e*)))]
-          [(escape-frame ,x ,body) (set-minus (Expr body) (list x))]
           [(library ,d ([,x* ,s* ,e*] ...) ,body) (union* (cons (Expr body) (map Expr e*)))]
           [(call ,e ,e* ...) (union* (map Expr (cons e e*)))]
           [(and ,e* ...) (union* (map Expr e*))]
@@ -83,6 +77,7 @@ See docs/license.txt. |#
           [(throw ,e) (Expr e)]
           [(break) '()]
           [(try-finally ,e0 ,e1) (set-union (Expr e0) (Expr e1))]
+          [(try-catch ,e (,d* ,e*) ...) (union* (cons (Expr e) (map Expr e*)))]
           [(host-call ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-get ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-set ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
@@ -105,7 +100,6 @@ See docs/license.txt. |#
   (define (lambda-form? e)
     (nanopass-case (L0 Expr) e
       [(lambda ,nm ,cl* ...) #t]
-      [(async-lambda ,nm ,cl) #t]
       [else #f]))
 
 ;; —— simplify-letrec（含 recognize-let）：L0 → L1 ——
@@ -243,11 +237,7 @@ See docs/license.txt. |#
          `(label ,x (,x* ...) ,b0 ,b1))]
       [(jump ,x ,[e*] ...)
        (let ((p* (hashtable-ref label-params x '())))
-         `(jump ,x ,(map (lambda (p e) (if (boxed? p) `(box ,e) e)) p* e*) ...))]
-      [(escape-frame ,x ,[body])
-       (if (boxed? x)
-           `(escape-frame ,x (begin (set! ,x (box ,x)) ,body))
-           `(escape-frame ,x ,body))])
+         `(jump ,x ,(map (lambda (p e) (if (boxed? p) `(box ,e) e)) p* e*) ...))])
     (Clause : Clause (ir) -> Clause ()
       [(clause (,x* ...) ,x ,[body])
        ;; 被装箱的形参：进入时把形参换成 Box

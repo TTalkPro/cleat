@@ -194,8 +194,6 @@
     (overload "Cleat.Scheme.HostPrimitives" "CultureName" 0 #f (unsafe) #f))
   (primitive $current-directory
     (overload "Cleat.Scheme.HostPrimitives" "CurrentDirectory" 0 #f (unsafe) #f))
-  (primitive $current-handlers
-    (overload "Cleat.Scheme.ExceptionHandlers" "Current" 0 #f (unsafe) #f))
   (primitive $custom-port-input
     (overload "Cleat.Scheme.PortPrimitives" "CustomPortInput" 1 #f (pure unsafe) #f))
   (primitive $custom-port-output
@@ -636,8 +634,6 @@
     (overload "Cleat.Scheme.HostPrimitives" "SetConsoleForegroundColor" 1 #f (unsafe) #f))
   (primitive $set-current-directory!
     (overload "Cleat.Scheme.HostPrimitives" "SetCurrentDirectory" 1 #f (unsafe) #f))
-  (primitive $set-current-handlers!
-    (overload "Cleat.Scheme.ExceptionHandlers" "Set" 1 #f (unsafe) #f))
   (primitive $set-runtime-hook!
     (overload "Cleat.Scheme.RuntimeHooks" "SetRuntimeHook" 2 #f () #f))
   (primitive $single->bytes
@@ -762,12 +758,8 @@
     (overload "Cleat.Scheme.Builtins" "ExactSqrtBigInteger" 1 #f (pure) #f))
   (primitive bytevector->string
     (overload "Cleat.Scheme.IO" "ByteVectorToString" 2 #f () #f))
-  (primitive call-with-current-continuation
-    (overload "Cleat.Scheme.Control" "CallWithCurrentContinuation" 1 #f () #f))
   (primitive call-with-values
     (overload "Cleat.Scheme.Control" "CallWithValues" 2 #f (allow-tail-call) #f))
-  (primitive call/cc
-    (overload "Cleat.Scheme.Control" "CallWithCurrentContinuation" 1 #f () #f))
   (primitive car
     (overload "Cleat.Scheme.Builtins" "Car" 1 #f () car))
   (primitive cdr
@@ -1091,10 +1083,9 @@
   (special $break break)   ; 调用 Debugger.Break
   (special $or? or)   ; 短路或，参数为未求值表达式，结果为 CLR bool
   (special $throw throw)   ; 抛出参数（一个 .NET 异常对象）
+  (special $try/catch try-catch)   ; ($try/catch body '类型 处理器 …)：按 CLR 类型捕获；类型 #f 即 SchemeException，处理器收到其条件（designs/15 §3）
   (special $try/finally try-finally)   ; ($try/finally body finalizer)：finalizer 在 finally 中求值
   (special apply apply)   ; 展开最后一个列表参数
-  (special call-with-current-continuation escape-frame)   ; 同 call/cc
   (special call-with-values call-with-values)   ; 消费者为字面 lambda 时可内联
-  (special call/cc escape-frame)   ; 逃逸续延捕获帧（IronScheme 02 §6；cleat-047 删除）
   (special values values)   ; 在 Scheme 中定义（boot/exceptions.sls）；作为原语出现时编译为多值构造
 )

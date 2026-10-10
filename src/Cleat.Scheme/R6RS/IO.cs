@@ -1209,10 +1209,6 @@ public class IO : Builtins
                 return TranscodedOutputPort(s, tc);
             }
         }
-        catch (ContinuationException)
-        {
-            throw;
-        }
         catch (FileNotFoundException ex)
         {
             return FileNotFoundViolation("open-file-output-port", ex.Message, filename);
@@ -1282,10 +1278,6 @@ public class IO : Builtins
             {
                 return TranscodedInputOutputPort(s, tc);
             }
-        }
-        catch (ContinuationException)
-        {
-            throw;
         }
         catch (FileNotFoundException ex)
         {

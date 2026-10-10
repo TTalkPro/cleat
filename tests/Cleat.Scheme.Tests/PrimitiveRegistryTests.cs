@@ -54,13 +54,6 @@ public class PrimitiveRegistryTests
     }
 
     [Test]
-    public void AliasesShareImplementation()
-    {
-        Assert.That(Prim("call/cc").Invoke1(new Fn(a => ((Procedure)a[0]).Invoke1(9))), Is.EqualTo(9));
-        Assert.That(Prim("call-with-current-continuation").Invoke1(new Fn(a => 8)), Is.EqualTo(8));
-    }
-
-    [Test]
     public void PrimitivePrintsWithItsName()
     {
         Assert.That(Prim("symbol-value").ToString(), Is.EqualTo("#<procedure symbol-value>"));

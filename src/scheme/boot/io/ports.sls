@@ -402,7 +402,7 @@ See docs/license.txt. |#
           (assertion-violation 'port-eof? "not supported" port)])))
           
   (define (file-not-found who filename)
-    (raise-continuable
+    (raise
       (condition
         (make-i/o-file-does-not-exist-error filename)
         (make-who-condition who))))
@@ -458,7 +458,7 @@ See docs/license.txt. |#
     ($make-custom-textual-input-port id read get-pos set-pos close))
     
   (define (io-port-error who port)    
-    (raise-continuable
+    (raise
       (condition
         (make-i/o-port-error port)
         (make-who-condition who))))

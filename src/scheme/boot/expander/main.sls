@@ -51,7 +51,7 @@
     (rnrs hashtables)
     (rnrs bytevectors)
     (only (rnrs conditions) serious-condition? condition?)
-    (only (rnrs exceptions) raise raise-continuable with-exception-handler)
+    (only (rnrs exceptions) raise)
     (boot expander compat)
     (boot expander internal)
     (boot expander library-manager)
@@ -59,7 +59,7 @@
     (only (ironscheme core) get-command-line format compile-library-dll load-library-dll load-fasl compress-constants? constant-fold)
     (boot enums)
     (boot files)
-    (only (ironscheme unsafe) $fx+ $fx- $throw $program-failed
+    (only (ironscheme unsafe) $fx+ $fx- $throw $try/catch $program-failed
           $console-foreground-color $set-console-foreground-color! $system-exception? $exception-message
           $path-change-extension $path-extension $string-lower $path-combine $directory-create
           $directory-exists? $path-full $path-trim-separator $string-replace $directory-files
@@ -142,27 +142,26 @@
          (lambda (var) (cond cls ...))
          (lambda () b b* ...))]))  
     
+  ;; 未处理的 Scheme 条件（SchemeException）：报告后以零个值返回（cleat-047：$try/catch 取代 call/cc + with-exception-handler）
   (define (eval-top-level x)
     (host-guard [e [e (parameterize ((foreground-color 'Red)
                                     (current-output-port (current-error-port)))
                        (display "Unhandled CLR exception during evaluation:\n")
                        (display e)
                        (newline))]]
-      (call/cc
-        (lambda (k)
-          (with-exception-handler
-            (lambda (e)
-              (let ((serious? (or (serious-condition? e) (system-exception? e) (not (condition? e)))))
-                (when serious?
-                  (parameterize ((foreground-color (if serious? 'Red 'Yellow))
-                                 (current-output-port (current-error-port)))
-                    (display "Unhandled exception during evaluation:\n")
-                    (display e)
-                    (newline)))
-                (k)))
-            (lambda ()
-              (parameterize ([allow-library-redefinition #t])
-                (eval x (interaction-environment)))))))))
+      ($try/catch
+        (parameterize ([allow-library-redefinition #t])
+          (eval x (interaction-environment)))
+        '#f
+        (lambda (e)
+          (let ((serious? (or (serious-condition? e) (system-exception? e) (not (condition? e)))))
+            (when serious?
+              (parameterize ((foreground-color (if serious? 'Red 'Yellow))
+                             (current-output-port (current-error-port)))
+                (display "Unhandled exception during evaluation:\n")
+                (display e)
+                (newline)))
+            (values))))))
             
   (define (eval-embedded x)
     (eval x (interaction-environment)))            
@@ -187,18 +186,16 @@
                        (display "Unhandled CLR exception during evaluation:\n")
                        (display e)
                        (newline))]]
-      (call/cc
-        (lambda (k)
-          (with-exception-handler
-            (lambda (e)
-              (let ((serious? (or (serious-condition? e) (system-exception? e) (not (condition? e)))))
-                (when serious?
-                  (parameterize ((current-output-port (current-error-port)))
-                    (display "Unhandled exception during evaluation:\n")
-                    (display e)
-                    (newline)))
-                (k)))
-            f)))))
+      ($try/catch (f)
+        '#f
+        (lambda (e)
+          (let ((serious? (or (serious-condition? e) (system-exception? e) (not (condition? e)))))
+            (when serious?
+              (parameterize ((current-output-port (current-error-port)))
+                (display "Unhandled exception during evaluation:\n")
+                (display e)
+                (newline)))
+            (values))))))
     
   (define compile
     (case-lambda
@@ -573,13 +570,11 @@
   (define (repl-describe name)
     (let ((sym (string->symbol name)))
       (and (memq sym (interaction-environment-symbols))
-           (call/cc
-             (lambda (k)
-               (with-exception-handler
-                 (lambda (e) (k #f))
-                 (lambda ()
-                   (let ((v (eval sym (interaction-environment))))
-                     (and (procedure? v) (procedure-hint sym v))))))))))
+           ($try/catch
+             (let ((v (eval sym (interaction-environment))))
+               (and (procedure? v) (procedure-hint sym v)))
+             '#f
+             (lambda (e) #f)))))
 
   (define (procedure-hint sym p)
     (define (show x) (call-with-string-output-port (lambda (o) (display x o))))
@@ -636,8 +631,6 @@
   (set-symbol-value! 'pretty-print pretty-print)
   (set-symbol-value! 'assertion-violation assertion-violation)
   (set-symbol-value! 'raise raise)
-  (set-symbol-value! 'raise-continuable raise-continuable)
-  (set-symbol-value! 'with-exception-handler with-exception-handler)
   (set-symbol-value! 'emacs-mode? emacs-mode?)
   (set-symbol-value! 'stacktrace-enable? display-stacktrace)
   

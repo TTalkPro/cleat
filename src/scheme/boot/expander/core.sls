@@ -1479,9 +1479,12 @@
   (define trace-letrec-syntax-macro
     (trace-let/rec-syntax 'letrec-syntax))
   
+  ;; guard（cleat-047，designs/15 §3）：展开到核心形式 ($try/catch body '#f (lambda (con) 子句…))——
+  ;; 捕获 SchemeException 并把它的条件交给子句；没有子句匹配时在 catch 里再 raise（放弃 R6RS
+  ;; "在 raise 的动态环境里 raise-continuable"的细节，元层不依赖它）。体的多值作为一个值穿过 try。
   (define guard-macro
     (lambda (x)
-      (define (gen-clauses con outerk clause*) 
+      (define (gen-clauses con clause*) 
         (define (f x k) 
           (syntax-match x (=>) 
             ((e => p) 
@@ -1497,38 +1500,18 @@
             (_ (stx-error x "invalid guard clause"))))
         (define (f* x*)
           (syntax-match x* (else)
-            (()
-             (let ((g (gensym)))
-               (values `((lambda () (raise-continuable ,con))) g)))
-            (((else e e* ...))
-             (values `(begin ,e ,@e*) #f))
-            ((cls . cls*) 
-             (let-values (((e g) (f* cls*)))
-               (values (f cls e) g)))
+            (() `(raise ,con))
+            (((else e e* ...)) `(begin ,e ,@e*))
+            ((cls . cls*) (f cls (f* cls*)))
             (others (stx-error others "invalid guard clause"))))
-        (let-values (((code raisek) (f* clause*)))
-          (if raisek
-            `((call/cc
-                (lambda (,raisek)
-                  (,outerk 
-                    (lambda () ,code)))))
-            `(,outerk (lambda () ,code)))))
+        (f* clause*))
       (syntax-match x ()
         ((_ (con clause* ...) b b* ...)
          (id? con)
-         (let ((outerk (gensym)))
-           (bless
-             `((call/cc
-                 (lambda (,outerk)
-                     (with-exception-handler
-                       (lambda (,con)
-                         ,(gen-clauses con outerk clause*))
-                       (lambda () 
-                         (call-with-values 
-                          (lambda () ,b ,@b*)
-                          (lambda args
-                              (,outerk (lambda ()
-                                         (apply values args))))))))))))))))
+         (bless
+           `($try/catch (begin ,b ,@b*)
+              '#f
+              (lambda (,con) ,(gen-clauses con clause*))))))))
 
   (define define-enumeration-macro
     (lambda (stx) 

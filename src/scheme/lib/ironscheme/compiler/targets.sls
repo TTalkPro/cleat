@@ -43,7 +43,7 @@ See docs/license.txt. |#
         (string . "System.String")
         (void . "System.Void")
         (exception . "System.Exception")
-        (task . "System.Threading.Tasks.Task`1[System.Object]")
+        (scheme-exception . "Cleat.Scheme.SchemeException")   ; raise 抛出的异常，携带条件（$try/catch 的类型 #f）
         (procedure . "Cleat.Scheme.Procedure")
         (variadic-procedure . "Cleat.Scheme.VariadicProcedure")
         (cons . "Cleat.Scheme.Cons")
@@ -53,10 +53,7 @@ See docs/license.txt. |#
         (calls . "Cleat.Scheme.Calls")
         (inline-arith . "Cleat.Scheme.InlineArith")
         (boot-interface . "Cleat.Scheme.BootInterface")
-        (unspecified . "Cleat.Scheme.Unspecified")
-        (async-frame . "Cleat.Scheme.AsyncFrame")          ; cleat 里没有这个类型：async-lambda 在 parse-core 就拒绝（cleat-046），codegen 的 async 路径不会到达
-        (escape-continuation . "Cleat.Scheme.EscapeContinuation")
-        (continuation-exception . "Cleat.Scheme.ContinuationException"))
+        (unspecified . "Cleat.Scheme.Unspecified"))
       '((call . clr-call) (field-get . clr-field-get) (field-set . clr-field-set) (new . clr-new)
         (new-array . clr-new-array) (cast . clr-cast) (is . clr-is) (typeof . clr-type) (namespaces . clr-namespaces))))
 

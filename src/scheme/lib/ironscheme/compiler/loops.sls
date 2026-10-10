@@ -34,7 +34,6 @@ See docs/license.txt. |#
       [(prim ,pr) '()]
       [(primcall ,pr ,e* ...) e*]
       [(lambda ,nm ,cl* ...) (map clause-body cl*)]
-      [(async-lambda ,nm ,cl) (list (clause-body cl))]
       [(letrec ([,x* ,e*] ...) ,body) (append e* (list body))]
       [(let ([,x* ,e*] ...) ,body) (append e* (list body))]
       [(library ,d ([,x* ,s* ,e*] ...) ,body) (append e* (list body))]
@@ -44,10 +43,9 @@ See docs/license.txt. |#
       [(throw ,e) (list e)]
       [(break) '()]
       [(try-finally ,e0 ,e1) (list e0 e1)]
-      [(await ,e) (list e)]
+      [(try-catch ,e (,d* ,e*) ...) (cons e e*)]
       [(label ,x (,x* ...) ,body0 ,body1) (list body0 body1)]
       [(jump ,x ,e* ...) e*]
-      [(escape-frame ,x ,body) (list body)]
       [(host-call ,d0 ,d1 ,st ,e* ...) e*]
       [(host-field-get ,d0 ,d1 ,st ,e* ...) e*]
       [(host-field-set ,d0 ,d1 ,st ,e* ...) e*]
@@ -109,7 +107,6 @@ See docs/license.txt. |#
       [(letrec ([,x* ,e*] ...) ,body) (or (r* e*) (r body tail?))]
       [(lambda ,nm ,cl* ...)
        (exists (lambda (cl) (check-refs v n (clause-body cl) #f #t)) cl*)]
-      [(async-lambda ,nm ,cl) (check-refs v n (clause-body cl) #f #t)]
       [else (r* (kids e))]))
 
   ;; 把 e 的尾位置上对 v 的调用改成 jump

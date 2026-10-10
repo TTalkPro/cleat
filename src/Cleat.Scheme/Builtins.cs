@@ -39,8 +39,6 @@ public partial class Builtins
     public static object IODecodingError() => Errors.IODecodingError();
     public static object IOEncodingError() => Errors.IOEncodingError();
     public static object Raise(object obj) => Errors.Raise(obj);
-    public static object RaiseContinueable(object obj) => SchemeCalls.RaiseContinuable(obj);
-    public static object WithExceptionHandler(object handler, object thunk) => SchemeCalls.WithExceptionHandler(handler, thunk);
     public static object Exact(object obj) => SchemeCalls.Exact(obj);
     public static object Inexact(object obj) => SchemeCalls.Inexact(obj);
 

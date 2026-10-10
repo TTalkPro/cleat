@@ -6,7 +6,6 @@ See docs/license.txt. |#
 
 (library (boot exceptions)
   (export
-    with-exception-handler
     guard
     raise
     else
@@ -28,10 +27,10 @@ See docs/license.txt. |#
   (import 
     ;(boot config) 
     (only (ironscheme) import make-stacktrace-condition stacktrace-condition? display-stacktrace ungensym)
+    (only (ironscheme clr) clr-new)
     (ironscheme unsafe)
     (ironscheme contracts)
     (except (rnrs) 
-      with-exception-handler 
       raise 
       raise-continuable 
       assertion-violation 
@@ -51,18 +50,10 @@ See docs/license.txt. |#
     ($try/finally (proc)
                   (out)))      
 
-  ;; 处理器栈在 C# 里（IronScheme.Core.ExceptionHandlers，AsyncLocal，designs/10-async.md §2 D7）：
-  ;; 栈顶在前的过程列表，缺省是只含默认处理器（把条件包成 SchemeException 抛出）的表
-  (define/contract (with-exception-handler handler:procedure thunk:procedure)
-    (with-exception-handlers (cons handler ($current-handlers))
-                             thunk))
-
-  (define (with-exception-handlers new-handlers thunk)
-    (let ((old ($current-handlers)))
-      ($set-current-handlers! new-handlers)
-      ($try/finally (thunk)
-                    ($set-current-handlers! old))))
-          
+  ;; 异常模型（designs/15 §3，cleat-047）：没有处理器栈与 with-exception-handler。
+  ;; raise 把对象包成 Cleat.Scheme.SchemeException 抛出（CLR throw）；捕获用核心形式
+  ;; ($try/catch body '#f (lambda (c) …))（类型 #f 即 SchemeException，处理器收到其条件），guard 展开到它。
+  ;; raise-continuable 等同 raise：元层不依赖"处理器返回后继续"的语义。
   (define (add-stacktrace con)
     (if (or (not (display-stacktrace))
             (not (serious-condition? con))
@@ -77,22 +68,10 @@ See docs/license.txt. |#
                                 ($stack-trace))))))))
 
   (define (raise obj)
-    (let ((obj (add-stacktrace obj)))
-      (let ((handlers ($current-handlers)))
-        (with-exception-handlers (cdr handlers)
-          (lambda ()
-            ((car handlers) obj)
-            (raise
-              (condition
-                (make-non-continuable-violation)
-                (make-message-condition "handler returned"))))))))
+    ($throw (clr-new Cleat.Scheme.SchemeException (add-stacktrace obj))))
 
   (define (raise-continuable obj)
-    (let ((obj (add-stacktrace obj)))
-      (let ((handlers ($current-handlers)))
-        (with-exception-handlers (cdr handlers)
-          (lambda ()
-            ((car handlers) obj))))))
+    (raise obj))
           
   (define (assertion-violation who msg . irritants)
     (raise
@@ -167,8 +146,6 @@ See docs/license.txt. |#
 
   ;; 新运行时（IronScheme.Core）经 RuntimeHooks 回调这些过程，取代旧 Glue.il 对 boot dll 的直接引用
   ($set-runtime-hook! 'raise raise)
-  ($set-runtime-hook! 'raise-continuable raise-continuable)
-  ($set-runtime-hook! 'with-exception-handler with-exception-handler)
   ($set-runtime-hook! 'assertion-violation assertion-violation)
   ($set-runtime-hook! 'undefined-error undefined-error)
   ($set-runtime-hook! 'lexical-error lexical-error)

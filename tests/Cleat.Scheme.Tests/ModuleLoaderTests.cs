@@ -30,17 +30,17 @@ public class ModuleLoaderTests
         var square = (Procedure)Symbol.Intern("mini-square").Value;
         Assert.That(square.Invoke1(7), Is.EqualTo(49));
         Assert.That(Symbol.Intern("mini-greeting").Value, Is.EqualTo("hello from miniboot"));
-        var hook = RuntimeHooks.Get("with-exception-handler");
-        Assert.That(hook.GetType().Name, Is.EqualTo("mini$weh"));
-        // C# 代码经钩子调用 boot 镜像中的过程
-        Assert.That(SchemeCalls.WithExceptionHandler(square, new Thunk(() => "thunk result")), Is.EqualTo("thunk result"));
+        var hook = RuntimeHooks.Get("exact");
+        Assert.That(hook.GetType().Name, Is.EqualTo("mini$exact"));
+        // C# 代码经钩子调用 boot 镜像中的过程（样例的 exact 钩子是 (lambda (th) (th))，只为验证调用链）
+        Assert.That(SchemeCalls.Exact(new Thunk(() => "thunk result")), Is.EqualTo("thunk result"));
     }
 
     private static void WithHookRestored(Action body)
     {
-        var saved = RuntimeHooks.Get("with-exception-handler");
+        var saved = RuntimeHooks.Get("exact");
         try { body(); }
-        finally { RuntimeHooks.Set("with-exception-handler", saved); }
+        finally { RuntimeHooks.Set("exact", saved); }
     }
 
     [Test]

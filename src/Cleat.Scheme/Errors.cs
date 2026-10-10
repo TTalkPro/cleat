@@ -107,10 +107,6 @@ public static class SchemeCalls
 {
     public static object Exact(object z) => RuntimeHooks.Required(RuntimeHooks.Exact, "exact").Invoke1(z);
     public static object Inexact(object z) => RuntimeHooks.Required(RuntimeHooks.Inexact, "inexact").Invoke1(z);
-    public static object RaiseContinuable(object obj) =>
-      RuntimeHooks.Required(RuntimeHooks.RaiseContinuable, "raise-continuable").Invoke1(obj);
-    public static object WithExceptionHandler(object handler, object thunk) =>
-      RuntimeHooks.Required(RuntimeHooks.WithExceptionHandler, "with-exception-handler").Invoke2(handler, thunk);
 }
 
 /// <summary>钩子登记之前（或单元测试中）使用的 .NET 异常。</summary>

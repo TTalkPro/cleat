@@ -71,6 +71,12 @@
         (px g$px (case-lambda ((r) ($record-field-ref rtd '0 r))))
         (p? g$p? (case-lambda ((o) ($record-instance? rtd o)))))
        (begin (p? '1) (px '1))))
+    ;; cleat-047：$try/catch → try-catch → Lcil 的 try/catch（类型 #f 即 SchemeException，处理器收到其 Condition）；
+    ;; 处理器先求值；try 体内的调用不发 tail.
+    (try-catch
+     (case-lambda
+       ((th h)
+        ($try/catch (th) '#f (case-lambda ((c) (h c))) '"System.InvalidOperationException" (case-lambda ((e) e))))))
     (library
      (library-letrec* (snapshot lib)
        ((u g$u (clr-using-internal 'System.Text))

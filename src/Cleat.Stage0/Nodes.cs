@@ -284,6 +284,39 @@ internal sealed class TryFinally : Node
     }
 }
 
+/// <summary>
+/// ($try/catch body '类型 处理器 …)（designs/15 §3）：处理器先于 body 求值；body 不在尾位置。
+/// 异常按子句顺序匹配第一个 CLR 类型（类型 #f 即 <see cref="SchemeException"/>，处理器收到其条件 Condition；
+/// 其他类型的处理器收到异常对象本身）；都不匹配则原样重新抛出。
+/// </summary>
+internal sealed class TryCatch : Node
+{
+    private readonly Node _body;
+    private readonly TypeRef[] _types;      // null 表示 SchemeException
+    private readonly Node[] _handlers;
+    public TryCatch(Node body, TypeRef[] types, Node[] handlers) { _body = body; _types = types; _handlers = handlers; }
+    public override object Eval(Frame f)
+    {
+        var hs = NodeHelpers.EvalAll(_handlers, f);
+        try { return _body.Eval(f); }
+        catch (Exception e)
+        {
+            for (int i = 0; i < _types.Length; i++)
+            {
+                if (_types[i] == null)
+                {
+                    if (e is SchemeException se) return Errors.RequiresType<Procedure>(hs[i], "$try/catch").Invoke1(se.Condition);
+                }
+                else if (_types[i].Get().IsInstanceOfType(e))
+                {
+                    return Errors.RequiresType<Procedure>(hs[i], "$try/catch").Invoke1(e);
+                }
+            }
+            throw;
+        }
+    }
+}
+
 internal sealed class Unsupported : Node
 {
     private readonly string _what;
