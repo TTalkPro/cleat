@@ -145,3 +145,17 @@ Clojure 语义中与 psyntax 冲突、需要专门设计的只有命名空间（
 6. **度量**：展开 `core.clj` 前 1000 行的耗时（估计 IronScheme 镜像上为秒级）；记录 10 条冲突清单的逐条结论。
 
 通过判据：1 ~ 5 全部跑通且 6 的耗时可接受 → 采用 C，重写 00 的 D4 / D6 / D14、04、07、08 与任务表；否则在 A / B 之间定。
+
+## §7 方案 C 下 Scheme 会不会侵入 Clojure
+
+语言层面不会，前提是封死三道边界；边界之外有一处美观问题、一处正确性风险。jolt 在 Chez 上的已知偏离表（字符串按码点、整数无身份、打印差异）就是边界没封严的后果；cleat 的条件更好——Clojure 的值本来就是 `clojure.lang` 的 CLR 对象。
+
+| 边界 | 要求 | 不封的后果 |
+|---|---|---|
+| 语法 | 用户只写 Clojure；`macroexpand` / `macroexpand-1` 在 Clojure 特殊形式处停止，不展到 `case-lambda` / `letrec`；`&form` 与 `defsyntax` 的输出经 `syntax->datum` 只含 Clojure 集合 | 宏作者看到 Scheme 核心形式 |
+| 值 | Clojure 代码只对 Cleat.Core 的原语与 `Reflector` 转换规则编译（机器描述表按**源语言**分项，不复用 IronScheme 的 `Interop`）：IronScheme 的 fixnum 是 32 位 `int`、列表是 `Cons`、空表 `null`、`Unspecified`、可变字符串、`SchemeChar`、互操作把 `long` 转 Scheme 数 / 枚举转符号——这些都不能碰到 Clojure 的值 | jolt 式偏离 |
+| 诊断 | psyntax 的语法错误包装成 `Syntax error (file:line:col)`；条件 → `ExceptionInfo`；函数类名 `ns$name`；`(class f)` 为 `ClojureFn`，`(fn? f)` 为真 | 错误信息与栈是 Scheme 风格 |
+
+会露出来的：
+- 美观：CLR 栈里夹着 `IronScheme.Core.*` 的帧（过程分派、展开器），像 Clojure 过滤 `clojure.lang.*` 帧一样过滤。
+- 正确性：Scheme 过程作为**值**流进 Clojure 时是 `Procedure` 不是 `IFn`。要么让 `Procedure` 实现 `IFn`（改 IronScheme），要么规定 Clojure 只拿 `cleat.kernel` 包装过的函数。列入 PoC 第 5 项的判据。
