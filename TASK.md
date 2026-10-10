@@ -23,7 +23,7 @@
 | [cleat-016](tasks/cleat-016-stage0-deftype.md) | stage0：deftype* / reify* 生成真实类型 | M2 | cleat-015、cleat-019、cleat-020 | 未开始 |
 | [cleat-017](tasks/cleat-017-kernel-and-core-adaptation.md) | cleat.kernel 与 core.clj 分层适配 | M2 | cleat-011、cleat-013 | 未开始 |
 | [cleat-018](tasks/cleat-018-stage0-load-all-boot.md) | 在 stage0 上加载全部 boot 命名空间；语料子集通过 | M2 | cleat-016、cleat-017 | 未开始 |
-| [cleat-019](tasks/cleat-019-lcil-spec-and-reader.md) | Lcil 规格（继承 + 扩展）与读取器 | M3 | cleat-003 | 未开始 |
+| [cleat-019](tasks/cleat-019-lcil-spec-and-reader.md) | Lcil 规格（继承 + 扩展）与读取器 | M3 | cleat-003 | 完成 |
 | [cleat-020](tasks/cleat-020-emitter-core.md) | 发射器核心：类型、接口、方法、switch、try | M3 | cleat-019 | 未开始 |
 | [cleat-021](tasks/cleat-021-constants-fasl.md) | 常量编码与 fasl | M3 | cleat-019、cleat-006、cleat-007 | 未开始 |
 | [cleat-022](tasks/cleat-022-module-conventions-and-loader.md) | 程序集约定、接口文件与加载器对接 | M3 | cleat-020、cleat-021、cleat-012 | 未开始 |
