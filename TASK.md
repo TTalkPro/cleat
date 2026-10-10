@@ -19,28 +19,28 @@
 | [cleat-012](tasks/cleat-012-rt-split-loader-hooks.md) | RT 拆分、加载器与运行时钩子 | M1 | cleat-007、cleat-009、cleat-010 | 完成 |
 | [cleat-013](tasks/cleat-013-expander-macroexpand-resolve.md) | 展开器：宏展开与符号决议 → Lcore | M2 | cleat-009、cleat-010、cleat-012 | 完成 |
 | [cleat-014](tasks/cleat-014-expander-special-forms.md) | 展开器：特殊形式检查、case 预处理、deftype 签名、类型提示 | M2 | cleat-013 | 完成 |
-| [cleat-015](tasks/cleat-015-stage0-interpreter.md) | stage0：Lcore 解释器核心 | M2 | cleat-008、cleat-013 | 未开始 |
-| [cleat-016](tasks/cleat-016-stage0-deftype.md) | stage0：deftype* / reify* 生成真实类型 | M2 | cleat-015、cleat-019、cleat-020 | 未开始 |
+| [cleat-015](tasks/cleat-015-stage0-interpreter.md) | stage0：Lcore 解释器核心 | 替换（15 §5） | cleat-008、cleat-013 | 搁置 |
+| [cleat-016](tasks/cleat-016-stage0-deftype.md) | stage0：deftype* / reify* 生成真实类型 | 替换（15 §5） | cleat-015、cleat-019、cleat-020 | 搁置 |
 | [cleat-017](tasks/cleat-017-kernel-and-core-adaptation.md) | cleat.kernel 与 core.clj 分层适配 | M2 | cleat-011、cleat-013 | 完成 |
-| [cleat-018](tasks/cleat-018-stage0-load-all-boot.md) | 在 stage0 上加载全部 boot 命名空间；语料子集通过 | M2 | cleat-016、cleat-017 | 未开始 |
+| [cleat-018](tasks/cleat-018-stage0-load-all-boot.md) | 在 stage0 上加载全部 boot 命名空间；语料子集通过 | 替换（15 §5） | cleat-016、cleat-017 | 搁置 |
 | [cleat-019](tasks/cleat-019-lcil-spec-and-reader.md) | Lcil 规格（继承 + 扩展）与读取器 | M3 | cleat-003 | 完成 |
 | [cleat-020](tasks/cleat-020-emitter-core.md) | 发射器核心：类型、接口、方法、switch、try | M3 | cleat-019 | 完成 |
 | [cleat-021](tasks/cleat-021-constants-fasl.md) | 常量编码与 fasl | M3 | cleat-019、cleat-006、cleat-007 | 完成 |
 | [cleat-022](tasks/cleat-022-module-conventions-and-loader.md) | 程序集约定、接口文件与加载器对接 | M3 | cleat-020、cleat-021、cleat-012 | 完成 |
-| [cleat-023](tasks/cleat-023-nanopass-port.md) | cleat.nanopass 移植 | M4 | cleat-018 | 未开始 |
-| [cleat-024](tasks/cleat-024-languages-and-parse-core.md) | 语言 L0 ~ L3 与 parse-core | M4 | cleat-023、cleat-011 | 未开始 |
-| [cleat-025](tasks/cleat-025-frontend-passes.md) | 前中端 pass（循环识别、cp0-lite、box、自由变量） | M4 | cleat-024 | 未开始 |
-| [cleat-026](tasks/cleat-026-codegen-cil-functions.md) | codegen-cil：函数、调用、Var、原语内联、控制流 | M4 | cleat-025、cleat-020 | 未开始 |
-| [cleat-027](tasks/cleat-027-codegen-cil-types-case-try-interop.md) | codegen-cil：deftype / reify、case、try、互操作 | M4 | cleat-026 | 未开始 |
-| [cleat-028](tasks/cleat-028-compiler-driver.md) | 编译驱动：compile-form / eval、compile、构建脚本 | M4 | cleat-027、cleat-022 | 未开始 |
-| [cleat-029](tasks/cleat-029-phase-a-stage0-build.md) | Phase A：stage0 编译出 cleat.boot.dll | M5 | cleat-028、cleat-018 | 未开始 |
+| [cleat-023](tasks/cleat-023-nanopass-port.md) | cleat.nanopass 移植 | 替换（15 §5） | cleat-018 | 搁置 |
+| [cleat-024](tasks/cleat-024-languages-and-parse-core.md) | 语言 L0 ~ L3 与 parse-core | 替换（15 §5） | cleat-023、cleat-011 | 搁置 |
+| [cleat-025](tasks/cleat-025-frontend-passes.md) | 前中端 pass（循环识别、cp0-lite、box、自由变量） | 替换（15 §5） | cleat-024 | 搁置 |
+| [cleat-026](tasks/cleat-026-codegen-cil-functions.md) | codegen-cil：函数、调用、Var、原语内联、控制流 | 替换（15 §5） | cleat-025、cleat-020 | 搁置 |
+| [cleat-027](tasks/cleat-027-codegen-cil-types-case-try-interop.md) | codegen-cil：deftype / reify、case、try、互操作 | 替换（15 §5） | cleat-026 | 搁置 |
+| [cleat-028](tasks/cleat-028-compiler-driver.md) | 编译驱动：compile-form / eval、compile、构建脚本 | 替换（15 §5） | cleat-027、cleat-022 | 搁置 |
+| [cleat-029](tasks/cleat-029-phase-a-stage0-build.md) | Phase A：stage0 编译出 cleat.boot.dll | 替换（15 §5） | cleat-028、cleat-018 | 搁置 |
 | [cleat-030](tasks/cleat-030-host-and-repl.md) | 宿主 Cleat.Host 与 REPL | M5 | cleat-022、cleat-012 | 进行中（骨架完成） |
 | [cleat-031](tasks/cleat-031-phase-b-fixpoint.md) | Phase B：自举不动点 | M6 | cleat-029、cleat-030 | 未开始 |
 | [cleat-032](tasks/cleat-032-conformance-baseline.md) | 符合性基线：语料、clojure-test-suite、test_clojure | M6 | cleat-031、cleat-002 | 未开始 |
 | [cleat-033](tasks/cleat-033-aot-and-load-path.md) | 命名空间 AOT（.clj.dll）与加载路径 | M7 | cleat-032 | 未开始 |
 | [cleat-034](tasks/cleat-034-publish-and-repl-editing.md) | 自包含发布与 REPL 行编辑 | M7 | cleat-033 | 未开始 |
 | [cleat-035](tasks/cleat-035-embedding-and-error-goldens.md) | 嵌入 API 与错误黄金文件 | M7 | cleat-033 | 未开始 |
-| [cleat-036](tasks/cleat-036-lcore-seed.md) | Lcore 种子（可选缓存；Phase A 过慢时提前到 M2） | M7 | cleat-021、cleat-018 | 未开始 |
+| [cleat-036](tasks/cleat-036-lcore-seed.md) | Lcore 种子（可选缓存；Phase A 过慢时提前到 M2） | 替换（15 §5） | cleat-021、cleat-018 | 搁置 |
 | [cleat-037](tasks/cleat-037-targets-and-llvm-primitives.md) | 机器描述表与原语表的 llvm 列 | 后续（LLVM） | cleat-004、cleat-028 | 搁置 |
 | [cleat-038](tasks/cleat-038-native-runtime-kernel.md) | 原生运行时 cleat-rt 内核（C） | 后续（LLVM） | cleat-004、cleat-037 | 搁置 |
 | [cleat-039](tasks/cleat-039-codegen-llvm.md) | codegen-llvm | 后续（LLVM） | cleat-037、cleat-038、cleat-025 | 搁置 |
@@ -48,7 +48,17 @@
 | [cleat-041](tasks/cleat-041-native-driver-and-conformance.md) | 交叉编译驱动与原生语料验收 | 后续（LLVM） | cleat-040 | 搁置 |
 | [cleat-042](tasks/cleat-042-performance.md) | 性能：拆箱、协议内联缓存、跨单元直接链接 | 后续 | cleat-032 | 未开始 |
 | [cleat-043](tasks/cleat-043-genclass-proxy-async.md) | gen-class、proxy 全量与异步 | 后续 | cleat-033 | 未开始 |
-| [cleat-044](tasks/cleat-044-spike-clojure-on-ironscheme.md) | PoC：Clojure on IronScheme（语法对象、命名空间、`(clojure syntax)`、卫生宏、接缝） | 决策前 | cleat-017 | 未开始（待用户决定） |
+| [cleat-044](tasks/cleat-044-spike-clojure-on-ironscheme.md) | PoC：Clojure on IronScheme | 决策前 | cleat-017 | 并入 cleat-049 |
+| [cleat-045](tasks/cleat-045-vendor-scheme-runtime.md) | 纳入并更名 C# 元层：Cleat.Scheme、Cleat.Stage0、Emit / PrimGen 合并 | M2′ | cleat-017 | 未开始 |
+| [cleat-046](tasks/cleat-046-vendor-scheme-boot.md) | 纳入 Scheme 元层：boot、展开器、编译器、nanopass、种子；本仓库自举不动点 | M2′ | cleat-045 | 未开始 |
+| [cleat-047](tasks/cleat-047-try-catch-model.md) | 异常模型简化：删 call/cc 与处理器栈，加 `$try/catch`，重生成种子 | M2′ | cleat-046 | 未开始 |
+| [cleat-048](tasks/cleat-048-extensible-syntax-objects.md) | 可扩展语法对象：三张扩展表、8 处改造、Clojure 集合注册 | M2′ | cleat-047 | 未开始 |
+| [cleat-049](tasks/cleat-049-psyntax-clojure-extensions.md) | psyntax 的 Clojure 扩展：命名空间模型、rib 索引、macroexpand-1、错误钩子（含原 PoC 判据） | M4′ | cleat-048 | 未开始 |
+| [cleat-050](tasks/cleat-050-clojure-syntax-library.md) | `(clojure syntax)` 库：特殊形式、defmacro 垫片、语法引用、defsyntax、&env | M4′ | cleat-049 | 未开始 |
+| [cleat-051](tasks/cleat-051-compiler-clojure-nodes.md) | 编译器的 Clojure 节点：Var、IFn 约定、多类型 try/catch、deftype、switch、keyword-invoke | M4′ | cleat-050 | 未开始 |
+| [cleat-052](tasks/cleat-052-compile-driver-on-scheme.md) | 编译驱动：eval、load / compile 钩子、.clj.dll 与接口文件、宿主接入 | M4′ | cleat-051 | 未开始 |
+| [cleat-053](tasks/cleat-053-clojure-boot-image.md) | Clojure 自举：Scheme 镜像编译 core.clj → cleat.boot.dll，镜像不动点 | M5′ | cleat-052 | 未开始 |
+| [cleat-054](tasks/cleat-054-rename-scheme-libraries.md) | Scheme 库名 `(ironscheme …)` → `(cleat scheme …)`，同步重生成种子 | 后续 | cleat-053 | 未开始 |
 
 ## 里程碑
 
@@ -56,10 +66,13 @@
 |--------|------|------|
 | M0 准备与验证 | cleat-001 ~ cleat-003、cleat-005 | 骨架、测试资产、.NET 与提取两项验证结论 |
 | M1 新运行时 | cleat-006 ~ cleat-012 | 无 DLR 的 `Cleat.Core`，`primitives.edn` |
-| M2 展开器与 stage0 | cleat-013 ~ cleat-018 | 能从源码加载全部 core 的解释器 |
+| M2 展开器 | cleat-013、014、017 完成；015 / 016 / 018 替换 | C# 展开器成为 Scheme 版的规格 |
+| M2′ 纳入元层 | cleat-045 ~ cleat-048 | Scheme 镜像在本仓库自举、try / catch 模型、可扩展语法对象 |
 | M3 Lcil 与发射器 | cleat-019 ~ cleat-022 | 手写 Lcil → dll 可运行 |
-| M4 nanopass 与编译器 | cleat-023 ~ cleat-028 | 能编译单个命名空间 |
-| M5 首次自举 | cleat-029 ~ cleat-030 | `cleat.boot.dll`（stage1）、宿主 |
+| M4 nanopass 与编译器 | 替换（15 §5） | — |
+| M4′ Clojure 在元层上 | cleat-049 ~ cleat-052 | 命名空间模型、(clojure syntax)、编译器 Clojure 节点、驱动 |
+| M5 首次自举 | 029 替换；030 骨架完成 | — |
+| M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 自举闭合与符合性 | cleat-031 ~ cleat-032 | 不动点、三个基线 |
 | M7 工程 | cleat-033 ~ cleat-036 | AOT、发布、REPL、嵌入、种子 |
 | 后续 | cleat-042 ~ cleat-043 | 性能、gen-class / proxy / 异步 |
@@ -68,4 +81,4 @@
 ## 关键路径
 
 cleat-001 → 005 → 006 → 008 → 013 → 015 →（019 → 020 →）016 → 018 → 023 → 024 → 025 → 026 → 027 → 028 → 029 → 031 → 032。
-M3（019 ~ 022）与 M1 / M2 可并行。LLVM 相关任务搁置，不在当前计划内。
+新关键路径：cleat-045 → 046 → 047 → 048 → 049 → 050 → 051 → 052 → 053 → 032。LLVM 相关任务搁置，不在当前计划内。

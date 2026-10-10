@@ -1,5 +1,7 @@
 # 00 总体设计
 
+> **2026-10-10 方向变更**：按 [14](14-three-layer-architecture.md) 方案 C 与 [15](15-scheme-core-vendoring.md) 执行——纳入 IronScheme 的元层（psyntax、nanopass、Scheme 编译器、stage0、种子），编译器用 Scheme 写、语法对象可扩展、异常模型简化为 try / catch，Clojure 作为元层之上的库获得卫生宏。本文 D4（C# 展开器）、D6（编译器用 Clojure）、D14 与里程碑 M2 / M4 / M5 由 15 §5 取代；其余决策与已完成的 M1 / M3 继续有效。
+
 Cleat：.NET 上的 Clojure 实现。运行时用 C#，编译器用 Clojure 自己写（nanopass），CIL 与 LLVM IR 是两个平等的后端，自举只依靠 .NET SDK 与本仓库。
 
 ## 1. 目标
