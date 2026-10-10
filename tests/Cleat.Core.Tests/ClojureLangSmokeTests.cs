@@ -193,7 +193,8 @@ public class ClojureLangSmokeTests
             Known("Read round-trip Util.equals (Regex has reference equality, same as JVM Pattern)", Util.equals(Read(printed), form));
             string readEvalMsg = null;
             try { Read("#=(+ 1 2)"); } catch (Exception e) { readEvalMsg = (e.InnerException ?? e).Message; }
-            Check("#= hits the cleat-005 stub", readEvalMsg != null && readEvalMsg.Contains("cleat-005 stub"), readEvalMsg);
+            // cleat-010: #= now goes through Reflector; `+` is not a mapped var here (no clojure.core loaded), so it can't resolve
+            Check("#= resolves through Reflector (cleat-010); unmapped var reports Can't resolve", readEvalMsg != null && readEvalMsg.StartsWith("Can't resolve +"), readEvalMsg);
         }
 
         // --- EdnReader

@@ -34,7 +34,7 @@ public sealed partial class LcilEmitter
     }
 
     private CoreApi _core;
-    private CoreApi Core => _core ??= new CoreApi(LoadReference("IronScheme.Core"));
+    private CoreApi Core => _core ??= new CoreApi(LoadReference(CoreAssemblyName));
 
     private static readonly MethodInfo s_getTypeFromHandle = typeof(Type).GetMethod("GetTypeFromHandle");
     private static readonly MethodInfo s_objectGetType = typeof(object).GetMethod("GetType");

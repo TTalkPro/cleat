@@ -1,4 +1,4 @@
-﻿/**
+/**
  *   Copyright (c) Rich Hickey. All rights reserved.
  *   The use and distribution terms for this software are covered by the
  *   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
@@ -9,6 +9,7 @@
  **/
 
 
+using Cleat.Core.Runtime; // CLEAT-010: Reflector / TypeResolver for #= and record literals
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -76,6 +77,24 @@ namespace clojure.lang
 
         // CLEAT-005: was Compiler.CurrentNamespace (== (Namespace)RT.CurrentNSVar.deref()); not a compiler dependency, inlined.
         static Namespace CurrentNamespace => (Namespace)RT.CurrentNSVar.deref();
+
+        // CLEAT-010: was Compiler.namespaceFor(inns, sym): the current ns' aliases, then the global namespace map.
+        static Namespace NamespaceFor(Namespace inns, Symbol sym)
+        {
+            Symbol nsSym = Symbol.intern(sym.Namespace);
+            return (inns?.LookupAlias(nsSym)) ?? Namespace.find(nsSym);
+        }
+
+        // CLEAT-010: the var half of Compiler.maybeResolveIn (the type half is handled by the caller via TypeResolver).
+        static Var MaybeResolveVar(Namespace n, Symbol sym)
+        {
+            if (sym.Namespace != null)
+            {
+                Namespace ns = NamespaceFor(n, sym);
+                return ns?.FindInternedVar(Symbol.intern(sym.Name));
+            }
+            return n?.GetMapping(sym) as Var;
+        }
 
         // CLEAT-005: resolver used when *reader-resolver* is unbound; replaces the `else` branches that called
         // Compiler.resolveSymbol / Compiler.CurrentNamespace.GetMapping / Compiler.IsSpecial.
@@ -1864,12 +1883,22 @@ namespace clojure.lang
                         //return Reflector.InvokeConstructor(RT.classForName(fs.Name.Substring(0, fs.Name.Length - 1)), args);
                         // I think the JVM code is wrong here
                         string s = fs.ToString();
-                        // CLEAT-005: was Reflector.InvokeConstructor(RT.classForNameE(...), args) -- needs Reflector (cleat-010)
-                        throw new NotImplementedException("cleat-005 stub: #=(Ctor. ...) -> Reflector.InvokeConstructor");
+                        // CLEAT-010: was Reflector.InvokeConstructor(RT.classForNameE(...), args)
+                        return Reflector.New(TypeResolver.ResolveE(s.Substring(0, s.Length - 1), null), args);
                     }
-                    // CLEAT-005: was `if (Compiler.NamesStaticMember(fs)) return Reflector.InvokeStaticMethod(fs.Namespace, fs.Name, args);`
-                    //            and `Compiler.maybeResolveIn(Compiler.CurrentNamespace, fs)` then applyTo -- needs Reflector + resolver/evaluator
-                    throw new NotImplementedException("cleat-005 stub: #=(f ...) -> Compiler.NamesStaticMember/Reflector.InvokeStaticMethod/Compiler.maybeResolveIn");
+                    // CLEAT-010: was `if (Compiler.NamesStaticMember(fs)) return Reflector.InvokeStaticMethod(fs.Namespace, fs.Name, args);`
+                    // NamesStaticMember == namespace part names no Clojure namespace (alias or loaded ns) -> it is a type name.
+                    if (fs.Namespace != null && NamespaceFor(CurrentNamespace, fs) == null)
+                    {
+                        Object[] args = RT.toArray(RT.next(o));
+                        Type t = TypeResolver.ResolveE(fs.Namespace, null);
+                        return fs.Name.Equals("new") ? Reflector.New(t, args) : Reflector.Call(t, fs.Name, null, args, null, null);
+                    }
+                    // CLEAT-010: was `Compiler.maybeResolveIn(Compiler.CurrentNamespace, fs)` then applyTo; a var is an IFn.
+                    IFn v = MaybeResolveVar(CurrentNamespace, fs);
+                    if (v != null)
+                        return v.applyTo(RT.next(o));
+                    throw new InvalidOperationException("Can't resolve " + fs);
                 }
                 else
                     throw new InvalidOperationException("Unsupported #= form");
@@ -1948,8 +1977,8 @@ namespace clojure.lang
                     if (!ctorFound)
                         throw new ArgumentException(String.Format("Unexpected number of constructor arguments to {0}: got {1}", recordType.ToString(), recordEntries.count()));
 
-                    // CLEAT-005: was Reflector.InvokeConstructor(recordType, RT.toArray(recordEntries))
-                    throw new NotImplementedException("cleat-005 stub: #ns.Record[...] -> Reflector.InvokeConstructor");
+                    // CLEAT-010: was Reflector.InvokeConstructor(recordType, RT.toArray(recordEntries))
+                    ret = Reflector.New(recordType, RT.toArray(recordEntries));
                 }
                 else if (form is IPersistentMap vals)
                 {
@@ -1959,8 +1988,8 @@ namespace clojure.lang
                             throw new ArgumentException(String.Format("Unreadable defrecord form: key must be of type clojure.lang.Keyword, got {0}", s.first().ToString()));
                     }
 
-                    // CLEAT-005: was Reflector.InvokeStaticMethod(recordType, "create", new Object[] { vals })
-                    throw new NotImplementedException("cleat-005 stub: #ns.Record{...} -> Reflector.InvokeStaticMethod(create)");
+                    // CLEAT-010: was Reflector.InvokeStaticMethod(recordType, "create", new Object[] { vals })
+                    ret = Reflector.Call(recordType, "create", null, new Object[] { vals }, null, null);
                 }
                 else
                 {

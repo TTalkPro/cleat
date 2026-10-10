@@ -14,7 +14,7 @@
 | [cleat-007](tasks/cleat-007-var-namespace-refs.md) | Var、Namespace、引用类型、STM 与 MultiFn | M1 | cleat-006 | 完成 |
 | [cleat-008](tasks/cleat-008-function-model.md) | 函数模型 IFn / AFn / AFunction / RestFn | M1 | cleat-006 | 完成 |
 | [cleat-009](tasks/cleat-009-reader.md) | reader 提取与决议接口 | M1 | cleat-006、cleat-007 | 完成 |
-| [cleat-010](tasks/cleat-010-reflector.md) | Reflector 与 TypeResolver（无 DLR） | M1 | cleat-008 | 未开始 |
+| [cleat-010](tasks/cleat-010-reflector.md) | Reflector 与 TypeResolver（无 DLR） | M1 | cleat-008 | 完成 |
 | [cleat-011](tasks/cleat-011-primitives-and-primgen.md) | 原语标注与 PrimGen（primitives.edn） | M1 | cleat-006 ~ cleat-010 | 未开始 |
 | [cleat-012](tasks/cleat-012-rt-split-loader-hooks.md) | RT 拆分、加载器与运行时钩子 | M1 | cleat-007、cleat-009、cleat-010 | 完成 |
 | [cleat-013](tasks/cleat-013-expander-macroexpand-resolve.md) | 展开器：宏展开与符号决议 → Lcore | M2 | cleat-009、cleat-010、cleat-012 | 未开始 |
