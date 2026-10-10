@@ -1,0 +1,51 @@
+;; boot 镜像的加载顺序（designs/03-language-core.md §5、00 D15；cleat-017）。
+;; :path 相对 src/clojure/；加载器按 .cljr > .cljc > .clj 找文件（这里写 ClojureCLR 原有的扩展名）。
+;; :loaded-by 的条目不由镜像构建器单独加载——它们由所在文件里的 (load "…") 按这个顺序拉入，列出来是为了
+;;   让 CoreSourcesTests 覆盖到每个文件，并记录实际顺序。
+;; :boot false 的条目不进镜像，按需 require（03 §5"其余按需从源码或 .clj.dll 加载"）。
+;; cleat.nanopass / cleat.compiler（03 §5 排在 uuid 之后）由 cleat-020 / cleat-02x 加进来。
+{:version 1
+ :entries
+ [{:ns cleat.kernel            :path "cleat/kernel.clj"              :boot true}
+  {:ns clojure.core            :path "clojure/core.clj"              :boot true}
+  ;; core.clj 末尾按 ClojureCLR 的顺序 load 的文件
+  {:ns clojure.core            :path "clojure/core_clr.clj"          :boot true :loaded-by clojure.core}
+  {:ns clojure.core            :path "clojure/core_proxy.clj"        :boot true :loaded-by clojure.core}
+  {:ns clojure.core            :path "clojure/core_print.clj"        :boot true :loaded-by clojure.core}
+  {:ns clojure.core            :path "clojure/genclass.clj"          :boot true :loaded-by clojure.core}
+  {:ns clojure.core            :path "clojure/core_deftype.clj"      :boot true :loaded-by clojure.core}
+  {:ns clojure.core.protocols  :path "clojure/core/protocols.clj"    :boot true :loaded-by clojure.core}
+  {:ns clojure.core            :path "clojure/gvec.clj"              :boot true :loaded-by clojure.core}
+  {:ns clojure.instant         :path "clojure/instant.clj"           :boot true :loaded-by clojure.core}
+  {:ns clojure.uuid            :path "clojure/uuid.clj"              :boot true :loaded-by clojure.core}
+  ;; 其余进镜像的库（REPL 与编译器驱动要用）
+  {:ns clojure.string          :path "clojure/string.clj"            :boot true}
+  {:ns clojure.set             :path "clojure/set.clj"               :boot true}
+  {:ns clojure.walk            :path "clojure/walk.clj"              :boot true}
+  {:ns clojure.edn             :path "clojure/edn.clj"               :boot true}
+  {:ns clojure.data            :path "clojure/data.clj"              :boot true}
+  {:ns clojure.template        :path "clojure/template.clj"          :boot true}
+  {:ns clojure.test            :path "clojure/test.clj"              :boot true}
+  {:ns clojure.stacktrace      :path "clojure/stacktrace.clj"        :boot true}
+  {:ns clojure.repl            :path "clojure/repl.clj"              :boot true}
+  {:ns clojure.main            :path "clojure/main.clj"              :boot true}
+  {:ns clojure.pprint          :path "clojure/pprint.clj"            :boot true}
+  {:ns clojure.pprint          :path "clojure/pprint/utilities.clj"     :boot true :loaded-by clojure.pprint}
+  {:ns clojure.pprint          :path "clojure/pprint/column_writer.clj" :boot true :loaded-by clojure.pprint}
+  {:ns clojure.pprint          :path "clojure/pprint/pretty_writer.clj" :boot true :loaded-by clojure.pprint}
+  {:ns clojure.pprint          :path "clojure/pprint/pprint_base.clj"   :boot true :loaded-by clojure.pprint}
+  {:ns clojure.pprint          :path "clojure/pprint/cl_format.clj"     :boot true :loaded-by clojure.pprint}
+  {:ns clojure.pprint          :path "clojure/pprint/dispatch.clj"      :boot true :loaded-by clojure.pprint}
+  {:ns clojure.pprint          :path "clojure/pprint/print_table.clj"   :boot true :loaded-by clojure.pprint}
+  {:ns clojure.zip             :path "clojure/zip.clj"               :boot true}
+  {:ns clojure.clr.io          :path "clojure/clr/io.clj"            :boot true}
+  {:ns clojure.clr.shell       :path "clojure/clr/shell.clj"         :boot true}
+  {:ns clojure.reflect         :path "clojure/reflect.clj"           :boot true}
+  {:ns clojure.reflect         :path "clojure/reflect/clr.clj"       :boot true :loaded-by clojure.reflect}
+  {:ns clojure.datafy          :path "clojure/datafy.clj"            :boot true}
+  ;; 按需加载
+  {:ns clojure.core.reducers   :path "clojure/core/reducers.clj"     :boot false}
+  {:ns clojure.core.server     :path "clojure/core/server.clj"       :boot false}
+  {:ns clojure.test.junit      :path "clojure/test/junit.clj"        :boot false}
+  {:ns clojure.test.tap        :path "clojure/test/tap.clj"          :boot false}
+  {:ns clojure.repl.deps       :path "clojure/repl/deps.cljc"        :boot false}]}
