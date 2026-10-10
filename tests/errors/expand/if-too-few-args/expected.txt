@@ -1,0 +1,3 @@
+Syntax error compiling if at (input.clj:2:3).
+Too few arguments to if
+exit: 1

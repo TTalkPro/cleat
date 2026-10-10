@@ -1,0 +1,3 @@
+Syntax error compiling at (input.clj:1:17).
+Unable to resolve symbol: unknown-thing in this context
+exit: 1

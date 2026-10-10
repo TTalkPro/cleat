@@ -1,0 +1,3 @@
+Syntax error (ArgumentException) compiling new at (input.clj:1:17).
+Unable to resolve classname: NoSuchType
+exit: 1

@@ -1,0 +1,3 @@
+Syntax error reading source at (input.clj:2:10).
+Unmatched delimiter: )
+exit: 1

@@ -1,0 +1,3 @@
+Syntax error (NotSupportedException) compiling recur at (input.clj:4:7).
+Cannot recur across try
+exit: 1

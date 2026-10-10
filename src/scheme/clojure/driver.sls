@@ -50,9 +50,16 @@
             (when unit (vector-set! unit 0 (cons core (vector-ref unit 0)))))
           (let ((v (try-eval-simple core)))
             (if (eq? v not-simple)
-                ((compile-core-of-image core))
+                (run-compiled core)
                 v))))
       form))
+
+  ;;; 编译执行：值经 ClojureOps.HoldResult 存放、TakeResult 取出——compile-core 的 thunk 经 Scheme 互操作返回，
+  ;;; 会把 long 规范成 Int32（cleat-055 值边界）。AOT 单元收集的是未包装的 core
+  (define take-result (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps TakeResult))
+  (define (run-compiled core)
+    ((compile-core-of-image (list '$clj-call (list 'quote "HoldResult") (list 'quote #f) core)))
+    (take-result #f))
 
   (define (clojure-eval-toplevel form)
     (let* ((form (if (macroexpand-top? form)

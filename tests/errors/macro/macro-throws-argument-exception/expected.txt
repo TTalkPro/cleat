@@ -1,0 +1,3 @@
+Syntax error macroexpanding m at (input.clj:3:16).
+bad arg
+exit: 1

@@ -1,0 +1,3 @@
+Syntax error compiling deftype* at (input.clj:1:1).
+Malformed deftype*
+exit: 1

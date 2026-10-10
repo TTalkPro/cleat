@@ -1,0 +1,3 @@
+Execution error (InvalidCastException) at (input.clj:1).
+Unable to cast object of type 'System.Int64' to type 'System.Exception'.
+exit: 1

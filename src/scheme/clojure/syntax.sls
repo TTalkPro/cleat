@@ -193,6 +193,18 @@
 
   (define (err e msg) (syntax-violation #f msg e))
 
+  ;;; 重复的绑定名（Clojure 允许：(fn* [a a] a)、(loop* [a 1 a 2] a) 取最后一个；psyntax 报 "duplicate binding"）：
+  ;;; 后面还有同名者的标识符换成临时名（它在体里本来就被遮蔽），于是 Scheme 的绑定形式不再有重复（cleat-055）
+  (define (dedupe-ids ids)
+    (let loop ((ids ids) (acc '()))
+      (if (null? ids)
+          (reverse acc)
+          (loop (cdr ids)
+                (cons (if (exists (lambda (y) (bound-identifier=? (car ids) y)) (cdr ids))
+                          (car (generate-temporaries (list (car ids))))
+                          (car ids))
+                      acc)))))
+
   ;;; 语法列表（可能是带 wrap 的语法对象）→ Scheme 列表
   (define (stx-list x)
     (syntax-case x ()
@@ -233,7 +245,7 @@
               ((not target) (err e "Can't refer to qualified var that doesn't exist"))
               ((eq? target ns) (clr-call clojure.lang.Namespace intern ns name))
               ((nil->f (clr-call clojure.lang.Namespace FindInternedVar target name))
-               (err e "Can't create defs outside of current namespace"))
+               (err e "Can't create defs outside of current ns"))
               (else (err e "Can't refer to qualified var that doesn't exist"))))
           (let ((o (nil->f (clr-call clojure.lang.Namespace GetMapping ns name))))
             (cond
@@ -304,7 +316,7 @@
   (define-form quote (e expand)
     (syntax-case e ()
       ((_ x) (list 'quote (syntax->clj #'x)))
-      (_ (err e "Wrong number of args to quote"))))
+      (_ (err e (string-append "Wrong number of args (" (number->string (- (length (stx-list e)) 1)) ") passed to quote")))))
 
   ;;; Compiler.LookupVar(sym, false)
   (define (lookup-var e sym)
@@ -335,6 +347,7 @@
   (define-special throw (e)
     (syntax-case e ()
       ((head x) (with-syntax ((x (in-ctx #'head (ctx-nontail (cur)) #'x))) #'($throw x)))
+      ((head) (err e "Too few arguments to throw, throw expects a single Exception instance"))
       (_ (err e "Too many arguments to throw, throw expects a single Exception instance"))))
 
   (define (monitor-special name method)
@@ -372,7 +385,7 @@
         (if (null? items)
             (reverse acc)
             (let ((sym (syntax->clj (car items))))
-              (unless (clj-symbol? sym) (err e (string-append "Bad binding form, expected symbol, got " (->string sym))))
+              (unless (clj-symbol? sym) (err e (string-append "Bad binding form, expected symbol, got: " (->string sym))))
               (when (sym-ns sym) (err e (string-append "Can't let qualified name: " (->string sym))))
               (when (sym-is? sym "&") (err e "Can't use & as a local binding"))
               (loop (cddr items) (cons (cons (car items) (cadr items)) acc)))))))
@@ -382,7 +395,7 @@
       (syntax-case e ()
         ((head bindings form ...)
          (let* ((head #'head)
-                (pairs (binding-pairs e #'bindings "Bad binding form, expected matched symbol/value pairs."))
+                (pairs (binding-pairs e #'bindings "Bad binding form, expected matched symbol expression pairs"))
                 (c (ctx-clear (cur))))
            ;; 每个初值在非尾位置、能看到之前的绑定
            (let loop ((ps pairs) (locals '()) (out '()))
@@ -395,10 +408,11 @@
                    (if loop?
                        (let ((bc (make-ctx #t #f (ctx-locals bc) (ctx-fn-name bc) #f)))
                          (with-syntax ((((x i) ...) bindings)
+                                       ((y ...) (dedupe-ids (map car bindings)))
                                        ((lp) (generate-temporaries '(loop)))
                                        (body (body-stx head #'(form ...) bc)))
                            (with-syntax ((body (in-ctx/loop head bc #'lp (length bindings) #'body)))
-                             #'(let* ((x i) ...) (let lp ((x x) ...) body)))))
+                             #'(let* ((x i) ...) (let lp ((y x) ...) body)))))
                        (with-syntax ((((x i) ...) bindings)
                                      (body (in-ctx head bc (body-stx head #'(form ...) bc))))
                          #'(let* ((x i) ...) body))))))))
@@ -483,8 +497,8 @@
                         (bc (make-ctx #t #f (ctx-locals bc) name #f)))
                    (cond
                      ((and rest variadic) (err e "Can't have more than 1 variadic overload"))
-                     ((and (not rest) (memv n arities)) (err e "Can't have 2 overloads with the same arity.")))
-                   (with-syntax (((p ...) params)
+                     ((and (not rest) (memv n arities)) (err e "Can't have 2 overloads with same arity")))
+                   (with-syntax (((p ...) (dedupe-ids params))
                                  ((lp) (generate-temporaries '(recur)))
                                  (body (body-stx head (cdr cl) bc)))
                      (with-syntax ((body (in-ctx/loop head bc #'lp (length params) #'body)))
@@ -494,7 +508,7 @@
                              (loop (cdr cls) (cons compiled fixed) variadic (cons n arities))))))))
                (begin
                  (when (and variadic (pair? arities) (>= (apply max arities) (+ (car variadic) 1)))
-                   (err e "Can't have fixed arity methods with more params than the variadic method."))
+                   (err e "Can't have fixed arity function with more params than variadic function"))
                  ;; ($clj-fn '类名 '变长必需个数|#f (case-lambda 固定子句 … 变长子句))（cleat-051）：编译为 AFunction / RestFn 的子类；
                  ;; 变长子句在最后，形参为"必需参数 + 剩余 seq"
                  (let* ((m (user-meta (syntax->clj e))))
@@ -513,20 +527,27 @@
 
   ;;; ———————————————— letfn* ————————————————
 
+  (define (fn*-form? d)
+    (and (clj-list? d) (> (count* d) 0) (sym-is? (clr-static-call clojure.lang.RT (first System.Object) d) "fn*")))
+
   (define-special letfn* (e)
     (syntax-case e ()
       ((head bindings form ...)
        (let* ((head #'head)
-              (pairs (binding-pairs e #'bindings "Bad binding form, expected matched symbol/expression pairs."))
+              (pairs (binding-pairs e #'bindings "Bad binding form, expected matched symbol expression pairs"))
               (c (ctx-clear (cur)))
               (locals (map (lambda (p) (make-local* (syntax->clj (car p)) 'local)) pairs))
               (bc (ctx-with-locals c locals)))
+         ;; 初值都是 (fn* …) 时为 letrec（编译器对 lambda 的 letrec 不装箱）。否则（宏展开成 fn*、或不是函数——JVM 的 Clojure
+         ;; 在编译期拒绝）先绑定为 nil 再依次赋值：Scheme 的 letrec 会在读到未初始化的变量时抛 Scheme 条件（cleat-055 值边界）
          (with-syntax ((((x i) ...)
-                        (map (lambda (p)
-                               (list (car p) (in-ctx head (ctx-hinted bc (sym-name (syntax->clj (car p)))) (cdr p))))
-                             pairs))
+                        (map (lambda (p x)
+                               (list x (in-ctx head (ctx-hinted bc (sym-name (syntax->clj (car p)))) (cdr p))))
+                             pairs (dedupe-ids (map car pairs))))
                        (body (in-ctx head bc (body-stx head #'(form ...) bc))))
-           #'(letrec ((x i) ...) body))))
+           (if (for-all (lambda (p) (fn*-form? (syntax->clj (cdr p)))) pairs)
+               #'(letrec ((x i) ...) body)
+               #'(let ((x '()) ...) (set! x i) ... body)))))
       (_ (err e "Bad binding form, expected vector"))))
 
   ;;; ———————————————— try ————————————————
@@ -552,7 +573,7 @@
                          (unless t (err e (string-append "Unable to resolve classname: " (->string td))))
                          (let ((b (syntax->clj #'bsym)))
                            (unless (clj-symbol? b) (err e (string-append "Bad binding form, expected symbol, got: " (->string b))))
-                           (when (sym-ns b) (err e (string-append "Can't bind qualified name: " (->string b))))
+                           (when (sym-ns b) (err e (string-append "Can't bind qualified name:" (->string b))))
                            (let* ((hc (ctx-with-locals (ctx-no-recur c tail?)
                                         (list (make-local b (clj-symbol (clr-call System.Type get_FullName t)) #f 'catch))))
                                   (h (in-ctx head hc (body-stx head #'(hform ...) hc))))
@@ -616,7 +637,7 @@
                          ((and (null? (stx-list #'args)) (clj-list? md)
                                (clj-symbol? (clr-static-call clojure.lang.RT (first System.Object) md)))
                           (syntax-case #'member () ((m . margs) (values (syntax->clj #'m) (stx-list #'margs) #t))))
-                         (else (err e "Malformed member expression, expecting (. target member-name args... ) or (. target (member-name args...)), where member-name is a Symbol")))))
+                         (else (err e "Malformed member expression")))))
            (let* ((static (maybe-type td))
                   (first-arg (and (pair? args) (syntax->clj (car args))))
                   (type-args (and first-arg (clj-list? first-arg)
@@ -630,7 +651,7 @@
                   (member (munge (if prop? (substring name 1 (string-length name)) name)))
                   (type (or static (expr-type td))))
              (values static (and (not static) #'target) member prop? args type-args method? type)))))
-      (_ (err e "Malformed member expression, expecting (. target member ... ) or  (. target (member ...))"))))
+      (_ (err e "Malformed member expression, expecting (. target member ...)"))))
 
   (registration (register-clj-special! (string->symbol ".") (lambda (e) (dot-special e))))
   (define (dot-special e)
@@ -664,7 +685,7 @@
          (unless t (err e (string-append "Unable to resolve classname: " (->string td))))
          (with-syntax ((k (node-id #'head)) (data (const-stx (list "NewOf" 1 t))) ((a ...) (host-args e #'head #'(arg ...))))
            #'(k $clj-call data a ...))))
-      (_ (err e "wrong number of arguments, expecting: (new Typename args ...)"))))
+      (_ (err e "wrong number of arguments, expecting: (new Classname args...)"))))
 
   (define-special set! (e)
     (syntax-case e ()
@@ -759,6 +780,12 @@
                         field-syms))
            (field-locals (map (lambda (f) (make-local (cadr f) (tag-of (cadr f)) (caddr f) 'field)) fields))
            (c (cur)))
+      ;; 字段名重复：JVM 的 Clojure 在定义类时报 ClassFormatError "Duplicate field name"；psyntax 会报 Scheme 的 "duplicate binding"
+      (let check ((fs fields))
+        (when (pair? fs)
+          (when (exists (lambda (g) (string=? (sym-name (cadr g)) (sym-name (cadar fs)))) (cdr fs))
+            (err e (string-append "Duplicate field name \"" (sym-name (cadar fs)) "\" in " class-name)))
+          (check (cdr fs))))
       ;; 方法体可以引用正在定义的类型（(new Foo …)、^Foo）：先登记同名的桩类型（HostSyntax.DefineStub，运行时换成真正的类型）
       (unless reify?
         (clr-static-call Cleat.Scheme.Clojure.HostSyntax DefineStub class-name
@@ -777,7 +804,7 @@
                                       (map (lambda (a t) (make-local (clj-symbol (sym-name (syntax->clj a))) (clj-symbol t) #f 'arg)) args ptypes)))
                       (bc (make-ctx #t #f (append (reverse locals) (ctx-locals c)) (ctx-fn-name c) #f))
                       (spec (list iface name (type-desc ret) (map type-desc ptypes))))
-                 (with-syntax ((this this) ((a ...) args)
+                 (with-syntax (((this a ...) (dedupe-ids (cons this args)))
                                ((lp) (generate-temporaries '(recur)))
                                (body (body-stx head #'(mbody ...) bc)))
                    (with-syntax ((body (in-ctx/loop head bc #'lp (length args) #'body)))

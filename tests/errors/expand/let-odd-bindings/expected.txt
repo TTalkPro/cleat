@@ -1,0 +1,3 @@
+Syntax error (ArgumentException) compiling let* at (input.clj:2:3).
+Bad binding form, expected matched symbol expression pairs
+exit: 1

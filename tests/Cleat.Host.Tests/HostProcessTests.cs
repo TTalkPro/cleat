@@ -18,7 +18,7 @@ public class HostProcessTests
     private string _dir;
 
     private static string TestDir => TestContext.CurrentContext.TestDirectory;
-    private static string RepoDir => Path.GetFullPath(Path.Combine(TestDir, "..", "..", "..", "..", ".."));
+    internal static string RepoDir => Path.GetFullPath(Path.Combine(TestDir, "..", "..", "..", "..", ".."));
     private static string HostDll =>
       Path.Combine(RepoDir, "src", "Cleat.Host", "bin", new DirectoryInfo(TestDir).Parent.Name, new DirectoryInfo(TestDir).Name, "cleat.dll");
 
@@ -33,7 +33,7 @@ public class HostProcessTests
     /// <summary>运行 cleat；stdin 为 null 时标准输入立即关闭。</summary>
     private Result Cleat(string stdin, params string[] args) => CleatIn(_dir, stdin, null, args);
 
-    private static Result CleatIn(string dir, string stdin, (string, string)[] env, params string[] args)
+    internal static Result CleatIn(string dir, string stdin, (string, string)[] env, params string[] args)
     {
         Assert.That(File.Exists(HostDll), Is.True, "host not built: " + HostDll);
         var psi = new ProcessStartInfo("dotnet")
@@ -143,8 +143,8 @@ public class HostProcessTests
         };
         Assert.That(lines.Take(expected.Length), Is.EqualTo(expected), r.ToString());
         Assert.That(lines[expected.Length], Does.Match(@"^user=> user\$fn__\d+$"), r.ToString());
-        Assert.That(r.Err, Does.Contain("Syntax error (NO_SOURCE_PATH:0:0) Unable to resolve symbol: nope in this context"));
-        Assert.That(r.Err, Does.Contain("Execution error (ArithmeticException) at (REPL:7:1).\nDivide by zero"));
+        Assert.That(r.Err, Does.Contain("Syntax error compiling at (REPL:0:0).\nUnable to resolve symbol: nope in this context"));
+        Assert.That(r.Err, Does.Contain("Execution error (ArithmeticException) at (REPL:7).\nDivide by zero"));
         Assert.That(r.Err, Does.Contain("Syntax error reading source at (REPL:"));
         Assert.That(r.Err, Does.Contain("EOF while reading"));
     }
@@ -182,7 +182,7 @@ public class HostProcessTests
         string bad = Write("bad.clj", "(def a 1)\n\n  (. clojure.lang.Numbers (divide a 0))\n");
         var e = Cleat(null, bad);
         Assert.That(e.ExitCode, Is.EqualTo(1), e.ToString());
-        Assert.That(e.Err, Does.Contain($"Execution error (ArithmeticException) at ({bad}:3:3).\nDivide by zero"));
+        Assert.That(e.Err, Does.Contain("Execution error (ArithmeticException) at (bad.clj:3).\nDivide by zero"), "paths under the current directory are relative");
     }
 
     [Test]
@@ -190,16 +190,16 @@ public class HostProcessTests
     {
         var unresolved = Cleat(null, "-e", "(nope 1)");
         Assert.That(unresolved.ExitCode, Is.EqualTo(1), unresolved.ToString());
-        Assert.That(unresolved.Err.Trim(), Is.EqualTo("Syntax error (NO_SOURCE_PATH:1:1) Unable to resolve symbol: nope in this context"));
+        Assert.That(unresolved.Err.Trim(), Is.EqualTo("Syntax error compiling at (REPL:1:1).\nUnable to resolve symbol: nope in this context"));
 
         var runtime = Cleat(null, "-e", "(def boom (fn* [] (. clojure.lang.RT (nth [1 2] 5))))", "-e", "(boom)");
         Assert.That(runtime.ExitCode, Is.EqualTo(1), runtime.ToString());
-        Assert.That(runtime.Err, Does.StartWith("Execution error (ArgumentOutOfRangeException) at (REPL:1:1).\n"));
+        Assert.That(runtime.Err, Does.StartWith("Execution error (ArgumentOutOfRangeException) at (REPL:1).\n"));
 
         string file = Write("syn.clj", "(def ok 1)\n(def bad (fn* [] undefined-thing))\n");
         var syntax = Cleat(null, file);
         Assert.That(syntax.ExitCode, Is.EqualTo(1), syntax.ToString());
-        Assert.That(syntax.Err.Trim(), Does.Match("^" + Regex.Escape($"Syntax error ({file}:2:") + @"\d+\) Unable to resolve symbol: undefined-thing in this context$"));
+        Assert.That(syntax.Err.Trim(), Does.Match("^" + Regex.Escape("Syntax error compiling at (syn.clj:2:") + @"\d+\)\.\nUnable to resolve symbol: undefined-thing in this context$"));
     }
 
     [Test]

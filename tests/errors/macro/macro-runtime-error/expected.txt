@@ -1,0 +1,3 @@
+Unexpected error (ArithmeticException) macroexpanding m at (input.clj:3:16).
+Divide by zero
+exit: 1

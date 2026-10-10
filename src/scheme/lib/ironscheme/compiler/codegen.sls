@@ -130,7 +130,7 @@ See docs/license.txt. |#
             (mutable classes)    ; 已生成的类型（逆序）
             (mutable consts)     ; 常量（逆序）
             (mutable nconsts)
-            const-index          ; eq 哈希表：常量 → 下标
+            const-index          ; eq 哈希表（按 Equals）：常量 → (下标 . 常量)，见 constant-index!
             (mutable namespaces)
             (mutable references)
             (mutable mfields)    ; 模块静态字段名（逆序）
@@ -242,13 +242,21 @@ See docs/license.txt. |#
          (or (neg-zero? d)
              (and (not (real? d)) (or (neg-zero? (real-part d)) (neg-zero? (imag-part d)))))))
 
+  ;; 按 Equals 去重只对 Scheme 的数据安全。宿主对象（cleat-055：Clojure 的值）的 Equals 可能跨类型、忽略元数据——
+  ;; Clojure 的 () 与 []、'(1 2) 与 [1 2] 相等，带元数据的符号与不带的相等——合并会让 Clojure 代码看到错的常量。
+  ;; 这些对象只有同一个对象（eq?）才共用下标。表的值为 (下标 . 常量)。
+  (define (equals-dedupable? d)
+    (or (number? d) (char? d) (string? d) (symbol? d) (boolean? d) (null? d) (pair? d) (vector? d) (bytevector? d)))
+
   (define (constant-index! u d)
-    (or (and (not (signed-zero-constant? d)) (hashtable-ref (unit-const-index u) d #f))
-        (let ((k (unit-nconsts u)))
-          (unless (signed-zero-constant? d) (hashtable-set! (unit-const-index u) d k))
-          (unit-consts-set! u (cons d (unit-consts u)))
-          (unit-nconsts-set! u (+ k 1))
-          k)))
+    (let ((hit (and (not (signed-zero-constant? d)) (hashtable-ref (unit-const-index u) d #f))))
+      (if (and hit (or (eq? (cdr hit) d) (equals-dedupable? d)))
+          (car hit)
+          (let ((k (unit-nconsts u)))
+            (unless (or (signed-zero-constant? d) hit) (hashtable-set! (unit-const-index u) d (cons k d)))
+            (unit-consts-set! u (cons d (unit-consts u)))
+            (unit-nconsts-set! u (+ k 1))
+            k))))
 
   (define (add-namespace! u ns)
     (unless (member ns (unit-namespaces u))

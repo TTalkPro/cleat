@@ -373,17 +373,29 @@
         ex))
 
   ;;; 宏调用：v 为宏 Var，form 为 Clojure 数据，pos 为错误位置；返回展开结果（Clojure 数据）
+  ;;; 宏抛出的异常按 Clojure 1.12 的 Compiler.macroexpand1 分阶段（cleat-055，与 JVM 的输出对照）：
+  ;;;   宏函数的 ArityException（隐去 &form / &env 后）→ compile-syntax-check，无符号（"Syntax error (ArityException) compiling at"）；
+  ;;;   ArgumentException / InvalidOperationException / IExceptionInfo / 恰为 System.Exception（JVM 的受检异常）→ macro-syntax-check；
+  ;;;   其余 → macroexpand（"Unexpected error (类型) macroexpanding m at"）。符号是形式里写的运算符。
   (define (call-macro v form pos)
     (with-clr-exception-handler
       (lambda (ex)
         (if (clr-is Cleat.Core.Expand.ExpanderException ex)
             ($throw ex)
-            (let ((ex (macro-arity-fix v ex)))
+            (let* ((fixed (macro-arity-fix v ex))
+                   (arity? (not (eq? fixed ex)))
+                   (ex fixed)
+                   (op (clr-static-call clojure.lang.RT (first System.Object) form))
+                   (sym (and (not arity?) (clj-symbol? op) (->string op))))
               ($throw (expander-exception pos
-                        (if (or (clr-is System.ArgumentException ex) (clr-is System.InvalidOperationException ex)
-                                (clr-is clojure.lang.IExceptionInfo ex))
-                            'macro-syntax-check 'macroexpand)
-                        (clr-call System.Exception get_Message ex) ex)))))
+                        (cond
+                          (arity? 'compile-syntax-check)
+                          ((or (clr-is System.ArgumentException ex) (clr-is System.InvalidOperationException ex)
+                               (clr-is clojure.lang.IExceptionInfo ex)
+                               (clr-call System.Object Equals (clr-call System.Object GetType ex) (clr-type-of System.Exception)))
+                           'macro-syntax-check)
+                          (else 'macroexpand))
+                        (clr-call System.Exception get_Message ex) ex sym)))))
       (lambda () (apply-macro v form (macro-env-provider)))))
 
   (define (macro-transformer v)
@@ -459,21 +471,45 @@
       ((macroexpand) (clr-static-field-get Cleat.Core.Expand.ExpanderException PhaseMacroexpand))
       (else (clr-static-field-get Cleat.Core.Expand.ExpanderException PhaseCompile))))
 
-  (define (expander-exception pos phase msg cause)
-    (clr-new Cleat.Core.Expand.ExpanderException
-      (or (and pos (caddr pos)) (source-path))
-      (if pos (car pos) 0) (if pos (cadr pos) 0)
-      (phase-keyword phase) msg cause))
+  ;;; sym：出错形式的运算符名（字符串，Clojure 的 CompilerException.symbol），没有时省略
+  (define expander-exception
+    (case-lambda
+      ((pos phase msg cause) (expander-exception pos phase msg cause #f))
+      ((pos phase msg cause sym)
+       (clr-new Cleat.Core.Expand.ExpanderException
+         (or (and pos (caddr pos)) (source-path))
+         (if pos (car pos) 0) (if pos (cadr pos) 0)
+         (phase-keyword phase) msg cause (or sym '())))))
+
+  ;;; 出错形式的特殊形式名（Clojure 只对特殊形式报 "compiling recur at"，普通调用为 "compiling at"），否则 #f
+  (define (special-form-op form)
+    (and (stx? form)
+         (let ((d (syntax->clj form)))
+           (and (clr-is clojure.lang.ISeq d)
+                (let ((h (clr-static-call clojure.lang.RT (first System.Object) d)))
+                  (and (special-head-key h) (sym-name h)))))))
+
+  ;;; psyntax 自己的报错文本（Scheme 的措辞）不给 Clojure 用户看：换成 Clojure 的说法（cleat-055 诊断边界的后备；
+  ;;; 已知的来源——重复的参数、deftype* 的形状——在 (clojure syntax) 里先处理掉了）
+  (define (clojure-wording msg form op)
+    (cond
+      ((equal? msg "invalid syntax") (if op (string-append "Malformed " op) "Malformed form"))
+      ((equal? msg "duplicate binding") "Duplicate binding name")
+      ((member msg '("expected a list" "invalid expression" "not an identifier" "invalid context for definition"
+                     "incorrect usage of auxiliary keyword" "invalid syntax in quasiquote"))
+       (if op (string-append "Malformed " op) (string-append "Malformed form: " (->string (syntax->clj form)))))
+      (else msg)))
 
   ;;; syntax-error-hook：psyntax 的语法错误改抛 ExpanderException。"unbound identifier" 由 resolve-in 给出原因
   (define (clojure-error-hook who msg form c)
-    (let ((text (if (and (equal? msg "unbound identifier") (stx? form))
-                    (let ((d (syntax->clj form)))
-                      (if (clj-symbol? d)
-                          (let-values (((o why p?) (resolve-in (current-ns) d))) (or why msg))
-                          msg))
-                    msg)))
-      ($throw (expander-exception (syntax-position form) 'compile-syntax-check text '()))))
+    (let* ((op (special-form-op form))
+           (text (if (and (equal? msg "unbound identifier") (stx? form))
+                     (let ((d (syntax->clj form)))
+                       (if (clj-symbol? d)
+                           (let-values (((o why p?) (resolve-in (current-ns) d))) (or why msg))
+                           (string-append "Unable to resolve symbol: " (->string d) " in this context")))
+                     (clojure-wording msg form op))))
+      ($throw (expander-exception (syntax-position form) 'compile-syntax-check text '() op))))
 
   ;;; —— 入口：在 *ns* 里展开 / 求值 Clojure 形式 ——
 

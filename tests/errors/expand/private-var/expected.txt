@@ -1,0 +1,3 @@
+Syntax error (InvalidOperationException) compiling at (input.clj:4:8).
+var: other/secret is not public
+exit: 1

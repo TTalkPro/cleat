@@ -1,0 +1,3 @@
+Syntax error (ArityException) compiling at (input.clj:3:16).
+Wrong number of args (0) passed to: user/m
+exit: 1

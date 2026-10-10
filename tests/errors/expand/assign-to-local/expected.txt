@@ -1,0 +1,3 @@
+Syntax error (ArgumentException) compiling set! at (input.clj:1:17).
+Cannot assign to non-mutable: x
+exit: 1

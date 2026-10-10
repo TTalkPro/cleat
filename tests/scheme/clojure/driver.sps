@@ -141,13 +141,13 @@
   ;; ———————— 错误：执行错误带最内层形式的位置；语法错误是 ExpanderException ————————
   (check-contains "execution error names the type and location"
     (lambda () (format-error (lambda () (load-string "\n  (. clojure.lang.Numbers (divide 1 0))"))))
-    "Execution error (ArithmeticException) at (REPL:2:3).")
+    "Execution error (ArithmeticException) at (REPL:2).")
   (check-contains "execution error message on the next line"
     (lambda () (format-error (lambda () (load-string "(. clojure.lang.Numbers (divide 1 0))"))))
     "Divide by zero")
   (check-contains "syntax error keeps the expander text"
     (lambda () (format-error (lambda () (ev "(nope 1)"))))
-    "Syntax error (NO_SOURCE_PATH:1:1) Unable to resolve symbol: nope in this context")
+    "Syntax error compiling at (REPL:1:1).\nUnable to resolve symbol: nope in this context")
   (check-contains "exceptions are not wrapped (Clojure catch semantics)"
     (lambda () (with-clr-exception-handler (lambda (e) (clr-call System.Object ToString (clr-call System.Object GetType e)))
                  (lambda () (ev "(. clojure.lang.Numbers (divide 1 0))"))))

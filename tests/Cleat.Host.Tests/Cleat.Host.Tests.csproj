@@ -11,7 +11,8 @@
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
   </ItemGroup>
   <ItemGroup>
-    <!-- 只为构建顺序：先构建宿主（及其 Scheme 镜像与预编译的驱动库）；测试以子进程运行 src/Cleat.Host/bin/…/cleat.dll -->
-    <ProjectReference Include="..\..\src\Cleat.Host\Cleat.Host.csproj" ReferenceOutputAssembly="false" />
+    <!-- 先构建宿主（及其 Scheme 镜像与预编译的驱动库）；进程级测试以子进程运行 src/Cleat.Host/bin/…/cleat.dll，
+         cleat-055 的边界测试（SchemeInvisibilityTests）在测试进程里启动宿主（Program.Start），所以引用其程序集 -->
+    <ProjectReference Include="..\..\src\Cleat.Host\Cleat.Host.csproj" />
   </ItemGroup>
 </Project>

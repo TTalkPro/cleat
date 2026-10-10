@@ -1,0 +1,3 @@
+Execution error (ArityException) at (input.clj:3).
+Wrong number of args (2) passed to: user/f
+exit: 1

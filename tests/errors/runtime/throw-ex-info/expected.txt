@@ -1,0 +1,3 @@
+Execution error (ExceptionInfo) at (input.clj:1).
+boom
+exit: 1

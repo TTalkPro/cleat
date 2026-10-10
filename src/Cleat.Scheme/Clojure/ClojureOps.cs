@@ -185,6 +185,26 @@ public static class ClojureOps
         return null;
     }
 
+    // —— 编译路径的求值结果（cleat-055 值边界）——
+    // 镜像的 compile-core 返回的 thunk 是 (lambda () (clr-static-call ModuleLoader Run asm))：Scheme 互操作把返回值按 Scheme 规范化
+    // （long → fixnum Int32 等），Clojure 的顶层值经过它就变了。驱动把 Lcore 包成 ($clj-call 'HoldResult #f 核心)：值在编译后的代码里
+    // 直接存进线程槽（不经 Scheme 互操作），thunk 返回 nil，再由过程 TakeResult 原样取出。
+
+    [ThreadStatic] private static object t_result;
+
+    public static object HoldResult(object x)
+    {
+        t_result = x;
+        return null;
+    }
+
+    public static readonly Procedure TakeResult = new Op1("clojure-take-result", _ =>
+    {
+        object r = t_result;
+        t_result = null;
+        return r;
+    });
+
     /// <summary>Namespace 对象作为表达式（RT 的引导 ns 宏展开为它）：按名字取，AOT 产物里不存 Namespace 常量（cleat-052）。</summary>
     public static object FindNamespaceOf(object name) => Namespace.findOrCreate((clojure.lang.Symbol)name);
 

@@ -214,7 +214,7 @@
       '(exception "Syntax error (NO_SOURCE_PATH:1:1) Too few arguments to def"))
     (test "def outside the current namespace"
       (load-string "(def a/x 1)")
-      '(exception "Syntax error (NO_SOURCE_PATH:1:1) Can't create defs outside of current namespace"))
+      '(exception "Syntax error (NO_SOURCE_PATH:1:1) Can't create defs outside of current ns"))
 
     ;; —— macroexpand-1：宏 Var 展开一步，特殊形式不展开 ——
     ;; 还没有 fn*，宏函数用一个 map 充当（map 是 IFn：(m &form &env) = (get m &form &env)，所以宏调用不带参数）

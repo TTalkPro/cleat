@@ -1,0 +1,3 @@
+Syntax error reading source at (input.clj:4:1).
+EOF while reading, starting at line 3
+exit: 1

@@ -89,16 +89,34 @@ public sealed class ExpanderException : Exception, IExceptionInfo
     public static readonly Keyword PhaseSyntax = Keyword.intern("clojure.error", "macro-syntax-check"),
       PhaseMacroexpand = Keyword.intern("clojure.error", "macroexpand"), PhaseCompile = Keyword.intern("clojure.error", "compile-syntax-check");
 
+    /// <summary>原因文本（不含位置前缀）：Clojure 的 ex-str 把它放在第二行（cleat-055）。</summary>
+    public string Reason { get; }
+
+    /// <summary>
+    /// 出错形式的运算符（Clojure 的 CompilerException.symbol）：特殊形式名（"compiling recur at"）或宏的符号（"macroexpanding m at"）；
+    /// 普通调用与符号为 null（"compiling at"）。
+    /// </summary>
+    public string Symbol { get; }
+
     public ExpanderException(string sourcePath, int line, int column, Keyword phase, string message, Exception cause = null)
+        : this(sourcePath, line, column, phase, message, cause, null)
+    {
+    }
+
+    public ExpanderException(string sourcePath, int line, int column, Keyword phase, string message, Exception cause, string symbol)
         : base(Format(sourcePath, line, column, message), cause)
     {
-        SourcePath = sourcePath; Line = line; Column = column; Phase = phase;
+        SourcePath = sourcePath; Line = line; Column = column; Phase = phase; Reason = message; Symbol = symbol;
     }
 
     private static string Format(string path, int line, int column, string message) =>
       $"Syntax error ({path ?? "NO_SOURCE_PATH"}:{line}:{column}) {message}";
 
-    public IPersistentMap getData() => RT.map(
-      Keyword.intern("clojure.error", "source"), SourcePath, Keyword.intern("clojure.error", "line"), (long)Line,
-      Keyword.intern("clojure.error", "column"), (long)Column, Keyword.intern("clojure.error", "phase"), Phase);
+    public IPersistentMap getData()
+    {
+        var m = RT.map(
+          Keyword.intern("clojure.error", "source"), SourcePath, Keyword.intern("clojure.error", "line"), (long)Line,
+          Keyword.intern("clojure.error", "column"), (long)Column, Keyword.intern("clojure.error", "phase"), Phase);
+        return Symbol == null ? m : m.assoc(Keyword.intern("clojure.error", "symbol"), clojure.lang.Symbol.intern(Symbol));
+    }
 }

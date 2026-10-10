@@ -1,0 +1,3 @@
+Syntax error compiling at (input.clj:1:1).
+No such namespace: nope.ns
+exit: 1
