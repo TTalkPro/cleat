@@ -55,6 +55,7 @@
     (boot expander compat)
     ;(boot config)
     (boot expander internal)
+    (boot expander syntax-ext)
     (only (rnrs syntax-case) syntax-case syntax with-syntax)
     (prefix (rnrs syntax-case) sys.))
   
@@ -494,10 +495,6 @@
            (let ([a (f (car e) m s1* ae*)] 
                  [d (f (cdr e) m s1* ae*)])
              (if (eq? a d) e (cons a d)))]
-          [(vector? e) 
-           (let ([ls1 (vector->list e)])
-             (let ([ls2 (map (lambda (x) (f x m s1* ae*)) ls1)])
-               (if (for-all eq? ls1 ls2) e (list->vector ls2))))]
           [(stx? e)
            (let ([m* (stx-mark* e)] [s2* (stx-subst* e)])
              (cond
@@ -519,6 +516,12 @@
            (syntax-violation #f 
                "raw symbol encountered in output of macro"
                expr e)]
+          ;;; 语法扩展（向量等）：对子项递归，有变化才 rebuild
+          [(syntax-extension-of e) =>
+           (lambda (x)
+             (let* ([ls1 ((syntax-extension-children x) e)]
+                    [ls2 (map (lambda (c) (f c m s1* ae*)) ls1)])
+               (if (for-all eq? ls1 ls2) e ((syntax-extension-rebuild x) e ls2))))]
           [else (make-stx e (list m) s1* ae*)]))
       (mkstx (f expr mark '() '()) '() '() (list ae))))
 
@@ -531,23 +534,34 @@
          (syntax-kind? (annotation-expression x) p?))
         (else (p? x)))))
 
-  (define syntax-vector->list
+  ;;; 语法扩展（syntax-ext.sls）：去掉 wrap 与注解后的裸数据、它的扩展种类
+  (define syntax-ext-datum
     (lambda (x)
       (cond
-        ((stx? x)
-         (let ((ls (syntax-vector->list (stx-expr x)))
-               (m* (stx-mark* x))
-               (s* (stx-subst* x))
-               (ae* (stx-ae* x)))
-           (map (lambda (x) (mkstx x m* s* ae*)) ls)))
-        ((annotation? x) 
-         (syntax-vector->list (annotation-expression x)))
-        ((vector? x) (vector->list x))
-        (else (assertion-violation 'syntax-vector->list "BUG: not a syntax vector" x)))))
+        ((stx? x) (syntax-ext-datum (stx-expr x)))
+        ((annotation? x) (syntax-ext-datum (annotation-expression x)))
+        (else x))))
+  (define syntax-ext-kind
+    (lambda (x)
+      (let ((e (syntax-extension-of (syntax-ext-datum x))))
+        (and e (syntax-extension-kind e)))))
+  (define syntax-ext?
+    (lambda (x kind)
+      (let ((e (syntax-extension-by-kind kind)))
+        (and e (syntax-kind? x (syntax-extension-pred e))))))
+  ;;; 子项列表，wrap 下推到子项（与 syntax-dispatch 的 each-any 相同：wrap 为空时子项原样）
+  (define syntax-ext->list
+    (lambda (x kind)
+      (let ((m (syntax-dispatch x (vector 'ext kind 'each-any))))
+        (if m
+            (car m)
+            (assertion-violation 'syntax-ext->list "BUG: not a syntax extension of this kind" kind x)))))
+  (define syntax-vector->list
+    (lambda (x) (syntax-ext->list x 'vector)))
   (define syntax-pair?
     (lambda (x) (syntax-kind? x pair?)))
   (define syntax-vector?
-    (lambda (x) (syntax-kind? x vector?)))
+    (lambda (x) (syntax-ext? x 'vector)))
   (define syntax-null?
     (lambda (x) (syntax-kind? x null?)))
   (define syntax-list? ;;; FIXME: should terminate on cyclic input.
@@ -664,8 +678,11 @@
       ((pair? x) 
        (cons (strip-annotations (car x))
              (strip-annotations (cdr x))))
-      ((vector? x) (vector-map strip-annotations x))
       ((annotation? x) (annotation-stripped x))
+      ((syntax-extension-of x) =>
+       (lambda (e)
+         ((syntax-extension-rebuild e) x
+           (map strip-annotations ((syntax-extension-children e) x)))))
       (else x)))
 
   (define strip
@@ -674,8 +691,10 @@
           (if (or (annotation? x)
                   (and (pair? x) 
                        (annotation? (car x)))
-                  (and (vector? x) (> (vector-length x) 0)
-                       (annotation? (vector-ref x 0))))
+                  (let ((e (syntax-extension-of x)))
+                    (and e
+                         (let ((ls ((syntax-extension-children e) x)))
+                           (and (pair? ls) (annotation? (car ls)))))))
               ;;; TODO: Ask Kent why this is a sufficient test
               (strip-annotations x)
               x)
@@ -688,12 +707,13 @@
                  (if (and (eq? a (car x)) (eq? d (cdr x)))
                      x
                      (cons a d))))
-              ((vector? x)
-               (let ((old (vector->list x)))
-                 (let ((new (map f old)))
-                   (if (for-all eq? old new)
-                       x
-                       (list->vector new)))))
+              ((syntax-extension-of x) =>
+               (lambda (e)
+                 (let ((old ((syntax-extension-children e) x)))
+                   (let ((new (map f old)))
+                     (if (for-all eq? old new)
+                         x
+                         ((syntax-extension-rebuild e) x new))))))
               (else x))))))
 
   (define stx->datum
@@ -827,7 +847,10 @@
                  displaced-lexical syntax import export $module
                  $core-rtd library mutable ctv local-ctv global-ctv)
                 (values type (binding-value b) id))
-               (else (values 'other #f #f))))))
+               (else
+                (if (binding-extension-of type)
+                    (values type (binding-value b) id)
+                    (values 'other #f #f)))))))
         ((syntax-pair? e)
          (let ((id (syntax-car e)))
            (if (id? id)
@@ -845,7 +868,10 @@
                       define-fluid-syntax)
                     (values type (binding-value b) id))
                    (else
-                    (values 'call #f #f))))
+                    (let ((x (binding-extension-of type)))
+                      (if (and x (binding-extension-expand-form x))
+                          (values type (binding-value b) id)
+                          (values 'call #f #f))))))
                (values 'call #f #f))))
         (else (let ((d (stx->datum e)))
                 (if (self-evaluating? d)
@@ -879,6 +905,8 @@
         ((and (pair? x) (eq? (car x) '$rtd)) x)
         ((and (pair? x) (eq? (car x) 'ctv)) 
          (cons* 'local-ctv (cdr x) src))
+        ;;; 绑定扩展：(kind . value)，kind 已登记（syntax-ext.sls）
+        ((and (pair? x) (binding-extension-of (car x))) x)
         (else (assertion-violation 'expand "invalid transformer" x)))))
   
   ;;; r6rs's make-variable-transformer:
@@ -1259,8 +1287,9 @@
             ((stx? x) x)
             ((pair? x) (cons (f (car x)) (f (cdr x))))
             ((symbol? x) (scheme-stx x))
-            ((vector? x)
-             (vector-map f x))
+            ((syntax-extension-of x) =>
+             (lambda (e)
+               ((syntax-extension-rebuild e) x (map f ((syntax-extension-children e) x)))))
             (else x)))
         '() '() '())))
   
@@ -1813,6 +1842,18 @@
                      ((cons x y)
                       (f y (lambda (ls) (k (cons x ls)))))
                      (_ (app 'list->vector pat-x)))))))))
+      ;;; 向量以外的语法扩展：子项都是常量时在展开期 rebuild，否则运行时 syntax-ext-rebuild
+      (define quasiext
+        (lambda (p lev)
+          (let* ((kind (syntax-ext-kind p))
+                 (proto (syntax-ext-datum p))
+                 (x (vquasi (syntax-ext->list p kind) lev)))
+            (syntax-match x (quote)
+              ((quote (x* ...)) (app 'quote (syntax-ext-rebuild kind proto x*)))
+              (_ (list (scheme-stx 'syntax-ext-rebuild)
+                       (datum kind)
+                       (datum (syntax-ext-rebuild kind proto '()))
+                       x))))))
       (define vquasi
         (lambda (p lev)
           (syntax-match p ()
@@ -1861,6 +1902,8 @@
                         (quasi (list p) (+ lev 1))))
             ((p . q) (quasicons (quasi p lev) (quasi q lev)))
             (#(x ...) (not (stx? x)) (quasivector (vquasi x lev)))
+            (p (let ((kind (syntax-ext-kind p))) (and kind (not (eq? kind 'vector))))
+             (quasiext p lev))
             (p (app 'quote p)))))
       (lambda (x)
         (syntax-match x ()
@@ -1921,9 +1964,10 @@
                 (values (append lhs2* lhs*)
                         (append rhs2* rhs*)
                         (cons p q))))
-            (#(x* ...) 
-             (let-values (((lhs* rhs* x*) (quasi x* lev)))
-               (values lhs* rhs* (list->vector x*))))
+            (x (syntax-ext-kind x)
+             (let ((kind (syntax-ext-kind x)))
+               (let-values (((lhs* rhs* x*) (quasi (syntax-ext->list x kind) lev)))
+                 (values lhs* rhs* (syntax-ext-rebuild kind (syntax-ext-datum x) x*)))))
             (_ (values '() '() p)))))
       (lambda (x)
         (syntax-match x ()
@@ -2242,6 +2286,9 @@
   ;;   #(each p)                          (p*)
   ;;   #(each+ p1 (p2_1 ... p2_n) p3)      (p1* (p2_n ... p2_1) . p3)
   ;;   #(vector p)                        #(x ...) if p matches (x ...)
+  ;;                                      （= #(ext vector p)，保留这一写法使产物不变）
+  ;;   #(ext kind p)                      语法扩展 kind 的数据 d（syntax-ext.sls），
+  ;;                                      若 p 匹配 d 的子项列表
   ;;   #(atom <object>)                   <object> with "equal?"
   (define convert-pattern
    ; returns syntax-dispatch pattern & ids
@@ -2278,9 +2325,10 @@
                (let-values (((x ids) (cvt x n ids)))
                  (values (cons x y) ids))))
             (() (values '() ids))
-            (#(p ...) (not (stx? p))
-             (let-values (((p ids) (cvt p n ids)))
-               (values `#(vector ,p) ids)))
+            (x (syntax-ext-kind x)
+             (let ((kind (syntax-ext-kind x)))
+               (let-values (((p ids) (cvt (syntax-ext->list x kind) n ids)))
+                 (values (if (eq? kind 'vector) `#(vector ,p) `#(ext ,kind ,p)) ids))))
             (datum
              (values `#(atom ,(stx->datum datum)) ids)))))
       (cvt pattern 0 '())))
@@ -2367,7 +2415,15 @@
                ((free-id atom) r)
                ((scheme-id atom) r)
                ((vector) (match-empty (vector-ref p 1) r))
+               ((ext) (match-empty (vector-ref p 2) r))
                (else (assertion-violation 'syntax-dispatch "invalid pattern" p)))))))
+      ;;; 语法扩展：e 是 kind 的裸数据时，按列表模式匹配它的子项
+      (define match-ext
+        (lambda (e kind p m* s* ae* r)
+          (let ((x (syntax-extension-by-kind kind)))
+            (and x
+                 ((syntax-extension-pred x) e)
+                 (match ((syntax-extension-children x) e) p m* s* ae* r)))))
       (define combine
         (lambda (r* r)
           (if (null? (car r*))
@@ -2411,9 +2467,8 @@
                            (match-empty (vector-ref p 1) r)
                            (combine xr* r)))))
                ((atom) (and (equal? (vector-ref p 1) (strip e m*)) r))
-               ((vector)
-                (and (vector? e)
-                     (match (vector->list e) (vector-ref p 1) m* s* ae* r)))
+               ((vector) (match-ext e 'vector (vector-ref p 1) m* s* ae* r))
+               ((ext) (match-ext e (vector-ref p 1) (vector-ref p 2) m* s* ae* r))
                (else (assertion-violation 'syntax-dispatch "invalid pattern" p)))))))
       (define match
         (lambda (e p m* s* ae* r)
@@ -2613,10 +2668,16 @@
                (let-values (((ynew maps)
                              (gen-syntax src y r maps ellipsis? vec?)))
                  (values (gen-cons e x y xnew ynew) maps))))
-            (#(ls ...) 
-             (let-values (((lsnew maps)
-                           (gen-syntax src ls r maps ellipsis? #t)))
-               (values (gen-vector e ls lsnew) maps)))
+            (x (syntax-ext-kind x)
+             (let* ((kind (syntax-ext-kind x))
+                    (ls (syntax-ext->list x kind)))
+               (let-values (((lsnew maps)
+                             (gen-syntax src ls r maps ellipsis? #t)))
+                 (values
+                   (if (eq? kind 'vector)
+                       (gen-vector e ls lsnew)
+                       (gen-ext e kind ls lsnew))
+                   maps))))
             (_ (values `(quote ,e) maps)))))
       (define gen-ref
         (lambda (src var level maps)
@@ -2685,6 +2746,19 @@
             ((eq? (car lsnew) 'list)
              `(vector . ,(cdr lsnew)))
             (else `(list->vector ,lsnew)))))
+      ;;; 向量以外的语法扩展：子项都是常量时在展开期 rebuild，否则生成对 syntax-ext-rebuild 的调用；
+      ;;; 原型取"子项为空的重建结果"，只携带不参与展开的部分（元数据等）
+      (define gen-ext
+        (lambda (e kind ls lsnew)
+          (cond
+            ((eq? (car lsnew) 'quote)
+             (if (eq? (cadr lsnew) ls)
+                 `(quote ,e)
+                 `(quote ,(syntax-ext-rebuild kind (syntax-ext-datum e) (cadr lsnew)))))
+            (else
+             `(syntax-ext-rebuild (quote ,kind)
+                (quote ,(syntax-ext-rebuild kind (syntax-ext-datum e) '()))
+                ,lsnew)))))
       (define regen
         (lambda (x)
           (case (car x)
@@ -2820,11 +2894,12 @@
         (unless (stx? x)
           (cond
             ((pair? x) (f (car x)) (f (cdr x)))
-            ((vector? x) (vector-for-each f x))
             ((symbol? x) 
              (syntax-violation #f 
                "raw symbol encountered in output of macro"
-               expr x)))))
+               expr x))
+            ((syntax-extension-of x) =>
+             (lambda (e) (for-each f ((syntax-extension-children e) x)))))))
       (add-mark (gen-mark) rib x expr))
     (let ((x (transformer (add-mark anti-mark #f expr #f))))
       (if (procedure? x) 
@@ -2970,7 +3045,13 @@
                (stx-error e "attempt to reference an unexportable variable")))
           (else
            ;(assertion-violation 'chi-expr "invalid type " type (strip e '()))
-           (stx-error e "invalid expression"))))))
+           (let ((x (binding-extension-of type)))
+             (if x
+                 (let ((expand (lambda (e) (chi-expr e r mr))))
+                   (if (syntax-pair? e)
+                       ((binding-extension-expand-form x) e value expand)
+                       ((binding-extension-expand-reference x) e value expand)))
+                 (stx-error e "invalid expression"))))))))
 
   (define chi-set!
     (lambda (e r mr)
@@ -2997,7 +3078,12 @@
                     (build-global-assignment (syntax-annotation e) loc 
                       (chi-expr v r mr)))
                   (stx-error e "attempt to modify an unexportable variable")))
-             (else (stx-error e))))))))
+             (else
+              (let ((x (binding-extension-of type)))
+                (if (and x (binding-extension-expand-set! x))
+                    ((binding-extension-expand-set! x) e value
+                      (lambda (e) (chi-expr e r mr)))
+                    (stx-error e))))))))))
   
   (define (verify-formals fmls stx)
     (syntax-match fmls ()
@@ -4236,17 +4322,19 @@
     (lambda (x . args)
       (unless (for-all string? args)
         (assertion-violation 'syntax-error "invalid argument" args))
-      (raise 
-        (condition 
-          (make-message-condition
-            (if (null? args) 
-                "invalid syntax"
-                (apply string-append args)))
-          (make-syntax-violation 
-            (syntax->datum x)
-            #f)
-          (extract-position-condition x)
-          (extract-trace x)))))
+      (let ((msg (if (null? args) 
+                     "invalid syntax"
+                     (apply string-append args))))
+        (let ((c (condition 
+                   (make-message-condition msg)
+                   (make-syntax-violation 
+                     (syntax->datum x)
+                     #f)
+                   (extract-position-condition x)
+                   (extract-trace x))))
+          (let ((hook (syntax-error-hook)))
+            (when hook (hook #f msg x c)))
+          (raise c)))))
 
   (define (extract-trace x)
     (define-condition-type &trace &condition
@@ -4278,15 +4366,17 @@
                 (else
                  (assertion-violation 'syntax-violation 
                     "invalid who argument" who)))))
-         (raise 
-           (condition
-             (if who 
-                 (make-who-condition who)
-                 (condition))
-             (make-message-condition msg)
-             condition-object
-             (extract-position-condition form)
-             (extract-trace form))))))
+         (let ((c (condition
+                    (if who 
+                        (make-who-condition who)
+                        (condition))
+                    (make-message-condition msg)
+                    condition-object
+                    (extract-position-condition form)
+                    (extract-trace form))))
+           (let ((hook (syntax-error-hook)))
+             (when hook (hook who msg form c)))
+           (raise c)))))
 
   (define syntax-violation
     (case-lambda

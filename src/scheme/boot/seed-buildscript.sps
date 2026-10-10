@@ -86,6 +86,7 @@
     "boot/expander/internal.sls"
     "boot/expander/library-manager.sls"
     "boot/expander/builders.sls"
+    "boot/expander/syntax-ext.sls"   ; cleat-048：可扩展语法对象的注册表，core 导入
     "boot/expander/core.sls"
     "boot/expander/main.sls"
     ))
@@ -267,6 +268,7 @@
     (ri          (rnrs records inspection)             #t    #t)
     (rp          (rnrs records procedural)             #t    #t)
     (rs          (rnrs records syntactic)              #t    #t)
+    (isx         (ironscheme syntax-ext)               #t    #t)
     ($all        (boot system all)                 #f    #t)
     ($boot       (boot system bootstrap)           #f    #t)
     ))
@@ -1709,6 +1711,28 @@
     (&stacktrace-rtd)
     (&stacktrace-rcd)
     (ellipsis-map)
+    ;;; cleat-048：(boot expander syntax-ext)
+    (make-syntax-extension                        isx)
+    (syntax-extension?                            isx)
+    (syntax-extension-kind                        isx)
+    (syntax-extension-pred                        isx)
+    (syntax-extension-children                    isx)
+    (syntax-extension-rebuild                     isx)
+    (register-syntax-extension!                   isx)
+    (syntax-extension-of                          isx)
+    (syntax-extension-by-kind                     isx)
+    (syntax-extensions                            isx)
+    (syntax-ext-rebuild                           isx)
+    (make-binding-extension                       isx)
+    (binding-extension?                           isx)
+    (binding-extension-kind                       isx)
+    (binding-extension-expand-reference           isx)
+    (binding-extension-expand-set!                isx)
+    (binding-extension-expand-form                isx)
+    (binding-extension-macroexpand-1?             isx)
+    (register-binding-extension!                  isx)
+    (binding-extension-of                         isx)
+    (syntax-error-hook                            isx)
     ))
 
 

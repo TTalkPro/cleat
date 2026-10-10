@@ -20,6 +20,7 @@ C# 一侧在 `src/Cleat.Scheme`（运行时）、`src/Cleat.Stage0`（Lcore 解�
 | `lib/ironscheme/{clr,contracts,contracts-helper,integrable,typed}.sls`、`lib/ironscheme/{clr,syntax,typed}/` | `src/scheme/lib/ironscheme/` | boot 源码、编译器与 nanopass 适配库导入的、不在镜像里的库（从源码加载） |
 | `lib/nanopass/implementation-helpers.ironscheme.sls` | `src/scheme/lib/nanopass/` | IronScheme 对 nanopass 的覆盖适配库（在搜索路径里先于 `nanopass/` 找到） |
 | `nanopass/` | 子模块 `src/scheme/lib/nanopass-framework-scheme/` | nanopass 框架原样快照（不含 `.git`） |
+| `clojure/` | cleat 新增（cleat-048 起） | 按需加载、不进 Scheme 镜像的 Clojure 侧库，如 `(clojure syntax-kinds)`（把 Clojure 集合登记为语法扩展）；库名 `(clojure x)` 由搜索目录 `.` 找到 |
 
 库名暂时仍是 `(ironscheme …)` / `(boot …)` / `(nanopass …)`（cleat-054 改名）。psyntax 的文件定位器把 `(ironscheme compiler parse)`
 映射到 `<搜索目录>/ironscheme/compiler/parse.sls`，所以编译器放在 `lib/ironscheme/compiler/` 而不是设计 15 写的 `src/scheme/compiler/`。
