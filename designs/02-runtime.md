@@ -15,7 +15,7 @@
 | `nil` | `null` | 同 ClojureCLR |
 | 布尔 | 装箱 `bool`；`RT.T` / `RT.F` 单例，比较用 `RT.booleanCast` | 同 |
 | 整数 | `long`（装箱）；溢出按 Clojure 规则抛 `ArithmeticException`，`+'` 升为 `BigInt` | `Numbers.cs` |
-| `BigInt` / `BigDecimal` / `Ratio` | 提取；`BigInteger` 用 BCL | 同；ClojureCLR 自带的 `BigInteger.cs` 若与 BCL 重复则删 |
+| `BigInt` / `BigDecimal` / `Ratio` | 提取；`BigInteger` 暂用 ClojureCLR 自带的实现（哈希与 Java 一致；换 BCL 需约 150 行适配，cleat-006 决定后续再议） | 同 |
 | 浮点 | `double`（装箱） | 同 |
 | 字符 | `char`（装箱）；非 BMP 码点按 Clojure 规则是两个 `char` | 同 |
 | 字符串 | `string` | 同 |

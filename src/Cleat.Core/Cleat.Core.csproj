@@ -1,10 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 运行时（无 DLR）。设计：designs/02-runtime.md。clojure.lang/ 下是从 ClojureCLR 改写的 EPL 代码（designs/00 D11） -->
+  <!-- 运行时（无 DLR）。设计：designs/02-runtime.md。clojure.lang/ 下是从 ClojureCLR 改写的 EPL 代码（designs/00 D11），
+       不按 .editorconfig 的样式检查；新写的代码在 Runtime/ 与 Expander/ -->
   <PropertyGroup>
     <RootNamespace>Cleat.Core</RootNamespace>
     <AssemblyName>Cleat.Core</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- 旧代码带 CLSCompliant 等标注 -->
-    <NoWarn>$(NoWarn);CS3021;CS1591</NoWarn>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
+    <!-- 旧代码：CLSCompliant 标注、缺少 XML 注释、过时 API、未使用变量等 -->
+    <NoWarn>$(NoWarn);CS3021;CS1591;CS0618;CS0162;CS0168;CS0219;CS0414;CS0649;CS0169;CS8981;SYSLIB0011;SYSLIB0050;SYSLIB0051</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- RT.classForName 用 DependencyContext 枚举程序集（不是 DLR） -->
+    <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="10.0.0" />
+  </ItemGroup>
 </Project>
