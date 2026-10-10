@@ -1,0 +1,109 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Concurrent;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using clojure.lang;
+
+namespace Cleat.Core.Runtime;
+
+/// <summary>
+/// 接口文件 `名字.ifc`（designs/05-cil-backend.md §6、04 §6）：编译产物旁的 EDN，记录镜像 id（MVID）与其中的已知函数
+/// （Var → 类名与各 arity），供编译器做跨单元直接链接。加载 dll 时若 MVID 相符就登记；boot 镜像的接口文件另有 BootInterface.Check。
+/// </summary>
+public sealed class InterfaceFile
+{
+    public sealed class Entry
+    {
+        public Symbol Var;          // ns/name
+        public string ClassName;    // 函数类（含程序集名："T, asm"）
+        public int[] Arities;       // 固定参数个数；变长用 -(required + 1) 表示
+        public bool HasStatic;      // 有 invokeStatic
+    }
+
+    public string AssemblyName;
+    public Guid ImageId;
+    public List<Entry> Entries = new List<Entry>();
+
+    private static readonly Keyword KAsm = Keyword.intern("assembly"), KId = Keyword.intern("image-id"), KEntries = Keyword.intern("entries"),
+      KVar = Keyword.intern("var"), KClass = Keyword.intern("class"), KArities = Keyword.intern("arities"), KStatic = Keyword.intern("static");
+
+    public string ToEdn()
+    {
+        var entries = Entries.OrderBy(e => e.Var.ToString(), StringComparer.Ordinal).Select(e =>
+          (object)RT.map(KVar, e.Var, KClass, e.ClassName, KArities, LazilyPersistentVector.createOwning(e.Arities.Select(a => (object)(long)a).ToArray()), KStatic, e.HasStatic)).ToArray();
+        var m = RT.map(KAsm, AssemblyName, KId, ImageId.ToString(), KEntries, LazilyPersistentVector.createOwning(entries));
+        return ";; cleat 接口文件（designs/05 §6）；由编译驱动生成\n" + RT.printString(m) + "\n";
+    }
+
+    public static InterfaceFile Parse(string text)
+    {
+        var m = (IPersistentMap)EdnReader.readString(text, RT.map(Keyword.intern("eof"), null));
+        var f = new InterfaceFile { AssemblyName = (string)m.valAt(KAsm), ImageId = Guid.Parse((string)m.valAt(KId)) };
+        for (ISeq s = RT.seq(m.valAt(KEntries)); s != null; s = s.next())
+        {
+            var e = (IPersistentMap)s.first();
+            f.Entries.Add(new Entry
+            {
+                Var = (Symbol)e.valAt(KVar),
+                ClassName = (string)e.valAt(KClass),
+                Arities = ((IPersistentVector)e.valAt(KArities)).seq() is ISeq a ? RT.toArray(a).Select(x => (int)(long)x).ToArray() : Array.Empty<int>(),
+                HasStatic = RT.booleanCast(e.valAt(KStatic)),
+            });
+        }
+        return f;
+    }
+
+    public void Save(string path) => File.WriteAllText(path, ToEdn());
+    public static InterfaceFile Load(string path) => Parse(File.ReadAllText(path));
+
+    /// <summary>dll 旁的接口文件路径：`x.y.clj.dll` → `x.y.clj.ifc`。</summary>
+    public static string PathFor(string dllPath) => Path.ChangeExtension(dllPath, ".ifc");
+
+    // ———————————————— 已知函数登记 ————————————————
+
+    private static readonly ConcurrentDictionary<Symbol, Entry> s_known = new ConcurrentDictionary<Symbol, Entry>();
+
+    /// <summary>已加载产物中的已知函数（编译器跨单元直接链接用）。</summary>
+    public static Entry FindKnown(Symbol var) => s_known.TryGetValue(var, out var e) ? e : null;
+
+    public static int KnownCount => s_known.Count;
+
+    /// <summary>登记接口文件；程序集的 MVID 与文件记录的不符时不登记并返回 false（镜像重建后的旧文件）。</summary>
+    public static bool Register(InterfaceFile f, Assembly asm)
+    {
+        if (asm.ManifestModule.ModuleVersionId != f.ImageId) return false;
+        foreach (var e in f.Entries) s_known[e.Var] = e;
+        return true;
+    }
+
+    /// <summary>加载 dll 后调用：有同名 .ifc 且 MVID 相符则登记。</summary>
+    public static bool TryRegisterBeside(string dllPath, Assembly asm)
+    {
+        string p = PathFor(dllPath);
+        if (!File.Exists(p)) return false;
+        try { return Register(Load(p), asm); }
+        catch (Exception e) { RT.errPrintWriter().WriteLine($"warning: ignoring interface file {p}: {e.Message}"); return false; }
+    }
+
+    public static void ClearKnown() => s_known.Clear();
+}
+
+/// <summary>编译产物（用了 boot 镜像接口的 .clj.dll）在入口开头调用：镜像 id 不符则该产物是对旧镜像编译的，报错让加载方回退源码。</summary>
+public static class BootInterface
+{
+    public static Guid? CurrentImageId { get; set; }
+
+    public sealed class StaleModuleException : Exception
+    {
+        public StaleModuleException(string message) : base(message) { }
+    }
+
+    public static void Check(string imageId)
+    {
+        if (CurrentImageId == null) return;
+        if (!Guid.TryParse(imageId, out var g) || g != CurrentImageId.Value)
+            throw new StaleModuleException($"module was compiled against boot image {imageId}, but the running image is {CurrentImageId}; recompile it");
+    }
+}

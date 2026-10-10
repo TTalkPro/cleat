@@ -14,3 +14,12 @@
 
 ## 验收标准
 - 测试通过。
+
+## 结论（2026-10-10）
+
+完成（加载器本身在 cleat-012 已做，本任务补接口文件与镜像核对）。
+- 程序集约定：`[Cleat.Core.CleatModuleAttribute("入口类型", "Initialize")]`，入口 `public static object`，发射器在 `(entry …)` 时写入并校验（cleat-020）；`Loader.LoadModule` / `Run` 读属性调入口（cleat-012）。
+- `Cleat.Core.Runtime.InterfaceFile`：EDN 格式 `{:assembly "名字" :image-id "MVID" :entries [{:var ns/name :class "T, asm" :arities [n … -(required+1)] :static bool} …]}`，`ToEdn` / `Parse` / `Save` / `Load`，`PathFor(dll)` = 同名 `.ifc`；已知函数登记表 `FindKnown(var)`；`Register(file, asm)` 只在程序集 MVID 与文件相符时登记（镜像重建后的旧文件被忽略）；`Loader.LoadModule` 加载 dll 后自动尝试旁边的 `.ifc`。
+- `BootInterface.Check(imageId)`：产物入口开头调用，与 `CurrentImageId`（宿主加载 boot 镜像时设置，cleat-030）不符时抛 `StaleModuleException`；`Loader.TryLoad` 捕获它并回退到源码（有源码时），打印警告。
+- 测试 `InterfaceFileTests`（3 项）：EDN 往返与排序确定；加载 dll 时不相符的接口文件被忽略、相符的登记；镜像核对。
+- 留给后续：编译驱动（cleat-028）写接口文件与在产物入口生成 `Check` 调用；`CurrentImageId` 由宿主设置（cleat-030）。

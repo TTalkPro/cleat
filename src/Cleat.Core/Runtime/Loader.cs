@@ -153,6 +153,7 @@ public static class Loader
         }
 
         Register(asm);
+        InterfaceFile.TryRegisterBeside(full, asm);   // cleat-022：旁边的 .ifc（MVID 相符才登记）
         return WithLoadBindings(() => Run(asm));
     }
 
@@ -222,8 +223,16 @@ public static class Loader
 
             if (assembly is not null && (source is null || assembly.LastWriteTimeUtc >= source.LastWriteTimeUtc))
             {
-                LoadModule(assembly.FullName, false);
-                return true;
+                try
+                {
+                    LoadModule(assembly.FullName, false);
+                    return true;
+                }
+                catch (BootInterface.StaleModuleException e) when (source is not null)
+                {
+                    // cleat-022：对旧 boot 镜像编译的产物 → 回退源码（designs/04 §6）
+                    RT.errPrintWriter().WriteLine($"warning: {assembly.Name}: {e.Message}; loading {source.Name} instead");
+                }
             }
 
             if (source is not null)
