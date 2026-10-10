@@ -289,6 +289,24 @@ namespace clojure.lang
         public static readonly Var UncheckedMathVar = Var.intern(Namespace.findOrCreate(Symbol.intern("clojure.core")),
             Symbol.intern("*unchecked-math*"), false).setDynamic();
 
+        // CLEAT-012: compiler-side Vars that lived in Compiler.cs (core.clj expects them in clojure.core).
+        // *loaded-libs*, *print-length*, *print-level*, *print-namespace-maps* are def'd by core.clj itself.
+        public static readonly Var CompileFilesVar
+            = Var.intern(ClojureNamespace, Symbol.intern("*compile-files*"), false).setDynamic();
+
+        public static readonly Var CompilePathVar
+            = Var.intern(ClojureNamespace, Symbol.intern("*compile-path*"), null).setDynamic();
+
+        public static readonly Var CompilerOptionsVar
+            = Var.intern(ClojureNamespace, Symbol.intern("*compiler-options*"), null).setDynamic();
+
+        // *source-path* = file name, *file* = full path (ClojureCLR's SourceVar / SourcePathVar)
+        public static readonly Var SourceVar
+            = Var.intern(ClojureNamespace, Symbol.intern("*source-path*"), "NO_SOURCE_FILE").setDynamic();
+
+        public static readonly Var SourcePathVar
+            = Var.intern(ClojureNamespace, Symbol.intern("*file*"), "NO_SOURCE_PATH").setDynamic();
+
         #endregion
 
         #region  Clojure-environment IFns needing support
@@ -341,8 +359,8 @@ namespace clojure.lang
         {
             public override object invoke(object arg1)
             {
-                // CLEAT-005: was Compiler.loadFile(arg1.ToString()); belongs to Loader (cleat-012)
-                throw new NotImplementedException("cleat-005 stub: load-file -> Compiler.loadFile");
+                // CLEAT-012: was Compiler.loadFile(arg1.ToString()); the Loader opens the file and calls the load-source hook
+                return Cleat.Core.Runtime.Loader.LoadFile(arg1.ToString());
             }
         }
 
@@ -396,19 +414,7 @@ namespace clojure.lang
             }
         }
 
-#if MONO
-        public static bool checkSpecAsserts = ReadTrueFalseDefault(Environment.GetEnvironmentVariable("CLOJURE_SPEC_CHECK_ASSERTS"), false);
-#else
-        public static bool checkSpecAsserts = ReadTrueFalseDefault(Environment.GetEnvironmentVariable("clojure.spec.check-asserts"), false);
-#endif
-
-#if MONO
-        public static bool instrumentMacros = !ReadTrueFalseDefault(Environment.GetEnvironmentVariable("CLOJURE_SPEC_SKIP_MACROS"), false);
-#else
-        public static bool instrumentMacros = !ReadTrueFalseDefault(Environment.GetEnvironmentVariable("clojure.spec.skip-macros"), false);
-#endif
-
-        internal static volatile bool CHECK_SPECS = false;
+        // CLEAT-012: removed checkSpecAsserts / instrumentMacros / CHECK_SPECS (clojure.spec is not part of cleat)
 
         public static string SystemRuntimeDirectory = RuntimeEnvironment.GetRuntimeDirectory();
 
@@ -452,103 +458,38 @@ namespace clojure.lang
             //v.setMeta(map(dockw, "tests if 2 arguments are the same object",
             //    arglistskw, list(vector(Symbol.intern("x"), Symbol.intern("y")))));
 
-            // load Clojure.Source.dll to pick up all the clojure source files as embedded resources.
-            // If not found, we hope that the source files core.clj, etc. are available on the standard file search path
-
-
-            // Apparently this can cause a problem when the CLR is embedded in a non-managed app (such as a C++ app)
-            //   -- it will be an empty string and then we end up with a relative instead of an absolute path,
-            //   which will cause Assembly.LoadFile to throw an ArgumentException.
-            //string baseDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-
-            // THis alternative is supposed to work.
-            string baseDir = Path.GetDirectoryName(typeof(RT).Assembly.Location);
-
-
-            try
-            {
-                Assembly.LoadFile(Path.Combine(baseDir, "Clojure.Source.dll"));
-            }
-            catch (FileLoadException)
-            {
-                // this is okay.  It just means that the assets clojure/core.clj and company are going to be somewhere else
-            }
-            catch (FileNotFoundException)
-            {
-                // this is okay.  It just means that the assets clojure/core.clj and company are going to be somewhere else
-            }
-            catch (ArgumentException)
-            {
-                // This can happen when using CLR embedded in a non-managed app (such as C++ app)
-
-            }
-
-            // CLEAT-005: removed Compiler.InitializeCompilerOptions() and the RuntimeBootstrapFlag._doRTBootstrap block that
-            // bound Compiler.CompilerOptionsVar/DirectLinkingKeyword and called load("clojure/core").
-            // Cleat: startup becomes "register primitives -> load boot image" (02 §10), owned by Loader (cleat-012).
+            // CLEAT-012: removed the Assembly.LoadFile(baseDir/"Clojure.Source.dll") probe and the
+            // Compiler.InitializeCompilerOptions() + RuntimeBootstrapFlag._doRTBootstrap block that called load("clojure/core").
+            // Startup is now explicit: register primitives -> RT.Init() -> Loader.LoadModule(boot image) or stage0 (see Loader.cs).
         }
 
-        public static void LoadSpecCode()
-        {
-            // CLEAT-005: was clojure.clr.api.Clojure.var("clojure.core","require") + require of clojure.spec.alpha / clojure.core.specs.alpha
-            throw new NotImplementedException("cleat-005 stub: LoadSpecCode (clojure.clr.api.Clojure / spec assemblies)");
-        }
-
-        public static void Init()
-        {
-            DoInit();
-        }
+        // CLEAT-012: removed LoadSpecCode (clojure.spec / clojure.clr.api) and PostBootstrapInit (user.clj, clojure.core.server);
+        // the host does those explicitly (cleat-030). Init is idempotent and needs no compiler.
 
         private static bool INIT = false; // init guard
+        private static readonly object InitLock = new();
 
-        [MethodImpl(MethodImplOptions.Synchronized)]
-        static void DoInit()
+        /// <summary>
+        /// Idempotent runtime initialization: makes sure clojure.core and user exist, points the root of *ns* at user,
+        /// touches the Loader (assembly resolution) and runs RuntimeHooks.OnInit when registered.
+        /// Loading clojure.core itself is the boot image's / stage0's job and happens after this.
+        /// </summary>
+        public static void Init()
         {
-            if (INIT) { return; } else { INIT = true; }
-
-
-            // CLEAT-005: removed the Compiler.CompilerOptionsVar / DirectLinkingKeyword binding and the
-            // Assembly.LoadFile of clojure.spec.alpha.dll / clojure.core.specs.alpha.dll (needs compiled-clj assemblies);
-            // RT.Init becomes Loader's job (cleat-012).
-            throw new NotImplementedException("cleat-005 stub: RT.Init/DoInit (spec assemblies + PostBootstrapInit)");
-#pragma warning disable CS0162 // unreachable
-            PostBootstrapInit();
-
-            CHECK_SPECS = RT.instrumentMacros;
-#pragma warning restore CS0162
-        }
-
-        public static void PostBootstrapInit()
-        {
-            Var.pushThreadBindings(
-                RT.mapUniqueKeys(CurrentNSVar, CurrentNSVar.deref(),
-                WarnOnReflectionVar, WarnOnReflectionVar.deref(),
-                RT.UncheckedMathVar, RT.UncheckedMathVar.deref()));
-            try
+            lock (InitLock)
             {
-                Symbol USER = Symbol.intern("user");
-                Symbol CLOJURE = Symbol.intern("clojure.core");
+                if (INIT) { return; }
+                INIT = true;
 
-                Var in_ns = var("clojure.core", "in-ns");
-                Var refer = var("clojure.core", "refer");
-                in_ns.invoke(USER);
-                refer.invoke(CLOJURE);
-                MaybeLoadCljScript("user.cljr");
-                MaybeLoadCljScript("user.cljc");
-                MaybeLoadCljScript("user.clj");
-
-                // start socket servers
-                Var require = var("clojure.core", "require");
-                Symbol SERVER = Symbol.intern("clojure.core.server");
-                require.invoke(SERVER);
-                Var start_servers = var("clojure.core.server", "start-servers");
-                start_servers.invoke(Environment.GetEnvironmentVariables());
-            }
-            finally
-            {
-                Var.popThreadBindings();
+                Namespace.findOrCreate(Symbol.intern("clojure.core"));
+                Namespace user = Namespace.findOrCreate(Symbol.intern("user"));
+                CurrentNSVar.bindRoot(user);
+                Cleat.Core.Runtime.Loader.EnsureInitialized();
+                Cleat.Core.Runtime.RuntimeHooks.OnInit?.Invoke();
             }
         }
+
+        public static bool IsInitialized => INIT;
 
         #endregion
 
@@ -2857,11 +2798,17 @@ namespace clojure.lang
 
         internal static Type classForName(string p, Namespace ns, bool canCallClrTypeSpec)
         {
-            // CLEAT-005: removed Compiler.FindDuplicateType(p) lookup of types generated in the current compilation session;
-            // Cleat's Loader/compiler must register generated types through a hook (cleat-012).
+            // CLEAT-012: was Compiler.FindDuplicateType(p); module assemblies (boot image, AOT .clj.dll, in-memory eval
+            // assemblies) register with the Loader and are searched first.
+            Type t = Cleat.Core.Runtime.Loader.FindType(p);
+            if (t != null)
+            {
+                NumDuplicates++;
+                return t;
+            }
 
             // Try using Type.GetType which can find types with assembly-qualified names.
-            Type t = Type.GetType(p, false);
+            t = Type.GetType(p, false);
             if (t != null)
             {
                 NumDirects++;
@@ -3522,118 +3469,11 @@ namespace clojure.lang
             load(relativePath, true);
         }
 
-        static readonly IList<string> sourceExtensions = [".cljr", ".cljc", ".clj"];
-        // CLEAT-005: `.Map(...)` was an extension method from CljCompiler/Context/DynInitHelper.cs; replaced by LINQ Select (3 sites)
-        static readonly IList<string> assemblyExtensions = sourceExtensions.Select((x) => { return x + ".dll"; }).ToList();
-
+        // CLEAT-012: the search (source vs .clj.dll, embedded resources) moved to Cleat.Core.Runtime.Loader;
+        // the compile/eval half goes through RuntimeHooks (load-source / compile).
         public static void load(String relativePath, Boolean failIfNotFound)
         {
-            if (!RuntimeBootstrapFlag.DisableFileLoad)
-            {
-                FileInfo cljInfo = sourceExtensions.Select((ext) => FindFile(relativePath + ext)).Where((fi) => fi is not null).FirstOrDefault();
-
-                var dllRelativePath = relativePath.Replace('/', '.');
-                FileInfo assyInfo = assemblyExtensions.Select((ext) => FindFile(dllRelativePath + ext)).Where((fi) => fi is not null).FirstOrDefault();
-
-                if ((assyInfo != null &&
-                     (cljInfo == null || assyInfo.LastWriteTime >= cljInfo.LastWriteTime)))
-                {
-                    try
-                    {
-                        Var.pushThreadBindings(RT.mapUniqueKeys(CurrentNSVar, CurrentNSVar.deref(),
-                                                          WarnOnReflectionVar, WarnOnReflectionVar.deref(),
-                                                          RT.UncheckedMathVar, RT.UncheckedMathVar.deref()));
-                        // CLEAT-005: was Compiler.LoadAssembly(assyInfo, relativePath) (load a compiled .clj.dll)
-                        throw new NotImplementedException("cleat-005 stub: RT.load -> Compiler.LoadAssembly(FileInfo)");
-                    }
-                    finally
-                    {
-                        Var.popThreadBindings();
-                    }
-                }
-
-                if (cljInfo != null)
-                {
-                    // Need to know the actual extension
-                    string ext = cljInfo.Name.Substring(cljInfo.Name.LastIndexOf('.'));
-                    string sourceName = relativePath + ext;
-                    // CLEAT-005: was `if (booleanCast(Compiler.CompileFilesVar.deref())) Compile(...) else LoadScript(...)` (*compile-files*)
-                    LoadScript(cljInfo, sourceName);
-                    return;
-                }
-            }
-
-            try
-            {
-                Var.pushThreadBindings(RT.map(CurrentNSVar, CurrentNSVar.deref(),
-                    WarnOnReflectionVar, WarnOnReflectionVar.deref(),
-                    RT.UncheckedMathVar, RT.UncheckedMathVar.deref()));
-                // CLEAT-005: removed Compiler.TryLoadInitType(relativePath) (finds __Init__ type of an already-loaded compiled namespace)
-            }
-            finally
-            {
-                Var.popThreadBindings();
-            }
-
-
-            bool loaded = TryLoadFromEmbeddedResource(relativePath, relativePath + ".cljr.dll")
-                || TryLoadFromEmbeddedResource(relativePath, relativePath + ".cljc.dll")
-                || TryLoadFromEmbeddedResource(relativePath, relativePath + ".clj.dll");
-
-
-            if (!loaded && failIfNotFound)
-                throw new FileNotFoundException(String.Format("Could not locate {0} with extensions .cljr, .cljc, .clj, .cljr.dll, .cljc.dll, or .clj.dll on load path.{1}",
-                        relativePath,
-                        relativePath.Contains("_") ? " Please check that namespaces with dashes use underscores in the Clojure file name." : ""));
-        }
-
-        private static bool TryLoadFromEmbeddedResource(string relativePath, string assemblyname)
-        {
-            var asmStream = GetEmbeddedResourceStream(assemblyname, out _);
-            if (asmStream != null)
-            {
-                try
-                {
-                    Var.pushThreadBindings(RT.map(CurrentNSVar, CurrentNSVar.deref(),
-                                                  WarnOnReflectionVar, WarnOnReflectionVar.deref(),
-                                                  RT.UncheckedMathVar, RT.UncheckedMathVar.deref()));
-                    // CLEAT-005: was Compiler.LoadAssembly(ReadStreamBytes(asmStream), relativePath)
-                    throw new NotImplementedException("cleat-005 stub: RT.load -> Compiler.LoadAssembly(byte[]) from embedded resource");
-                }
-                finally
-                {
-                    Var.popThreadBindings();
-                }
-            }
-
-            var extension = ".cljr";
-            var embeddedCljName = relativePath.Replace("/", ".") + extension;
-            var stream = GetEmbeddedResourceStream(embeddedCljName, out Assembly containingAssembly);
-            if (stream == null)
-            {
-                extension = ".cljc";
-                embeddedCljName = relativePath.Replace("/", ".") + extension;
-                stream = GetEmbeddedResourceStream(embeddedCljName, out containingAssembly);
-            }
-            if (stream == null)
-            {
-                extension = ".clj";
-                embeddedCljName = relativePath.Replace("/", ".") + extension;
-                stream = GetEmbeddedResourceStream(embeddedCljName, out containingAssembly);
-            }
-            if (stream != null)
-            {
-                using var rdr = new StreamReader(stream);
-                // CLEAT-005: was `if (booleanCast(Compiler.CompileFilesVar.deref())) Compile(...) else LoadScript(...)` (*compile-files*)
-                LoadScript(containingAssembly.FullName, embeddedCljName, rdr, relativePath);
-                return true;
-            }
-            return false;
-        }
-
-        private static void MaybeLoadCljScript(string cljname)
-        {
-            LoadCljScript(cljname, false);
+            Cleat.Core.Runtime.Loader.TryLoad(relativePath, failIfNotFound);
         }
 
         public static void LoadCljScript(string cljname)
@@ -3647,31 +3487,13 @@ namespace clojure.lang
             if (cljInfo != null)
                 LoadScript(cljInfo, cljname);
             else if (failIfNotFound)
-                throw new FileNotFoundException(String.Format("Could not locate Clojure resource on {0}", ClojureLoadPathString));
+                throw new FileNotFoundException(String.Format("Could not locate Clojure resource {0} on {1}", cljname, ClojureLoadPathString));
         }
 
         public static void LoadScript(FileInfo cljInfo, string relativePath)
         {
-            using TextReader rdr = cljInfo.OpenText();
-            LoadScript(cljInfo.FullName, cljInfo.Name, rdr, relativePath);
-        }
-
-        private static void LoadScript(string fullName, string name, TextReader rdr, string relativePath)
-        {
-            // CLEAT-005: was Compiler.load(rdr, fullName, name, relativePath) -- read/eval loop; Cleat: Loader hook (cleat-012)
-            throw new NotImplementedException("cleat-005 stub: RT.LoadScript -> Compiler.load(TextReader)");
-        }
-
-        private static void Compile(FileInfo cljInfo, string relativePath)
-        {
-            using TextReader rdr = cljInfo.OpenText();
-            Compile(cljInfo.Directory.FullName, cljInfo.Name, rdr, relativePath);
-        }
-
-        private static void Compile(string dirName, string name, TextReader rdr, string relativePath)
-        {
-            // CLEAT-005: was Compiler.Compile(rdr, dirName, name, relativePath) -- AOT compile; Cleat: compiler driver (cleat-028)
-            throw new NotImplementedException("cleat-005 stub: RT.Compile -> Compiler.Compile(TextReader)");
+            // CLEAT-012: was Compiler.load(rdr, fullName, name, relativePath)
+            Cleat.Core.Runtime.Loader.LoadFile(cljInfo.FullName, relativePath);
         }
 
         static FileInfo FindFile(string path, string filename)
@@ -3690,6 +3512,10 @@ namespace clojure.lang
 
         static IEnumerable<string> GetFindFilePathsRaw()
         {
+            // CLEAT-012: the Loader's path (CLEAT_LOAD_PATH, -I) comes first
+            foreach (string path in Cleat.Core.Runtime.Loader.LoadPath.ToArray())
+                yield return path;
+
             yield return System.AppDomain.CurrentDomain.BaseDirectory;
             yield return Path.Combine(System.AppDomain.CurrentDomain.BaseDirectory, "bin");
             yield return Directory.GetCurrentDirectory();
@@ -3761,7 +3587,7 @@ namespace clojure.lang
             return path.Replace('/', Path.DirectorySeparatorChar);
         }
 
-        static Stream GetEmbeddedResourceStream(string resourceName, out Assembly containingAssembly)
+        internal static Stream GetEmbeddedResourceStream(string resourceName, out Assembly containingAssembly)  // CLEAT-012: internal (Loader)
         {
             containingAssembly = null;
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
