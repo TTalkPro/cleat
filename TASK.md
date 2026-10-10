@@ -7,7 +7,7 @@
 |----|------|--------|------|------|
 | [cleat-001](tasks/cleat-001-repository-skeleton.md) | 仓库骨架与构建约定（含许可分区确认） | M0 | 无 | 完成 |
 | [cleat-002](tasks/cleat-002-test-assets.md) | 引入测试资产：jolt 语料、clojure-test-suite、test_clojure | M0 | cleat-001 | 完成 |
-| [cleat-003](tasks/cleat-003-spike-dotnet-capabilities.md) | 验证 .NET 10 能力（Clojure 相关补充） | M0 | cleat-001 | 未开始 |
+| [cleat-003](tasks/cleat-003-spike-dotnet-capabilities.md) | 验证 .NET 10 能力（Clojure 相关补充） | M0 | cleat-001 | 完成 |
 | [cleat-004](tasks/cleat-004-spike-llvm-toolchain.md) | 验证 LLVM 工具链与原生 ABI（异常方案、调用约定） | 后续（LLVM） | cleat-001 | 搁置 |
 | [cleat-005](tasks/cleat-005-spike-extract-clojurelang.md) | 提取试验：clojure.lang 不带 DLR 能否编译 | M0 | cleat-001 | 未开始 |
 | [cleat-006](tasks/cleat-006-core-values-and-collections.md) | Cleat.Core 骨架、值表示与持久集合 | M1 | cleat-005 | 未开始 |
