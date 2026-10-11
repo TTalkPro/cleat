@@ -20,7 +20,17 @@ public sealed class InterfaceFile
         public string ClassName;    // 函数类（含程序集名："T, asm"）
         public int[] Arities;       // 固定参数个数；变长用 -(required + 1) 表示
         public bool HasStatic;      // 有 invokeStatic
+        // 可内联的固定子句（cleat-042）：参数个数 → 子句 (形参 体 …) 的 Lcore（Cleat.Scheme 的 fasl 字节）；没有时为 null。
+        // 不写进 .ifc（启动时要解析），写在旁边的二进制文件 .inl，第一次要用时才读（FindInline）
+        public Dictionary<int, byte[]> Inline;
+        internal InterfaceFile Owner;
     }
+
+    /// <summary>.ifc 旁的内联体文件（cleat-042）</summary>
+    public static string InlinePathFor(string ifcPath) => Path.ChangeExtension(ifcPath, ".inl");
+
+    private string _inlinePath;        // 读入时：旁边的 .inl（还没读）
+    private bool _inlineLoaded;
 
     public string AssemblyName;
     public Guid ImageId;
@@ -55,8 +65,64 @@ public sealed class InterfaceFile
         return f;
     }
 
-    public void Save(string path) => File.WriteAllText(path, ToEdn());
-    public static InterfaceFile Load(string path) => Parse(File.ReadAllText(path));
+    public void Save(string path)
+    {
+        File.WriteAllText(path, ToEdn());
+        string inl = InlinePathFor(path);
+        if (File.Exists(inl)) File.Delete(inl);
+        var withInline = Entries.Where(e => e.Inline is { Count: > 0 }).OrderBy(e => e.Var.ToString(), StringComparer.Ordinal).ToList();
+        if (withInline.Count == 0) return;
+        // 格式：镜像 id、条目数，每条 Var 名、子句数、(参数个数 长度 字节)…
+        using var w = new BinaryWriter(File.Create(inl));
+        w.Write(ImageId.ToString());
+        w.Write(withInline.Count);
+        foreach (var e in withInline)
+        {
+            w.Write(e.Var.ToString());
+            w.Write(e.Inline.Count);
+            foreach (var kv in e.Inline.OrderBy(kv => kv.Key)) { w.Write(kv.Key); w.Write(kv.Value.Length); w.Write(kv.Value); }
+        }
+    }
+
+    public static InterfaceFile Load(string path)
+    {
+        var f = Parse(File.ReadAllText(path));
+        string inl = InlinePathFor(path);
+        if (File.Exists(inl)) f._inlinePath = inl;
+        return f;
+    }
+
+    /// <summary>已知函数的可内联子句（参数个数 n）的 fasl 字节；没有时 null。第一次用到时读 .inl（镜像 id 不符的旧文件忽略）</summary>
+    public static byte[] FindInline(Entry e, int n)
+    {
+        var f = e.Owner;
+        if (f != null && !f._inlineLoaded)
+            lock (f)
+                if (!f._inlineLoaded)
+                {
+                    try { f.LoadInline(); }
+                    catch (Exception ex) { RT.errPrintWriter().WriteLine($"warning: ignoring inline file {f._inlinePath}: {ex.Message}"); }
+                    f._inlineLoaded = true;
+                }
+        return e.Inline != null && e.Inline.TryGetValue(n, out var b) ? b : null;
+    }
+
+    private void LoadInline()
+    {
+        if (_inlinePath == null) return;
+        using var r = new BinaryReader(File.OpenRead(_inlinePath));
+        if (!Guid.TryParse(r.ReadString(), out var id) || id != ImageId) return;
+        var byVar = Entries.ToDictionary(e => e.Var.ToString(), StringComparer.Ordinal);
+        int count = r.ReadInt32();
+        for (int i = 0; i < count; i++)
+        {
+            string v = r.ReadString();
+            int k = r.ReadInt32();
+            var d = new Dictionary<int, byte[]>();
+            for (int j = 0; j < k; j++) { int n = r.ReadInt32(); int len = r.ReadInt32(); d[n] = r.ReadBytes(len); }
+            if (byVar.TryGetValue(v, out var e)) e.Inline = d;
+        }
+    }
 
     /// <summary>dll 旁的接口文件路径：`x.y.clj.dll` → `x.y.clj.ifc`。</summary>
     public static string PathFor(string dllPath) => Path.ChangeExtension(dllPath, ".ifc");
@@ -74,7 +140,7 @@ public sealed class InterfaceFile
     public static bool Register(InterfaceFile f, Assembly asm)
     {
         if (asm.ManifestModule.ModuleVersionId != f.ImageId) return false;
-        foreach (var e in f.Entries) s_known[e.Var] = e;
+        foreach (var e in f.Entries) { e.Owner = f; s_known[e.Var] = e; }
         return true;
     }
 

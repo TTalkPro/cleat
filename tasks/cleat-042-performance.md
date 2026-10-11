@@ -207,3 +207,46 @@ prim_fib（`(defn fib ^long [^long n] …)`，fib 27）：27 → **4 ms**。
 
 剩余：第 4 项的小函数内联（无提示的 `mod`、`fib` 这类装箱泛型算术）、第 5 项 locals-clearing；
 局部变量按初值静态类型推断（省去 `^Type` 提示）。
+
+### 第 4 项：小函数内联（2026-10-11）
+
+先剖析（fib）：两处与内联无关的固定开销先去掉——
+- 静态决议调用后的 `RetObject` 走 `Reflector.ConvertFrom` 的类型分派，占 fib 的 35%：long / double / bool / 引用类型直接返回。
+- 直接链接调用点每次 `newobj` 一个实例作 self：守卫已确认 Var 的根就是该函数类的实例，直接用根（普通 invoke 的 this 也是它）。
+  fib 17 → 9 ms、protocol 53 → 43 ms。
+
+**内联**（JVM 没有的；按 CLR 的做法在编译期做）：
+- AOT 单元（clojure.core 等）的顶层 `(def v (fn* …))`，非宏、无自引用、固定子句小（≤160 个序对）且只含 let / loop / if / 调用
+  （不含 set!、fn*、deftype、def、try 等）时，接口文件旁写 `.inl`（二进制：镜像 id + 各子句 Lcore 的 fasl）；`.ifc` 不变
+  （启动时要解析；把内联体放进 .ifc 会让它 134 KB → 1.1 MB、启动多 ~40 ms）。`.inl` 第一次要用时才读，镜像 id 不符的旧文件忽略。
+- 调用点（展开器 var-call）：`((lambda (r a …) (if (instance? 函数类 r) ((case-lambda 子句) a …) (r a …))) Var读 实参 …)`——
+  守卫保证 with-redefs / 重定义照常；实参只求值一次；子句的约束变量逐一 α 改名（前端按符号建表，同一体内联多次名字不能重复）。
+  构建 Clojure 镜像时关闭（`inline-calls?`）：镜像里的子句不含内联结果，A / B / C 各级 `.inl` 相同，不动点成立。
+- 变长子句的形参在 Lcore 里也是真列表（必需参数 + 剩余 seq），必须跳过（否则 `(commute r f x)` 把 x 当剩余 seq）。
+- **语义边界**：内联后函数边界上的 Object 不再存在，实参的静态类型会流进体里改变重载选择。long 的两组重载行为相同；
+  double 不同（`Util.equiv` 的同一性捷径使 JVM 上 `(not= ##NaN ##NaN)` 为 false；double 除零 object 重载报错、double 重载得 ##Inf）。
+  内联的形参与实参临时变量带 `$inl` 后缀，推断不把它们定为 double。
+- 配套：`(instance? T x)` 的 T 是能按名字引用的常量时直接 `isinst`（守卫与用户代码都受益）；
+  宿主调用的实参在推断里算原始用途（通常选到原始类型的重载）；
+  Clojure `if` 的测试 `(let ((t X)) (if (null? t) #f t))` 中 X 是返回 CLR bool 的调用时直接在 test 上下文求值（不装箱再判断）。
+
+内联的合流点：守卫两支（内联体 long、退回的 invoke 是 object）合流后结果装箱——不做投机类型（没有去优化就不安全）。
+
+符合性：语料 "eduction reduces" 由抛 CCE 转为正确的 9（分歧表那条的"jolt 值"说明本就不对），删除；cts 与基线一致；583 测试全绿。
+
+**基准的预热**：现在生成代码很快，前几轮的时间主要是框架（CoreLib 等 ReadyToRun 代码）还没升到 tier-1——调用计数的 100 ms 窗口在
+启动期不断被新 JIT 推迟。`DOTNET_TieredCompilation=0` 稳态反而更慢（protocol 72 vs 33 ms，失去动态 PGO 的接口去虚化），所以不改运行时设置；
+min 是稳态指标，中位数呈双峰（keyword_invoke 21 / 69、protocol 33 / 71）。
+
+| 基准 | 基线 | 第 4 项前 | 现在（min） |
+|---|---|---|---|
+| sum_loop | 1006 | 12 | 11 |
+| protocol | 517 | 53 | 33 |
+| keyword_invoke | 631 | 56 | 21 |
+| lazy_chain | 349 | 87 | 82 |
+| assoc_map | 219 | 64 | 61 |
+| reduce_vec | 119 | 33 | 33 |
+| fib | 49 | 17 | 10 |
+| prim_fib | — | 4 | 4 |
+
+剩余：第 5 项 locals-clearing；内联只覆盖 AOT 单元（REPL / 源码加载的 defn 还没有内联体）；局部变量按初值类型推断。

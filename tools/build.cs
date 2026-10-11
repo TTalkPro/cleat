@@ -162,7 +162,7 @@ void Publish(string[] a)
                    "--self-contained", "-o", outDir, "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-nodeReuse:false"]);
     File.Copy(schemeBoot, Path.Combine(outDir, "cleat.scheme.boot.dll"));
     CopyDir(Path.Combine(bootDir, "cleat.scheme.clojure"), Path.Combine(outDir, "cleat.scheme.clojure"));
-    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "boot-order.edn" })
+    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "cleat.boot.inl", "boot-order.edn" })
         if (File.Exists(Path.Combine(bootDir, f))) File.Copy(Path.Combine(bootDir, f), Path.Combine(outDir, f));
     foreach (var f in Directory.GetFiles(Path.Combine(srcDir, "clojure"), "*.clj.*"))
         File.Copy(f, Path.Combine(outDir, Path.GetFileName(f)));

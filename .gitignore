@@ -61,6 +61,7 @@ src/boot/*.dll
 src/boot/*.lcil
 src/boot/*.pdb
 **/*.ifc
+**/*.inl
 **/*.clj.dll
 artifacts/
 

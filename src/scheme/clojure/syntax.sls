@@ -26,10 +26,10 @@
 
 (library (clojure syntax)
   (export clojure-eval clojure-expand clojure-macroexpand-1 clojure-macroexpand
-          current-ctx clojure-locals-env special-form-names)
+          current-ctx clojure-locals-env special-form-names inline-calls?)
   (import
     (rnrs)
-    (only (cleat scheme) parameterize make-parameter with-clr-exception-handler format)
+    (only (cleat scheme) parameterize make-parameter with-clr-exception-handler format gensym)
     (only (cleat scheme unsafe) $throw $try/catch $try/finally)
     (cleat scheme syntax-ext)
     (cleat scheme clr)
@@ -1045,6 +1045,66 @@
                                 (prim-sig (car vs) ps (nil->f (meta-get vm kw-tag)))))))
                    (else (loop (cdr vs))))))))
 
+  ;;; ———————————————— 小函数内联（cleat-042 第 4 项）————————————————
+  ;;; 接口文件里记了 Lcore 的小函数（Driver.InlineTarget）在调用点展开为
+  ;;;   ((lambda (r a …) (if ($clj-call "IsInstanceOf" #f '函数类 r) ((case-lambda 子句) a …) ($clj-invoke r a …))) Var读 实参 …)
+  ;;; 守卫保证 with-redefs / 重定义照常生效；实参只求值一次。子句的约束变量逐一改名（同一个体内联多次时名字不重复，
+  ;;; 前端按符号建表）。构建 Clojure 镜像时关闭（inline-calls? 为 #f）：镜像里的子句不含内联结果，各级镜像的接口文件相同，不动点成立
+  (define inline-calls? (make-parameter #t))
+  (define (inline-target v n)
+    (let ((r (clr-static-call Cleat.Scheme.Clojure.Driver InlineTarget v n)))
+      (and (vector? r) r)))
+
+  ;; Lcore 的 α 改名：只看 Scheme 的序对与符号（与 parse-core 相同），约束形式是 lambda / case-lambda（含 annotated-）/ letrec / letrec*
+  ;; 内联子句的形参与实参临时变量带 $inl 后缀：编译器不把它们推断为 double（函数边界上实参是 Object——Util.equiv 的同一性捷径、
+  ;; double 除零等在 object 重载与 double 重载上行为不同；long 的两组重载行为相同，照常推断）
+  (define (inl-gensym) (string->symbol (string-append (symbol->string (gensym)) "$inl")))
+  (define (alpha-rename-clause cl)
+    (define top? #t)
+    (define (bind fs env)
+      (cond ((null? fs) (values '() env))
+            ((symbol? fs) (let ((n (if top? (inl-gensym) (gensym)))) (values n (cons (cons fs n) env))))
+            ((pair? fs) (let-values (((n env) (bind (car fs) env)))
+                          (let-values (((rest env) (bind (cdr fs) env)))
+                            (values (cons n rest) env))))
+            (else (values fs env))))
+    (define (clause cl env)
+      (let-values (((fs env) (bind (car cl) env)))
+        (set! top? #f)
+        (cons fs (walk* (cdr cl) env))))
+    (define (walk* xs env)
+      (cond ((pair? xs) (cons (walk (car xs) env) (walk* (cdr xs) env)))
+            (else xs)))
+    (define (walk x env)
+      (cond
+        ((symbol? x) (let ((p (assq x env))) (if p (cdr p) x)))
+        ((not (pair? x)) x)
+        ((eq? (car x) 'quote) x)
+        ((eq? (car x) 'lambda) (cons 'lambda (clause (cdr x) env)))
+        ((eq? (car x) 'case-lambda) (cons 'case-lambda (map (lambda (c) (clause c env)) (cdr x))))
+        ((eq? (car x) 'annotated-case-lambda)
+         (cons* 'annotated-case-lambda (cadr x) (map (lambda (c) (clause c env)) (cddr x))))
+        ((eq? (car x) 'annotated-call) (cons* 'annotated-call (cadr x) (walk* (cddr x) env)))
+        ((memq (car x) '(letrec letrec*))
+         (let* ((names (map car (cadr x)))
+                (env (append (map (lambda (s) (cons s (gensym))) names) env)))
+           (cons* (car x)
+                  (map (lambda (b) (list (walk (car b) env) (walk (cadr b) env))) (cadr x))
+                  (walk* (cddr x) env))))
+        (else (walk* x env))))
+    (clause cl '()))
+
+  (define (inline-call it v arg-cores)
+    (let ((type (vector-ref it 0))
+          (cl (alpha-rename-clause (vector-ref it 1)))
+          (r (gensym))
+          (ts (map (lambda (a) (inl-gensym)) arg-cores)))
+      (cons `(lambda (,r ,@ts)
+               (if ,(clj-call "IsInstanceOf" #f (list 'quote type) r)
+                   ((case-lambda ,cl) ,@ts)
+                   ,(invoke-core r ts)))
+            (cons (var-reference v) arg-cores))))
+
   (define (var-call e v expand)
     (syntax-case e ()
       ((head arg ...)
@@ -1072,6 +1132,8 @@
             => (lambda (sig)
                  (apply clj-call "PrimInvoke" #f (list 'quote sig) (var-reference v)
                         (map (lambda (a) (expand-in nt a expand)) args))))
+           ((and (inline-calls?) (inline-target v n))
+            => (lambda (it) (inline-call it v (map (lambda (a) (expand-in nt a expand)) args))))
            (else
             ;; 接口文件里的已知函数（cleat-033，designs/04 §6）：参数个数恰为某固定 arity 时生成受保护直接调用
             ;; （$clj-static-call 类名 参数个数 Var读 实参…）：编译器先取 Var 的当前根，还是这个函数类就直接

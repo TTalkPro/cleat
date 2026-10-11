@@ -776,12 +776,20 @@ See docs/license.txt. |#
          ((equal? d0 "PrimInvoke")
           (Expr (cadr e*))
           (for-each (lambda (a c) (if (sig-char-raw c) (Raw a) (Expr a))) (cddr e*) (sig-params (quoted-datum (car e*)))))
+         ;; 宿主调用的实参（cleat-042 第 4 项）：静态决议时通常选到原始类型的重载（Numbers.isPos(long) …），算原始用途；
+         ;; 实例算装箱用途
+         ((host-call-layout d0 d1 e*)
+          => (lambda (l) (when (cadr l) (Expr (cadr l))) (for-each Raw (caddr l))))
          (else (for-each Expr e*)))]
       [(clj-static-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
       [(clj-case ,d ,e0 ,e1 ,e* ...) (Expr e0) (Expr e1) (for-each Expr e*)]
       [(clj-deftype ,d (,x* ...) ,le* ...) (for-each exclude! x*) (for-each Expr le*)]
       [else (void)])
     (Expr ir))
+
+  (define (inlined-binding? x)
+    (let* ((s (symbol->string x)) (n (string-length s)))
+      (and (> n 4) (string=? (substring s (- n 4) n) "$inl"))))
 
   ;; 原始签名子句的 L / D 形参登记为固定类型（cleat-042）
   (define (fix-clause-params! nm cl)
@@ -865,8 +873,10 @@ See docs/license.txt. |#
             (let* ((x (car work))
                    (old (hashtable-ref env x #f))
                    (new (and old
-                             (let f ((es (hashtable-ref defs x '())) (t 'top))
-                               (if (or (null? es) (not t)) t (f (cdr es) (meet-type t (expr-type (car es) env))))))))
+                             (let ((t (let f ((es (hashtable-ref defs x '())) (t 'top))
+                                        (if (or (null? es) (not t)) t (f (cdr es) (meet-type t (expr-type (car es) env)))))))
+                               ;; 内联子句的形参（$inl，见 (clojure syntax) 的 inline-call）不推断为 double
+                               (if (and (eq? t 'fl) (inlined-binding? x)) #f t)))))
               (if (and old (not (eq? old new)))
                   (begin
                     (hashtable-set! env x new)
@@ -1189,6 +1199,39 @@ See docs/license.txt. |#
           (begin (cg-raw e mc rt) (emit! mc '(ret)))
           (cg* e mc ctx))))
 
+  ;; Clojure 的 if 的测试是 (let ((t X)) (if (null? t) '#f t))（nil 与 false 都为假）。X 是返回 CLR bool 的调用
+  ;; （静态决议的宿主调用、可 isinst 的 instance?）时它不会是 nil：直接返回 X，在 test 上下文求值，不装箱再判断（cleat-042）
+  (define (truthy-bool-call e)
+    (define (same? a v) (nanopass-case (L3 Expr) a [,x (eq? x v)] [else #f]))
+    (define (null-test? a v)
+      (nanopass-case (L3 Expr) a
+        [(primcall ,pr ,e* ...) (and (eq? pr 'null?) (= (length e*) 1) (same? (car e*) v))]
+        [else #f]))
+    (nanopass-case (L3 Expr) e
+      [(let ([,x* ,e*] ...) ,body)
+       (and (= (length x*) 1)
+            (let ((v (car x*)) (init (car e*)))
+              (nanopass-case (L3 Expr) body
+                [(if ,e0 ,e1 ,e2)
+                 (and (null-test? e0 v)
+                      (eq? (quoted-datum e1) #f)
+                      (same? e2 v)
+                      (bool-call? init)
+                      init)]
+                [else #f])))]
+      [else #f]))
+
+  (define (bool-call? e)
+    (nanopass-case (L3 Expr) e
+      [(clj-call ,d0 ,d1 ,e* ...)
+       (or (let ((sl (host-call-signature d0 d1 e*)))
+             (and (pair? sl) (string=? (vector-ref (car sl) 3) "System.Boolean")))
+           (and (equal? d0 "IsInstanceOf") (= (length e*) 2)
+                (let ((t (quoted-datum (car e*))))
+                  (and (clr-is System.Type t)
+                       (> (string-length (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls IsinstName t)) 0)))))]
+      [else #f]))
+
   (define (raw-tail-leaf? e)
     (nanopass-case (L3 Expr) e
       [(if ,e0 ,e1 ,e2) #f]
@@ -1241,7 +1284,7 @@ See docs/license.txt. |#
          (else (load-constant! mc d) (finish-value! mc ctx)))]
       [(if ,e0 ,e1 ,e2)
        (let ((else-l (new-label! mc)) (end-l (new-label! mc)))
-         (cg e0 mc 'test)
+         (cg (or (truthy-bool-call e0) e0) mc 'test)
          (emit! mc `(brfalse ,else-l))
          (cg e1 mc ctx)
          (unless (eq? ctx 'tail) (emit! mc `(br ,end-l)))
@@ -1481,8 +1524,19 @@ See docs/license.txt. |#
       [(clj-call ,d0 ,d1 ,e* ...)
        ;; ClojureOps 的静态方法：参数与返回都是 object；d1 为固定参数个数时其余实参打包成 object[]。
        ;; Numbers 的 int64 算术（cleat-042）在实参类型全知时直接发 int64 原始运算
-       (if (equal? d0 "PrimInvoke")
-           (cg-prim-invoke! e* mc ctx)
+       (cond
+         ((equal? d0 "PrimInvoke") (cg-prim-invoke! e* mc ctx))
+         ;; (instance? T x)，T 是常量且能按名字引用：isinst（cleat-042；内联的守卫、用户代码的 instance?）
+         ((and (equal? d0 "IsInstanceOf") (= (length e*) 2)
+               (let ((t (quoted-datum (car e*))))
+                 (and (clr-is System.Type t)
+                      (let ((n (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls IsinstName t)))
+                        (and (> (string-length n) 0) n)))))
+          => (lambda (n)
+               (cg (cadr e*) mc 'value)
+               (emit! mc `(isinst ,n) '(ldnull) '(cgt.un))
+               (finish-bool! mc ctx)))
+         (else
        (case (numbers-raw-emit! e mc)
          ((bool) (finish-bool! mc ctx))
          ((l64) (box-raw! mc 'l64) (finish-value! mc ctx))
@@ -1494,10 +1548,10 @@ See docs/license.txt. |#
                (operands! mc (map (lambda (x) (lambda () (cg x mc 'value))) e*))
                (when d1 (pack-array! mc (- argc d1)))
                (emit! mc `(call ,clojure-ops-type ,d0 ,(if d1 (append (objs d1) (list obj-array)) (objs argc)) ,obj))
-               (finish-value! mc ctx)))))))]
+               (finish-value! mc ctx))))))))]
       [(clj-static-call ,d0 ,d1 ,e* ...)
        ;; 受保护的直接链接（cleat-033，designs/04 §6）：e0 取 Var 的当前根。实参先存入临时变量，根还是函数类 d0 时
-       ;; newobj 一个实例作 self、直接 call d0::invokeStatic；被 with-redefs / 重定义换掉的根（别的类）走普通
+       ;; 以根作 self 直接 call d0::invokeStatic；被 with-redefs / 重定义换掉的根（别的类）走普通
        ;; IFn.invoke（d1 为 Clojure 层的参数个数，fast 慢两条路的返回值在终点汇合）
        (let* ((argc (length e*))                       ; 实参个数：e0 是 Var 读，e1 起才是实参
               (n (- argc 1))
@@ -1509,7 +1563,8 @@ See docs/license.txt. |#
          (emit! mc `(stloc ,root))
          (for-each (lambda (x l) (cg x mc 'value) (emit! mc `(stloc ,l))) (cdr e*) defs)
          (emit! mc `(ldloc ,root) `(isinst ,d0) `(brfalse ,slow))
-         (emit! mc `(newobj ,d0 ()))
+         ;; self 就是 Var 的根（已确认是 d0 的实例；普通 invoke 的 this 也是它）——不再每次调用 newobj（cleat-042）
+         (emit! mc `(ldloc ,root))
          (for-each (lambda (l) (emit! mc `(ldloc ,l))) defs)
          (emit! mc `(call ,d0 "invokeStatic" ,(objs (+ n 1)) ,obj) `(br ,end))
          (emit! mc `(label ,slow) `(ldloc ,root) `(castclass ,ifn-type))

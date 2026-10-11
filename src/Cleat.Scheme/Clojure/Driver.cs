@@ -654,11 +654,11 @@ public static class Driver
         CollectTypes(lcil, types);
         var fnNames = new Dictionary<string, int>(StringComparer.Ordinal);
         var defs = new Dictionary<Var, int>();
-        var candidates = new List<(Var v, string cls, int[] arities)>();
+        var candidates = new List<(Var v, string cls, int[] arities, object init)>();
         foreach (var core in Items(cores) ?? new List<object>())
             Walk(core, fnNames, defs, candidates);
         var file = new InterfaceFile { AssemblyName = asm, ImageId = Mvid(dllPath) };
-        foreach (var (v, cls, arities) in candidates)
+        foreach (var (v, cls, arities, init) in candidates)
         {
             if (defs[v] != 1 || fnNames[cls] != 1 || !types.Contains(cls)) continue;
             var m = v.meta();
@@ -669,6 +669,7 @@ public static class Driver
                 ClassName = cls + ", " + asm,
                 Arities = arities,
                 HasStatic = true,
+                Inline = v.IsMacro ? null : InlineClauses(init),
             });
         }
         string ifc = InterfaceFile.PathFor(dllPath);
@@ -696,7 +697,7 @@ public static class Driver
     }
 
     /// <summary>顶层形式里的 $clj-def / $clj-fn：数 fn 类名与 Var 的定义次数，记下 (def v (fn* …)) 的候选。</summary>
-    private static void Walk(object x, Dictionary<string, int> fnNames, Dictionary<Var, int> defs, List<(Var, string, int[])> candidates)
+    private static void Walk(object x, Dictionary<string, int> fnNames, Dictionary<Var, int> defs, List<(Var, string, int[], object)> candidates)
     {
         if (!PairOf(x, out var head0, out var tail0)) return;
         if (HeadIs(head0, "quote")) return;
@@ -714,11 +715,94 @@ public static class Driver
                 if (FnNode(xs[4]) is { } fn && Quoted(fn[1]) is object cls && cls != NotSimple)
                 {
                     var arities = FnArities(fn[2], fn[4]);
-                    if (arities != null) candidates.Add((v, cls.ToString(), arities));
+                    if (arities != null) candidates.Add((v, cls.ToString(), arities, xs[4]));
                 }
             }
         }
         for (object p = x; PairOf(p, out var pc, out var pd); p = pd) Walk(pc, fnNames, defs, candidates);
+    }
+
+    // ———————————————— 可内联的小函数（cleat-042 第 4 项）————————————————
+    // 顶层 (def v (fn* …)) 的固定子句足够小、只含 let / loop / if / 调用这类结构时，接口文件记下子句的 Lcore（fasl），
+    // 其它单元的展开器在调用点内联它（带守卫：Var 的根还是这个函数类时走内联体，否则普通调用）。
+    // Lcore 的结构只看 Scheme 的序对与符号（与 parse-core 的视角相同）；clojure.lang 的列表与符号是常量
+
+    private const int InlineMaxPairs = 160;
+
+    private static readonly HashSet<string> s_noInline = new(StringComparer.Ordinal)
+    {
+        "set!", "library-letrec*", "typed-case-lambda", "annotated-typed-case-lambda", "async-lambda",
+        "$clj-fn", "$clj-deftype", "$clj-def", "$clj-var-set!", "$try/catch", "$try/finally", "define-clr-class-internal",
+        "clr-using-internal", "clr-reference-internal",
+    };
+
+    private static Dictionary<int, byte[]> InlineClauses(object init)
+    {
+        // 只认不带自引用的 fn*（($clj-fn …) 或外包 WithMetaOf）；命名 fn* 的 letrec 里子句引用 self，内联后无处绑定
+        var xs = Items(init);
+        if (xs == null) return null;
+        if (xs.Count == 5 && HeadIs(xs[0], "$clj-call") && Quoted(xs[1]) is string m && m == "WithMetaOf") xs = Items(xs[3]);
+        if (xs == null || xs.Count != 5 || !HeadIs(xs[0], "$clj-fn")) return null;
+        var lambda = Items(xs[4]);
+        if (lambda == null || lambda.Count < 2 || !HeadIs(lambda[0], "case-lambda")) return null;
+        Dictionary<int, byte[]> r = null;
+        // 变长子句（总在最后）的形参也是真列表（必需参数 + 剩余 seq），不能当固定子句内联
+        int last = Quoted(xs[2]) is bool or null ? lambda.Count : lambda.Count - 1;
+        for (int i = 1; i < last; i++)
+        {
+            var clause = lambda[i];
+            if (!(clause is Cleat.Scheme.Cons c) || Items(c.car) is not { } formals || !formals.All(f => f is Cleat.Scheme.Symbol)) continue;
+            int pairs = 0;
+            if (!InlineOk(clause, ref pairs)) continue;
+            try { (r ??= new Dictionary<int, byte[]>())[formals.Count] = Cleat.Scheme.Fasl.Write(clause); }
+            catch (Exception) { }   // 常量里有 fasl 写不了的对象：不内联
+        }
+        return r;
+    }
+
+    private static bool InlineOk(object x, ref int pairs)
+    {
+        while (x is Cleat.Scheme.Cons c)
+        {
+            if (++pairs > InlineMaxPairs) return false;
+            if (c.car is Cleat.Scheme.Symbol h)
+            {
+                string n = h.ToString();
+                if (n == "quote") return true;
+                if (s_noInline.Contains(n)) return false;
+            }
+            if (c.car is Cleat.Scheme.Cons && !InlineOk(c.car, ref pairs)) return false;
+            x = c.cdr;
+        }
+        return true;
+    }
+
+    private static readonly ConcurrentDictionary<(InterfaceFile.Entry, int), object[]> s_inlineCache = new();
+
+    /// <summary>
+    /// (inline-target var argc)：Var 是接口文件里的已知函数、有参数个数为 argc 的可内联子句时返回 #(函数类 子句)，否则 #f。
+    /// 子句是 fasl 读回的新副本（每次调用点各自改名，见展开器的 inline-call）。
+    /// </summary>
+    public static object InlineTarget(object var, object argc)
+    {
+        if (var is not Var v) return s_false;
+        int n;
+        try { n = Convert.ToInt32(argc); }
+        catch (Exception) { return s_false; }
+        var e = InterfaceFile.FindKnown(clojure.lang.Symbol.intern(v.Namespace.Name.Name, v.Symbol.Name));
+        var bytes = e == null ? null : InterfaceFile.FindInline(e, n);
+        if (bytes == null) return s_false;
+        var cached = s_inlineCache.GetOrAdd((e, n), _ =>
+        {
+            int comma = e.ClassName.IndexOf(',');
+            string tn = comma < 0 ? e.ClassName : e.ClassName.Substring(0, comma).Trim();
+            string an = comma < 0 ? null : e.ClassName.Substring(comma + 1).Trim();
+            var t = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(a => an == null || a.GetName().Name == an).Select(a => a.GetType(tn, false)).FirstOrDefault(x => x != null);
+            return t == null ? null : new object[] { t, bytes };
+        });
+        if (cached == null) return s_false;
+        return new object[] { cached[0], Cleat.Scheme.Fasl.Read((byte[])cached[1]) };
     }
 
     private static readonly Symbol s_letrec = Symbol.Intern("letrec");

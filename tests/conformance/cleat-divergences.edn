@@ -249,7 +249,6 @@
   {:suite "regex / escapes in and out of a character class" :label "\\b inside a class is a pattern error" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
   {:suite "regex / escapes in and out of a character class" :label "\\R is a linebreak outside a class and an error inside" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\R': Unrecognized escape sequence \\\\R."}
   {:suite "regex / \\p property classes" :label "(?u) accepted" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?u)^hi$': Unrecognized grouping construct."}
-  {:suite "seq / lazy over infinite" :label "eduction reduces" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
   {:suite "seq / strictness round 3" :label "shuffle on number" :category :strictness :reason "shuffle of a non-collection answers [] (ClojureCLR copies (seq coll)); the JVM's ArrayList constructor throws"}
   {:suite "sorted / predicates" :label "sorted-map? true" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "sorted / predicates" :label "sorted-map? false" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}

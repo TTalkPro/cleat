@@ -139,6 +139,9 @@ public static class ClojureStaticCalls
           }
         : Array.Empty<object>();
 
+    /// <summary>(instance? T x) 的 T 能直接 isinst 时它在 Lcil 里的名字，否则 ""（桩、泛型、嵌套等交给运行时的 Reflector.Is）</summary>
+    public static string IsinstName(object t) => t is Type ty && Nameable(ty) ? HostSyntax.TypeName(ty) : "";
+
     /// <summary>形参类型 p 能否接受静态类型为 a（null 为未知：core 时只匹配引用类型形参，否则什么都可能）的实参</summary>
     private static bool Match(Type p, Type a, bool core)
     {
@@ -216,7 +219,10 @@ public static class ClojureStaticCalls
     private static long Low64(System.Numerics.BigInteger b) => unchecked((long)(ulong)(b & ulong.MaxValue));
 
     // —— 返回值（Reflector.ToClojure）——
-    public static object RetObject(object v) => Reflector.ConvertFrom(v, typeof(object));
+    // 绝大多数返回值已是 Clojure 的表示（long、double、引用类型）：先排除这些，只有 int 等少见的值类型才走 ConvertFrom 的类型分派（cleat-042：
+    // fib 的剖析里 ConvertFrom 占 35%）
+    public static object RetObject(object v) =>
+      v is null || v is long || v is double || v is bool || v is not ValueType ? v : Reflector.ConvertFrom(v, typeof(object));
     public static object RetInt32(int v) => (long)v;
 
     /// <summary>实例调用的实例为 nil 时与 ClojureOps.CallInstance 同样报错</summary>

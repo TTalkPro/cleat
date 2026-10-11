@@ -144,7 +144,7 @@
       (set! compile-boot-unit (eval 'clojure-compile-boot-unit (environment '(clojure compile)))))
     (let ((unit (vector '())))
       (set! form-ordinal 0)
-      (parameterize ((current-unit unit) (boot-build #t))
+      (parameterize ((current-unit unit) (boot-build #t) (inline-calls? #f))
         (for-each (lambda (f) (reset-ids!) (clojure-eval-toplevel f)) forms))
       (compile-boot-unit (reverse (vector-ref unit 0)) dll-path)))
 
