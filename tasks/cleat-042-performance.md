@@ -111,3 +111,10 @@ dotimes 展开后的形状可能未被 loop-forms 识别，这是最可疑的一
 2. **call-with-output-file 不支持追加模式**（第三参位置被读成布尔，报 "not boolean: append"）；多探针用计数器文件名或接受覆盖。
 3. 对 codegen.sls 的**增量补丁已两次损坏文件结构**（括号失衡/顶层 form 被吞，报 func-type unbound 或 "mismatched brackets"）。任何新修改必须：git checkout 到干净态 → 单次 python 全量重放 → 括号平衡校验 → stage0 引导冒烟 → 再构建。
 4. 当前 9c03e1f 状态 = 三处修复（形状 gen=#f、deps 下钻、暂定 top）已进树、全测试绿、基准无变化。下一会话第一步：**单次全量重放**完整变更集（l64 推断/发射设施 + gen 修正 + 计数器版探针），然后用探针数据定位识别链路断点。
+
+### 探针迭代二结论（2026-10-11 深夜）
+
+- 带探针的构建在**引导编译路径**上崩溃（探针写文件抛异常 → 汇总为构建失败），bench 表单的推断数据未能取得。
+- 下次探针迭代必须：探针写文件用 `guard` 包裹（任何异常写 'ERR 后继续），且**不放在引导编译会经过的路径上**
+  （generate-unit/infer-var-types! 会被引导期的编译调用——需要按 assembly-name 过滤，只对 bench/clojure 单元记录）。
+- loop-forms 旗标疑点仍未验证（此前 GU 只出现过 -main 表单的旗标 #t/#f 各一次，无法归因到 run 表单）。
