@@ -32,11 +32,11 @@
   (define (meta-of x)
     (if (clr-is clojure.lang.IMeta x)
         (clr-call clojure.lang.IMeta meta x)
-        '()))
+        #nil))
 
   (define (with-meta-of new old)
     (let ((m (meta-of old)))
-      (if (and (not (null? m)) (clr-is clojure.lang.IObj new))
+      (if (and (not (nil? m)) (clr-is clojure.lang.IObj new))
           (clr-call clojure.lang.IObj withMeta new m)
           new)))
 
@@ -93,13 +93,13 @@
 
   (define (meta-ref m k)
     (let ((v (clr-static-call clojure.lang.RT (get System.Object System.Object) m k)))
-      (if (null? v) #f v)))
+      (if (nil? v) #f v)))
 
   (define (->string v) (clr-call System.Object ToString v))
 
   (define (clojure-source-of x)
     (let ((m (meta-of x)))
-      (and (not (null? m))
+      (and (not (nil? m))
            (let ((line (meta-ref m kw-line)))
              (and line
                   (let* ((col (or (meta-ref m kw-column) 1))

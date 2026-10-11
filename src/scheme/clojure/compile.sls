@@ -31,17 +31,17 @@
   (define meta* (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps Meta))
 
   (define (->string x) (clr-call System.Object ToString x))
-  (define (named ns name) (if (null? ns) (list name) (list ns name)))
+  (define (named ns name) (if (nil? ns) (list name) (list ns name)))
 
   ;;; x 是 Clojure 的值时返回它的编码（designs/05 §3、LCIL.md §8），否则 #f（交给 Scheme 的编码）。
   ;;; encode 编码子项（经同一个编码器，所以子项里的 long 等也走这里）。
   ;;; 带元数据的对象（符号、集合）写成 (meta 元数据 对象)
   (define (encode-clojure-constant x encode)
     (define (with-meta enc)
-      (let ((m (if (clr-is clojure.lang.IMeta x) (meta* x) '())))
-        (if (null? m) enc (list 'meta (encode m) enc))))
+      (let ((m (if (clr-is clojure.lang.IMeta x) (meta* x) #nil)))
+        (if (nil? m) enc (list 'meta (encode m) enc))))
     (cond
-      ((null? x) #f)
+      ((nil? x) #f)
       ((clr-is clojure.lang.Var x)
        (list 'var (->string (clr-prop-get clojure.lang.Namespace Name (clr-prop-get clojure.lang.Var Namespace x)))
              (clr-prop-get clojure.lang.Symbol Name (clr-prop-get clojure.lang.Var Symbol x))))

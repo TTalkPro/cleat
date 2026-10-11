@@ -986,6 +986,7 @@
     (negative?                                  i r ba se)
     (not                                        i r ba se)
     (null?                                      i r ba se)
+    (nil?                                       i r ba se)
     (number->string                             i r ba se)
     (number?                                    i r ba se)
     (numerator                                  i r ba se)
@@ -2109,6 +2110,7 @@
   (cond
     ((symbol? x) (symbol->seed-text x))
     ((null? x) "()")
+    ((nil? x) "#nil")
     ((eq? x #t) "#t")
     ((eq? x #f) "#f")
     ((string? x) (string->seed-text x))

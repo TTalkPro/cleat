@@ -109,7 +109,7 @@ public static class ClojureOps
     {
         var items = new System.Collections.Generic.List<object>();
         for (ISeq s = clojure.lang.RT.seq(x); s != null; s = s.next()) items.Add(s.first());
-        object r = null;
+        object r = EmptyList.Instance;
         for (int i = items.Count - 1; i >= 0; i--) r = new Cleat.Scheme.Cons(items[i], r);
         return r;
     });
@@ -124,7 +124,7 @@ public static class ClojureOps
             items.Add(e.key());
             items.Add(e.val());
         }
-        object r = null;
+        object r = EmptyList.Instance;
         for (int i = items.Count - 1; i >= 0; i--) r = new Cleat.Scheme.Cons(items[i], r);
         return r;
     });

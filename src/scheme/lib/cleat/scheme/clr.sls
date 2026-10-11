@@ -114,27 +114,27 @@ See docs/license.txt. |#
   (define-syntax clr-static-field-get
     (syntax-rules ()
       [(_ type member)
-       (clr-field-get type member '())]))
+       (clr-field-get type member '#nil)]))
 
   (define-syntax clr-static-field-set!
     (syntax-rules ()
       [(_ type member value)
-       (clr-field-set! type member '() value)]))
+       (clr-field-set! type member '#nil value)]))
 
   (define-syntax clr-static-call
     (syntax-rules ()
       [(_ type member args ...)
-       (clr-call type member '() args ...)]))
+       (clr-call type member '#nil args ...)]))
 
   (define-syntax clr-static-event-add!
     (syntax-rules ()
       [(_ type event handler)
-       (clr-event-add! type event '() handler)]))
+       (clr-event-add! type event '#nil handler)]))
 
   (define-syntax clr-static-event-remove!
     (syntax-rules ()
       [(_ type event handler)
-       (clr-event-remove! type event '() handler)]))
+       (clr-event-remove! type event '#nil handler)]))
        
   (define-syntax clr-event-add!
     (lambda (e)
@@ -185,12 +185,12 @@ See docs/license.txt. |#
   (define-syntax clr-static-prop-get
     (syntax-rules ()
       [(_ type prop-name args ...)
-       (clr-prop-get type prop-name '() args ...)]))
+       (clr-prop-get type prop-name '#nil args ...)]))
 
   (define-syntax clr-static-prop-set!
     (syntax-rules ()
       [(_ type prop-name args ...)
-       (clr-prop-set! type prop-name '() args ...)]))
+       (clr-prop-set! type prop-name '#nil args ...)]))
 
   (define-syntax clr-new
     (lambda (e)

@@ -390,7 +390,13 @@ public static class HostPrimitives
     #region 向量、表、散列表
 
     [Primitive("$make-vector", Flags = PrimitiveFlags.Unsafe)]
-    public static object MakeVector(object k) => new object[(int)k];
+    public static object MakeVector(object k)
+    {
+        // 未填充的槽为 '()（R6RS 未规定内容；与 '() 曾是 null 时的行为一致，不暴露 #nil）
+        var v = new object[(int)k];
+        Array.Fill(v, EmptyList.Instance);
+        return v;
+    }
 
     /// <summary>任何宿主数组的长度（object[]、byte[]、int[]、double[] …）。</summary>
     [Primitive("$vector-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
@@ -538,7 +544,13 @@ public static class HostPrimitives
 
     /// <summary>取值（键已换过哨兵）；没有时为空表，调用方再用 $hashtable-contains? 区分。</summary>
     [Primitive("$hashtable-get", Flags = PrimitiveFlags.Unsafe)]
-    public static object HashtableGet(object ht, object key) => ((Hashtable)ht)[key];
+    public static object HashtableGet(object ht, object key)
+    {
+        // 缺失的键返回 '()（hashtable-ref 据此再查 contains?；'() 曾经就是 null）；存着 #nil 的键返回 null
+        var h = (Hashtable)ht;
+        var v = h[key];
+        return v == null && !h.ContainsKey(key) ? EmptyList.Instance : v;
+    }
 
     [Primitive("$hashtable-put!", Flags = PrimitiveFlags.Unsafe)]
     public static object HashtablePut(object ht, object key, object value)

@@ -81,7 +81,7 @@
                      form))
            (body (top-level-do-body form)))
       (if body
-          (let loop ((xs body) (last '()))
+          (let loop ((xs body) (last #nil))
             (if (null? xs) last (loop (cdr xs) (clojure-eval-toplevel (car xs)))))
           (eval-form form))))
 
@@ -95,7 +95,7 @@
            (ns0 (current-ns))
            (v (with-ns-binding ns0
                 (lambda ()
-                  (let loop ((last '()))
+                  (let loop ((last #nil))
                     (let ((form (read-form r eof)))
                       (if (eq? form eof)
                           last

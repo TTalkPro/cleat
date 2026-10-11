@@ -299,7 +299,7 @@ public static class Interop
         if (t == typeof(bool)) return true;                         // 旧系统：非布尔按真值转换
         if (t == typeof(char)) return (a is SchemeChar sc && sc.Value < 0x10000) || a is int;
         if (IsNumeric(t)) return IsSchemeNumber(a) || a is char;
-        if (t.IsArray) return a is object[] || a is Cons || (a is Array arr && arr.GetType().GetElementType() != null);
+        if (t.IsArray) return a is object[] || a is Cons || a is EmptyList || (a is Array arr && arr.GetType().GetElementType() != null);
         return false;
     }
 
@@ -334,6 +334,7 @@ public static class Interop
                 {
                     object[] v => v,
                     Cons c => c.ToList(),
+                    EmptyList => Array.Empty<object>(),
                     Array arr => arr.Cast<object>().ToList(),
                     _ => null,
                 };

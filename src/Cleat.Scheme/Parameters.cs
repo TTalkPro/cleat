@@ -11,7 +11,7 @@ namespace Cleat.Scheme;
 /// </summary>
 public sealed class ParamSlot
 {
-    /// <summary>空表是 null，而 AsyncLocal 的 null 表示"未设置"，所以空表另用哨兵存放。</summary>
+    /// <summary>#nil 是 null，而 AsyncLocal 的 null 表示"未设置"，所以 #nil 另用哨兵存放。</summary>
     private static readonly object s_nil = new object();
 
     private readonly AsyncLocal<object> _local = new AsyncLocal<object>();
@@ -60,10 +60,10 @@ public static class Parameters
 public static class ExceptionHandlers
 {
     [ThreadStatic] private static object t_handlers;
-    private static readonly object s_default = new Cons(new DefaultHandler(), null);
+    private static readonly object s_default = new Cons(new DefaultHandler());
 
     [Primitive("$current-handlers", Flags = PrimitiveFlags.Unsafe)]
-    public static object Current() => t_handlers ?? s_default;
+    public static object Current() => t_handlers is null or EmptyList ? s_default : t_handlers;
 
     [Primitive("$set-current-handlers!", Flags = PrimitiveFlags.Unsafe)]
     public static object Set(object handlers)

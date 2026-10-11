@@ -74,7 +74,8 @@ public static class Interpreter
     {
         switch (x)
         {
-            case null: return "()";
+            case null: return "#nil";
+            case EmptyList: return "()";
             case string s: return "\"" + s + "\"";
             case Symbol s: return s.Name;
             case bool b: return b ? "#t" : "#f";
@@ -84,7 +85,7 @@ public static class Interpreter
                 object p = c;
                 for (; p is Cons pc && n < 12; p = pc.cdr, n++) sb.Append(n > 0 ? " " : "").Append(Show(pc.car, depth - 1));
                 if (p is Cons) sb.Append(" ...");
-                else if (p != null) sb.Append(" . ").Append(Show(p, depth - 1));
+                else if (p is not EmptyList) sb.Append(" . ").Append(Show(p, depth - 1));
                 return sb.Append(')').ToString();
             case Cons _: return "(...)";
             case object[] v: return "#(" + (depth > 0 ? string.Join(" ", Array.ConvertAll(v.Length > 12 ? v[..12] : v, o => Show(o, depth - 1))) : "...") + ")";

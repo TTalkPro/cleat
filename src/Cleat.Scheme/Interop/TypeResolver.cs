@@ -128,7 +128,7 @@ public static class TypeResolver
             case Cons c:
                 {
                     // (Name arg …)：泛型构造；不支持开放泛型
-                    if (c.cdr == null || !(c.car is Symbol g)) return null;
+                    if (c.cdr is EmptyList || !(c.car is Symbol g)) return null;
                     var args = new List<Type>();
                     foreach (var a in (Cons)c.cdr)
                     {

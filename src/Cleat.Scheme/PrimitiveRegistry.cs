@@ -104,7 +104,7 @@ public sealed class PrimitiveProcedure : VariadicProcedure
     public override object Form => _form ??= Cons.FromArray(Overloads.OrderBy(o => o.FixedArity).ThenBy(o => o.HasRest).Select(o =>
     {
         var ps = o.Method.GetParameters();
-        object formals = o.HasRest ? Symbol.Intern(ps[^1].Name) : null;
+        object formals = o.HasRest ? Symbol.Intern(ps[^1].Name) : EmptyList.Instance;
         for (int i = o.FixedArity - 1; i >= 0; i--) formals = new Cons(Symbol.Intern(ps[i].Name), formals);
         return (object)new Cons(Symbol.Intern(_name), formals);
     }).ToArray());

@@ -30,59 +30,56 @@ public partial class Builtins
         return all.ToArray();
     }
 
-    internal static Cons VectorToList(object[] vec)
+    internal static object VectorToList(object[] vec)
     {
         return Cleat.Scheme.Cons.FromArray(vec);
     }
 
-    internal static object[] ListToVector(Cons e)
+    /// <summary>正规列表 → 向量；不是以 '() 结尾的列表报 assertion-violation。</summary>
+    public static object[] ListToVector(object list)
     {
         // 先数长度再填充：不经 ArrayList 扩容与复制（iron-033，展开器封闭 rib 时对大表频繁调用）
         int n = 0;
-        for (var p = e; p != null; p = Requires<Cons>(p.cdr)) n++;
+        object p = list;
+        for (; p is Cons c; p = c.cdr) n++;
+        if (p is not EmptyList) AssertionViolation("list->vector", "not a proper list", list);
         var v = new object[n];
-        for (int i = 0; e != null; e = (Cons)e.cdr) v[i++] = e.car;
+        int i = 0;
+        for (p = list; p is Cons c; p = c.cdr) v[i++] = c.car;
         return v;
     }
 
-    public static object[] ListToVector(object args)
-    {
-        Cons e = Requires<Cons>(args);
-        return ListToVector(e);
-    }
-
-    public static T[] ListToVector<T>(Cons list)
+    public static T[] ListToVector<T>(object list)
     {
         var l = new List<T>();
-        while (list != null)
+        object p = list;
+        for (; p is Cons c; p = c.cdr)
         {
-            object o = list.car;
-            if (o is T)
+            object o = c.car;
+            if (o is T t)
             {
-                l.Add((T)o);
+                l.Add(t);
             }
             else
             {
-                var t = typeof(T);
+                var type = typeof(T);
                 if (o == null)
                 {
-                    AssertionViolation("ListToVector", "type cannot be null", t, FALSE);
+                    AssertionViolation("ListToVector", "type cannot be null", type, FALSE);
                 }
-                AssertionViolation("ListToVector", "not type of " + t.Namespace + "." + t.Name, o, o.GetType());
+                AssertionViolation("ListToVector", "not type of " + type.Namespace + "." + type.Name, o, o.GetType());
             }
-
-            list = Requires<Cons>(list.cdr);
-
         }
+        if (p is not EmptyList) AssertionViolation("ListToVector", "not a proper list", list);
         return l.ToArray();
     }
 
-    public static double[] ListToFlonumVector(Cons list)
+    public static double[] ListToFlonumVector(object list)
     {
         return ListToVector<double>(list);
     }
 
-    public static int[] ListToFixnumVector(Cons list)
+    public static int[] ListToFixnumVector(object list)
     {
         return ListToVector<int>(list);
     }

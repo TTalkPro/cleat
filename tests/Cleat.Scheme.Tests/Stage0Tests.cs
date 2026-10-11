@@ -19,14 +19,15 @@ public class Stage0Tests
     /// <summary>测试用的简单打印（Scheme 打印器在种子中）。</summary>
     private static string Show(object x) => x switch
     {
-        null => "()",
+        null => "#nil",
+        EmptyList => "()",
         Cons c => "(" + ShowTail(c) + ")",
         Symbol s => s.Name,
         _ => x.ToString(),
     };
 
     private static string ShowTail(Cons c) =>
-      Show(c.car) + (c.cdr == null ? "" : c.cdr is Cons d ? " " + ShowTail(d) : " . " + Show(c.cdr));
+      Show(c.car) + (c.cdr is EmptyList ? "" : c.cdr is Cons d ? " " + ShowTail(d) : " . " + Show(c.cdr));
 
     private static object Run(string src)
     {

@@ -76,7 +76,7 @@ public abstract class VariadicProcedure : Procedure
     /// <summary>把 args[from..] 打包成列表，供子类实现剩余参数。</summary>
     protected static object RestList(object[] args, int from)
     {
-        object rest = null;
+        object rest = EmptyList.Instance;
         for (int i = args.Length - 1; i >= from; i--) rest = new Cons(args[i], rest);
         return rest;
     }

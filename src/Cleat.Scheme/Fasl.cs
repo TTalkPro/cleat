@@ -19,11 +19,11 @@ namespace Cleat.Scheme;
 /// </summary>
 public static class Fasl
 {
-    public const byte Version = 1;
+    public const byte Version = 2;   // 2：'() 是 EmptyList（标签 Empty），Nil 标签表示 #nil（null）（cleat-058）
     private static readonly byte[] s_magic = Encoding.ASCII.GetBytes("CLFASL");
 
     // 标签（与 Cleat.Emit.FaslEncoder 一致）：0x0_ 单例；0x1_ 数；0x2_ 字符、字符串、符号；0x3_ 序列；0x4_ Scheme 记录等；0x5_ Clojure 其他；0x6_ 共享
-    public const byte Nil = 0x00, True = 0x01, False = 0x02, Unspec = 0x03, EofTag = 0x04,
+    public const byte Nil = 0x00, True = 0x01, False = 0x02, Unspec = 0x03, EofTag = 0x04, Empty = 0x05,
       Fix = 0x10, Big = 0x11, Rat = 0x12, Flo = 0x13, Cpx = 0x14,
       Long = 0x18, Double = 0x19, BigIntTag = 0x1A, BigDec = 0x1B, RatioTag = 0x1C,
       Chr = 0x20, Str = 0x21, MStr = 0x22, Sym = 0x23,
@@ -129,6 +129,7 @@ public static class Fasl
             {
                 // ———— 单例 ————
                 case Nil: return Register<object>(def, null);
+                case Empty: return Register<object>(def, EmptyList.Instance);
                 case True: return Register(def, RT.True);
                 case False: return Register(def, RT.False);
                 case Unspec: return Register<object>(def, Unspecified.Instance);
@@ -461,6 +462,7 @@ public static class Fasl
             {
                 // ———— 单例与 Scheme 值 ————
                 case null: _w.Write(Nil); return;
+                case EmptyList _: _w.Write(Empty); return;
                 case bool b: _w.Write(b ? True : False); return;
                 case Unspecified _: _w.Write(Unspec); return;
                 case int i: _w.Write(Fix); _w.Write(i); return;

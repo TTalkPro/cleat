@@ -1,6 +1,6 @@
 # cleat-058 Scheme 元层按 skeg 对齐：guard / call-with-return / try·catch·finally·throw / #nil / EmptyList
 
-- 里程碑：后续　依赖：cleat-047、cleat-054　状态：进行中
+- 里程碑：后续　依赖：cleat-047、cleat-054　状态：完成
 - 设计依据：skeg 的 designs/13-exceptions.md（§1 ~ §7）与其提交 e02260a、6cd25cc、a67bece、54f5181、7e32a99、63fdb30、4fe132e、
   4ee4ebe、fbdd543、ad82eaf、d6e49ec、aab48c4；本仓库 [15 §3](../designs/15-scheme-core-vendoring.md) 的异常模型（本任务推翻其中
   "删除处理器栈 / call/cc" 两条）。
@@ -79,3 +79,27 @@ cleat-047 为简化元层删掉了 call/cc 与处理器栈，`guard` 改为 `$tr
 - 测试：新增 `tests/scheme/compiler/guard-try.sps`（移植 skeg host-smoke 的 guard / try / throw / call-with-return 部分，32 例）；
   `compile-small.sps`、`try-catch.sps` 里用 dynamic-wind 的用例改为 `try … (finally …)`（guard 的子句体在 finally 之后执行）。
 - 种子：一步重生成（展开器文件只用到种子已认识的 `$try/finally`），不动点；种子里不再有 dynamic-wind。590 测试全绿。
+
+### 阶段 3（2026-10-12）：#nil 与 EmptyList
+
+- 运行时（按 skeg 4ee4ebe / fbdd543 / ad82eaf / d6e49ec 移植：改路径与名字后 `git apply --reject`，13 个文件的拒绝块手工落地）：
+  `Cleat.Scheme.EmptyList`（单例，`IReadOnlyList<object>`），`'()` 是它，`#nil` 是 .NET null；`RT.IsTrue`：#f 与 #nil 为假、`'()` 为真；
+  `null?` 只认 `'()`，新原语 `nil?`（内联 `ldnull ceq`）；表的构造、剩余参数、apply、处理器栈以 `'()` 结尾；`$hashtable-get` 对缺失键返回 `'()`
+  （旧种子的 hashtable-ref 照常）；读写 `#nil`；fasl 版本 2（新标签 Empty = 0x05），发射器的常量编码 `(empty)` / `(nil)`；
+  codegen 的 `'()` 常量是 `ldsfld EmptyList::Instance`；`clr-static-*` 的实例位置写 `'#nil`（parse 仍接受旧的 `'()`）。
+- Clojure 层（本仓库特有）：Clojure 的 nil = `#nil`。`if` 不再包 `(if (null? t) #f t)`（Scheme 的真值现在与 Clojure 相同）；
+  原来用 `'()` 表示 nil 的地方（空 `do`、缺省 else、`&env` 缺省、letfn 占位、元数据、`(or type '())` 等传给 C# 的 null）改 `#nil`；
+  CLR 结果的判空 `null?` → `nil?`（`nil->f`、`sym-ns`、`meta-of` 等）；`scheme->clj` 把 Scheme 的 `'()` 变成 Clojure 的 `()`。
+  C# 侧：`Driver` 的 Lcore 遍历同时认 `'()` 与 Clojure 列表的 null 表尾，简单求值器的真值与 `null?` / `nil?` 跟新规则；
+  `ClojureOps.SeqToList` 等以 `'()` 结尾；`Driver.InlineTarget` 读不了的内联体（旧 fasl）不内联。
+- 种子：两步法（skeg 13 §7）——第一步暂时去掉展开器文件、打印器、种子写出器与编译器库（constants / codegen）里的 `nil?`
+  （编译器库也由种子系统从源码装入），旧种子构建镜像、重生成种子；第二步恢复，再生成，不动点。
+- 测试：新增 `tests/scheme/compiler/nil-empty.sps`（14 例）；C# 单元测试按新表示改期望；三个 Lcil 快照只差 `'()` 的 ldsfld；
+  `namespaces.sps` 的模板例子改用 `#nil` 并加 `'()` → `()` 一例。随附库的 `.clj.dll` 需重编译（`compile-libs`；fasl 版本变了）。
+  591 测试全绿；基准不退化（protocol min 32、keyword_invoke 17、reduce_vec 18 ms）。
+
+## 结论（2026-10-12）
+
+五点全部落地：guard 恢复 R6RS 语义并与 clr-guard 统一（.NET 异常在处理器一级包成 `&clr-exception`）；call/cc → `call-with-return`；
+`try` / `catch` / `finally` / `throw`，删除 dynamic-wind；`#nil`；`'()` = `EmptyList.Instance`。与 skeg 的有意差别：不在每个宿主调用处包
+try 区域（只在处理器一级转换），`call-with-return` 不是编译器特殊形式（元层无 async）。三次种子重生成都是不动点。

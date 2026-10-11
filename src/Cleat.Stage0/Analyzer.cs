@@ -98,7 +98,7 @@ public sealed class Analyzer
             if (h == s_annCaseLambda) return MakeLambda(((Cons)args).cdr, sc, false, null);
             if (h == s_typedCaseLambda) return MakeLambda(args, sc, true, null);
             if (h == s_annTypedCaseLambda) return MakeLambda(((Cons)args).cdr, sc, true, null);
-            if (h == s_lambdaS) return MakeLambda(new Cons(args, null), sc, false, null);
+            if (h == s_lambdaS) return MakeLambda(new Cons(args), sc, false, null);
             if (h == s_letrecS || h == s_letrecStar) return MakeLetrec(Nth(args, 0), ((Cons)args).cdr, sc, tail);
             if (h == s_libraryLetrecStar) return MakeLibraryLetrec((Cons)args, sc, tail);
             if (h == s_annotatedCall) return Analyze(((Cons)args).cdr, sc, tail);
@@ -146,7 +146,7 @@ public sealed class Analyzer
     private Node Body(object body, Scope sc, bool tail)
     {
         var r = new List<Node>();
-        for (object p = body; p is Cons c; p = c.cdr) r.Add(Analyze(c.car, sc, tail && c.cdr == null));
+        for (object p = body; p is Cons c; p = c.cdr) r.Add(Analyze(c.car, sc, tail && c.cdr is EmptyList));
         if (r.Count == 0) return new Const(Unspecified.Instance);
         return r.Count == 1 ? r[0] : new Seq(r.ToArray());
     }
@@ -205,7 +205,7 @@ public sealed class Analyzer
     private Node MakeLibraryLetrec(Cons args, Scope sc, bool tail)
     {
         var saved = new List<string>(_namespaces);
-        bool isProgram = args.car == null;
+        bool isProgram = args.car is null or EmptyList;
         object bindings = Nth(args, 1);
         var vars = new List<Symbol>();
         var locs = new List<Symbol>();
@@ -231,9 +231,9 @@ public sealed class Analyzer
     {
         TypeRef T() => new TypeRef(Quoted(Nth(args, 0)), _namespaces.ToArray());
         if (h == s_clrCallI)
-            return new ClrCall(T(), Quoted(Nth(args, 1)), Analyze(Nth(args, 2), sc, false), AnalyzeList(Drop(args, 3), sc), _namespaces.ToArray());
-        if (h == s_clrFieldGetI) return new ClrFieldGet(T(), MemberName(Quoted(Nth(args, 1))), Analyze(Nth(args, 2), sc, false));
-        if (h == s_clrFieldSetI) return new ClrFieldSet(T(), MemberName(Quoted(Nth(args, 1))), Analyze(Nth(args, 2), sc, false), Analyze(Nth(args, 3), sc, false));
+            return new ClrCall(T(), Quoted(Nth(args, 1)), Instance(Nth(args, 2), sc), AnalyzeList(Drop(args, 3), sc), _namespaces.ToArray());
+        if (h == s_clrFieldGetI) return new ClrFieldGet(T(), MemberName(Quoted(Nth(args, 1))), Instance(Nth(args, 2), sc));
+        if (h == s_clrFieldSetI) return new ClrFieldSet(T(), MemberName(Quoted(Nth(args, 1))), Instance(Nth(args, 2), sc), Analyze(Nth(args, 3), sc, false));
         if (h == s_clrNewI) return new ClrNew(T(), AnalyzeList(((Cons)args).cdr, sc));
         if (h == s_clrNewArrayI) return new ClrNewArray(T(), Analyze(Nth(args, 1), sc, false));
         if (h == s_clrCastI) return new ClrCast(T(), Analyze(Nth(args, 1), sc, false));
@@ -254,6 +254,12 @@ public sealed class Analyzer
         if (h == s_clrNamespacesI) return new Const(Cons.FromList(_namespaces.ToArray()));
         return null;
     }
+
+    /// <summary>实例位置：'#nil（clr-static-* 的约定）或旧约定 '() 表示静态调用（与编译器 parse 的 static-instance? 一致）。</summary>
+    private Node Instance(object x, Scope sc) =>
+      x is Cons c && ReferenceEquals(c.car, s_quote) && c.cdr is Cons d && d.car is null or EmptyList
+        ? new Const(null)
+        : Analyze(x, sc, false);
 
     private static string MemberName(object spec) => spec is Symbol s ? s.Name : spec as string;
 

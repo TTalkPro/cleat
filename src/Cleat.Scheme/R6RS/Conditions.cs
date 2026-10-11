@@ -41,7 +41,7 @@ public class Conditions : Builtins
 
     [Primitive("simple-conditions")]
     public static object SimpleConditions(object cond) =>
-      cond is CompoundCondition cc ? Cleat.Scheme.Cons.FromArray(cc._conds) : new Cleat.Scheme.Cons(cond, null);
+      cond is CompoundCondition cc ? Cleat.Scheme.Cons.FromArray(cc._conds) : new Cleat.Scheme.Cons(cond);
 
     [Primitive("condition-predicate")]
     public static object ConditionPredicate(object rtd)

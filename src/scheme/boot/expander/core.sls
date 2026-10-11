@@ -682,6 +682,7 @@
   (define self-evaluating?
     (lambda (x) ;;; am I missing something here?
       (or (number? x) (string? x) (char? x) (boolean? x)
+          (nil? x)                     ; #nil（.NET null）与 #t / #f 一样自求值
           (valuetype-vector? x))))
 
   ;;; strip is used to remove the wrap of a syntax object.

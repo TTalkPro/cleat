@@ -147,7 +147,8 @@ See docs/license.txt. |#
       (define (encode-object x)
         (cond
           ((and foreign-encoder (foreign-encoder x encode)) => (lambda (enc) enc))
-          ((null? x) '(nil))
+          ((null? x) '(empty))   ; '()（EmptyList，cleat-058）
+          ((nil? x) '(nil))      ; #nil（null）
           ((eq? x #t) '(true))
           ((eq? x #f) '(false))
           ((unspecified? x) '(unspecified))

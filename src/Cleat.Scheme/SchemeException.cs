@@ -16,7 +16,7 @@ public sealed class SchemeException : Exception
     }
 
     /// <summary>条件的可读形式由宿主用 Scheme 打印器生成（iron-029）；此处只给出简单形式。</summary>
-    public override string ToString() => "SchemeException: " + (Condition?.ToString() ?? "()");
+    public override string ToString() => "SchemeException: " + (Condition?.ToString() ?? "#nil");
 }
 
 /// <summary>顶层程序以未处理的条件结束（boot/expander/main.sls 的 load/program），宿主据此返回非零退出码。</summary>

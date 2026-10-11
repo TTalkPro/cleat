@@ -11,7 +11,7 @@
       (body
         (ldc.i4 0)
         (stloc 2)
-        (ldnull)
+        (ldsfld "Cleat.Scheme.EmptyList" "Instance")
         (stloc 3)
         (ldloc 2)
         (stloc 0)

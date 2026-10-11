@@ -159,7 +159,7 @@ public partial class Builtins
     #region 列表、指针、字符串
 
     private static object ListStarHelper(object a, object rest) =>
-      rest == null ? a : new Cleat.Scheme.Cons(a, ListStarHelper(Car(rest), Cdr(rest)));
+      rest is EmptyList ? a : new Cleat.Scheme.Cons(a, ListStarHelper(Car(rest), Cdr(rest)));
 
     [Primitive("list*")]
     public static object ListStar(object a, params object[] rest) => ListStarHelper(a, Cleat.Scheme.Cons.FromArray(rest));
@@ -251,10 +251,10 @@ public partial class Builtins
     #region 构建脚本与展开器直接调用的方法（非原语）
 
     /// <summary>构建脚本生成 (boot primlocs) 时调用：((原语名 . 位置) ...) → 哈希表。</summary>
-    public static object MakePrimlocHashtable(Cleat.Scheme.Cons map)
+    public static object MakePrimlocHashtable(object map)
     {
         var ht = new Hashtable(1024);
-        foreach (Cleat.Scheme.Cons m in map) ht[m.car] = m.cdr;
+        foreach (Cleat.Scheme.Cons m in (IEnumerable<object>)map) ht[m.car] = m.cdr;
         return ht;
     }
 

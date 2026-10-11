@@ -13,6 +13,6 @@ public partial class Builtins
     [Primitive("not", Flags = PrimitiveFlags.Pure, Inline = "not")]
     public static object Not(object obj)
     {
-        return GetBool(!(!(obj is bool) || (bool)obj));
+        return GetBool(!RT.IsTrue(obj));
     }
 }

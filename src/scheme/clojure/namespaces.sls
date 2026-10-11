@@ -6,7 +6,7 @@
 ;;;     包成注解 (make-annotation Scheme符号 源位置 原Clojure符号)：标识符认 expression（boot 的 id?），
 ;;;     syntax->datum 得回 stripped（原符号，带元数据）。符号自己没有位置，用外层列表的位置（与 C# 展开器报错的位置相同）。
 ;;;   - 非空 Clojure 列表 / seq → Scheme 列表（psyntax 的应用、宏、syntax-case 都按序对工作），注解的 stripped 为原对象；
-;;;     空列表 () 保持原对象（它与 nil 不同；Scheme 的 '() 就是 CLR null，即 Clojure 的 nil）。
+;;;     空列表 () 保持原对象（它与 nil 不同；Clojure 的 nil 是 CLR null，即 Scheme 的 #nil，cleat-058）。
 ;;;   - 向量 / map / set → 用 048 登记的 rebuild 转换子项，注解的 stripped 为原对象。
 ;;;   - 其他（数、字符串、关键字、nil）不变。
 ;;;   于是未被宏改动的部分 syntax->datum 得回原对象（eq?）；模板产物里的 Scheme 符号 / 序对由 scheme->clj 转回 Clojure。
@@ -69,7 +69,7 @@
 
   (define (clj-symbol name) (clr-static-call clojure.lang.Symbol (intern System.String) name))
   (define (clj-symbol? x) (clr-is clojure.lang.Symbol x))
-  (define (sym-ns s) (let ((n (clr-call clojure.lang.Symbol get_Namespace s))) (if (null? n) #f n)))
+  (define (sym-ns s) (let ((n (clr-call clojure.lang.Symbol get_Namespace s))) (if (nil? n) #f n)))
   (define (sym-name s) (clr-call clojure.lang.Symbol get_Name s))
   (define (->string x) (clr-call System.Object ToString x))
   (define (->csym x) (cond ((clj-symbol? x) x) ((symbol? x) (clj-symbol (symbol->string x))) (else (clj-symbol x))))
@@ -79,7 +79,7 @@
   (define (var-public? v) (clr-call clojure.lang.Var get_isPublic v))
   (define (var-macro? v) (clr-call clojure.lang.Var get_IsMacro v))
   (define (var-dynamic? v) (clr-call clojure.lang.Var isDynamic v))
-  (define (nil->f x) (if (null? x) #f x))
+  (define (nil->f x) (if (nil? x) #f x))
   (define current-ns-var (clr-static-field-get clojure.lang.RT CurrentNSVar))
 
   (define (current-ns) (clr-call clojure.lang.Var deref current-ns-var))
@@ -131,6 +131,8 @@
   (define (scheme->clj x)
     (cond
       ((symbol? x) (scheme-symbol->clj x))
+      ;; Scheme 的 '()（EmptyList）是空表，对应 Clojure 的 ()（PersistentList.EMPTY）；Clojure 的 nil 是 #nil（cleat-058）
+      ((null? x) (clj-list))
       ((pair? x)
        (let loop ((x x) (acc '()))
          (cond
@@ -192,13 +194,13 @@
                      (values o #f #f)
                      (values #f (string-append "Unable to resolve symbol: " (->string sym) " in this context") #f)))))))))
 
-  ;;; Clojure 的 ns-resolve / resolve：解析不到为 nil（'()），私有 Var 抛 IllegalStateException
+  ;;; Clojure 的 ns-resolve / resolve：解析不到为 nil（#nil），私有 Var 抛 IllegalStateException
   (define (clj-ns-resolve ns sym)
     (let-values (((o msg private?) (resolve-in ns (->csym sym))))
       (cond
         (o o)
         (private? ($throw (clr-new System.InvalidOperationException msg)))
-        (else '()))))
+        (else #nil))))
   (define (clj-resolve sym) (clj-ns-resolve (current-ns) sym))
 
   ;;; —— 标签与绑定 ——
@@ -355,7 +357,7 @@
   ;;; 与 Clojure 完全相同的不卫生语义：宏输出里的符号按使用处解析。&env 由 set-macro-env-provider! 登记的过程给出
   ;;; （(clojure syntax) 给出词法局部的 符号 → LocalBinding map），没有登记时为 nil。
 
-  (define macro-env-provider (lambda () '()))
+  (define macro-env-provider (lambda () #nil))
   (define (set-macro-env-provider! thunk) (set! macro-env-provider thunk))
 
   (define op-apply-to (clj-op ApplyTo))
@@ -491,7 +493,7 @@
        (clr-new Cleat.Core.Expand.ExpanderException
          (or (and pos (caddr pos)) (source-path))
          (if pos (car pos) 0) (if pos (cadr pos) 0)
-         (phase-keyword phase) msg cause (or sym '())))))
+         (phase-keyword phase) msg cause (or sym #nil)))))
 
   ;;; 出错形式的特殊形式名（Clojure 只对特殊形式报 "compiling recur at"，普通调用为 "compiling at"），否则 #f
   (define (special-form-op form)
@@ -521,7 +523,7 @@
                            (let-values (((o why p?) (resolve-in (current-ns) d))) (or why msg))
                            (string-append "Unable to resolve symbol: " (->string d) " in this context")))
                      (clojure-wording msg form op))))
-      ($throw (expander-exception (syntax-position form) 'compile-syntax-check text '() op))))
+      ($throw (expander-exception (syntax-position form) 'compile-syntax-check text #nil op))))
 
   ;;; —— 入口：在 *ns* 里展开 / 求值 Clojure 形式 ——
 
@@ -564,7 +566,7 @@
       (lambda ()
         (cond
           ((macro-var-head form
-             (lambda (msg) ($throw (expander-exception #f 'compile-syntax-check msg '())))) 
+             (lambda (msg) ($throw (expander-exception #f 'compile-syntax-check msg #nil)))) 
            => (lambda (v) (call-macro v form #f)))
           (else
            (let* ((x (clj->scheme form))

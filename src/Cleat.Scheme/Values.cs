@@ -1,3 +1,5 @@
+using System.Collections;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace Cleat.Scheme;
@@ -8,8 +10,8 @@ public static class RT
     public static readonly object True = true;
     public static readonly object False = false;
 
-    /// <summary>Scheme 真值：只有 #f 为假。</summary>
-    public static bool IsTrue(object o) => !(o is bool b) || b;
+    /// <summary>真值：#f 与 #nil（.NET null）为假，其余（包括 '()）为真（designs/13-exceptions.md §7）。</summary>
+    public static bool IsTrue(object o) => o != null && (o is not bool b || b);
 
     public static object Bool(bool b) => b ? True : False;
 
@@ -26,6 +28,26 @@ public static class RT
     /// <summary>fixnum 装箱；小整数返回缓存的同一对象。</summary>
     public static object Box(int value) =>
       value >= MinCache && value < MaxCache ? s_intCache[value - MinCache] : value;
+}
+
+/// <summary>
+/// 空表 '()：非 null 的单例（与 Clojure 的 PersistentList.EMPTY 同理）。#nil 是 .NET 的 null，与 '()、#f 两两不同。
+/// 正规列表以它结尾；以 #nil 结尾的序对链不是正规列表。
+/// </summary>
+public sealed class EmptyList : IReadOnlyList<object>
+{
+    public static readonly EmptyList Instance = new EmptyList();
+    private EmptyList() { }
+    public override string ToString() => "()";
+
+    /// <summary>与 Clojure 的 EmptyList 相同：first / next 为 null，more 为自己。</summary>
+    public object First => null;
+    public Cons Next => null;
+    public object More => this;
+    public int Count => 0;
+    public object this[int index] => throw new System.ArgumentOutOfRangeException(nameof(index));
+    public IEnumerator<object> GetEnumerator() { yield break; }
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 }
 
 /// <summary>未指定值（如 set! 的返回值）。</summary>

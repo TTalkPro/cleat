@@ -13,7 +13,7 @@ namespace Cleat.Emit;
 /// </summary>
 internal static class SchemeData
 {
-    private static Type s_consType, s_symbolType;
+    private static Type s_consType, s_symbolType, s_emptyType;
     private static Func<object, object> s_car, s_cdr;
     private static Func<object, string> s_symbolName;
 
@@ -32,6 +32,7 @@ internal static class SchemeData
         var cons = scheme.GetType("Cleat.Scheme.Cons", true);
         s_car = Getter<object>(cons, "car");
         s_cdr = Getter<object>(cons, "cdr");
+        s_emptyType = scheme.GetType("Cleat.Scheme.EmptyList", true);
         s_consType = cons;
     }
 
@@ -45,7 +46,7 @@ internal static class SchemeData
     {
         switch (x)
         {
-            case null: return new SList();
+            case null: throw new LcilException("#nil in Lcil data");
             case string s: return new SStr(s);
             case StringBuilder sb: return new SStr(sb.ToString());
             case bool b: return new SBool(b);
@@ -54,13 +55,14 @@ internal static class SchemeData
             case double d: return new SReal(d);
         }
         var t = x.GetType();
+        if (t == s_emptyType) return new SList();
         // Scheme 字符串的另一种表示（可变串、含 BMP 外字符的串，iron-055）：取其 UTF-16 文本
         if (t.FullName == "Cleat.Scheme.SchemeString") return new SStr(x.ToString());
         if (t == s_consType)
         {
             var l = new SList();
             object p = x;
-            while (p != null)
+            while (p.GetType() != s_emptyType)
             {
                 if (p.GetType() != s_consType) throw new LcilException("improper list in Lcil data");
                 l.Items.Add(Node(s_car(p)));

@@ -23,7 +23,7 @@ public static class Control
         for (int i = 0; i < args.Length - 1; i++) all.Add(args[i]);
         object tail = args[args.Length - 1];
         for (; tail is Cons c; tail = c.cdr) all.Add(c.car);
-        if (tail != null)
+        if (tail is not EmptyList)
             return Errors.AssertionViolation("apply", "last argument is not a proper list", args[args.Length - 1]);
 
         return all.Count switch

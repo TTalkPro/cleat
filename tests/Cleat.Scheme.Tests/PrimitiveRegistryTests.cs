@@ -49,7 +49,7 @@ public class PrimitiveRegistryTests
         var add = new Add2();
         Assert.That(apply.Invoke2(add, Cons.FromArray(1, 2)), Is.EqualTo(3));
         Assert.That(apply.Invoke3(add, 1, Cons.FromArray(2)), Is.EqualTo(3));
-        Assert.That(apply.InvokeN(new object[] { add, 1, 2, null }), Is.EqualTo(3));
+        Assert.That(apply.InvokeN(new object[] { add, 1, 2, EmptyList.Instance }), Is.EqualTo(3));
         Assert.Throws<SchemeRuntimeError>(() => apply.Invoke0());   // 至少 1 个固定参数
     }
 

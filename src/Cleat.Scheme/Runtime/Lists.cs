@@ -23,6 +23,13 @@ public partial class Builtins
     [Primitive("null?", Flags = PrimitiveFlags.Pure, Inline = "null?")]
     public static object IsNull(object arg1)
     {
+        return GetBool(arg1 is EmptyList);
+    }
+
+    /// <summary>(nil? x)：x 是否为 #nil（.NET null）。与 null?（空表 '()）不同。</summary>
+    [Primitive("nil?", Flags = PrimitiveFlags.Pure, Inline = "nil?")]
+    public static object IsNil(object arg1)
+    {
         return GetBool(arg1 == null);
     }
 
@@ -35,7 +42,7 @@ public partial class Builtins
     [Primitive("list-prim")]
     public static object List()
     {
-        return null;
+        return EmptyList.Instance;
     }
 
     [Primitive("list-prim")]
@@ -129,24 +136,19 @@ public partial class Builtins
 
     public static object Append(object arg1, object arg2)
     {
-        if (arg1 == null)
+        if (arg1 is EmptyList)
         {
             return arg2;
         }
-        if (arg2 == null)
+        if (arg2 is EmptyList)
         {
             return arg1;
         }
         Cons c = arg1 as Cons;
-        do
+        while (c.cdr is Cons next)
         {
-            if (c.cdr == null)
-            {
-                break;
-            }
-            c = c.cdr as Cons;
+            c = next;
         }
-        while (true);
 
         c.cdr = arg2;
 
@@ -160,10 +162,11 @@ public partial class Builtins
 
         if (list == null)
         {
-            return null;
+            return EmptyList.Instance;
         }
 
-        Cons prev = null, next = null;
+        object prev = EmptyList.Instance;
+        Cons next;
 
         while (true)
         {
@@ -185,7 +188,7 @@ public partial class Builtins
         Cons i = c;
         Cons j = null;
 
-        while (i.cdr != null)
+        while (i.cdr is not EmptyList)
         {
             j = i;
             i = i.cdr as Cons;

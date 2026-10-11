@@ -13,7 +13,10 @@ public class ListsVectorsEqualityTests
         Assert.That(Builtins.Car(p), Is.EqualTo(1));
         Assert.That(Builtins.Cdr(p), Is.EqualTo(2));
         Assert.That(Builtins.IsPair(p), Is.SameAs(RT.True));
-        Assert.That(Builtins.IsNull(null), Is.SameAs(RT.True));
+        Assert.That(Builtins.IsNull(EmptyList.Instance), Is.SameAs(RT.True));   // '() 是 EmptyList（cleat-058）
+        Assert.That(Builtins.IsNull(null), Is.SameAs(RT.False));
+        Assert.That(Builtins.IsNil(null), Is.SameAs(RT.True));
+        Assert.That(Builtins.IsNil(EmptyList.Instance), Is.SameAs(RT.False));
         Assert.That(Builtins.IsNull(p), Is.SameAs(RT.False));
         Assert.Throws<SchemeRuntimeError>(() => Builtins.Car(null));
     }
@@ -22,7 +25,7 @@ public class ListsVectorsEqualityTests
     public void ListPrimAllArities()
     {
         var lp = new PrimitiveProcedure("list-prim", PrimitiveRegistry.All["list-prim"]);
-        Assert.That(lp.Invoke0(), Is.Null);
+        Assert.That(lp.Invoke0(), Is.SameAs(EmptyList.Instance));
         Assert.That(((Cons)lp.Invoke3(1, 2, 3)).ToArray(), Is.EqualTo(new object[] { 1, 2, 3 }));
         Assert.That(((Cons)lp.InvokeN(new object[] { 1, 2, 3, 4, 5 })).Count(), Is.EqualTo(5));
         Assert.That(((Cons)lp.InvokeN(Enumerable.Range(0, 9).Cast<object>().ToArray())).Count(), Is.EqualTo(9));
@@ -65,7 +68,8 @@ public class ListsVectorsEqualityTests
     public void Not()
     {
         Assert.That(Builtins.Not(RT.False), Is.SameAs(RT.True));
-        Assert.That(Builtins.Not(null), Is.SameAs(RT.False));
+        Assert.That(Builtins.Not(null), Is.SameAs(RT.True));                 // #nil 为假（cleat-058）
+        Assert.That(Builtins.Not(EmptyList.Instance), Is.SameAs(RT.False));   // '() 为真
         Assert.That(Builtins.Not(0), Is.SameAs(RT.False));
     }
 }

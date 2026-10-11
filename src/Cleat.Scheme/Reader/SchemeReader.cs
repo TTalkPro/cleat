@@ -243,13 +243,13 @@ public sealed class SchemeReader
     {
         var sym = Wrap(Symbol.Intern(name), start);
         var datum = RequireDatum(ReadItem());
-        return Wrap(new Cons(sym, new Cons(datum, null)), start);
+        return Wrap(new Cons(sym, new Cons(datum)), start);
     }
 
     private object ReadList((int Line, int Col) start, char closer)
     {
         var items = new List<object>();
-        object tail = null;
+        object tail = EmptyList.Instance;
         while (true)
         {
             var x = ReadItem();
@@ -324,6 +324,7 @@ public sealed class SchemeReader
         {
             case "t": case "T": case "true": return Wrap(RT.True, start);
             case "f": case "F": case "false": return Wrap(RT.False, start);
+            case "nil": return Wrap(null, start);   // #nil：.NET null（designs/13-exceptions.md §7）
         }
         if ("xXbBoOdDeEiI".IndexOf(name[0]) >= 0)
         {
@@ -367,11 +368,11 @@ public sealed class SchemeReader
         throw Error("not a known vector type: " + type);
     }
 
-    private byte[] BytesFromList(Cons list)
+    private byte[] BytesFromList(object list)
     {
         var result = new List<byte>();
-        if (list != null)
-            foreach (var o in list)
+        if (list is IEnumerable<object> items)
+            foreach (var o in items)
             {
                 if (!(o is int i) || i < 0 || i > 255) throw Error("bytevector element out of range: " + o);
                 result.Add((byte)i);

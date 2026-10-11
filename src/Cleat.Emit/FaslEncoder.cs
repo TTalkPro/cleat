@@ -16,11 +16,11 @@ namespace Cleat.Emit;
 /// </summary>
 public static class FaslEncoder
 {
-    public const byte Version = 1;
+    public const byte Version = 2;   // 与 Cleat.Scheme.Fasl.Version 一致（2：'() 是 EmptyList，cleat-058）
     public static readonly byte[] Magic = Encoding.ASCII.GetBytes("CLFASL");
 
     // 标签（与 Cleat.Scheme.Fasl 一致）：0x0_ 单例；0x1_ 数；0x2_ 字符、字符串、符号；0x3_ 序列；0x4_ Scheme 记录等；0x5_ Clojure 其他；0x6_ 共享
-    public const byte Nil = 0x00, True = 0x01, False = 0x02, Unspec = 0x03, EofTag = 0x04,
+    public const byte Nil = 0x00, True = 0x01, False = 0x02, Unspec = 0x03, EofTag = 0x04, Empty = 0x05,
       Fix = 0x10, Big = 0x11, Rat = 0x12, Flo = 0x13, Cpx = 0x14,
       Long = 0x18, Double = 0x19, BigInt = 0x1A, BigDec = 0x1B, Ratio = 0x1C,
       Chr = 0x20, Str = 0x21, MStr = 0x22, Sym = 0x23,
@@ -122,7 +122,8 @@ public static class FaslEncoder
             switch (l.Head)
             {
                 // ———— 单例 ————
-                case "nil": Arity(l, 0); _w.Write(Nil); return;
+                case "nil": Arity(l, 0); _w.Write(Nil); return;       // #nil（null）；Clojure 的 nil
+                case "empty": Arity(l, 0); _w.Write(Empty); return;   // Scheme 的 '()（EmptyList，cleat-058）
                 case "true": Arity(l, 0); _w.Write(True); return;
                 case "false": Arity(l, 0); _w.Write(False); return;
                 case "unspecified": Arity(l, 0); _w.Write(Unspec); return;
@@ -171,7 +172,7 @@ public static class FaslEncoder
                 // ———— 序列 ————
                 case "pair": Arity(l, 2); _w.Write(Pair); Encode(l[1]); Encode(l[2]); return;
                 case "list":
-                    if (_scheme) { _w.Write(List); Items(l, 1); _w.Write(Nil); }
+                    if (_scheme) { _w.Write(List); Items(l, 1); _w.Write(Empty); }
                     else { _w.Write(CljList); Items(l, 1); }
                     return;
                 case "dlist":

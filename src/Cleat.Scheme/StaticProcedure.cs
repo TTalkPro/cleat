@@ -58,7 +58,7 @@ public class StaticProcedure : Procedure
     /// <summary>args[from..] 打包成列表（剩余参数；同 VariadicProcedure.RestList，持有类不是它的子类）。</summary>
     public static object Rest(object[] args, int from)
     {
-        object rest = null;
+        object rest = EmptyList.Instance;
         for (int i = args.Length - 1; i >= from; i--) rest = new Cons(args[i], rest);
         return rest;
     }

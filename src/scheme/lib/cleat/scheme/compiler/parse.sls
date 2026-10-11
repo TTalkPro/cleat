@@ -78,7 +78,8 @@ See docs/license.txt. |#
         (cadr x)
         (bad-form who form)))
 
-  (define (static-instance? x) (equal? x ''()))
+  ;; 实例位置是 '#nil（clr-static-* 的约定，.NET null）时为静态调用；'() 是旧约定（'() 曾经就是 null，cleat-058）
+  (define (static-instance? x) (or (equal? x ''#nil) (equal? x ''())))
 
 ;; typed-lambda 的类型说明（iron-034 D6）：形参类型为 Int32 / Double 时，形参改名，体外包
   ;;   (let ((x ($as-fixnum x$typed))) 体)

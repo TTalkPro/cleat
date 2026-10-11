@@ -59,7 +59,7 @@ public static class Driver
     }
 
     private static readonly Symbol s_quote = Symbol.Intern("quote"), s_if = Symbol.Intern("if"), s_begin = Symbol.Intern("begin"),
-      s_caseLambda = Symbol.Intern("case-lambda"), s_lambda = Symbol.Intern("lambda"), s_null = Symbol.Intern("null?"),
+      s_caseLambda = Symbol.Intern("case-lambda"), s_lambda = Symbol.Intern("lambda"), s_null = Symbol.Intern("null?"), s_nil = Symbol.Intern("nil?"),
       s_varRef = Symbol.Intern("$clj-var-ref"), s_varSet = Symbol.Intern("$clj-var-set!"), s_def = Symbol.Intern("$clj-def"),
       s_invoke = Symbol.Intern("$clj-invoke"), s_kwInvoke = Symbol.Intern("$clj-keyword-invoke"), s_call = Symbol.Intern("$clj-call");
 
@@ -108,7 +108,7 @@ public static class Driver
         var r = new List<object>();
         object p = list;
         while (PairOf(p, out var car, out var cdr)) { r.Add(car); p = cdr; }
-        return p == null ? r : null;   // 非真列表：null
+        return p is null or EmptyList ? r : null;   // 非真列表：null（Scheme 表尾 '()，Clojure 列表的 next 为 null）
     }
 
     /// <summary>Lcore 的序对：模板节点是 clojure.lang 的列表，展开器生成的子结构是 Scheme 的 Cons（字段 car / cdr）</summary>
@@ -171,7 +171,7 @@ public static class Driver
         if (ReferenceEquals(head, s_quote)) return xs.Count == 2;
         if (ReferenceEquals(head, s_if)) return (xs.Count == 3 || xs.Count == 4) && AllSimple(xs, 1, sc);
         if (ReferenceEquals(head, s_begin)) return AllSimple(xs, 1, sc);
-        if (ReferenceEquals(head, s_null)) return xs.Count == 2 && Simple(xs[1], sc);
+        if (ReferenceEquals(head, s_null) || ReferenceEquals(head, s_nil)) return xs.Count == 2 && Simple(xs[1], sc);
         if (ReferenceEquals(head, s_varRef)) return xs.Count == 3 && Quoted(xs[1]) is Var;
         if (ReferenceEquals(head, s_varSet)) return xs.Count == 3 && Quoted(xs[1]) is Var && Simple(xs[2], sc);
         if (ReferenceEquals(head, s_def)) return xs.Count == 6 && Quoted(xs[1]) is Var && Simple(xs[4], sc) && Simple(xs[5], sc);
@@ -189,7 +189,7 @@ public static class Driver
         return false;
     }
 
-    private static bool IsTrue(object x) => !(x is bool b) || b;
+    private static bool IsTrue(object x) => RT.IsTrue(x);   // #f 与 #nil 为假（cleat-058）
 
     private static object Eval(object x, Env env)
     {
@@ -210,7 +210,8 @@ public static class Driver
             for (int i = 1; i < xs.Count; i++) last = Eval(xs[i], env);
             return last;
         }
-        if (ReferenceEquals(head, s_null)) return Eval(xs[1], env) == null;
+        if (ReferenceEquals(head, s_null)) return Eval(xs[1], env) is EmptyList;
+        if (ReferenceEquals(head, s_nil)) return Eval(xs[1], env) == null;
         if (ReferenceEquals(head, s_varRef))
         {
             var v = (Var)Quoted(xs[1]);
@@ -407,7 +408,7 @@ public static class Driver
     public static readonly Procedure TopLevelDoBody = new P1("clojure-top-level-do-body", form =>
     {
         if (form is not ISeq s || !s_do.Equals(s.first())) return s_false;
-        object r = null;
+        object r = EmptyList.Instance;
         var items = new List<object>();
         for (ISeq p = s.next(); p != null; p = p.next()) items.Add(p.first());
         for (int i = items.Count - 1; i >= 0; i--) r = new Cons(items[i], r);
@@ -449,7 +450,7 @@ public static class Driver
     public static void CompileBoot(IEnumerable<object> forms, string dllPath)
     {
         var hook = CompileBootHook ?? throw new InvalidOperationException("the Clojure driver has not registered compile-boot");
-        object list = null;
+        object list = EmptyList.Instance;
         foreach (var f in forms.Reverse()) list = new Cons(f, list);
         hook(list, Path.GetFullPath(dllPath));
     }
@@ -802,7 +803,9 @@ public static class Driver
             return t == null ? null : new object[] { t, bytes };
         });
         if (cached == null) return s_false;
-        return new object[] { cached[0], Cleat.Scheme.Fasl.Read((byte[])cached[1]) };
+        // 读不了的内联体（旧 fasl 版本、过期产物的 .inl）不内联，照常调用
+        try { return new object[] { cached[0], Cleat.Scheme.Fasl.Read((byte[])cached[1]) }; }
+        catch (System.IO.InvalidDataException) { return s_false; }
     }
 
     private static readonly Symbol s_letrec = Symbol.Intern("letrec");

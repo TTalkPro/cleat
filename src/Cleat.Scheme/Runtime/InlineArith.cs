@@ -37,8 +37,8 @@ public static class ValuesPrimitives
     public static object Tail(object r, object n)
     {
         int from = (int)n;
-        if (r is not MultipleValues mv) return from == 0 ? new Cons(r, null) : null;
-        object rest = null;
+        if (r is not MultipleValues mv) return from == 0 ? new Cons(r) : EmptyList.Instance;
+        object rest = EmptyList.Instance;
         for (int i = mv.Length - 1; i >= from; i--) rest = new Cons(mv[i], rest);
         return rest;
     }

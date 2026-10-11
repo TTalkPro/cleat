@@ -20,7 +20,7 @@ public class RuntimeHooksTests
         var e = Assert.Throws<SchemeException>(d);
         var cond = (Cons)e.Condition;
         Assert.That(cond.car, Is.SameAs(Symbol.Intern(kind)));
-        return ((Cons)cond.cdr)?.ToArray() ?? Array.Empty<object>();
+        return (cond.cdr as Cons)?.ToArray() ?? Array.Empty<object>();
     }
 
     [Test]
@@ -53,7 +53,7 @@ public class RuntimeHooksTests
         Assert.That(missing, Has.Length.EqualTo(15));
         Assert.That(missing, Does.Not.Contain(Symbol.Intern("exact")));
         foreach (var n in RuntimeHooks.Names) RuntimeHooks.Set(n, new Fn(a => null));
-        Assert.That(RuntimeHooks.Missing(), Is.Null);   // '()
+        Assert.That(RuntimeHooks.Missing(), Is.SameAs(EmptyList.Instance));   // '()
     }
 
     [Test]

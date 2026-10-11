@@ -1007,6 +1007,8 @@
   (primitive make-record-type-descriptor
     (overload "Cleat.Scheme.Records" "MakeRecordTypeDescriptor" 6 #f () #f)
     (overload "Cleat.Scheme.Records" "MakeRecordTypeDescriptorTyped" 7 #f () #f))
+  (primitive nil?
+    (overload "Cleat.Scheme.Builtins" "IsNil" 1 #f (pure) nil?))
   (primitive not
     (overload "Cleat.Scheme.Builtins" "Not" 1 #f (pure) not))
   (primitive null?

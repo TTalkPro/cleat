@@ -69,6 +69,7 @@ See docs/license.txt. |#
       [(obj port readable?)
         (cond
           [(null? obj)        (put-string port "()")]
+          [(nil? obj)         (put-string port "#nil")]
           [(boolean? obj)     (put-string port (if obj "#t" "#f"))]
           [(number? obj)      (put-string port (number->string obj))]
           [(eof-object? obj)  (put-string port "#<eof>")]

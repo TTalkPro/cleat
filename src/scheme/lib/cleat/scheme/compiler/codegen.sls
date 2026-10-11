@@ -97,6 +97,7 @@ See docs/license.txt. |#
   (define-target-type void-type void)
   (define-target-type exception-type exception)
   (define-target-type unspecified-type unspecified)
+  (define-target-type empty-list-type empty-list)
   (define-target-type proc-type procedure)
   (define-target-type variadic-type variadic-procedure)
   (define-target-type cons-type cons)
@@ -444,7 +445,8 @@ See docs/license.txt. |#
       ((and (fixnum? d) (exact? d)) (emit! mc `(ldc.i4 ,d) `(call ,rt-type "Box" (,int32-type) ,obj)))
       ((eq? d #t) (emit! mc `(ldsfld ,rt-type "True")))
       ((eq? d #f) (emit! mc `(ldsfld ,rt-type "False")))
-      ((null? d) (emit! mc '(ldnull)))
+      ((null? d) (emit! mc `(ldsfld ,empty-list-type "Instance")))   ; '()
+      ((nil? d) (emit! mc '(ldnull)))                                   ; #nil
       ((unspecified? d) (emit! mc `(ldsfld ,unspecified-type "Instance")))
       ((and (char? d) (< (char->integer d) #x10000))
        (emit! mc `(ldc.i4 ,(char->integer d)) `(box ,char-type)))
@@ -1855,7 +1857,8 @@ See docs/license.txt. |#
             (args!)
             (emit! mc `(call ,rt-type "IsTrue" (,obj) ,bool-type) '(ldc.i4 0) '(ceq))
             (finish-bool! mc ctx))
-           ((null?) (args!) (emit! mc '(ldnull) '(ceq)) (finish-bool! mc ctx))
+           ((null?) (args!) (emit! mc `(ldsfld ,empty-list-type "Instance") '(ceq)) (finish-bool! mc ctx))
+           ((nil?) (args!) (emit! mc '(ldnull) '(ceq)) (finish-bool! mc ctx))
            ((pair?) (args!) (emit! mc `(isinst ,cons-type) '(ldnull) '(cgt.un)) (finish-bool! mc ctx))
            (($fx+ $fx* $fxand $fxior $fxxor)
             (unbox-args! int32-type)
@@ -2007,7 +2010,7 @@ See docs/license.txt. |#
     (let ((arity (let ((as (map (lambda (c) (if (cdr c) (inexact (car c)) (car c))) clauses)))
                    (cond ((null? as) '()) ((null? (cdr as)) (car as)) (else as)))))
       (cond
-        ((null? arity) '((ldnull)))
+        ((null? arity) `((ldsfld ,empty-list-type "Instance")))
         ((fixnum? arity) `((ldc.i4 ,arity) (call ,rt-type "Box" (,int32-type) ,obj)))
         (else `((ldconst ,(constant-index! u arity)))))))
 
@@ -2071,7 +2074,7 @@ See docs/license.txt. |#
                           (cond ((null? as) '()) ((null? (cdr as)) (car as)) (else as)))))
              `(method "get_Arity" (attrs override) (params) (ret ,obj)
                 (body ,@(cond
-                          ((null? arity) '((ldnull)))
+                          ((null? arity) `((ldsfld ,empty-list-type "Instance")))
                           ((fixnum? arity) `((ldc.i4 ,arity) (call ,rt-type "Box" (,int32-type) ,obj)))
                           (else `((ldconst ,(constant-index! u arity)))))
                       (ret)))))

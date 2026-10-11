@@ -59,7 +59,7 @@ public class ProcedureDispatchTests
     {
         var p = new ConsRest();
         Assert.That(((Cons)p.Invoke3(1, 2, 3)).ToArray(), Is.EqualTo(new object[] { 1, 2, 3 }));
-        Assert.That(((Cons)p.Invoke1(1)).cdr, Is.Null);
+        Assert.That(((Cons)p.Invoke1(1)).cdr, Is.SameAs(EmptyList.Instance));
         Assert.That(((Cons)p.InvokeN(Enumerable.Range(0, 6).Cast<object>().ToArray())).Count(), Is.EqualTo(6));
         Arity(() => p.Invoke0());
     }
@@ -96,7 +96,7 @@ public class ApplyTests
         var add = new Add2();
         Assert.That(Control.Apply(add, Cons.FromArray(1, 2)), Is.EqualTo(3));
         Assert.That(Control.Apply(add, 1, Cons.FromArray(2)), Is.EqualTo(3));
-        Assert.That(Control.Apply(add, 1, 2, null), Is.EqualTo(3));
+        Assert.That(Control.Apply(add, 1, 2, EmptyList.Instance), Is.EqualTo(3));
     }
 
     [Test]

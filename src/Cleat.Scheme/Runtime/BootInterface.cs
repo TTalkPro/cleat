@@ -41,7 +41,7 @@ public static class BootInterface
 
     // —— 用户库的接口文件（.fasl / 库 dll 旁的 名字.ifc，compile-library-dll 写出）——
     private static readonly object s_ifcGate = new();
-    private static object s_ifcFiles = null;   // Scheme 表，按加载顺序（追加在表尾，编译器记下读过几个）
+    private static object s_ifcFiles = EmptyList.Instance;   // Scheme 表，按加载顺序（追加在表尾，编译器记下读过几个）
 
     /// <summary>加载 .fasl / 库 dll 之后：旁边的接口文件记录的程序集名与加载的相同时登记它。</summary>
     internal static void RegisterInterfaceFile(string path, Assembly asm)
@@ -57,7 +57,7 @@ public static class BootInterface
             var items = new System.Collections.Generic.List<object>();
             for (object p = s_ifcFiles; p is Cons c; p = c.cdr) items.Add(c.car);
             items.Add(ifc);
-            object list = null;
+            object list = EmptyList.Instance;
             for (int i = items.Count - 1; i >= 0; i--) list = new Cons(items[i], list);
             s_ifcFiles = list;
         }

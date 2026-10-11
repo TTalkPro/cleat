@@ -32,7 +32,8 @@ public class ReaderTests
         Assert.That(L(Read("[a b]")), Is.EqualTo(new object[] { S("a"), S("b") }));
         var dotted = (Cons)Read("(1 . 2)");
         Assert.That(dotted.car, Is.EqualTo(1)); Assert.That(dotted.cdr, Is.EqualTo(2));
-        Assert.That(Read("()"), Is.Null);
+        Assert.That(Read("()"), Is.SameAs(EmptyList.Instance));   // cleat-058
+        Assert.That(Read("#nil"), Is.Null);
         Assert.That(Read("#(1 #(2))"), Is.EqualTo(new object[] { 1, new object[] { 2 } }));
         Assert.Throws<ReaderException>(() => Read("(1 2]"));
         Assert.Throws<ReaderException>(() => Read("(1 2"));

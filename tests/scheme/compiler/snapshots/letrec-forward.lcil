@@ -97,7 +97,7 @@
       (body
         (label start)
         (ldarg 1)
-        (ldnull)
+        (ldsfld "Cleat.Scheme.EmptyList" "Instance")
         (ceq)
         (brfalse L0)
         (ldarg 0)

@@ -145,7 +145,8 @@ public class ValueTests
     {
         Assert.That(RT.IsTrue(RT.False), Is.False);
         Assert.That(RT.IsTrue(RT.True), Is.True);
-        Assert.That(RT.IsTrue(null), Is.True);              // '() 为真
+        Assert.That(RT.IsTrue(null), Is.False);             // #nil 为假（cleat-058）
+        Assert.That(RT.IsTrue(EmptyList.Instance), Is.True);  // '() 为真
         Assert.That(RT.IsTrue(0), Is.True);
         Assert.That(RT.IsTrue(false), Is.False);            // 任何装箱的 false 都为假
         Assert.That(RT.Bool(true), Is.SameAs(RT.True));
@@ -162,9 +163,9 @@ public class ValueTests
     [Test]
     public void ConsFromListAndEnumerate()
     {
-        var l = Cons.FromArray(1, 2, 3);
+        var l = (Cons)Cons.FromArray(1, 2, 3);
         Assert.That(l.ToArray(), Is.EqualTo(new object[] { 1, 2, 3 }));
-        Assert.That(Cons.FromArray(), Is.Null);
+        Assert.That(Cons.FromArray(), Is.SameAs(EmptyList.Instance));   // '() 是 EmptyList（cleat-058）
         var improper = new Cons(1, 2);
         Assert.That(improper.ToArray(), Is.EqualTo(new object[] { 1 }));
     }

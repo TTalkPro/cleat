@@ -261,9 +261,14 @@
       (test "converted form is a Scheme list of identifiers"
         (syntax-case (datum->syntax #'here x) () ((h a b c d) (list (identifier? #'h) (syntax->datum #'h) (str (syntax->clj #'a)))))
         (list #t (sym "q/x") "[y]")))
+    ;; cleat-058：#nil 是 Clojure 的 nil；Scheme 的 '() 是空表，对应 Clojure 的 ()
     (test "scheme->clj turns template output into Clojure data"
-      (str (scheme->clj (list 'a/b 1 (clj-vector 'c '()) '())))
+      (str (scheme->clj (list 'a/b 1 (clj-vector 'c #nil) #nil)))
       "(a/b 1 [c nil] nil)")
+    (test "scheme->clj maps '() to the empty Clojure list"
+      (let ((x (scheme->clj (list 'f '()))))
+        (list (str x) (clr-is clojure.lang.IPersistentList (clr-call clojure.lang.ISeq first (clr-call clojure.lang.ISeq next x)))))
+      '("(f ())" #t))
 
     ;; —— 规模：1000 个 def 后查找不随定义数增长 ——
     (let ()

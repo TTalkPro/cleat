@@ -36,7 +36,7 @@ public static class Calls
         for (int i = 0; i < args.Length - 1; i++) r.Add(args[i]);
         object l = args[^1];
         while (l is Cons c) { r.Add(c.car); l = c.cdr; }
-        if (l != null) Errors.AssertionViolation("apply", "not a proper list", args[^1]);
+        if (l is not EmptyList) Errors.AssertionViolation("apply", "not a proper list", args[^1]);
         return r.ToArray();
     }
 

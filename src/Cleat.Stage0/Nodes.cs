@@ -374,7 +374,7 @@ public sealed class Closure : Procedure
         get
         {
             var a = Array.ConvertAll(_info.Clauses, c => c.Rest ? (object)(double)c.Required : RT.Box(c.Required));
-            return a.Length == 0 ? null : a.Length == 1 ? a[0] : Cons.FromArray(a);
+            return a.Length == 0 ? EmptyList.Instance : a.Length == 1 ? a[0] : Cons.FromArray(a);
         }
     }
 
@@ -442,7 +442,7 @@ public sealed class Closure : Procedure
         {
             object l = args[args.Length - 1];
             while (l is Cons c) { list.Add(c.car); l = c.cdr; }
-            if (l != null) Errors.AssertionViolation("apply", "not a proper list", args[args.Length - 1]);
+            if (l is not EmptyList) Errors.AssertionViolation("apply", "not a proper list", args[args.Length - 1]);
         }
         return list.ToArray();
     }
@@ -459,7 +459,7 @@ public sealed class Closure : Procedure
             {
                 var slots = new object[cl.Required + 1];
                 Array.Copy(args, slots, cl.Required);
-                object rest = null;
+                object rest = EmptyList.Instance;
                 for (int i = args.Length - 1; i >= cl.Required; i--) rest = new Cons(args[i], rest);
                 slots[cl.Required] = rest;
                 return cl.Body.Eval(new Frame(slots, _env));

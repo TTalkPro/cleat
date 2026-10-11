@@ -57,6 +57,7 @@ See docs/license.txt. |#
         (inline-arith . "Cleat.Scheme.InlineArith")
         (boot-interface . "Cleat.Scheme.BootInterface")
         (unspecified . "Cleat.Scheme.Unspecified")
+        (empty-list . "Cleat.Scheme.EmptyList")   ; '()（cleat-058）
         ;; Clojure 运行时（cleat-051 的 Clojure 节点）
         (ifn . "clojure.lang.IFn")
         (clj-var . "clojure.lang.Var")
