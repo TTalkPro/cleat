@@ -155,6 +155,66 @@ public static class ClojureStaticCalls
     public static bool ArgBoolean(object v) => v is bool b ? b : Reflector.Convert<bool>(v);
     public static char ArgChar(object v) => v is char c ? c : Reflector.Convert<char>(v);
 
+    // —— 原始签名的 fn（cleat-042）：JVM 的转换语义 ——
+    // 实参（invoke(Object) → invokePrim）：RT.longCast / doubleCast（越界抛 IllegalArgument），只收数字——字符串、字符、关键字是
+    // ClassCastException（ClojureCLR 的 longCast 会解析字符串、取字符码），nil 是 NullPointerException。
+    // 返回值：Number.longValue() / doubleValue()——大整数与比值取低 64 位、浮点饱和、NaN 为 0，不报错；非数字同样 ClassCastException。
+
+    private static Exception NotNumber(object x) =>
+      new InvalidCastException($"{clojure.lang.Util.NameForType(x.GetType())} cannot be cast to Number");
+
+    public static long PrimArgLong(object x) =>
+      x is long l ? l : x == null ? throw new NullReferenceException() : clojure.lang.Util.IsNumeric(x) ? clojure.lang.RT.longCast(x) : throw NotNumber(x);
+
+    public static double PrimArgDouble(object x) =>
+      x is double d ? d : x == null ? throw new NullReferenceException() : clojure.lang.Util.IsNumeric(x) ? clojure.lang.RT.doubleCast(x) : throw NotNumber(x);
+
+    public static long PrimRetLong(object x)
+    {
+        switch (x)
+        {
+            case long l: return l;
+            case null: throw new NullReferenceException();
+            case double d: return SaturatingLong(d);
+            case float f: return SaturatingLong(f);
+            case int i: return i;
+            case short sh: return sh;
+            case byte by: return by;
+            case sbyte sb: return sb;
+            case ushort us: return us;
+            case uint ui: return ui;
+            case ulong ul: return unchecked((long)ul);
+            case char: throw NotNumber(x);
+            case clojure.lang.BigInt b: return Low64(Sys(b.toBigInteger()));
+            case System.Numerics.BigInteger bi: return Low64(bi);
+            case clojure.lang.Ratio r: return Low64(System.Numerics.BigInteger.Divide(Sys(r.numerator), Sys(r.denominator)));
+            case clojure.lang.BigDecimal bd: return Low64(Sys(bd.ToBigInteger()));
+            case decimal m: return Low64(new System.Numerics.BigInteger(decimal.Truncate(m)));
+            default: throw NotNumber(x);
+        }
+    }
+
+    public static double PrimRetDouble(object x) =>
+      x switch
+      {
+          double d => d,
+          null => throw new NullReferenceException(),
+          char => throw NotNumber(x),
+          clojure.lang.BigInt b => b.doubleValue(),
+          IConvertible c when clojure.lang.Util.IsNumeric(x) => c.ToDouble(System.Globalization.CultureInfo.InvariantCulture),
+          _ when clojure.lang.Util.IsNumeric(x) => clojure.lang.RT.doubleCast(x),
+          _ => throw NotNumber(x),
+      };
+
+    private static long SaturatingLong(double d) =>
+      double.IsNaN(d) ? 0 : d >= 9.223372036854775807E18 ? long.MaxValue : d <= -9.223372036854775808E18 ? long.MinValue : (long)d;
+
+    // 非 long 返回值的少见路径：经十进制文本换成 System.Numerics.BigInteger
+    private static System.Numerics.BigInteger Sys(clojure.lang.BigInteger b) =>
+      System.Numerics.BigInteger.Parse(b.ToString(), System.Globalization.CultureInfo.InvariantCulture);
+
+    private static long Low64(System.Numerics.BigInteger b) => unchecked((long)(ulong)(b & ulong.MaxValue));
+
     // —— 返回值（Reflector.ToClojure）——
     public static object RetObject(object v) => Reflector.ConvertFrom(v, typeof(object));
     public static object RetInt32(int v) => (long)v;

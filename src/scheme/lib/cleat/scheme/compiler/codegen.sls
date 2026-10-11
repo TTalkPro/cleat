@@ -302,7 +302,7 @@ See docs/license.txt. |#
     (fields unit
             class                ; 所属类型名
             static?
-            vars                 ; eq 哈希表：变量 → (arg . i) | (local . i) | (tlocal i . 类型) | (field . 名字) | (self)
+            vars                 ; eq 哈希表：变量 → (arg . i) | (targ i . 类型) | (local . i) | (tlocal i . 类型) | (field . 名字) | (self)
             (mutable locals)     ; 局部变量类型（逆序）
             (mutable nlocals)
             (mutable buffer)     ; 指令（逆序）
@@ -313,10 +313,11 @@ See docs/license.txt. |#
             self-mref            ; 已知过程自己的库变量（自尾调用识别），或 #f
             arg-base             ; 第一个形参的 ldarg 下标（实例方法为 1）
             labels               ; eq 哈希表：label 的名字 → (IL 标签 . 形参表)（局部循环，iron-034b）
-            (mutable big?)))     ; 方法体很大（只执行一次的测试过程之类）：不内联算术（iron-034f）
+            (mutable big?)       ; 方法体很大（只执行一次的测试过程之类）：不内联算术（iron-034f）
+            (mutable ret-type)))  ; 原始签名的方法（cleat-042）：返回 l64 / fl，尾位置的值转换成原始值再 ret；否则 #f
 
   (define (make-method-ctx u class static? loop-label loop-arity self-mref)
-    (make-mctx u class static? (make-eq-hashtable) '() 0 '() 0 0 loop-label loop-arity self-mref (if static? 0 1) (make-eq-hashtable) #f))
+    (make-mctx u class static? (make-eq-hashtable) '() 0 '() 0 0 loop-label loop-arity self-mref (if static? 0 1) (make-eq-hashtable) #f #f))
 
   ;; code（指令树）里有没有 (br L)
   (define (branches-to? code l)
@@ -396,7 +397,13 @@ See docs/license.txt. |#
       ((value) (void))
       ((effect) (emit! mc '(pop)))
       ((test) (emit! mc `(call ,rt-type "IsTrue" (,obj) ,bool-type)))
-      ((tail) (emit! mc '(ret)))))
+      ((tail)
+       ;; 原始签名的方法：object 结果按 JVM 的规则转换（Number.longValue / doubleValue，ClojureStaticCalls.PrimRet…）
+       (case (mctx-ret-type mc)
+         ((l64) (emit! mc `(call ,static-calls-type "PrimRetLong" (,obj) ,int64-type)))
+         ((fl) (emit! mc `(call ,static-calls-type "PrimRetDouble" (,obj) ,double-type)))
+         (else (void)))
+       (emit! mc '(ret)))))
 
   ;; 栈上是一个 CLR bool
   (define (finish-bool! mc ctx)
@@ -416,7 +423,7 @@ See docs/license.txt. |#
 
   ;; try 区域（try-finally / try-catch 的体）内不发 tail.：IL 不允许从受保护区域尾调用
   (define (tail-ok? mc ctx)
-    (and (eq? ctx 'tail) (= (mctx-try-depth mc) 0) (target-tail-calls? (current-target))))
+    (and (eq? ctx 'tail) (not (mctx-ret-type mc)) (= (mctx-try-depth mc) 0) (target-tail-calls? (current-target))))
 
   ;; ———————————————— 常量 ————————————————
 
@@ -460,6 +467,8 @@ See docs/license.txt. |#
   ;; 推断收敛后每个候选变量的类型（不论是否拆箱）：宿主调用按它选重载（cleat-042）——与推断时 expr-type 给出的
   ;; 返回类型一致；var-types 只含决定拆箱的变量
   (define sound-types (make-eq-hashtable))
+  ;; 原始签名子句的 L / D 形参（cleat-042）：类型固定（不是推断候选），推断与代码生成都当作已知
+  (define fixed-types (make-eq-hashtable))
 
   ;; 测量用（iron-034）：环境变量 IRONSCHEME_NO_034 设置时关掉 034 的生成优化（内联算术、拆箱、单元内直接调用），
   ;; 同一个 boot 镜像里对照编译时间与运行时间
@@ -654,6 +663,9 @@ See docs/license.txt. |#
                         ((flonum? d) 'fl)
                         (else #f))]
       [(clj-call ,d0 ,d1 ,e* ...)
+       (guard (equal? d0 "PrimInvoke"))
+       (sig-char-raw (sig-ret (quoted-datum (car e*))))]
+      [(clj-call ,d0 ,d1 ,e* ...)
        ;; Numbers 的 long 运算：实参还没定（top）时暂为 top，不动点继续；
        ;; 其余（含 double 实参的 Numbers 运算）按静态决议出的宿主调用的返回类型：long → l64，double → fl
        (let* ((op (numbers-arith-op d0 d1 e*))
@@ -689,7 +701,7 @@ See docs/license.txt. |#
     (MaybeTyped : Expr (ir) -> * (b)
       [(quote ,d) (or (fixnum? d) (flonum? d) (clr-is System.Int64 d))]
       [,x (candidate? x)]
-      [(clj-call ,d0 ,d1 ,e* ...) (and (host-call-layout d0 d1 e*) #t)]
+      [(clj-call ,d0 ,d1 ,e* ...) (or (equal? d0 "PrimInvoke") (and (host-call-layout d0 d1 e*) #t))]
       [(primcall ,pr ,e* ...) (and (or (memq pr fx-result-prims) (memq pr fl-result-prims)) #t)]
       [(call ,e0 ,e* ...) (and (inline-op e0 (length e*)) #t)]
       [(if ,e0 ,e1 ,e2) (or (MaybeTyped e1) (MaybeTyped e2))]
@@ -721,6 +733,7 @@ See docs/license.txt. |#
            (for-each Expr e*))]
       [(lambda ,nm (,x* ...) ,cl* ...)
        (for-each exclude! x*)
+       (for-each (lambda (cl) (fix-clause-params! nm cl)) cl*)
        (for-each Body cl*)]
       [(letrec ([,x* ,le*] ...) ,body) (for-each Expr le*) (Expr body)]
       [(let ([,x* ,e*] ...) ,body)
@@ -758,14 +771,26 @@ See docs/license.txt. |#
       [(clj-invoke ,e ,e* ...) (Expr e) (for-each Expr e*)]
       [(clj-keyword-invoke ,d ,e ,e* ...) (Expr e) (for-each Expr e*)]
       [(clj-call ,d0 ,d1 ,e* ...)
-       (if (numbers-arith-shape? d0 d1 e*)
-           (for-each Raw (list-tail e* 3))
-           (for-each Expr e*))]
+       (cond
+         ((numbers-arith-shape? d0 d1 e*) (for-each Raw (list-tail e* 3)))
+         ((equal? d0 "PrimInvoke")
+          (Expr (cadr e*))
+          (for-each (lambda (a c) (if (sig-char-raw c) (Raw a) (Expr a))) (cddr e*) (sig-params (quoted-datum (car e*)))))
+         (else (for-each Expr e*)))]
       [(clj-static-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
       [(clj-case ,d ,e0 ,e1 ,e* ...) (Expr e0) (Expr e1) (for-each Expr e*)]
       [(clj-deftype ,d (,x* ...) ,le* ...) (for-each exclude! x*) (for-each Expr le*)]
       [else (void)])
     (Expr ir))
+
+  ;; 原始签名子句的 L / D 形参登记为固定类型（cleat-042）
+  (define (fix-clause-params! nm cl)
+    (let ((sig (clause-sig nm cl)))
+      (when sig
+        (nanopass-case (L3 Clause) cl
+          [(clause (,x* ...) ,x ,body)
+           (for-each (lambda (p c) (let ((r (sig-char-raw c))) (when r (hashtable-set! fixed-types p r))))
+                     x* (sig-params sig))]))))
 
   ;; 过程体的 L3 节点数是否超过 n（数到 n 就停）；嵌套的 lambda 是别的方法，不数
   (define-pass count-nodes : L3 (ir n) -> * (v)
@@ -826,6 +851,8 @@ See docs/license.txt. |#
             [(begin ,e* ... ,e) (deps e)]
             [(let ([,x* ,e*] ...) ,body) (deps body)]
             [else '()]))
+        (let-values (((ks vs) (hashtable-entries fixed-types)))
+          (vector-for-each (lambda (k v) (hashtable-set! env k v) (hashtable-set! var-types k v) (hashtable-set! sound-types k v)) ks vs))
         (for-each (lambda (x) (hashtable-set! env x 'top)) cands)
         (for-each (lambda (x)
                     (for-each (lambda (e)
@@ -864,8 +891,42 @@ See docs/license.txt. |#
   (define (cg-raw e mc t)
     (let ((oa (and (eq? t 'l64) (numbers-arith-args e var-types))))
       (cond ((and oa (member (car oa) numbers-long-ops)) (numbers-raw-emit-args! (cdr oa) (car oa) mc))
+            ((raw-prim-invoke e t) => (lambda (e*) (cg-prim-invoke! e* mc 'raw)))
             ((raw-host-call e t) => (lambda (sl) (cg-static-host-call! sl mc 'raw)))
             (else (cg-raw/default e mc t)))))
+
+  ;; 返回 t 的原始签名调用（PrimInvoke）的 e*，否则 #f
+  (define (raw-prim-invoke e t)
+    (and (memq t '(l64 fl))
+         (nanopass-case (L3 Expr) e
+           [(clj-call ,d0 ,d1 ,e* ...)
+            (and (equal? d0 "PrimInvoke") (eq? (sig-char-raw (sig-ret (quoted-datum (car e*)))) t) e*)]
+           [else #f])))
+
+  ;; ($clj-call "PrimInvoke" #f '签名 f 实参 …)（cleat-042，JVM 的 IFn$LL 调用）：f 转换为 primifs.<签名>、callvirt invokePrim；
+  ;; L / D 实参已知原始类型时原始求值，否则求值后 RT.longCast / doubleCast。ctx 为 raw 时结果原样留在栈上
+  (define (cg-prim-invoke! e* mc ctx)
+    (let* ((sig (quoted-datum (car e*))) (f (cadr e*)) (args (cddr e*))
+           (cs (sig-params sig)) (rc (sig-ret sig))
+           (iface (string-append primifs-prefix sig))
+           (raws (map (lambda (a c) (let ((r (sig-char-raw c))) (and r (eq? (expr-type a var-types) r) r))) args cs))
+           (codes (map (lambda (a r) (with-buffer mc (lambda () (if r (cg-raw a mc r) (cg a mc 'value)))))
+                       (cons f args) (cons #f raws))))
+      (define (conv! c r) (unless r (unbox-to-sig! mc c)))
+      ;; 后面的操作数含 try 时先全部存临时变量（同 operands!）
+      (if (exists contains-try? (cdr codes))
+          (let ((temps (map (lambda (c r) (let ((t (new-local! mc (if r (type-clr r) obj)))) (emit-code! mc c) (emit! mc `(stloc ,t)) t))
+                            codes (cons #f raws))))
+            (emit! mc `(ldloc ,(car temps)) `(castclass ,iface))
+            (for-each (lambda (t c r) (emit! mc `(ldloc ,t)) (conv! c r)) (cdr temps) cs raws))
+          (begin
+            (emit-code! mc (car codes))
+            (emit! mc `(castclass ,iface))
+            (for-each (lambda (code c r) (emit-code! mc code) (conv! c r)) (cdr codes) cs raws)))
+      (emit! mc `(callvirt ,iface "invokePrim" ,(sig-param-types sig) ,(sig-char-type rc)))
+      (unless (eq? ctx 'raw)
+        (box-from-sig! mc rc)
+        (finish-value! mc ctx))))
 
   ;; 静态决议、返回 long（l64）/ double（fl）的宿主调用：结果直接以原始值留在栈上（RT.longCast、Numbers 的 double 运算 …）
   (define (raw-host-call e t)
@@ -889,8 +950,8 @@ See docs/license.txt. |#
               (emit! mc `(ldc.i8 ,(string->number (clr-call System.Object ToString d)))))
              (else (fallback)))]
       [,x (let ((loc (hashtable-ref (mctx-vars mc) x #f)))
-            (if (and loc (eq? (car loc) 'tlocal) (eq? (cddr loc) t))
-                (emit! mc `(ldloc ,(cadr loc)))
+            (if (and loc (memq (car loc) '(tlocal targ)) (eq? (cddr loc) t))
+                (emit! mc (if (eq? (car loc) 'targ) `(ldarg ,(cadr loc)) `(ldloc ,(cadr loc))))
                 (fallback)))]
       [(primcall ,pr ,e* ...)
        (if (and (eq? (expr-type e var-types) t) (raw-prim! pr e* mc))
@@ -1065,6 +1126,7 @@ See docs/license.txt. |#
         ((arg) (emit! mc `(ldarg ,(cdr loc))))
         ((local) (emit! mc `(ldloc ,(cdr loc))))
         ((tlocal) (emit! mc `(ldloc ,(cadr loc))) (box-raw! mc (cddr loc)))
+        ((targ) (emit! mc `(ldarg ,(cadr loc))) (box-raw! mc (cddr loc)))
         ((field dfield) (emit! mc '(ldarg 0) `(ldfld ,(mctx-class mc) ,(cdr loc))))
         ((self) (cond
                   ((pair? (cdr loc)) (emit! mc `(ldsfld ,(cadr loc) ,(cddr loc))))   ; 034d：共享持有类中的过程
@@ -1106,7 +1168,7 @@ See docs/license.txt. |#
   ;; 变量的原始类型（fx / fl），普通变量为 #f
   (define (var-raw-type mc x)
     (let ((loc (hashtable-ref (mctx-vars mc) x #f)))
-      (and loc (eq? (car loc) 'tlocal) (cddr loc))))
+      (and loc (memq (car loc) '(tlocal targ)) (cddr loc))))
 
   ;; 实参都是 (host-cast T e) 时返回类型名列表（Lcil 的实参类型提示，发射器据此静态决议重载，iron-033）；否则 #f
   (define (cast-types e*)
@@ -1119,7 +1181,28 @@ See docs/license.txt. |#
 
   ;; ———————————————— 表达式 ————————————————
 
+  ;; 原始签名的方法里尾位置的叶子表达式（不是 if / let / label … 这类把上下文传给子表达式的）类型已经是返回的原始类型时
+  ;; 直接以原始值返回（cleat-042）；其余照常，finish-value! 在尾位置转换
   (define (cg e mc ctx)
+    (let ((rt (and (eq? ctx 'tail) (mctx-ret-type mc))))
+      (if (and rt (raw-tail-leaf? e) (eq? (expr-type e var-types) rt))
+          (begin (cg-raw e mc rt) (emit! mc '(ret)))
+          (cg* e mc ctx))))
+
+  (define (raw-tail-leaf? e)
+    (nanopass-case (L3 Expr) e
+      [(if ,e0 ,e1 ,e2) #f]
+      [(begin ,e* ... ,e) #f]
+      [(let ([,x* ,e*] ...) ,body) #f]
+      [(letrec ([,x* ,le*] ...) ,body) #f]
+      [(label ,x (,x* ...) ,body0 ,body1) #f]
+      [(jump ,x ,e* ...) #f]
+      [(throw ,e) #f]
+      [(try-finally ,e0 ,e1) #f]
+      [(try-catch ,e (,d* ,e*) ...) #f]
+      [else #t]))
+
+  (define (cg* e mc ctx)
     (nanopass-case (L3 Expr) e
       [,x (unless (eq? ctx 'effect) (load-var! mc x) (finish-value! mc ctx))]
       [(label ,x (,x* ...) ,body0 ,body1)
@@ -1398,6 +1481,8 @@ See docs/license.txt. |#
       [(clj-call ,d0 ,d1 ,e* ...)
        ;; ClojureOps 的静态方法：参数与返回都是 object；d1 为固定参数个数时其余实参打包成 object[]。
        ;; Numbers 的 int64 算术（cleat-042）在实参类型全知时直接发 int64 原始运算
+       (if (equal? d0 "PrimInvoke")
+           (cg-prim-invoke! e* mc ctx)
        (case (numbers-raw-emit! e mc)
          ((bool) (finish-bool! mc ctx))
          ((l64) (box-raw! mc 'l64) (finish-value! mc ctx))
@@ -1409,7 +1494,7 @@ See docs/license.txt. |#
                (operands! mc (map (lambda (x) (lambda () (cg x mc 'value))) e*))
                (when d1 (pack-array! mc (- argc d1)))
                (emit! mc `(call ,clojure-ops-type ,d0 ,(if d1 (append (objs d1) (list obj-array)) (objs argc)) ,obj))
-               (finish-value! mc ctx))))))]
+               (finish-value! mc ctx)))))))]
       [(clj-static-call ,d0 ,d1 ,e* ...)
        ;; 受保护的直接链接（cleat-033，designs/04 §6）：e0 取 Var 的当前根。实参先存入临时变量，根还是函数类 d0 时
        ;; newobj 一个实例作 self、直接 call d0::invokeStatic；被 with-redefs / 重定义换掉的根（别的类）走普通
@@ -1987,15 +2072,30 @@ See docs/license.txt. |#
       ;; 体只编这一份，实例 invoke 转发到它并传 this 作 self（(fn* me [] me) 的 self 就是实例本身）；体里的 self
       ;; 是第 0 个参数。直接链接的调用点没有实例：现场 newobj 一个（fn 每次求值本就是新对象，cleat-032）。
       ;; 变长子句保留实例体（RestFn 的 doInvoke 语义）
+      ;; 原始签名的固定子句（cleat-042，JVM 的 IFn$LL）：体编成有类型的方法——没有自由字段时是静态 invokeStaticPrim
+      ;; （另有 object 签名的 invokeStatic 转换后转发给它，直接链接照旧），有字段时是实例 invokePrim；类实现
+      ;; clojure.lang.primifs.<签名>，invokePrim 供按 Var 元数据生成的原始调用点使用
       (when (null? fields)
-        (for-each (lambda (cl) (add-method! (clj-static-clause-method u name cl self)))
+        (for-each (lambda (cl)
+                    (let ((sig (clause-sig nm cl)))
+                      (add-method! (clj-static-clause-method u name cl self sig))
+                      (when sig
+                        (add-method! (clj-prim-bridge u name cl sig 'static))
+                        (add-method! (clj-prim-bridge u name cl sig 'prim)))))
                   (if variadic (list-head cl* (- n 1)) cl*)))
       (let loop ((cls cl*) (i 0))
         (unless (null? cls)
-          (if (and (null? fields) (not (and variadic (= i (- n 1)))))
-              (add-method! (clj-forward-method u name (car cls)))
-              (add-method! (clj-clause-method u name (car cls) fields field-names self
-                                              (if (and variadic (= i (- n 1))) "doInvoke" "invoke"))))
+          (let ((last-variadic? (and variadic (= i (- n 1)))))
+            (cond
+              ((and (null? fields) (not last-variadic?))
+               (add-method! (clj-forward-method u name (car cls))))
+              ((and (not last-variadic?) (clause-sig nm (car cls)))
+               => (lambda (sig)
+                    (add-method! (clj-clause-method u name (car cls) fields field-names self "invokePrim" sig))
+                    (add-method! (clj-prim-bridge u name (car cls) sig 'invoke))))
+              (else
+               (add-method! (clj-clause-method u name (car cls) fields field-names self
+                                               (if last-variadic? "doInvoke" "invoke"))))))
           (loop (cdr cls) (+ i 1))))
       (when variadic
         (add-method! `(method "getRequiredArity" (attrs override) (params) (ret ,int32-type)
@@ -2012,6 +2112,11 @@ See docs/license.txt. |#
                         (body (newobj ,name ()) (stsfld ,name "Instance") (ret)))))
       (add-class! u
         `(type ,name (base ,base) (attrs sealed)
+           ,@(let ((sigs (let loop ((cl* cl*) (acc '()))
+                           (if (null? cl*) (reverse acc)
+                               (let ((sig (clause-sig nm (car cl*))))
+                                 (loop (cdr cl*) (if (and sig (not (member sig acc))) (cons sig acc) acc)))))))
+               (if (null? sigs) '() `((interfaces ,@(map (lambda (sig) (string-append primifs-prefix sig)) sigs)))))
            ,@(if static? `((field "Instance" ,name static)) (map (lambda (f) `(field ,f ,obj)) field-names))
            ,@(reverse methods)))
       (list static? name "Instance")))
@@ -2022,36 +2127,101 @@ See docs/license.txt. |#
   (define (list-head ls n) (if (= n 0) '() (cons (car ls) (list-head (cdr ls) (- n 1)))))
 
   ;; Clojure 函数类的一个子句：实例方法 mname（invoke / doInvoke 的覆盖），形参都是 object
-  (define (clj-clause-method u class cl fields field-names self mname)
+  (define (clj-clause-method u class cl fields field-names self mname . sig)
     (nanopass-case (L3 Clause) cl
       [(clause (,x* ...) ,x ,body)
        (when x (error 'codegen "Clojure fn clauses have fixed parameters" x))
-       (let ((mc (make-method-ctx u class #f #f #f #f)))
-         (let loop ((ps x*) (j 1))
-           (unless (null? ps)
-             (hashtable-set! (mctx-vars mc) (car ps) (cons 'arg j))
-             (loop (cdr ps) (+ j 1))))
+       (let ((mc (make-method-ctx u class #f #f #f #f))
+             (sig (and (pair? sig) (car sig))))
+         (bind-clause-params! mc x* 1 sig)
          (for-each (lambda (f n) (hashtable-set! (mctx-vars mc) f (cons 'field n))) fields field-names)
          (when self (hashtable-set! (mctx-vars mc) self '(self)))
          (mctx-big?-set! mc (bigger-than? body big-body-nodes))
          (cg body mc 'tail)
-         (finish-method mc mname '(override) (objs (length x*))))]))
+         (if sig
+             (append (finish-method mc mname '() (sig-param-types sig) (sig-char-type (sig-ret sig)))
+                     `((implements ,(string-append primifs-prefix sig) "invokePrim")))
+             (finish-method mc mname '(override) (objs (length x*)))))]))
+
+  ;; 子句形参的位置：从下标 j0 起的参数；有原始签名时 L / D 形参是原始值的参数（targ），返回类型记入 mctx
+  (define (bind-clause-params! mc x* j0 sig)
+    (let loop ((ps x*) (j j0) (cs (if sig (sig-params sig) '())))
+      (unless (null? ps)
+        (let ((raw (and (pair? cs) (sig-char-raw (car cs)))))
+          (hashtable-set! (mctx-vars mc) (car ps) (if raw (cons 'targ (cons j raw)) (cons 'arg j))))
+        (loop (cdr ps) (+ j 1) (if (pair? cs) (cdr cs) '()))))
+    (when sig (mctx-ret-type-set! mc (sig-char-raw (sig-ret sig)))))
 
   ;; Clojure 函数类的固定子句的静态变体（cleat-033）：第 0 个参数是 self（实例 invoke 转发时传 this，
   ;; 直接链接的调用点传新建实例），形参从 1 开始；尾位置照常发 (tail)
-  (define (clj-static-clause-method u class cl self)
+  (define (clj-static-clause-method u class cl self sig)
     (nanopass-case (L3 Clause) cl
       [(clause (,x* ...) ,x ,body)
        (when x (error 'codegen "Clojure fn clauses have fixed parameters" x))
        (let ((mc (make-method-ctx u class #t #f #f #f)))
          (when self (hashtable-set! (mctx-vars mc) self (cons 'arg 0)))
-         (let loop ((ps x*) (j 1))
-           (unless (null? ps)
-             (hashtable-set! (mctx-vars mc) (car ps) (cons 'arg j))
-             (loop (cdr ps) (+ j 1))))
+         (bind-clause-params! mc x* 1 sig)
          (mctx-big?-set! mc (bigger-than? body big-body-nodes))
          (cg body mc 'tail)
-         (finish-method mc "invokeStatic" '(static) (objs (+ (length x*) 1))))]))
+         (if sig
+             (finish-method mc "invokeStaticPrim" '(static) (cons obj (sig-param-types sig)) (sig-char-type (sig-ret sig)))
+             (finish-method mc "invokeStatic" '(static) (objs (+ (length x*) 1)))))]))
+
+  ;; ———— 原始签名（cleat-042）————
+  ;; 签名字符串：每个形参一个字母、最后是返回，O = object、L = long、D = double（clojure.lang.primifs 的接口名）
+  (define primifs-prefix "clojure.lang.primifs.")
+  (define (sig-char-type c) (case c ((#\L) int64-type) ((#\D) double-type) (else obj)))
+  (define (sig-char-raw c) (case c ((#\L) 'l64) ((#\D) 'fl) (else #f)))
+  (define (sig-params sig) (list-head (string->list sig) (- (string-length sig) 1)))
+  (define (sig-ret sig) (string-ref sig (- (string-length sig) 1)))
+  (define (sig-param-types sig) (map sig-char-type (sig-params sig)))
+  ;; 栈顶 object → 字母 c 的类型（JVM 原始参数的转换：RT.longCast / doubleCast，只收数字）；字母 c 的值 → object
+  (define (unbox-to-sig! mc c)
+    (case c
+      ((#\L) (emit! mc `(call ,static-calls-type "PrimArgLong" (,obj) ,int64-type)))
+      ((#\D) (emit! mc `(call ,static-calls-type "PrimArgDouble" (,obj) ,double-type)))
+      (else (void))))
+  (define (box-from-sig! mc c)
+    (case c
+      ((#\L) (emit! mc `(box ,int64-type)))
+      ((#\D) (emit! mc `(box ,double-type)))
+      (else (void))))
+  ;; fn 名字记录里固定子句的签名（变长子句没有）
+  (define (clause-sig nm cl)
+    (and (clj-fn-name? nm)
+         (nanopass-case (L3 Clause) cl
+           [(clause (,x* ...) ,x ,body)
+            (and (not x) (let ((p (assv (length x*) (clj-fn-name-prims nm)))) (and p (cdr p))))])))
+
+  ;; 原始签名子句的转发方法：
+  ;;   static：object 签名的静态 invokeStatic(self, a …) → 转换实参、call invokeStaticPrim、装箱结果（直接链接的调用点用）
+  ;;   prim  ：实例 invokePrim(T …)（实现 primifs 接口）→ call invokeStaticPrim(this, …)
+  ;;   invoke：有字段的 fn 的实例 invoke(a …) → 转换实参、callvirt this.invokePrim、装箱结果
+  (define (clj-prim-bridge u class cl sig kind)
+    (let* ((mc (make-method-ctx u class (eq? kind 'static) #f #f #f))
+           (cs (sig-params sig)) (rc (sig-ret sig))
+           (n (length cs)) (ptypes (sig-param-types sig)) (rtype (sig-char-type rc)))
+      (case kind
+        ((static)
+         (emit! mc '(ldarg 0))
+         (let loop ((cs cs) (j 1)) (unless (null? cs) (emit! mc `(ldarg ,j)) (unbox-to-sig! mc (car cs)) (loop (cdr cs) (+ j 1))))
+         (emit! mc `(call ,class "invokeStaticPrim" ,(cons obj ptypes) ,rtype))
+         (box-from-sig! mc rc)
+         (emit! mc '(ret))
+         (finish-method mc "invokeStatic" '(static) (objs (+ n 1))))
+        ((prim)
+         (emit! mc '(ldarg 0))
+         (let loop ((j 1)) (unless (> j n) (emit! mc `(ldarg ,j)) (loop (+ j 1))))
+         (emit! mc `(call ,class "invokeStaticPrim" ,(cons obj ptypes) ,rtype) '(ret))
+         (append (finish-method mc "invokePrim" '() ptypes rtype)
+                 `((implements ,(string-append primifs-prefix sig) "invokePrim"))))
+        (else
+         (emit! mc '(ldarg 0))
+         (let loop ((cs cs) (j 1)) (unless (null? cs) (emit! mc `(ldarg ,j)) (unbox-to-sig! mc (car cs)) (loop (cdr cs) (+ j 1))))
+         (emit! mc `(call ,class "invokePrim" ,ptypes ,rtype))
+         (box-from-sig! mc rc)
+         (emit! mc '(ret))
+         (finish-method mc "invoke" '(override) (objs n))))))
 
   ;; 实例 invoke 的转发变体（cleat-033）：this 作 self，形参原样传给静态 invokeStatic，返回它的值
   (define (clj-forward-method u class cl)
@@ -2337,8 +2507,8 @@ See docs/license.txt. |#
          (cg body mc 'tail)
          (finish-method mc (string-append (if (pair? shared) (car shared) "") "C" (number->string i)) (if static? '(static) '()) (objs (length params))))]))
 
-  (define (finish-method mc name attrs params)
-    `(method ,name (attrs ,@attrs) (params ,@params) (ret ,obj)
+  (define (finish-method mc name attrs params . ret)
+    `(method ,name (attrs ,@attrs) (params ,@params) (ret ,(if (pair? ret) (car ret) obj))
        (locals ,@(reverse (mctx-locals mc)))
        (,(interop 'namespaces))
        (body ,@(reverse (mctx-buffer mc)))))
@@ -2374,6 +2544,7 @@ See docs/license.txt. |#
       (for-each (lambda (f) (collect-known! u f)) forms)
       (hashtable-clear! var-types)
       (hashtable-clear! sound-types)
+      (hashtable-clear! fixed-types)
       (when opt-infer?
         (let ((flags (loop-forms)))
           (if (and (list? flags) (= (length flags) (length forms)))

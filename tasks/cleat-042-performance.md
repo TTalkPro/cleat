@@ -171,3 +171,39 @@ extend-protocol 路径上 `MethodImplCache` 的 MRU 在两种类型交替时失�
 | reduce_vec | 119 | 37（19 ~ 38 双峰） |
 | fib | 49 | 17 |
 | prim_fib | — | 27 |
+
+### 第 2 项阶段 B：原始签名（JVM 的 IFn$LL）（2026-10-11）
+
+按 JVM 的做法，不靠接口文件：
+- **fn 一侧**：固定子句的形参 / 返回带 `^long` / `^double`（返回取参数向量的提示，没有时取 fn 形式的 `:rettag`——defn 名字上的
+  `^long`）、不超过 4 个形参、`clojure.lang.primifs` 有对应接口（`LL`、`OL`、`DD` …）时，`$clj-fn` 带签名
+  （`($clj-fn '类名 '变长 '((参数个数 . "LL") …) (case-lambda …))`，parse 与接口文件的读取同步改为 5 元素）。codegen：
+  - 体编成有类型的方法：无字段时静态 `invokeStaticPrim(self, long …) : long`，L / D 形参是原始参数（新的位置 `targ`），
+    推断把它们当固定类型；返回在尾位置——叶子表达式已是该原始类型时直接返回（`cg` 外包一层），否则按 JVM 的返回转换；
+    这种方法不发 `tail.`。有字段时体是实例 `invokePrim`。
+  - 转发：object 签名的 `invokeStatic`（直接链接照旧可用）、实现接口的 `invokePrim`、有字段时的 `invoke` 都转换后转发。
+- **调用点**：Var 的 `:arglists` 里该参数个数的参数表带原始提示（返回提示缺省取 Var 的 `:tag`）时生成
+  `($clj-call "PrimInvoke" #f '签名 Var读 实参 …)`：根 castclass 成 `primifs.<签名>`，已知原始类型的实参原始求值，
+  callvirt `invokePrim`，结果是 l64 / fl 表达式（推断与 `cg-raw` 都认）。`def` 在展开初值前就把 `:arglists` 放上 Var，自递归也走这条路。
+  根被换成没有该签名的函数时 InvalidCast（JVM 相同）。
+- **转换语义（JVM）**：实参 `RT.longCast` / `doubleCast` 但只收数字（`"42"`、`\a` 是 ClassCastException，nil 是 NPE）；
+  返回值 `Number.longValue()` / `doubleValue()`（大整数与比值取低 64 位、浮点饱和、NaN 为 0）——`ClojureStaticCalls.PrimArg… / PrimRet…`。
+
+符合性：语料 13 行由失败转为通过（"primitive hint coercion" 一组、`#()` 的返回提示、非数字实参的 CCE），
+逐行对比前一提交的结果没有任何回退；分歧表里标"target cleat-042"的条目全部删除（共 13 条）。583 测试全绿。
+
+prim_fib（`(defn fib ^long [^long n] …)`，fib 27）：27 → **4 ms**。
+
+| 基准 | 基线 | 现在 |
+|---|---|---|
+| sum_loop | 1006 | 12 |
+| protocol | 517 | 53 |
+| keyword_invoke | 631 | 56 |
+| lazy_chain | 349 | 87 |
+| assoc_map | 219 | 64 |
+| reduce_vec | 119 | 33 |
+| fib | 49 | 17 |
+| prim_fib | — | 4 |
+
+剩余：第 4 项的小函数内联（无提示的 `mod`、`fib` 这类装箱泛型算术）、第 5 项 locals-clearing；
+局部变量按初值静态类型推断（省去 `^Type` 提示）。

@@ -478,6 +478,24 @@
               #'(k $clj-call data p)))
           p)))
 
+  ;;; 原始签名（cleat-042，JVM 的 IFn$LL 等）：形参与返回的 ^long / ^double 提示各给一个字母 L / D，其余 O；
+  ;;; 返回类型取参数向量上的提示（defn 的 ^long [..]）。至少有一个原始类型、不超过 4 个形参、
+  ;;; clojure.lang.primifs 里有这个接口时返回签名字符串（如 "LL"），否则 #f
+  (define (prim-kind t)
+    (and t (clj-symbol? t) (not (sym-ns t))
+         (cond ((string=? (sym-name t) "long") "L") ((string=? (sym-name t) "double") "D") (else #f))))
+  ;;; rettag：参数向量没有提示时的返回提示（defn 名字上的 ^long 经 fn 形式的 :rettag 传来，同 JVM 的 FnExpr；调用点用 Var 的 :tag）
+  (define (prim-sig vec params . rettag)
+    (let ((sig (apply string-append
+                      (append (map (lambda (p) (or (prim-kind (tag-of p)) "O")) params)
+                              (list (or (prim-kind (tag-of vec))
+                                        (and (pair? rettag) (prim-kind (car rettag)))
+                                        "O"))))))
+      (and (<= (length params) 4)
+           (exists (lambda (ch) (not (char=? ch #\O))) (string->list sig))
+           (class-for-name (string-append "clojure.lang.primifs." sig))
+           sig)))
+
   (define (fn-class-name c self)
     (let ((base (or (ctx-fn-name c) (munge (ns-name* (current-ns)))))
           (simple (cond
@@ -506,6 +524,7 @@
               (name (fn-class-name c self))
               (outer (append (if self (list (make-local (syntax->clj self) #f #f 'this)) '()) '()))
               (base-ctx (make-ctx #t #f (append outer (ctx-locals c)) name #f)))
+         (define prims '())
          (let loop ((cls clauses) (fixed '()) (variadic #f) (arities '()))
            (if (pair? cls)
                (let*-values (((cl) (clause (car cls)))
@@ -518,6 +537,10 @@
                    (cond
                      ((and rest variadic) (err e "Can't have more than 1 variadic overload"))
                      ((and (not rest) (memv n arities)) (err e "Can't have 2 overloads with same arity")))
+                   (unless rest
+                     (let ((sig (prim-sig (syntax->clj (car cl)) (map syntax->clj req)
+                                          (nil->f (meta-get (meta-of (syntax->clj e)) kw-rettag)))))
+                       (when sig (set! prims (cons (cons n sig) prims)))))
                    (with-syntax (((p ...) (dedupe-ids params))
                                  ((lp) (generate-temporaries '(recur)))
                                  (body (body-stx head (cdr cl) bc)))
@@ -530,14 +553,14 @@
                (begin
                  (when (and variadic (pair? arities) (>= (apply max arities) (+ (car variadic) 1)))
                    (err e "Can't have fixed arity function with more params than variadic function"))
-                 ;; ($clj-fn '类名 '变长必需个数|#f (case-lambda 固定子句 … 变长子句))（cleat-051）：编译为 AFunction / RestFn 的子类；
+                 ;; ($clj-fn '类名 '变长必需个数|#f '原始签名 (case-lambda 固定子句 … 变长子句))（cleat-051）：编译为 AFunction / RestFn 的子类；
                  ;; 变长子句在最后，形参为"必需参数 + 剩余 seq"
                  ;; :rettag（defn 放在 fn 形式上的返回类型提示）只给编译器看，同 JVM 的 FnExpr 不留在函数对象上——
                  ;; 否则每个 defn 的函数都被 WithMetaOf 包成 MetaWrapper（RestFn）：直接链接的守卫失配、每次调用走 applyTo（cleat-042）
                  (let* ((m (let ((m (user-meta (syntax->clj e))))
                              (if (null? m) m (let ((m (dissoc* m kw-rettag))) (if (= (count* m) 0) '() m))))))
                    (with-syntax ((k (node-id head))
-                                 (data (const-stx (list name (and variadic (car variadic)))))
+                                 (data (const-stx (list name (and variadic (car variadic)) (reverse prims))))
                                  ((cl ...) (append (reverse fixed) (if variadic (list (cdr variadic)) '()))))
                      (let* ((fn #'(k $clj-fn data (case-lambda cl ...)))
                             (fn (if (null? m)
@@ -1009,6 +1032,19 @@
                               (list kw-line kw-column kw-source-span kw-tag))))
           (with-meta* new nm))))
 
+  ;;; Var 的 :arglists 里参数个数为 n 的固定参数列表带原始提示时的签名（JVM 的 InvokeExpr：按 Var 元数据里的提示
+  ;;; 生成 IFn$LL.invokePrim 调用；def 在展开初值之前就把 :arglists 放到 Var 上，自递归也能用），否则 #f
+  (define (var-prim-sig vm n)
+    (let ((al (meta-get vm kw-arglists)))
+      (and al (clr-is clojure.lang.ISeq (clr-static-call clojure.lang.RT (seq System.Object) al))
+           (let loop ((vs (seq->list al)))
+             (cond ((null? vs) #f)
+                   ((and (clr-is clojure.lang.IPersistentVector (car vs)) (= (count* (car vs)) n)
+                         (let ((ps (seq->list (car vs))))
+                           (and (not (exists (lambda (p) (and (clj-symbol? p) (sym-is? p "&"))) ps))
+                                (prim-sig (car vs) ps (nil->f (meta-get vm kw-tag)))))))
+                   (else (loop (cdr vs))))))))
+
   (define (var-call e v expand)
     (syntax-case e ()
       ((head arg ...)
@@ -1030,6 +1066,12 @@
            ((and (= n 2) (string=? (->string v) "#'clojure.core/instance?") (maybe-type (syntax->clj (car args))))
             => (lambda (t)
                  (clj-call "IsInstanceOf" #f (list 'quote t) (expand-in nt (cadr args) expand))))
+           ;; 原始签名的函数（cleat-042）：($clj-call '"PrimInvoke" '#f '签名 Var读 实参 …)，编译器把 Var 的根转换成
+           ;; clojure.lang.primifs.<签名> 并调用 invokePrim（实参与结果不装箱）；根被换成没有这个签名的函数时 InvalidCast（同 JVM）
+           ((and (<= 1 n 4) (var-prim-sig vm n))
+            => (lambda (sig)
+                 (apply clj-call "PrimInvoke" #f (list 'quote sig) (var-reference v)
+                        (map (lambda (a) (expand-in nt a expand)) args))))
            (else
             ;; 接口文件里的已知函数（cleat-033，designs/04 §6）：参数个数恰为某固定 arity 时生成受保护直接调用
             ;; （$clj-static-call 类名 参数个数 Var读 实参…）：编译器先取 Var 的当前根，还是这个函数类就直接

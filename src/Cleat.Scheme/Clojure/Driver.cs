@@ -703,7 +703,7 @@ public static class Driver
         var xs = Items(x);
         if (xs != null && xs.Count >= 1)
         {
-            if (HeadIs(xs[0], "$clj-fn") && xs.Count == 4 && Quoted(xs[1]) is object nm && nm != NotSimple)
+            if (HeadIs(xs[0], "$clj-fn") && xs.Count == 5 && Quoted(xs[1]) is object nm && nm != NotSimple)
             {
                 string name = nm.ToString();
                 fnNames[name] = fnNames.TryGetValue(name, out int k) ? k + 1 : 1;
@@ -713,7 +713,7 @@ public static class Driver
                 defs[v] = defs.TryGetValue(v, out int k) ? k + 1 : 1;
                 if (FnNode(xs[4]) is { } fn && Quoted(fn[1]) is object cls && cls != NotSimple)
                 {
-                    var arities = FnArities(fn[2], fn[3]);
+                    var arities = FnArities(fn[2], fn[4]);
                     if (arities != null) candidates.Add((v, cls.ToString(), arities));
                 }
             }
@@ -732,7 +732,7 @@ public static class Driver
     {
         var xs = Items(init);
         if (xs == null) return null;
-        if (xs.Count == 4 && HeadIs(xs[0], "$clj-fn")) return xs;
+        if (xs.Count == 5 && HeadIs(xs[0], "$clj-fn")) return xs;
         if (xs.Count == 5 && HeadIs(xs[0], "$clj-call") && Quoted(xs[1]) is string m && m == "WithMetaOf")
             return FnNode(xs[3]);
         if (xs.Count == 3 && HeadIs(xs[0], "letrec") && Items(xs[1]) is { Count: 1 } bs && Items(bs[0]) is { Count: 2 } b
@@ -741,7 +741,7 @@ public static class Driver
         return null;
     }
 
-    /// <summary>($clj-fn '类名 '变长必需个数|#f (case-lambda (形参 体) …)) 的 arity：固定子句为形参个数，变长子句为 -(必需个数 + 1)。</summary>
+    /// <summary>($clj-fn '类名 '变长必需个数|#f '原始签名 (case-lambda (形参 体) …)) 的 arity：固定子句为形参个数，变长子句为 -(必需个数 + 1)。</summary>
     private static int[] FnArities(object variadic, object lambda)
     {
         var l = Items(lambda);
