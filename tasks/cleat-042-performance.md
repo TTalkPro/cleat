@@ -71,3 +71,19 @@ dotimes 展开后的形状可能未被 loop-forms 识别，这是最可疑的一
   立即跑 `stage0 buildscript-nano` 引导冒烟 → 再进基准。
 - 调试探针（infer-entered/cands 文件日志、CLEAT_DEBUG_INFER 门）的写法已验证可用
   （call-with-output-file 不接受 'append 位置参数，用计数器文件名）。
+
+### 探针技术备查（2026-10-11，供下次直接使用）
+
+- 已验证可用的文件日志探针写法（call-with-output-file 不接受 'append；用计数器文件名）：
+  ```scheme
+  (define infer-log-seq (let ((n 0)) (lambda () (set! n (+ n 1)) n)))
+  ;; infer-var-types! 进入 / 收敛处：
+  (call-with-output-file (string-append "/tmp/opencode/infer-dbg." (number->string (infer-log-seq)) ".log")
+    (lambda (pt) (write ...) (newline pt)))
+  ```
+- 陷阱：探针必须放进 fasl 才对宿主 AOT 编译生效（rm -rf src/boot/cleat.scheme.clojure && dotnet build）；
+  display 输出会进 Scheme 引擎自己的端口，宿主进程里不可见——必须写文件。
+- AOT 产物的 IL 检查工具：/tmp/opencode/inspect（System.Reflection.Metadata 逐字节解码，打印方法/局部/IL）。
+- 已验证的事实链：`(loop …)` 宏转发到 `loop*` 特殊形式（core.clj:40）→ 降级为 label/jump；
+  `:inline` 形状中 gen 元数据是 #f（需 `(not gen)` 判定）——此修正 + 全部设施已在本会话验证可构建、
+  语义无损（583 测试绿），只是基准触发尚未打通（sum_loop 恒 ~1010-1070ms，与装箱基线一致）。
