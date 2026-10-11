@@ -79,6 +79,7 @@
 
   (define kw-tag (clj-keyword "tag"))
   (define kw-line (clj-keyword "line"))
+  (define kw-rettag (clj-keyword "rettag"))
   (define kw-column (clj-keyword "column"))
   (define kw-file (clj-keyword "file"))
   (define kw-doc (clj-keyword "doc"))
@@ -514,7 +515,10 @@
                    (err e "Can't have fixed arity function with more params than variadic function"))
                  ;; ($clj-fn '类名 '变长必需个数|#f (case-lambda 固定子句 … 变长子句))（cleat-051）：编译为 AFunction / RestFn 的子类；
                  ;; 变长子句在最后，形参为"必需参数 + 剩余 seq"
-                 (let* ((m (user-meta (syntax->clj e))))
+                 ;; :rettag（defn 放在 fn 形式上的返回类型提示）只给编译器看，同 JVM 的 FnExpr 不留在函数对象上——
+                 ;; 否则每个 defn 的函数都被 WithMetaOf 包成 MetaWrapper（RestFn）：直接链接的守卫失配、每次调用走 applyTo（cleat-042）
+                 (let* ((m (let ((m (user-meta (syntax->clj e))))
+                             (if (null? m) m (let ((m (dissoc* m kw-rettag))) (if (= (count* m) 0) '() m))))))
                    (with-syntax ((k (node-id head))
                                  (data (const-stx (list name (and variadic (car variadic)))))
                                  ((cl ...) (append (reverse fixed) (if variadic (list (cdr variadic)) '()))))

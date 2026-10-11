@@ -360,7 +360,6 @@
   {:suite "format / %t date-time" :label "an unknown sub-conversion" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
   {:suite "format / %t date-time" :label "an indexed date directive renders twice" :category :host/jvm-api :reason "JVM class statics: java.util.TimeZone/…"}
   {:suite "seq / eager argument checks" :label "repeat with a nil count throws at the call" :category :host/exception-type :reason "repeat with a nil / non-number count fails as a Reflector overload miss (InvalidOperationException), not NPE / ClassCastException"}
-  {:suite "seq / eager argument checks" :label "repeat with a non-number count throws at the call" :category :host/exception-type :reason "repeat with a nil / non-number count fails as a Reflector overload miss (InvalidOperationException), not NPE / ClassCastException"}
   {:suite "chunking-model / unchunked realization granularity" :label "dedupe is fully lazy at construction" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :chunking-model)"}
   {:suite "integer-box-model / narrow ints behave as integers" :label "byte is a Number" :category :host/jvm-api :reason "JVM class Number (java.lang implicit import)"}
   {:suite "integer-box-model / narrow int class collapses to Long" :label "byte class" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :integer-box-model)"}

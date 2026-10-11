@@ -10,7 +10,7 @@ namespace Cleat.Scheme.Clojure;
 /// <see cref="Reflector"/>：每次调用分配实参数组与缓存键、查表、经委托调用，<c>:inline</c> 的 <c>nth</c> / <c>rem</c> / <c>long</c> 等热点
 /// 每次约 100 ns 以上。这里按 JVM Clojure 的规则在编译期选定重载，codegen 直接发 <c>call</c>：
 /// <list type="bullet">
-/// <item>该名字、该参数个数的（非泛型、无 ref/params 的）公共方法只有一个时选它，实参按 Reflector 的规则转换（<see cref="Reflector.Convert{T}"/>）；</item>
+/// <item>该名字、该参数个数的（非泛型、无 ref/params 的）公共方法只有一个时选它（clojure.lang 的类型不看实参类型，同 JVM），实参按 Reflector 的规则转换（<see cref="Reflector.Convert{T}"/>）；</item>
 /// <item>有多个时，实参类型静态未知（object），只选形参全为 object 的那一个（<c>Numbers.add(object, object)</c>）；</item>
 /// <item>否则交回运行时决议。</item>
 /// </list>
@@ -79,7 +79,9 @@ public static class ClojureStaticCalls
         bool core = stubIfaces == null ? type.Assembly == s_core : fit.Count > 0 && fit.All(m => m.DeclaringType.Assembly == s_core);
         var matching = fit.Where(m => m.GetParameters().Select((p, i) => Match(p.ParameterType, ats[i], core)).All(x => x)).ToList();
         MethodInfo chosen = null;
-        if (matching.Count == 1) chosen = matching[0];
+        // JVM：该参数个数的方法只有一个时直接用它（实参按形参转换，RT.nth(object, int) 的 int 实参），不看类型匹配
+        if (core && fit.Count == 1) chosen = fit[0];
+        else if (matching.Count == 1) chosen = matching[0];
         else if (core && matching.Count > 1)
         {
             int Score(MethodInfo m) => m.GetParameters().Select((p, i) => ats[i] != null && p.ParameterType == ats[i] ? 1 : 0).Sum();
@@ -137,7 +139,7 @@ public static class ClojureStaticCalls
     }
 
     // —— 实参转换（Reflector.ConvertArg 的规则：同类型直接拆箱，否则 Convert<T>）；引用类型形参由 codegen 发 castclass（同 JVM 的 checkcast）——
-    public static int ArgInt32(object v) => v is int i ? i : Reflector.Convert<int>(v);
+    public static int ArgInt32(object v) => v is int i ? i : v is long l ? clojure.lang.RT.intCast(l) : Reflector.Convert<int>(v);
     public static long ArgInt64(object v) => v is long l ? l : Reflector.Convert<long>(v);
     public static double ArgDouble(object v) => v is double d ? d : Reflector.Convert<double>(v);
     public static bool ArgBoolean(object v) => v is bool b ? b : Reflector.Convert<bool>(v);

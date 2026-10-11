@@ -114,3 +114,28 @@ cts `not-eq` +1 通过（基线已重写）。583 测试全绿。
 
 第 3 项剩余：extend-protocol 路径的 `MethodImplCache.fnFor`（~50 ns）可做调用点单态缓存；
 `(m k)`（map 作为函数）与 `(:k m)` 的站点缓存；局部变量的类型推断（let 绑定取初值的静态类型，省去 `^Type` 提示）。
+
+### 第 3 项（第二步）：剖析驱动的两处修正（2026-10-11）
+
+`dotnet-trace`（~/.dotnet/tools/dotnet-trace，speedscope 格式自己汇总）剖析 protocol 基准：
+- **Reflector 仍占 30%**：`(nth v (mod i n))` 的 `RT.nth(object, int)`——实参静态类型未知、形参是 int，JVM 规则下不匹配。
+  JVM 的 Compiler 在**该参数个数只有一个方法时直接用它**（实参按形参拆箱转换），再才看类型匹配；补上（clojure.lang 的类型）。
+  已知 l64 的实参传 long / int 形参时原始求值（int 经 `RT.intCast(long)`，与 Reflector 的转换一致），`ArgInt32` 加 long 快速路径。
+- **每个 defn 的函数都被包成 MetaWrapper**：defn 在 fn 形式上放 `{:rettag …}`，`fn*` 把非空形式元数据一律
+  `WithMetaOf` → `AFunction.MetaWrapper`（RestFn）。后果：直接链接的守卫（isinst 函数类）恒失配，每次调用走
+  `doInvoke → applyTo → ApplyToHelper`。JVM 的 FnExpr 去掉 `:rettag`（与 line/column/file）后才决定是否带元数据；照做。
+
+语料又一条"Reflector 重载未命中"分歧消失（repeat 的非数字计数），从分歧表删除。583 测试全绿。
+
+| 基准 | 基线 | 第一步后 | 现在 |
+|---|---|---|---|
+| protocol | 517 | 112 | 63 |
+| keyword_invoke | 631 | 163 | 69 |
+| lazy_chain | 349 | 147 | 103 |
+| assoc_map | 219 | 83 | 75 |
+| reduce_vec | 119 | 54 | 19 |
+| fib | 49 | 19 | 17 |
+| sum_loop | 1006 | 12 | 13 |
+
+剖析中剩余的大头：`mod` 等小 defn 的装箱泛型算术（第 2 项的 `IFn.LL` 原始签名 / 第 4 项的小函数内联）、
+extend-protocol 路径上 `MethodImplCache` 的 MRU 在两种类型交替时失效（`FindFnFor` ~8%）。
