@@ -19,5 +19,6 @@ dotnet run tools/build.cs -- bench [-r 次数] [--write] [--only 正则]
 | assoc_map | 哈希 map 的 `assoc`（1000 键循环） | 20 万次 |
 | protocol | defprotocol / defrecord 的分派 | 40 万次调用 |
 | keyword_invoke | `(:k m)` 关键字调用快速路径 | 50 万次 |
+| prim_fib | `^long` 形参与返回的双递归（原始签名） | fib 27（~63 万次调用） |
 
 cleat-033 之前的直接链接基线见 `baseline.edn`（各项优化在此之上对照，见 tasks/cleat-042）。

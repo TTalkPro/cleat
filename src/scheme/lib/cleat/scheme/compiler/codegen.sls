@@ -457,6 +457,9 @@ See docs/license.txt. |#
   ;; （它们要么返回该类型、要么报错）、已定类型的变量、两个分支同类型的 if。通用 + - * 可能溢出成大整数，不算。
   ;; 循环变量靠乐观不动点定类型（定义点引用变量自己）。
   (define var-types (make-eq-hashtable))     ; 变量 → fx | fl；每个编译单元重算
+  ;; 推断收敛后每个候选变量的类型（不论是否拆箱）：宿主调用按它选重载（cleat-042）——与推断时 expr-type 给出的
+  ;; 返回类型一致；var-types 只含决定拆箱的变量
+  (define sound-types (make-eq-hashtable))
 
   ;; 测量用（iron-034）：环境变量 IRONSCHEME_NO_034 设置时关掉 034 的生成优化（内联算术、拆箱、单元内直接调用），
   ;; 同一个 boot 镜像里对照编译时间与运行时间
@@ -651,13 +654,13 @@ See docs/license.txt. |#
                         ((flonum? d) 'fl)
                         (else #f))]
       [(clj-call ,d0 ,d1 ,e* ...)
-       ;; Numbers 的 long 运算：实参还没定（top）时暂为 top，不动点继续；有确定不是 l64 的实参则 #f
-       (let ((op (numbers-arith-op d0 d1 e*)))
-         (and op (member op numbers-long-ops)
-              (let ((ts (map (lambda (x) (expr-type x env)) (list-tail e* 3))))
-                (cond ((for-all (lambda (t) (eq? t 'l64)) ts) 'l64)
-                      ((for-all (lambda (t) (memq t '(l64 top))) ts) 'top)
-                      (else #f)))))]
+       ;; Numbers 的 long 运算：实参还没定（top）时暂为 top，不动点继续；
+       ;; 其余（含 double 实参的 Numbers 运算）按静态决议出的宿主调用的返回类型：long → l64，double → fl
+       (let* ((op (numbers-arith-op d0 d1 e*))
+              (ts (and op (member op numbers-long-ops) (map (lambda (x) (expr-type x env)) (list-tail e* 3)))))
+         (cond ((and ts (for-all (lambda (t) (eq? t 'l64)) ts)) 'l64)
+               ((and ts (for-all (lambda (t) (memq t '(l64 top))) ts)) 'top)
+               (else (host-call-type d0 d1 e* env))))]
       [,x (hashtable-ref env x #f)]
       [(primcall ,pr ,e* ...)
        (cond ((memq pr fx-result-prims) 'fx) ((memq pr fl-result-prims) 'fl) (else #f))]
@@ -686,7 +689,7 @@ See docs/license.txt. |#
     (MaybeTyped : Expr (ir) -> * (b)
       [(quote ,d) (or (fixnum? d) (flonum? d) (clr-is System.Int64 d))]
       [,x (candidate? x)]
-      [(clj-call ,d0 ,d1 ,e* ...) (let ((op (numbers-arith-op d0 d1 e*))) (and op (member op numbers-long-ops) #t))]
+      [(clj-call ,d0 ,d1 ,e* ...) (and (host-call-layout d0 d1 e*) #t)]
       [(primcall ,pr ,e* ...) (and (or (memq pr fx-result-prims) (memq pr fl-result-prims)) #t)]
       [(call ,e0 ,e* ...) (and (inline-op e0 (length e*)) #t)]
       [(if ,e0 ,e1 ,e2) (or (MaybeTyped e1) (MaybeTyped e2))]
@@ -816,7 +819,9 @@ See docs/license.txt. |#
         (define (deps e)                     ; expr-type 会查的变量
           (nanopass-case (L3 Expr) e
             [,x (list x)]
-            [(clj-call ,d0 ,d1 ,e* ...) (if (numbers-arith-shape? d0 d1 e*) (apply append (map deps (list-tail e* 3))) '())]
+            [(clj-call ,d0 ,d1 ,e* ...)
+             (let ((layout (host-call-layout d0 d1 e*)))
+               (if layout (apply append (map deps (caddr layout))) '()))]
             [(if ,e0 ,e1 ,e2) (append (deps e1) (deps e2))]
             [(begin ,e* ... ,e) (deps e)]
             [(let ([,x* ,e*] ...) ,body) (deps body)]
@@ -842,6 +847,7 @@ See docs/license.txt. |#
                   (loop (cdr work))))))
         (for-each (lambda (x)
                     (let ((t (hashtable-ref env x #f)))
+                      (when (memq t '(fx fl l64)) (hashtable-set! sound-types x t))
                       (when (and (memq t '(fx fl l64))
                                  (<= (hashtable-ref boxed-uses x 0) (hashtable-ref raw-uses x 0)))
                         (hashtable-set! var-types x t))))
@@ -857,9 +863,20 @@ See docs/license.txt. |#
   ;; l64 上下文的原始算术（cleat-042）：clj-call 是 Numbers 的 long 运算时直接调用 (long …) 重载
   (define (cg-raw e mc t)
     (let ((oa (and (eq? t 'l64) (numbers-arith-args e var-types))))
-      (if (and oa (member (car oa) numbers-long-ops))
-          (numbers-raw-emit-args! (cdr oa) (car oa) mc)
-          (cg-raw/default e mc t))))
+      (cond ((and oa (member (car oa) numbers-long-ops)) (numbers-raw-emit-args! (cdr oa) (car oa) mc))
+            ((raw-host-call e t) => (lambda (sl) (cg-static-host-call! sl mc 'raw)))
+            (else (cg-raw/default e mc t)))))
+
+  ;; 静态决议、返回 long（l64）/ double（fl）的宿主调用：结果直接以原始值留在栈上（RT.longCast、Numbers 的 double 运算 …）
+  (define (raw-host-call e t)
+    (and (memq t '(l64 fl))
+         (nanopass-case (L3 Expr) e
+           [(clj-call ,d0 ,d1 ,e* ...)
+            (let ((sl (host-call-signature d0 d1 e*)))
+              (and (pair? sl)
+                   (string=? (vector-ref (car sl) 3) (if (eq? t 'l64) "System.Int64" "System.Double"))
+                   sl))]
+           [else #f])))
 
   (define (cg-raw/default e mc t)
     (define (fallback) (cg e mc 'value) (emit! mc `(unbox.any ,(type-clr t))))
@@ -915,28 +932,47 @@ See docs/license.txt. |#
           ((and (equal? d0 "GetInstanceField") (not d1) (= (length e*) 3)) (list #f (list-ref e* 2) '()))
           (else #f)))
 
-  (define (host-call-signature d0 d1 e*)
-    (let ((layout (host-call-layout d0 d1 e*)))
+  ;; env：推断中为不动点的类型表（实参类型还没定时返回 'pending），代码生成时为 var-types——改用 sound-types 选重载
+  (define (host-call-signature d0 d1 e* . env)
+    (let ((layout (host-call-layout d0 d1 e*))
+          (env (if (or (null? env) (eq? (car env) var-types)) sound-types (car env))))
       (and layout
            (let ((t (quoted-datum (car e*)))
                  (name (quoted-datum (cadr e*)))
                  (gen (if (member d0 '("CallStatic" "CallInstance")) (quoted-datum (list-ref e* (if (car layout) 2 3))) '())))
              (and (clr-is System.Type t) (string? name) (or (null? gen) (not gen))
-                  (let ((sig (if (member d0 '("CallStatic" "CallInstance"))
-                                 (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls Resolve
-                                                  t name (list->vector (map static-arg-type (caddr layout))) (car layout))
-                                 (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls ResolveField t name (car layout)))))
-                    (and (> (vector-length sig) 0) (cons sig layout))))))))
+                  (let ((ats (map (lambda (a) (static-arg-type a env)) (caddr layout))))
+                    (if (memq 'pending ats)
+                        'pending
+                        (let ((sig (if (member d0 '("CallStatic" "CallInstance"))
+                                       (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls Resolve
+                                                        t name (list->vector ats) (car layout))
+                                       (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls ResolveField t name (car layout)))))
+                          (and (> (vector-length sig) 0) (cons sig layout))))))))))
 
-  ;; 实参的静态类型名（JVM Clojure 的 getJavaClass：数字与字符串字面量、推断为 long 的变量），未知为 #f
-  (define (static-arg-type e)
+  ;; 静态决议的宿主调用的结果类型：l64 / fl / top（实参类型未定）/ #f
+  (define (host-call-type d0 d1 e* env)
+    (let ((sl (host-call-signature d0 d1 e* env)))
+      (cond ((eq? sl 'pending) 'top)
+            ((not sl) #f)
+            (else (let ((ret (vector-ref (car sl) 3)))
+                    (cond ((string=? ret "System.Int64") 'l64)
+                          ((string=? ret "System.Double") 'fl)
+                          (else #f)))))))
+
+  ;; 实参的静态类型名（JVM Clojure 的 getJavaClass：数字与字符串字面量、推断为 long / double 的变量与表达式），
+  ;; 未知为 #f，推断中还没定为 'pending
+  (define (static-arg-type e env)
     (nanopass-case (L3 Expr) e
       [(quote ,d) (cond ((clr-is System.Int64 d) "System.Int64")
                         ((flonum? d) "System.Double")
                         ((string? d) "System.String")
                         (else #f))]
-      [,x (and (eq? (hashtable-ref var-types x #f) 'l64) "System.Int64")]
-      [else #f]))
+      [else (case (expr-type e env)
+              ((l64) "System.Int64")
+              ((fl) "System.Double")
+              ((top) 'pending)
+              (else #f))]))
 
   ;; sl：host-call-signature 的结果 (签名 static? 实例 实参列表)
   (define (cg-static-host-call! sl mc ctx)
@@ -952,13 +988,17 @@ See docs/license.txt. |#
               (else (emit! mc `(castclass ,pt)))))
       ;; 操作数先各自求出 object；后面的操作数含 try 时（binding 等）全部先存 object 临时变量（同 operands!），
       ;; 再逐个取回并转换——转换后的原始值不能进 object 临时变量
-      ;; 已知 l64 的实参传给 long / int 形参：原始求值（int 经 RT.intCast，与 Reflector 的转换相同），不装箱
+      ;; 已知 l64 的实参传给 long / int 形参、已知 fl 的传给 double 形参：原始求值（int 经 RT.intCast，与 Reflector 的转换
+      ;; 相同），不装箱。返回 l64 / fl 或 #f
       (define (raw-long? x pt)
-        (and (member pt '("System.Int64" "System.Int32")) (eq? (expr-type x var-types) 'l64)))
+        (let ((t (expr-type x var-types)))
+          (cond ((and (eq? t 'l64) (member pt '("System.Int64" "System.Int32"))) 'l64)
+                ((and (eq? t 'fl) (string=? pt "System.Double")) 'fl)
+                (else #f))))
       (let* ((opnds (append (if static? '() (list inst)) args))
              (types (append (if static? '() (list 'instance)) pts))
              (raws (map (lambda (x pt) (and (not (eq? pt 'instance)) (raw-long? x pt))) opnds types))
-             (codes (map (lambda (x raw?) (with-buffer mc (lambda () (if raw? (cg-raw x mc 'l64) (cg x mc 'value))))) opnds raws))
+             (codes (map (lambda (x raw?) (with-buffer mc (lambda () (if raw? (cg-raw x mc raw?) (cg x mc 'value))))) opnds raws))
              (conv! (lambda (pt raw?)
                       (cond ((eq? pt 'instance)
                              (emit! mc `(ldstr ,name) `(call ,static-calls-type "Instance" (,obj ,obj) ,obj) `(castclass ,decl)))
@@ -967,7 +1007,7 @@ See docs/license.txt. |#
                             (raw? (void))
                             (else (convert! pt))))))
         (if (and (pair? codes) (exists contains-try? (cdr codes)))
-            (let ((temps (map (lambda (c raw?) (let ((t (new-local! mc (if raw? int64-type obj)))) (emit-code! mc c) (emit! mc `(stloc ,t)) t))
+            (let ((temps (map (lambda (c raw?) (let ((t (new-local! mc (if raw? (type-clr raw?) obj)))) (emit-code! mc c) (emit! mc `(stloc ,t)) t))
                               codes raws)))
               (for-each (lambda (t pt raw?) (emit! mc `(ldloc ,t)) (conv! pt raw?)) temps types raws))
             (for-each (lambda (c pt raw?) (emit-code! mc c) (conv! pt raw?)) codes types raws)))
@@ -977,9 +1017,10 @@ See docs/license.txt. |#
             (begin
               (when (string=? kind "volatile-field") (emit! mc '(volatile.)))
               (emit! mc (if static? `(ldsfld ,decl ,name) `(ldfld ,decl ,name))))))
-      (if (string=? ret "System.Boolean")
-          (finish-bool! mc ctx)
-          (begin
+      (cond
+        ((eq? ctx 'raw) (void))           ; cg-raw：long / double 结果原样留在栈上
+        ((string=? ret "System.Boolean") (finish-bool! mc ctx))
+        (else
             (cond ((string=? ret "System.Void") (emit! mc '(ldnull)))
                   ((string=? ret "System.Object") (emit! mc `(call ,static-calls-type "RetObject" (,obj) ,obj)))
                   ((string=? ret "System.Int32") (emit! mc `(call ,static-calls-type "RetInt32" (,int32-type) ,obj)))
@@ -2332,6 +2373,7 @@ See docs/license.txt. |#
       ;; 1. 已知过程：库变量绑定的、无自由变量且不被再赋值的 lambda
       (for-each (lambda (f) (collect-known! u f)) forms)
       (hashtable-clear! var-types)
+      (hashtable-clear! sound-types)
       (when opt-infer?
         (let ((flags (loop-forms)))
           (if (and (list? flags) (= (length flags) (length forms)))

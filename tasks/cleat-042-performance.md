@@ -139,3 +139,35 @@ cts `not-eq` +1 通过（基线已重写）。583 测试全绿。
 
 剖析中剩余的大头：`mod` 等小 defn 的装箱泛型算术（第 2 项的 `IFn.LL` 原始签名 / 第 4 项的小函数内联）、
 extend-protocol 路径上 `MethodImplCache` 的 MRU 在两种类型交替时失效（`FindFnFor` ~8%）。
+
+### 第 3 项收尾 + 第 2 项阶段 A：原始形参与宿主调用的原始返回值（2026-10-11）
+
+- `MethodImplCache` 记最近两项（多态调用点两种类型交替时不再回表查找）：protocol 63 → 57 ms。
+- **^long / ^double 形参**（fn*）：形参的循环初值经 `RT.longCast` / `RT.doubleCast`（JVM 原始形参的入口转换：
+  `(f 2.7)` → 2，`(f nil)` → NRE，NaN → 0），编译器把它推断为 int64 / double 局部；parse 把这种转换计入有类型的子句，
+  没有 recur 的 fn 也做推断。
+- **静态决议的宿主调用参与类型推断**：返回 long / double 的调用（`RT.longCast`、`Numbers` 的 double / long 重载 …）
+  是 l64 / fl 表达式，`cg-raw` 直接留原始值；实参静态类型来自推断（double 运算经 `Numbers.add(double, double)` 等，
+  long / double 实参原始传入）。**正确性**：推断不动点过程中类型是乐观的，按未收敛的类型选重载可能导致错误转换——
+  推断中实参类型未定时结果暂为 top、不缓存；收敛后全部候选的类型记入 `sound-types`，代码生成按它选重载，与推断给出的
+  返回类型一致（`var-types` 只是其中决定拆箱的子集）。C# 侧 `Resolve` 按（类型, 名字, 实参类型, 静态?）缓存。
+- `Numbers` 的混合重载 `(long, Object)` / `(Object, long)` 在另一侧也是 long 时直接走 `(long, long)`（原实现先装箱再分派）；
+  `quotient` / `remainder` 的 `(long, long)` 除零与 object 重载一样报 ArithmeticException "Divide by zero"
+  （类型已知时编译器直调它，结果不应随推断而变）。
+
+语料 3 条原始提示相关分歧消失（`^double` 拒绝 nil、`^long` 把 NaN 当 0、reduce 的 `^double` 形参），已从分歧表删除。
+583 测试全绿（cts 有一次计时相关的偶发差异，复跑一致）。
+
+新基准 `prim_fib`（`(defn fib ^long [^long n] …)`，fib 27）：27 ms——跨调用仍装箱（invokeStatic 是 object 签名），
+留给阶段 B（原始签名的 invokeStatic 与调用点）。
+
+| 基准 | 基线 | 现在 |
+|---|---|---|
+| sum_loop | 1006 | 13 |
+| protocol | 517 | 53 |
+| keyword_invoke | 631 | 57 |
+| lazy_chain | 349 | 86 |
+| assoc_map | 219 | 68 |
+| reduce_vec | 119 | 37（19 ~ 38 双峰） |
+| fib | 49 | 17 |
+| prim_fib | — | 27 |

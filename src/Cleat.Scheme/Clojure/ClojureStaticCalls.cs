@@ -47,7 +47,17 @@ public static class ClojureStaticCalls
     /// 规则同 JVM Clojure 的 Compiler.paramArgTypeMatch / subsumes：静态类型未知的实参只匹配非值类型形参；
     /// 有多个匹配时选与已知实参类型精确相符最多的那个，并列则交回运行时。
     /// </summary>
+    // 推断的不动点会对同一调用反复决议（cleat-042）：按（类型, 名字, 实参类型, 静态?）缓存。桩类型不缓存（同名重定义时换新桩）
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string, string, bool), object[]> s_resolved = new();
+
     public static object[] Resolve(object t, object name, object argTypes, object isStatic)
+    {
+        if (t is not Type ty || name is not string nm || HostSyntax.IsStub(ty)) return ResolveUncached(t, name, argTypes, isStatic);
+        var key = (ty, nm, string.Join(",", ((object[])argTypes).Select(a => a as string ?? "?")), isStatic is bool sb && sb);
+        return s_resolved.GetOrAdd(key, _ => ResolveUncached(t, name, argTypes, isStatic));
+    }
+
+    private static object[] ResolveUncached(object t, object name, object argTypes, object isStatic)
     {
         if (t is not Type type || name is not string member) return Array.Empty<object>();
         // deftype 方法体里的 this（桩类型）：在 deftype 声明的接口里找，callvirt 接口方法（真正的类型实现它们）

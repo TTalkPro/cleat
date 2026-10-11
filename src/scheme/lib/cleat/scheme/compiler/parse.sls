@@ -256,6 +256,10 @@ See docs/license.txt. |#
              (let ((m (quoted (cadr x) "$clj-call method" x))
                    (n (quoted (caddr x) "$clj-call fixed count" x)))
                (unless (and (string? m) (or (not n) (and (fixnum? n) (<= 0 n (length (cdddr x)))))) (bad-form "$clj-call" x))
+               ;; ^long / ^double 形参的入口转换（fn*，cleat-042）：计入有类型的子句，编译驱动对这个形式做类型推断
+               (when (and (string=? m "CallStatic") (>= (length x) 5)
+                          (let ((op (cadr (list-ref x 4)))) (and (string? op) (member op '("longCast" "doubleCast")))))
+                 (set! typed-count (+ typed-count 1)))
                `(clj-call ,m ,n ,(Args (cdddr x) x) ...)))
             (($clj-static-call)
              ;; ($clj-static-call '类名 '参数个数 Var读 实参 …)（cleat-033 直接链接）：类名是接口文件登记的

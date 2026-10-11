@@ -462,6 +462,22 @@
                (loop (cdr ps) req (car ps) amp))
               (else (loop (cdr ps) (cons (car ps) req) rest amp)))))))
 
+  ;;; ^long / ^double 形参（cleat-042）：循环变量的初值经 RT.longCast / RT.doubleCast（JVM 原始形参的入口转换），
+  ;;; 编译器据此把它推断为 int64 / double 局部变量；其余形参原样
+  (define rt-type #f)
+  (define (prim-param-init head p)
+    (let* ((t (tag-of (syntax->clj p)))
+           (op (and t (clj-symbol? t) (not (sym-ns t))
+                    (cond ((string=? (sym-name t) "long") "longCast")
+                          ((string=? (sym-name t) "double") "doubleCast")
+                          (else #f)))))
+      (if op
+          (begin
+            (unless rt-type (set! rt-type (class-for-name "clojure.lang.RT")))
+            (with-syntax ((k (node-id head)) (p p) (data (const-stx (list "CallStatic" 3 rt-type op '()))))
+              #'(k $clj-call data p)))
+          p)))
+
   (define (fn-class-name c self)
     (let ((base (or (ctx-fn-name c) (munge (ns-name* (current-ns)))))
           (simple (cond
@@ -505,8 +521,9 @@
                    (with-syntax (((p ...) (dedupe-ids params))
                                  ((lp) (generate-temporaries '(recur)))
                                  (body (body-stx head (cdr cl) bc)))
-                     (with-syntax ((body (in-ctx/loop head bc #'lp (length params) #'body)))
-                       (let ((compiled #'((p ...) (let lp ((p p) ...) body))))
+                     (with-syntax ((body (in-ctx/loop head bc #'lp (length params) #'body))
+                                   ((init ...) (map (lambda (p) (prim-param-init head p)) (stx-list #'(p ...)))))
+                       (let ((compiled #'((p ...) (let lp ((p init) ...) body))))
                          (if rest
                              (loop (cdr cls) fixed (cons n compiled) arities)
                              (loop (cdr cls) (cons compiled fixed) variadic (cons n arities))))))))
