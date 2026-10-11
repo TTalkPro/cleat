@@ -27,3 +27,17 @@
 
 待做：2（类型推断与拆箱，iron-034c 工作表法 + `IFn.LL` 原始签名）、3（协议与 keyword-invoke 的内联缓存）、
 4 剩余（`:inline` 之外的小函数内联）、5（locals-clearing）。每项完成后在此记基准前后数字。
+
+### 第 2 项的先期分析（2026-10-11，实验记录）
+
+- `+` / `<` / `inc` 的 `:inline` 已生效：`(clojure.core/+ acc i)` 与手写
+  `(. clojure.lang.Numbers (add acc i))` 同速（1051 vs 1049 ms / 500 万次）——内联不是瓶颈。
+- 实验加了 Int64 快速路径（`Numbers.add` 等五处 `is long` 直连原语，省去 `ops(x)` 的
+  `Type.GetTypeCode` 双重分派）：sum_loop 103%–105%，无改善——分派也不是瓶颈。
+- 装箱实验：同样的循环去掉 `acc` 累加（每迭代 1 次分配而非 2 次）1126 → 724 ms——**成本在
+  `Numbers.add(object,object)` 的结果装箱与 GC 压力**（每迭代 ~80 ns/次分配）。
+- 结论：第 2 项的正确形态是完整拆箱——`^long`/`^double` 局部与 loop 形参用 int64/double
+  局部变量、`+`/`<`/`inc` 在类型已知时发原始 `add.ovf`/`clt`（checked 溢出语义必须保留，
+  不能用无检查的 `add`）；已移植的 `infer-var-types!` 只认 Scheme 的 `$fx…`/int32 语义，
+  对 Clojure 的 Int64 返回未知，需要为 `$clj-call` 节点补 Int64 类型的推断与原始发射。
+  预期 sum_loop 1006 → ~150 ms。尚无对外的 C# 改动（实验已回退）。
