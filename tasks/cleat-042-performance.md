@@ -58,3 +58,16 @@
 调试入口：`CLEAT_DEBUG_INFER=1` 环境变量 + codegen.sls 的 infer 探针（当前为 display 版，注意 fasl 需重生成才生效）；
 建议先确认 infer-walk 是否真的为 loop 形式的变量登记了 l64 候选（`(GU #t (#f) 1)` 曾显示 -main 形式的 loop 旗标为 #f——
 dotimes 展开后的形状可能未被 loop-forms 识别，这是最可疑的一环）。
+
+### 触发调试的关键发现（2026-10-11，第二轮 WIP）
+
+- **形状检查的确定性 bug（下次直接修）**：`:inline` 产物的 gen 元数据是 **#f 而非 '()**——
+  `(dotimes ...)` 的 `(+ acc i)` 实际展开为 `($clj-call "CallStatic" 3 "clojure.lang.Numbers" "add" #f 实参…)`。
+  形状检查的 `(null? gen)` 恒为假，**必须改为 `(not gen)`**。修正此一处即可让识别生效（推断候选与
+  CallStatic 形状都已验证存在：infer 探针确认 loop 变量 `i`/`acc` 是候选，raw/boxed 计数正确）。
+- 该修正已验证会让形状匹配（修正后推断在识别路径上继续走通到 emit），但引入了引导失败：
+  codegen.sls 的增量补丁损坏了文件结构（func-type 定义被吞、括号失衡）——**增量补丁方式对 nanopass
+  文件不可靠**，下次会话应当：checkout 到 29b677c → 单次 python 全量重放（本文所列 + gen 修正）→
+  立即跑 `stage0 buildscript-nano` 引导冒烟 → 再进基准。
+- 调试探针（infer-entered/cands 文件日志、CLEAT_DEBUG_INFER 门）的写法已验证可用
+  （call-with-output-file 不接受 'append 位置参数，用计数器文件名）。
