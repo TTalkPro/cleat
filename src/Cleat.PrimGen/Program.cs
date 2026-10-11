@@ -20,7 +20,7 @@ namespace Cleat.PrimGen;
 /// </summary>
 public static class Program
 {
-    /// <summary>编译器专门处理的原语（IronScheme 03 §6）。种类名供编译器分派使用。async 的 await 已随 async 删除；call/cc 已随逃逸续延删除（cleat-047）。</summary>
+    /// <summary>编译器专门处理的原语（IronScheme 03 §6）。种类名供编译器分派使用。async 的 await 已随 async 删除；call/cc 改名 call-with-return，是普通原语（cleat-058）。</summary>
     private static readonly (string Name, string Kind, string Note)[] s_specials =
     {
         ("$and?", "and", "短路与，参数为未求值表达式，结果为 CLR bool"),

@@ -80,47 +80,20 @@ public class Stage0Tests
           (case-lambda ((a b c) (s0:list c b a))))")), Is.EqualTo("(3 2 1)"));
     }
 
-    private const string Boom = "($throw (clr-new-internal 'Cleat.Scheme.SchemeException 'boom))";
-
     [Test]
-    public void TryFinallyAndTryCatchOrdering()
+    public void EscapeContinuationAndTryFinally()
     {
-        // 异常先经 finally 再到外层 catch（CLR 的两遍异常处理）；处理器收到 SchemeException 的条件
         Assert.That(Show(Run(@"
         (set! s0:log '())
         (s0:list
-          ($try/catch ($try/finally (begin " + Boom + @" 'not-reached)
-                                    (set! s0:log (cons 'finally s0:log)))
-                      '#f (case-lambda ((c) (set! s0:log (cons 'catch s0:log)) c)))
-          s0:log)")), Is.EqualTo("(boom (catch finally))"));
+          (call-with-return
+            (case-lambda
+              ((k) ($try/finally
+                     (begin (k 'escaped) 'not-reached)
+                     (set! s0:log (cons 'finally s0:log))))))
+          s0:log)")), Is.EqualTo("(escaped (finally))"));
         Assert.That(Run(@"($and? '1 '#f)"), Is.EqualTo(false));
         Assert.That(Run(@"($or? '#f '2)"), Is.EqualTo(true));
-    }
-
-    [Test]
-    public void TryCatch()
-    {
-        // 类型 #f：SchemeException，处理器收到条件；正常返回时处理器不调用
-        Assert.That(Show(Run(@"($try/catch (begin " + Boom + @" 'not-reached) '#f (case-lambda ((c) (s0:list 'caught c))))")), Is.EqualTo("(caught boom)"));
-        Assert.That(Run(@"($try/catch '42 '#f (case-lambda ((c) 'wrong)))"), Is.EqualTo(42));
-        // CLR 类型：处理器收到异常对象本身
-        Assert.That(Run(@"($try/catch ($throw (clr-new-internal 'InvalidOperationException '""msg"")) '""System.InvalidOperationException"" (case-lambda ((e) (clr-call-internal '#f 'get_Message e))))"), Is.EqualTo("msg"));
-        // 子句按顺序匹配第一个类型；不匹配的异常原样穿过内层到外层
-        Assert.That(Show(Run(@"($try/catch ($try/catch " + Boom + @" '""System.InvalidOperationException"" (case-lambda ((e) 'wrong))) '#f (case-lambda ((c) (s0:list 'outer c))))")), Is.EqualTo("(outer boom)"));
-        Assert.That(Show(Run(@"($try/catch ($throw (clr-new-internal 'InvalidOperationException '""x"")) '#f (case-lambda ((c) 'a)) '""System.Exception"" (case-lambda ((e) 'b)))")), Is.EqualTo("b"));
-        // 处理器先于体求值
-        Assert.That(Show(Run(@"
-        (set! s0:log '())
-        ($try/catch (begin (set! s0:log (cons 'body s0:log)) s0:log) '#f (begin (set! s0:log (cons 'handler s0:log)) (case-lambda ((c) c))))")), Is.EqualTo("(body handler)"));
-        // 都不匹配：原异常抛出
-        Assert.Throws<InvalidOperationException>(() => Run(@"($try/catch ($throw (clr-new-internal 'InvalidOperationException '""boom"")) '#f (case-lambda ((c) 'wrong)))"));
-        // 处理器里再抛
-        var e = Assert.Throws<SchemeException>(() => Run(@"($try/catch " + Boom + @" '#f (case-lambda ((c) ($throw (clr-new-internal 'Cleat.Scheme.SchemeException (s0:list 'again c))))))"));
-        Assert.That(Show(e.Condition), Is.EqualTo("(again boom)"));
-        // 体不在尾位置：try 内的深递归仍受 C# 栈限制，但尾位置的 apply 蹦床在 try 外照常
-        Assert.That(Show(Run(@"
-        (letrec ((loop (case-lambda ((n) (if (eq? n '0) ($try/catch 'done '#f (case-lambda ((c) c))) (loop ($fx- n '1)))))))
-          (loop '100000))")), Is.EqualTo("done"));
     }
 
     [Test]

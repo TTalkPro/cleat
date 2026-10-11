@@ -194,6 +194,8 @@
     (overload "Cleat.Scheme.HostPrimitives" "CultureName" 0 #f (unsafe) #f))
   (primitive $current-directory
     (overload "Cleat.Scheme.HostPrimitives" "CurrentDirectory" 0 #f (unsafe) #f))
+  (primitive $current-handlers
+    (overload "Cleat.Scheme.ExceptionHandlers" "Current" 0 #f (unsafe) #f))
   (primitive $custom-port-input
     (overload "Cleat.Scheme.PortPrimitives" "CustomPortInput" 1 #f (pure unsafe) #f))
   (primitive $custom-port-output
@@ -560,6 +562,8 @@
     (overload "Cleat.Scheme.HostPrimitives" "IsProcedure" 1 #f (pure unsafe) #f))
   (primitive $program-failed
     (overload "Cleat.Scheme.HostPrimitives" "ProgramFailed" 0 #f (unsafe) #f))
+  (primitive $raise-clr-exception
+    (overload "Cleat.Scheme.Exceptions" "RaiseClrException" 1 #f (unsafe) #f))
   (primitive $random-next
     (overload "Cleat.Scheme.HostPrimitives" "RandomNext" 2 #f (unsafe) #f))
   (primitive $ratnum->flonum
@@ -634,6 +638,8 @@
     (overload "Cleat.Scheme.HostPrimitives" "SetConsoleForegroundColor" 1 #f (unsafe) #f))
   (primitive $set-current-directory!
     (overload "Cleat.Scheme.HostPrimitives" "SetCurrentDirectory" 1 #f (unsafe) #f))
+  (primitive $set-current-handlers!
+    (overload "Cleat.Scheme.ExceptionHandlers" "Set" 1 #f (unsafe) #f))
   (primitive $set-runtime-hook!
     (overload "Cleat.Scheme.RuntimeHooks" "SetRuntimeHook" 2 #f () #f))
   (primitive $single->bytes
@@ -758,6 +764,8 @@
     (overload "Cleat.Scheme.Builtins" "ExactSqrtBigInteger" 1 #f (pure) #f))
   (primitive bytevector->string
     (overload "Cleat.Scheme.IO" "ByteVectorToString" 2 #f () #f))
+  (primitive call-with-return
+    (overload "Cleat.Scheme.Control" "CallWithReturn" 1 #f () #f))
   (primitive call-with-values
     (overload "Cleat.Scheme.Control" "CallWithValues" 2 #f (allow-tail-call) #f))
   (primitive car

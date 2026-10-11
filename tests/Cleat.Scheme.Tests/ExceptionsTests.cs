@@ -22,13 +22,12 @@ public class ExceptionsTests
     }
 
     [Test]
-    public void SchemeExceptionIsAClrException()
+    public void ContinuationIsNotIntercepted()
     {
-        // Scheme 条件以 SchemeException 传播；with-clr-exception-handler 收到的是异常对象本身（不转成条件）
-        var r = Exceptions.WithClrExceptionHandler(
-          new Fn(a => ((SchemeException)a[0]).Condition),
-          new Fn(_ => throw new SchemeException("cond")));
-        Assert.That(r, Is.EqualTo("cond"));
+        // (call-with-return (lambda (k) (with-clr-exception-handler (lambda (e) 'handled) (lambda () (k 'escaped)))))
+        var r = Control.CallWithReturn(new Fn(a =>
+          Exceptions.WithClrExceptionHandler(new Fn(_ => "handled"), new Fn(_ => ((Procedure)a[0]).Invoke1("escaped")))));
+        Assert.That(r, Is.EqualTo("escaped"));
     }
 
     [Test]

@@ -1,4 +1,4 @@
-;;; cleat-047：核心形式 $try/catch 与 guard 的端到端测试（在镜像上运行：展开 → 编译 → 发射到内存 → 运行），
+;;; cleat-047 / cleat-058：核心形式 $try/catch 与 guard 的端到端测试（在镜像上运行：展开 → 编译 → 发射到内存 → 运行），
 ;;; 以及"try 区域内不发 tail."的 Lcil 检查。异常模型见 designs/15 §3。
 (import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme compiler) (cleat scheme unsafe))
 
@@ -10,9 +10,20 @@
   (display "FAIL: ") (display name) (newline)
   (display "  expected: ") (write expected) (newline)
   (display "  got:      ") (write got) (newline))
+;; 外框不装 Scheme 处理器（cleat-058：raise 先交给动态最近的处理器，$try/catch '#f 只接住走到缺省处理器的 raise）：
+;; 在 CLR 一级接住 SchemeException 与其他异常；运行器（eval-top-level）装的处理器在用例期间清空
+(define (without-handlers thunk)
+  (let ((old ($current-handlers)))
+    ($set-current-handlers! '())
+    ($try/finally (thunk) ($set-current-handlers! old))))
 (define (check name expr expected)
-  (let ((got (guard (e (#t (list 'exception (if (message-condition? e) (condition-message e) e))))
-               (run expr))))
+  (let ((got (without-handlers
+               (lambda ()
+                 (with-clr-exception-handler
+                   (lambda (e) (list 'clr-exception e))
+                   (lambda ()
+                     ($try/catch (run expr) '#f
+                       (lambda (e) (list 'exception (if (message-condition? e) (condition-message e) e))))))))))
     (unless (equal? got expected) (fail! name expected got))))
 
 ;; $try/catch 本身
@@ -43,8 +54,12 @@
 (check "multiple values pass through the try as one value"
   '(call-with-values (lambda () ($try/catch (values 1 2) '#f (lambda (c) 'wrong))) list)
   '(1 2))
-(check "raise from a handler reaches the outer guard"
+;; cleat-058：外层有 guard（处理器）时 raise 直接交给它；$try/catch '#f 不是处理器，只接住走到缺省处理器的 raise
+(check "raise inside an outer guard goes to the guard's handler, not to $try/catch"
   '(guard (e (#t (list 'outer e))) ($try/catch (raise 'a) '#f (lambda (c) (raise (list 'reraised c)))))
+  '(outer a))
+(check "raise from a $try/catch handler (no Scheme handler installed) reaches the outer $try/catch"
+  '($try/catch ($try/catch (raise 'a) '#f (lambda (c) (raise (list 'reraised c)))) '#f (lambda (c) (list 'outer c)))
   '(outer (reraised a)))
 (check "try/catch in effect and test contexts"
   '(let ((n 0)) ($try/catch (raise 'x) '#f (lambda (c) (set! n 1))) (if ($try/catch #f '#f (lambda (c) #t)) 'wrong (list n 'ok)))

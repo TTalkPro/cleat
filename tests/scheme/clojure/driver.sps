@@ -20,7 +20,7 @@
 (define (run thunk)
   (with-clr-exception-handler
     (lambda (e) (list 'exception (clr-message e)))
-    (lambda () (guard (e (#t (list 'condition (if (message-condition? e) (condition-message e) e)))) (thunk)))))
+    (lambda () (guard (e ((clr-condition? e) (list 'exception (clr-message (clr-condition-exception e)))) (#t (list 'condition (if (message-condition? e) (condition-message e) e)))) (thunk)))))
 (define (check name thunk expected)
   (set! checks (+ checks 1))
   (let ((got (run thunk)))

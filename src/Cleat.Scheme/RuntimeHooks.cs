@@ -12,7 +12,7 @@ namespace Cleat.Scheme;
 /// </summary>
 public static class RuntimeHooks
 {
-    // 与旧 Glue.il 的方法一一对应（raise-continuable 与 with-exception-handler 已随处理器栈删除，cleat-047）；名字取 Scheme 中的过程名。
+    // 与旧 Glue.il 的 15 个方法一一对应，另加 clr-exception-violation（cleat-058）；名字取 Scheme 中的过程名。
     public static Procedure AssertionViolation;          // (assertion-violation who msg irritant ...)
     public static Procedure UndefinedError;              // (undefined-error sym)
     public static Procedure LexicalError;                // (lexical-error msg what)
@@ -24,8 +24,11 @@ public static class RuntimeHooks
     public static Procedure IODecodingError;             // (io-decoding-error)
     public static Procedure IOEncodingError;             // (io-encoding-error)
     public static Procedure Raise;                       // (raise obj)
+    public static Procedure RaiseContinuable;            // (raise-continuable obj)
+    public static Procedure WithExceptionHandler;        // (with-exception-handler handler thunk)
     public static Procedure Exact;                       // (exact z)
     public static Procedure Inexact;                     // (inexact z)
+    public static Procedure ClrExceptionViolation;       // (clr-exception-violation exception)：宿主异常包成条件 raise（cleat-058）
 
     private static readonly (string Name, Func<Procedure> Get, Action<Procedure> Set)[] s_table =
     {
@@ -40,8 +43,11 @@ public static class RuntimeHooks
   ("io-decoding-error", () => IODecodingError, p => IODecodingError = p),
   ("io-encoding-error", () => IOEncodingError, p => IOEncodingError = p),
   ("raise", () => Raise, p => Raise = p),
+  ("raise-continuable", () => RaiseContinuable, p => RaiseContinuable = p),
+  ("with-exception-handler", () => WithExceptionHandler, p => WithExceptionHandler = p),
   ("exact", () => Exact, p => Exact = p),
   ("inexact", () => Inexact, p => Inexact = p),
+  ("clr-exception-violation", () => ClrExceptionViolation, p => ClrExceptionViolation = p),
 };
 
     public static IEnumerable<string> Names => s_table.Select(t => t.Name);

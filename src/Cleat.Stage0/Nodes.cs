@@ -299,7 +299,7 @@ internal sealed class TryCatch : Node
     {
         var hs = NodeHelpers.EvalAll(_handlers, f);
         try { return _body.Eval(f); }
-        catch (Exception e)
+        catch (Exception e) when (e is not ContinuationException)   // 逃逸续延的控制流放行（cleat-058）
         {
             for (int i = 0; i < _types.Length; i++)
             {

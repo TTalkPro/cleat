@@ -106,6 +106,7 @@ See docs/license.txt. |#
   (define-target-type calls-type calls)
   (define-target-type arith-type inline-arith)
   (define-target-type scheme-exn-type scheme-exception)
+  (define-target-type continuation-exn-type continuation-exception)
   ;; Clojure 运行时（cleat-051）
   (define-target-type ifn-type ifn)
   (define-target-type clj-var-type clj-var)
@@ -1430,7 +1431,11 @@ See docs/license.txt. |#
                            (callvirt ,proc-type "Invoke1" (,obj) ,obj)
                            ,(if tmp `(stloc ,tmp) '(pop)))))
                     d* hs)))
-         (emit! mc `(try (body ,@body) ,@handlers))
+         ;; 逃逸续延（call-with-return，cleat-058）的控制流异常一律放行：按 CLR 类型的子句（Clojure 的 catch Exception 等）
+         ;; 前面先接住 ContinuationException 原样 rethrow
+         (emit! mc `(try (body ,@body)
+                         ,@(if (exists (lambda (d) d) d*) `((catch ,continuation-exn-type (rethrow))) '())
+                         ,@handlers))
          (when tmp
            (emit! mc `(ldloc ,tmp))
            (finish-value! mc ctx)))]

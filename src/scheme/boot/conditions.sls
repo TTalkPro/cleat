@@ -140,6 +140,11 @@ See docs/license.txt. |#
     stacktrace-condition?
     condition-stacktrace
     
+    &clr-exception
+    make-clr-condition
+    clr-condition?
+    clr-condition-exception
+    
     &condition-rtd &condition-rcd &message-rtd &message-rcd
     &warning-rtd &warning-rcd &serious-rtd &serious-rcd
     &error-rtd &error-rcd &violation-rtd &violation-rcd
@@ -162,7 +167,8 @@ See docs/license.txt. |#
     &no-nans-rtd &no-nans-rcd 
     
     &where-rtd &where-rcd
-    &stacktrace-rtd &stacktrace-rcd)
+    &stacktrace-rtd &stacktrace-rcd
+    &clr-exception-rtd &clr-exception-rcd)
   (import 
     (except (rnrs)
       &condition
@@ -419,4 +425,10 @@ See docs/license.txt. |#
     make-no-infinities-violation no-infinities-violation?)
   
   (define-condition-type &no-nans &implementation-restriction
-    make-no-nans-violation no-nans-violation?))
+    make-no-nans-violation no-nans-violation?)
+
+  ;; 宿主（.NET）异常进入 Scheme 时包成的条件（cleat-058，skeg 13 §5.3）：
+  ;; 字段是原始 Exception 对象；父类型 &error，error? / serious-condition? 对它成立
+  (define-condition-type &clr-exception &error
+    make-clr-condition clr-condition?
+    (exception clr-condition-exception)))

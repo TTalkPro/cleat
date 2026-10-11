@@ -44,3 +44,25 @@ cleat-047 为简化元层删掉了 call/cc 与处理器栈，`guard` 改为 `$tr
 
 - Scheme 测试：skeg `host-smoke.sps` 中 guard / try / throw / #nil 各组用例的对应版本；R6RS 异常测试按 skeg 的期望。
 - 两个不动点（Scheme 镜像、Clojure 镜像）与种子不动点（镜像生成 = stage0 生成）成立；符合性基线不退化；cleat-042 的基准不退化。
+
+## 进度
+
+### 阶段 1（2026-10-12）：处理器栈、call-with-return、guard、&clr-exception
+
+- C#：cleat-047 删掉的 `EscapeContinuation` / `ContinuationException` / `ExceptionHandlers`（线程静态）/ 钩子 `raise-continuable`、
+  `with-exception-handler` 按 c0e9d62 的逆补丁恢复；`call/cc` 改名 `call-with-return`（普通原语，不是编译器特殊形式——skeg 设为特殊形式
+  只为 async 体内联，本仓库元层没有 async）；新增 `Errors.RaiseClrException`、钩子 `clr-exception-violation`（共 16 个）、
+  不安全原语 `$raise-clr-exception`。stage0 的 `$try/catch` 放过 `ContinuationException`。
+- Scheme：`exceptions.sls` 按 skeg 恢复 `with-exception-handler`（装处理器时外包 CLR catch：回卷上来的 .NET 异常包成 `&clr-exception` 条件
+  在本处理器下 raise）、R6RS 的 `raise` / `raise-continuable`；`conditions.sls` 加 `&clr-exception`（父 `&error`）；`guard` 按 skeg 13 §4
+  （call-with-return + with-exception-handler，不命中时 raise-continuable）；`main.sls` 的三处（eval-top-level、with-guard、repl-describe）
+  改为处理器式。
+- 编译器：`try-catch` 有按 CLR 类型的子句时先加一个 `(catch ContinuationException (rethrow))`——Clojure 的 `(catch Exception e …)`
+  不会吞掉逃逸续延。
+- **与 skeg 的差别**：.NET 异常只在 `with-exception-handler` 一级转换，不在每个宿主调用（clr-call 等）处包 try 区域（skeg 13 §5.1 的
+  第 1 个转换点）。对 guard / try 的结果相同（宿主异常不可继续）；省掉每次宿主调用的 try 区域（Scheme 编译器自身大量宿主调用，影响 Clojure 编译速度）。
+- **语义变化**：`$try/catch '#f` 不是处理器——外层有处理器（guard、eval-top-level）时 raise 先交给处理器，`$try/catch '#f` 只接住走到缺省
+  处理器的 raise。Clojure 驱动不装 Scheme 处理器，Clojure 代码里的 Scheme raise 仍到缺省处理器变成 SchemeException，Clojure 的 catch 照常看到；
+  因此 Clojure 的 `try` 不需要另装处理器。测试：四个 Clojure 脚本的外框把 `&clr-exception` 报成 `(exception 消息)`（意图不变）；
+  `try-catch.sps` 的外框在用例期间清空处理器栈，"外层 guard 内 raise" 一例按 R6RS 改期望。
+- 种子：按两步法重生成两次（先让种子的库表认识新名字，再让 main.sls 用它们），两次都是不动点（镜像生成 = stage0 生成）。583 测试全绿。

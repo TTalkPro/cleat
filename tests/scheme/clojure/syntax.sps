@@ -22,7 +22,7 @@
   (with-clr-exception-handler
     (lambda (e) (list 'exception (clr-message e)))
     (lambda ()
-      (guard (e (#t (list 'condition (if (message-condition? e) (condition-message e) e))))
+      (guard (e ((clr-condition? e) (list 'exception (clr-message (clr-condition-exception e)))) (#t (list 'condition (if (message-condition? e) (condition-message e) e))))
         (thunk)))))
 (define (check name thunk expected)
   (set! checks (+ checks 1))

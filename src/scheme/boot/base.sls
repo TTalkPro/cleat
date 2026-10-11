@@ -183,6 +183,7 @@ See docs/license.txt. |#
     assert
     
     apply
+    call-with-return
     call-with-values
     dynamic-wind
     procedure?

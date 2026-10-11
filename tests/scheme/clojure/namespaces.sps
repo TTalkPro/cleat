@@ -21,7 +21,7 @@
   (let ((got (with-clr-exception-handler
                (lambda (e) (list 'exception (clr-message e)))
                (lambda ()
-                 (guard (e (#t (list 'condition (if (message-condition? e) (condition-message e) e))))
+                 (guard (e ((clr-condition? e) (list 'exception (clr-message (clr-condition-exception e)))) (#t (list 'condition (if (message-condition? e) (condition-message e) e))))
                    (thunk))))))
     (unless (equal? got expected) (fail! name expected got))))
 (define-syntax test

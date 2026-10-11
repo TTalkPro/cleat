@@ -132,3 +132,53 @@ public class CallWithValuesTests
         Assert.That(Control.Values(1, 2), Is.InstanceOf<MultipleValues>());
     }
 }
+
+public class EscapeContinuationTests
+{
+    private static object CallCC(Func<Procedure, object> body) => Control.CallWithReturn(new Fn(a => body((Procedure)a[0])));
+
+    [Test]
+    public void EscapesWithValue()
+    {
+        // (call-with-return (lambda (k) (+ 1 (k 42)))) => 42
+        Assert.That(CallCC(k => 1 + (int)k.Invoke1(42)), Is.EqualTo(42));
+    }
+
+    [Test]
+    public void NormalReturn()
+    {
+        Assert.That(CallCC(k => 7), Is.EqualTo(7));
+    }
+
+    [Test]
+    public void EscapesWithMultipleValues()
+    {
+        var r = CallCC(k => k.Invoke2(1, 2));
+        Assert.That(((MultipleValues)r).ToArray(), Is.EqualTo(new object[] { 1, 2 }));
+    }
+
+    [Test]
+    public void InnerEscapesToOuterFrame()
+    {
+        // (call-with-return (lambda (outer) (call-with-return (lambda (inner) (outer 'out))) 'not-reached))
+        var r = CallCC(outer => { CallCC(inner => outer.Invoke1("out")); return "not-reached"; });
+        Assert.That(r, Is.EqualTo("out"));
+    }
+
+    [Test]
+    public void InvalidAfterFrameExits()
+    {
+        Procedure saved = null;
+        CallCC(k => { saved = k; return 0; });
+        var e = Assert.Throws<SchemeRuntimeError>(() => saved.Invoke1(1));
+        Assert.That(e.Message, Does.Contain("no longer valid"));
+    }
+
+    [Test]
+    public void OtherExceptionsPassThroughAndInvalidate()
+    {
+        Procedure saved = null;
+        Assert.Throws<InvalidOperationException>(() => CallCC(k => { saved = k; throw new InvalidOperationException(); }));
+        Assert.That(((EscapeContinuation)saved).IsValid, Is.False);
+    }
+}

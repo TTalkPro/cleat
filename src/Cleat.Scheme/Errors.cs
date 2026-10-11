@@ -87,6 +87,19 @@ public static class Errors
     }
 
     /// <summary>(raise obj)：未登记时把对象包成 <see cref="SchemeException"/> 抛出（与 Scheme 默认处理器一致）。</summary>
+    /// <summary>
+    /// .NET 异常 → Scheme 条件（cleat-058，skeg 13 §5）：在当前处理器下 raise 一个 &amp;clr-exception 条件。
+    /// 反射调用的外壳拆掉；续延逃逸、SchemeException、以及钩子还没登记时（早期引导、stage0）原样重抛。
+    /// </summary>
+    public static object RaiseClrException(Exception e)
+    {
+        if (e is System.Reflection.TargetInvocationException { InnerException: { } inner }) e = inner;
+        var h = RuntimeHooks.ClrExceptionViolation;
+        if (h == null || e is ContinuationException or SchemeException)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(e);
+        return h.Invoke1(e);
+    }
+
     public static object Raise(object obj)
     {
         var h = RuntimeHooks.Raise;
@@ -107,6 +120,10 @@ public static class SchemeCalls
 {
     public static object Exact(object z) => RuntimeHooks.Required(RuntimeHooks.Exact, "exact").Invoke1(z);
     public static object Inexact(object z) => RuntimeHooks.Required(RuntimeHooks.Inexact, "inexact").Invoke1(z);
+    public static object RaiseContinuable(object obj) =>
+      RuntimeHooks.Required(RuntimeHooks.RaiseContinuable, "raise-continuable").Invoke1(obj);
+    public static object WithExceptionHandler(object handler, object thunk) =>
+      RuntimeHooks.Required(RuntimeHooks.WithExceptionHandler, "with-exception-handler").Invoke2(handler, thunk);
 }
 
 /// <summary>钩子登记之前（或单元测试中）使用的 .NET 异常。</summary>

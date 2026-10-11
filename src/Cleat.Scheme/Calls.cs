@@ -10,6 +10,9 @@ namespace Cleat.Scheme;
 /// </summary>
 public static class Calls
 {
+    /// <summary>宿主调用（clr-call / clr-new / 字段读写）抛出的 .NET 异常：在 try 区域之外转成 Scheme 条件 raise（cleat-058）。</summary>
+    public static object RaiseClrException(Exception e) => Errors.RaiseClrException(e);
+
     /// <summary>被调用的值 → Procedure；不是过程时报 assertion-violation。</summary>
     public static Procedure Proc(object f) =>
       f as Procedure ?? (Procedure)Errors.AssertionViolation("apply", "not a procedure", f) ?? throw new InvalidOperationException("not a procedure");

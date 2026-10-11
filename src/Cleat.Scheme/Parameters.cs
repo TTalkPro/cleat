@@ -51,3 +51,30 @@ public static class Parameters
         return Unspecified.Instance;
     }
 }
+
+/// <summary>
+/// 当前异常处理器栈（boot/exceptions.sls 的 with-exception-handler / raise 使用）：Scheme 过程的列表，栈顶在前，
+/// 线程静态（IronScheme 的 AsyncLocal 与 async 帧字段已删；cleat-047 把整个处理器栈换成 $try/catch 后本类删除）。
+/// 缺省（以及设为空表时）是只含默认处理器的表，默认处理器把条件包成 <see cref="SchemeException"/> 抛出。
+/// </summary>
+public static class ExceptionHandlers
+{
+    [ThreadStatic] private static object t_handlers;
+    private static readonly object s_default = new Cons(new DefaultHandler(), null);
+
+    [Primitive("$current-handlers", Flags = PrimitiveFlags.Unsafe)]
+    public static object Current() => t_handlers ?? s_default;
+
+    [Primitive("$set-current-handlers!", Flags = PrimitiveFlags.Unsafe)]
+    public static object Set(object handlers)
+    {
+        t_handlers = handlers;
+        return Unspecified.Instance;
+    }
+
+    private sealed class DefaultHandler : Procedure
+    {
+        public override object Invoke1(object condition) => throw new SchemeException(condition);
+        public override string Name => "default-exception-handler";
+    }
+}

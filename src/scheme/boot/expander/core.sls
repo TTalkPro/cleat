@@ -1523,39 +1523,53 @@
   (define trace-letrec-syntax-macro
     (trace-let/rec-syntax 'letrec-syntax))
   
-  ;; guard（cleat-047，designs/15 §3）：展开到核心形式 ($try/catch body '#f (lambda (con) 子句…))——
-  ;; 捕获 SchemeException 并把它的条件交给子句；没有子句匹配时在 catch 里再 raise（放弃 R6RS
-  ;; "在 raise 的动态环境里 raise-continuable"的细节，元层不依赖它）。体的多值作为一个值穿过 try。
+  ;; guard（cleat-058，按 skeg 13 §4 恢复 R6RS 语义）：call-with-return + with-exception-handler。
+  ;; 子句在 raise 处的处理器里测试；命中的子句体包成 thunk 经 outerk 逃逸到 guard 帧执行；都不命中时
+  ;; (raise-continuable con)——穿过 guard 的 raise-continuable 得到外层处理器的值。与 R6RS 的差别：子句测试在 raise 处的
+  ;; 动态环境里求值（逃逸续延不能重入）。.NET 异常在 with-exception-handler 一级已包成 &clr-exception 条件，
+  ;; guard 不需另外处理：(guard (e ((clr-condition? e) …)) (clr-call …))。
   (define guard-macro
     (lambda (x)
-      (define (gen-clauses con clause*) 
-        (define (f x k) 
-          (syntax-match x (=>) 
-            ((e => p) 
-             (let ((t (gensym)))
-               `(let ((,t ,e)) 
-                  (if ,t (,p ,t) ,k))))
-            ((e) 
+      (define (gen-clauses con outerk clause*)
+        (define (deliver e*)
+          `(,outerk (lambda () ,@e*)))
+        (define (f x k)
+          (syntax-match x (=>)
+            ((e => p)
              (let ((t (gensym)))
                `(let ((,t ,e))
-                  (if ,t ,t ,k))))
-            ((e v v* ...) 
-             `(if ,e (begin ,v ,@v*) ,k))
+                  (if ,t ,(deliver (list (list p t))) ,k))))
+            ((e)
+             (let ((t (gensym)))
+               `(let ((,t ,e))
+                  (if ,t ,(deliver (list t)) ,k))))
+            ((e v v* ...)
+             `(if ,e ,(deliver (cons v v*)) ,k))
             (_ (stx-error x "invalid guard clause"))))
         (define (f* x*)
           (syntax-match x* (else)
-            (() `(raise ,con))
-            (((else e e* ...)) `(begin ,e ,@e*))
-            ((cls . cls*) (f cls (f* cls*)))
+            (() (list 'raise-continuable con))
+            (((else e e* ...))
+             (deliver (cons e e*)))
+            ((cls . cls*)
+             (f cls (f* cls*)))
             (others (stx-error others "invalid guard clause"))))
         (f* clause*))
       (syntax-match x ()
         ((_ (con clause* ...) b b* ...)
          (id? con)
-         (bless
-           `($try/catch (begin ,b ,@b*)
-              '#f
-              (lambda (,con) ,(gen-clauses con clause*))))))))
+         (let* ((outerk (gensym))
+                (code (gen-clauses con outerk clause*)))
+           (bless
+             `((call-with-return
+                 (lambda (,outerk)
+                   (with-exception-handler
+                     (lambda (,con) ,code)
+                     (lambda ()
+                       (call-with-values
+                         (lambda () ,b ,@b*)
+                         (lambda args
+                           (,outerk (lambda () (apply values args))))))))))))))))
 
   (define define-enumeration-macro
     (lambda (stx) 

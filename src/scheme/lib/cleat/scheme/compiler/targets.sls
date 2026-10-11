@@ -46,6 +46,7 @@ See docs/license.txt. |#
         (void . "System.Void")
         (exception . "System.Exception")
         (scheme-exception . "Cleat.Scheme.SchemeException")   ; raise 抛出的异常，携带条件（$try/catch 的类型 #f）
+        (continuation-exception . "Cleat.Scheme.ContinuationException")   ; call-with-return 的逃逸（cleat-058），CLR catch 一律放行
         (procedure . "Cleat.Scheme.Procedure")
         (variadic-procedure . "Cleat.Scheme.VariadicProcedure")
         (cons . "Cleat.Scheme.Cons")
