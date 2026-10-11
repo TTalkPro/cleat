@@ -250,3 +250,9 @@ min 是稳态指标，中位数呈双峰（keyword_invoke 21 / 69、protocol 33 
 | prim_fib | — | 4 | 4 |
 
 剩余：第 5 项 locals-clearing；内联只覆盖 AOT 单元（REPL / 源码加载的 defn 还没有内联体）；局部变量按初值类型推断。
+
+### 第 5 项（暂停，2026-10-11）
+
+locals clearing 的半成品在分支 `wip/cleat-042-locals-clearing`（1de4aec）：按生成顺序数引用、循环钉住、if 分支感知、转发参数与调用临时变量清除。
+已知：512 MB 堆上限下 `(reduce + (map inc (range 3e7)))` 仍保留头（`count` / `last` / `doseq` / `loop` 通过）；未跑全量测试。
+用户要求先做 cleat-058（Scheme 元层按 skeg 对齐），之后回到这里。
