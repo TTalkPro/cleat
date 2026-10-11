@@ -1,0 +1,8 @@
+;; cleat-042 基准基线（tools/build.cs bench --write 生成；优化对照用）
+{:name assoc_map :min 219 :median 224}
+{:name fib :min 49 :median 51}
+{:name keyword_invoke :min 631 :median 646}
+{:name lazy_chain :min 349 :median 365}
+{:name protocol :min 517 :median 522}
+{:name reduce_vec :min 119 :median 122}
+{:name sum_loop :min 1006 :median 1055}

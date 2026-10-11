@@ -28,6 +28,9 @@
 //                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为 .clj.dll，写在其
 //                         源码旁边（*compile-path* 未设时驱动就写在那里）；加载器的同目录新旧比较让 require 在 dll
 //                         不旧于源码时用 dll，否则回退源码                                          [cleat-033]
+//   bench [-r 次数] [--write] [--only 正则]
+//                         运行 bench/ 下的基准（每个一次宿主进程，逐个打印 BENCH <名字> <毫秒>），聚合最小/中位；
+//                         --write 把结果写到 bench/baseline.edn（优化前后对照，cleat-042）
 //   publish [-r RID] [-o 目录]
 //                         自包含发布（cleat-034）：.NET 运行时随发布，目标机器不需要 SDK 或 .NET；Scheme 镜像、
 //                         驱动库（cleat.scheme.clojure/）、Clojure 镜像与 AOT 库随发布。默认 RID 为当前平台，
@@ -77,6 +80,9 @@ try
         case "publish":
             Publish(rest);
             break;
+        case "bench":
+            Bench(rest);
+            break;
         default:
             return Usage();
     }
@@ -90,7 +96,7 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir]");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] | bench [-r n] [--write] [--only re]");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }
@@ -162,6 +168,81 @@ void Publish(string[] a)
         File.Copy(f, Path.Combine(outDir, Path.GetFileName(f)));
     foreach (var f in Directory.GetFiles(outDir, "*.pdb")) File.Delete(f);
     Console.WriteLine("published " + Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat"));
+}
+
+// 基准（cleat-042）：bench/ 下每个 *.clj 一次宿主进程（-m bench.<名字>），解析 BENCH 行，聚合最小/中位。
+// --write 与 bench/baseline.edn 比较（有基线时同时打印相对值），或写入基线。
+void Bench(string[] a)
+{
+    int runs = 3;
+    string only = null;
+    bool write = a.Contains("--write");
+    for (int i = 0; i < a.Length; i++)
+    {
+        if (a[i] == "-r" && i + 1 < a.Length) runs = int.Parse(a[++i]);
+        else if (a[i] == "--only" && i + 1 < a.Length) only = a[++i];
+        else if (a[i] == "--write") { }
+        else throw new CommandFailed("bench: unexpected argument " + a[i]);
+    }
+    string benchDir = Path.Combine(root, "bench");
+    var names = Directory.GetFiles(benchDir, "*.clj")
+        .Select(f => Path.GetFileNameWithoutExtension(f)).OrderBy(n => n, StringComparer.Ordinal)
+        .Where(n => only == null || System.Text.RegularExpressions.Regex.IsMatch(n, only)).ToList();
+    if (names.Count == 0) throw new CommandFailed("bench: no benchmarks in bench/");
+    var results = new Dictionary<string, List<long>>();
+    foreach (var name in names)
+    {
+        results[name] = [];
+        for (int r = 0; r < runs; r++)
+        {
+            var psi = new ProcessStartInfo("dotnet")
+            {
+                RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = false,
+                UseShellExecute = false, WorkingDirectory = root,
+            };
+            psi.ArgumentList.Add(Bin("Cleat.Host", "cleat.dll"));
+            psi.ArgumentList.Add("-I");
+            psi.ArgumentList.Add(benchDir);
+            psi.ArgumentList.Add("-m");
+            psi.ArgumentList.Add("bench." + name.Replace('_', '-'));   // 文件名下划线 ↔ 命名空间连字符
+            using var p = Process.Start(psi) ?? throw new CommandFailed("cannot start host");
+            string output = p.StandardOutput.ReadToEnd(), err = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            if (p.ExitCode != 0) throw new CommandFailed($"bench {name} failed:\n{err}");
+            foreach (var line in output.Split('\n'))
+                if (line.StartsWith("BENCH ", StringComparison.Ordinal))
+                {
+                    var parts = line.Split(' ');
+                    if (parts.Length >= 3 && long.TryParse(parts[2], out long ms)) results[name].Add(ms);
+                }
+        }
+    }
+    var baseline = new Dictionary<string, long>();
+    string basePath = Path.Combine(benchDir, "baseline.edn");
+    if (File.Exists(basePath))
+        foreach (var line in File.ReadAllLines(basePath))
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(line, @"{:name (\S+) :min (\d+) :median (\d+)}");
+            if (m.Success) baseline[m.Groups[1].Value] = long.Parse(m.Groups[2].Value);
+        }
+    bool failed = false;
+    foreach (var name in names)
+    {
+        var xs = results[name];
+        if (xs.Count == 0) { Console.WriteLine($"{name,-16} no samples"); failed = true; continue; }
+        xs.Sort();
+        long min = xs[0], median = xs[xs.Count / 2];
+        string rel = baseline.TryGetValue(name, out var b) ? $"  (基线 min {b}, {100.0 * min / b:F0}%)" : "";
+        Console.WriteLine($"{name,-16} min {min,6} ms  median {median,6} ms{rel}");
+    }
+    if (write)
+    {
+        var lines = names.Where(n => results[n].Count > 0)
+            .Select(n => $"{{:name {n} :min {results[n][0]} :median {results[n][results[n].Count / 2]}}}");
+        File.WriteAllLines(basePath, [";; cleat-042 基准基线（tools/build.cs bench --write 生成；优化对照用）", .. lines]);
+        Console.WriteLine("wrote " + basePath);
+    }
+    else if (baseline.Count > 0 && failed) throw new CommandFailed("bench: some benchmarks produced no samples");
 }
 
 void CopyDir(string from, string to)
