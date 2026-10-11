@@ -42,79 +42,38 @@
   对 Clojure 的 Int64 返回未知，需要为 `$clj-call` 节点补 Int64 类型的推断与原始发射。
   预期 sum_loop 1006 → ~150 ms。尚无对外的 C# 改动（实验已回退）。
 
-### 第 2 项的实现状态（2026-10-11，WIP）
+### 第 2 项（整数部分）完成（2026-10-11）
 
-已落地（全部测试绿、语义无损）：
-- `l64` 类型接入 codegen：`type-clr`（int64 局部）、`box-raw!`（box int64）、`quote` 的 Int64 字面量识别
-  （`real?`+`exact?`+`clr-is System.Int64`；注意 `exact?` 对非数会抛异常，必须放在 `real?` 之后）、
-  `infer-var-types!` 收敛判据纳入 l64、label/jump/tlocal 链路通用。
-- `numbers-arith-shape?` / `numbers-arith-args`（识别 `($clj-call "CallStatic" 3 "clojure.lang.Numbers" op '() 实参…)`）
-  与 `numbers-raw-emit!` / `numbers-raw-emit-args!`（int64 原始 add/sub/clt + 位测试溢出检查 + ThrowLongOverflow，
-  异常与 Numbers 完全一致）、`cg-raw` 外壳（l64 上下文走原始发射，否则 cg-raw/default）、
-  cg 的 clj-call 情形挂钩（全 l64 时绕过 CallStatic/Reflector）。
+根因：之前几轮的推断与发射设施都在，但形状识别从未命中。`IRONSCHEME_DUMP_PASSES=前缀` 直接给出 L3：
+`(+ acc i)` 展开为 `($clj-call "CallStatic" 3 '<System.Type clojure.lang.Numbers> '"add" '() acc i)`——
+**类型实参是 Type 对象而非字符串**（`string?` 恒假），泛型实参表是 `'()`（先前"gen 是 #f"的判断不对）。
+此外 Int64 字面量的 `real?`/`exact?` 判定不成立、`MaybeTyped` 不认 clj-call、发射后未装箱、
+手写的溢出 IL 混用 int32/int64 操作数（非法 IL）。
 
-未通（下一步调试）：sum_loop 未获益（1006 → 1042 ms，噪声内）。推断/识别/发射三段中至少一段对基准形式未生效。
-已排除：`:inline` 缺失、`ops` 分派开销、`mctx-big?`（基准已改为独立小方法）、陈旧 dll（bench 目录 dll 已删）。
-调试入口：`CLEAT_DEBUG_INFER=1` 环境变量 + codegen.sls 的 infer 探针（当前为 display 版，注意 fasl 需重生成才生效）；
-建议先确认 infer-walk 是否真的为 loop 形式的变量登记了 l64 候选（`(GU #t (#f) 1)` 曾显示 -main 形式的 loop 旗标为 #f——
-dotimes 展开后的形状可能未被 loop-forms 识别，这是最可疑的一环）。
+改法（codegen.sls）：
+- `numbers-arith-op` 识别 `add/minus/multiply/inc/dec`（→ long）与 `lt/lte/gt/gte/equiv`（→ bool），类型实参接受 Type 或字符串。
+- 推断：Int64 字面量 → l64；clj-call 的 long 运算参与 `MaybeTyped`、`deps` 与暂定 top 收敛。
+- 发射：实参以原始 int64 求值后**直接调用 Numbers 的 `(long …)` 重载**（溢出检查与 object 重载完全一致，JIT 内联），
+  不再手写溢出 IL；value 上下文装箱 Int64，比较走 `finish-bool!`；Int64 常量发 `ldc.i8`。
+- 清理了上一轮遗留的 `/tmp/opencode` 探针。
 
-### 触发调试的关键发现（2026-10-11，第二轮 WIP）
+语义核对：溢出仍抛 ArithmeticException "integer overflow"；double 累加、`*'` 自动提升、`dec`/`-`、`dotimes` 结果不变。
+583 测试全绿（含两个不动点与符合性门禁）。
 
-- **形状检查的确定性 bug（下次直接修）**：`:inline` 产物的 gen 元数据是 **#f 而非 '()**——
-  `(dotimes ...)` 的 `(+ acc i)` 实际展开为 `($clj-call "CallStatic" 3 "clojure.lang.Numbers" "add" #f 实参…)`。
-  形状检查的 `(null? gen)` 恒为假，**必须改为 `(not gen)`**。修正此一处即可让识别生效（推断候选与
-  CallStatic 形状都已验证存在：infer 探针确认 loop 变量 `i`/`acc` 是候选，raw/boxed 计数正确）。
-- 该修正已验证会让形状匹配（修正后推断在识别路径上继续走通到 emit），但引入了引导失败：
-  codegen.sls 的增量补丁损坏了文件结构（func-type 定义被吞、括号失衡）——**增量补丁方式对 nanopass
-  文件不可靠**，下次会话应当：checkout 到 29b677c → 单次 python 全量重放（本文所列 + gen 修正）→
-  立即跑 `stage0 buildscript-nano` 引导冒烟 → 再进基准。
-- 调试探针（infer-entered/cands 文件日志、CLEAT_DEBUG_INFER 门）的写法已验证可用
-  （call-with-output-file 不接受 'append 位置参数，用计数器文件名）。
+| 基准 | 基线 min | 现在 min | 比例 |
+|---|---|---|---|
+| sum_loop | 1006 | 13 | 1% |
+| assoc_map | 219 | 173 | 79% |
+| keyword_invoke | 631 | 541 | 86% |
+| protocol | 517 | 471 | 91% |
+| reduce_vec | 119 | 107 | 90% |
+| fib | 49 | 45 | 92% |
+| lazy_chain | 349 | 328 | 94% |
 
-### 探针技术备查（2026-10-11，供下次直接使用）
+（非 sum_loop 的改善来自 core 内部的循环——`dotimes` 等——也被拆箱。）
 
-- 已验证可用的文件日志探针写法（call-with-output-file 不接受 'append；用计数器文件名）：
-  ```scheme
-  (define infer-log-seq (let ((n 0)) (lambda () (set! n (+ n 1)) n)))
-  ;; infer-var-types! 进入 / 收敛处：
-  (call-with-output-file (string-append "/tmp/opencode/infer-dbg." (number->string (infer-log-seq)) ".log")
-    (lambda (pt) (write ...) (newline pt)))
-  ```
-- 陷阱：探针必须放进 fasl 才对宿主 AOT 编译生效（rm -rf src/boot/cleat.scheme.clojure && dotnet build）；
-  display 输出会进 Scheme 引擎自己的端口，宿主进程里不可见——必须写文件。
-- AOT 产物的 IL 检查工具：/tmp/opencode/inspect（System.Reflection.Metadata 逐字节解码，打印方法/局部/IL）。
-- 已验证的事实链：`(loop …)` 宏转发到 `loop*` 特殊形式（core.clj:40）→ 降级为 label/jump；
-  `:inline` 形状中 gen 元数据是 #f（需 `(not gen)` 判定）——此修正 + 全部设施已在本会话验证可构建、
-  语义无损（583 测试绿），只是基准触发尚未打通（sum_loop 恒 ~1010-1070ms，与装箱基线一致）。
+第 2 项剩余：`^double` / 浮点的 Clojure 路径（`Numbers` 的 double 重载）、`^long`/`^double` 提示的形参与返回、
+`IFn.LL` 等原始签名（fib 这类跨调用的算术）。
 
-### 第二轮调试的增量（2026-10-11 晚，已提交）
-
-三处修复已进树（583 测试全绿、基准未获益——发射仍未被触发）：
-1. 形状检查 gen 修正：`(null? gen)` → `(not gen)`（:inline 的 gen 元数据是 #f）。
-2. `deps` 下钻 clj 子树（clj-call/clj-invoke/clj-keyword-invoke/clj-static-call/clj-var-set!/clj-def）——
-   否则变量变化不会重排依赖它的候选（不动点缺依赖边）。
-3. `expr-type` 的 clj-call 情形改用**暂定 top** 语义：实参未定时返回 top 供不动点继续收敛，
-   而非直接塌缩 #f（#f 不可恢复）。
-
-下一步排查（按可疑度）：
-- loop-forms 旗标：`(GU #t (#f) 1)` 曾显示 -main 形式的旗标为 #f——dotimes/(loop…) 展开后的形状可能
-  未被 loop-forms 识别 → infer-var-types! 只对旗标为真的形式运行。在 compile-forms->lcil* 的
-  loop-forms 计算处加探针确认。
-- CallStatic 形状中 t 是字符串 "clojure.lang.Numbers"（已验证 parse-dot 走 type-spec→字符串），
-  但 add 的实参里 `(quote "add")` 的 quoted-datum 提取应无问题——若识别仍不中，dump lcil 文本
-  （clojure-compile-unit 加 lcil->string 一行）直接看 clj-call 节点的实际形状。
-
-### 本轮调试补充（2026-10-11 深夜——避免重复踩坑）
-
-1. **每次 bash 工具调用是独立 shell**：export CLEAT_DEBUG_INFER=1 必须与被测命令同一条命令链，否则探针静默不触发——多轮"无日志"观测因此无效。
-2. **call-with-output-file 不支持追加模式**（第三参位置被读成布尔，报 "not boolean: append"）；多探针用计数器文件名或接受覆盖。
-3. 对 codegen.sls 的**增量补丁已两次损坏文件结构**（括号失衡/顶层 form 被吞，报 func-type unbound 或 "mismatched brackets"）。任何新修改必须：git checkout 到干净态 → 单次 python 全量重放 → 括号平衡校验 → stage0 引导冒烟 → 再构建。
-4. 当前 9c03e1f 状态 = 三处修复（形状 gen=#f、deps 下钻、暂定 top）已进树、全测试绿、基准无变化。下一会话第一步：**单次全量重放**完整变更集（l64 推断/发射设施 + gen 修正 + 计数器版探针），然后用探针数据定位识别链路断点。
-
-### 探针迭代二结论（2026-10-11 深夜）
-
-- 带探针的构建在**引导编译路径**上崩溃（探针写文件抛异常 → 汇总为构建失败），bench 表单的推断数据未能取得。
-- 下次探针迭代必须：探针写文件用 `guard` 包裹（任何异常写 'ERR 后继续），且**不放在引导编译会经过的路径上**
-  （generate-unit/infer-var-types! 会被引导期的编译调用——需要按 assembly-name 过滤，只对 bench/clojure 单元记录）。
-- loop-forms 旗标疑点仍未验证（此前 GU 只出现过 -main 表单的旗标 #t/#f 各一次，无法归因到 run 表单）。
+数学语义方向（2026-10-11 用户决定）：数学层面不必逐条对照 JVM Clojure，优先贴合 CLR 自身特性；
+具体取舍（溢出异常类型、checked 指令、整数类型族等）在后续项中逐个定。
