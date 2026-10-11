@@ -40,7 +40,8 @@ namespace clojure.lang
         public readonly int _mask;
         private readonly object[] _table;    //[class, entry. class, entry ...]
         public readonly IDictionary _map;
-        Entry _mre;
+        // 最近命中的两项（cleat-042）：两种类型交替调用时（多态调用点）不再每次失配回到表查找；命中时不写字段
+        Entry _mre, _mre2;
 
         // Accessors
 
@@ -101,6 +102,9 @@ namespace clojure.lang
             Entry last = _mre;
             if (last != null && last.T == t)
                 return last.Fn;
+            last = _mre2;
+            if (last != null && last.T == t)
+                return last.Fn;
             return FindFnFor(t);
         }
 
@@ -109,7 +113,7 @@ namespace clojure.lang
             if (_map != null)
             {
                 Entry e = (Entry)_map[t];
-                _mre = e;
+                Remember(e);
                 return e?.Fn;
             }
             else
@@ -118,11 +122,18 @@ namespace clojure.lang
                 if (idx < _table.Length && ((Type)_table[idx]) == t)
                 {
                     Entry e = ((Entry)table[idx + 1]);
-                    _mre = e;
+                    Remember(e);
                     return e?.Fn;
                 }
                 return null;
             }
+        }
+
+        void Remember(Entry e)
+        {
+            if (e == null) return;
+            _mre2 = _mre;
+            _mre = e;
         }
 
         #endregion
