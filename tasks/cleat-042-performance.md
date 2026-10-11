@@ -104,3 +104,10 @@ dotimes 展开后的形状可能未被 loop-forms 识别，这是最可疑的一
 - CallStatic 形状中 t 是字符串 "clojure.lang.Numbers"（已验证 parse-dot 走 type-spec→字符串），
   但 add 的实参里 `(quote "add")` 的 quoted-datum 提取应无问题——若识别仍不中，dump lcil 文本
   （clojure-compile-unit 加 lcil->string 一行）直接看 clj-call 节点的实际形状。
+
+### 本轮调试补充（2026-10-11 深夜——避免重复踩坑）
+
+1. **每次 bash 工具调用是独立 shell**：export CLEAT_DEBUG_INFER=1 必须与被测命令同一条命令链，否则探针静默不触发——多轮"无日志"观测因此无效。
+2. **call-with-output-file 不支持追加模式**（第三参位置被读成布尔，报 "not boolean: append"）；多探针用计数器文件名或接受覆盖。
+3. 对 codegen.sls 的**增量补丁已两次损坏文件结构**（括号失衡/顶层 form 被吞，报 func-type unbound 或 "mismatched brackets"）。任何新修改必须：git checkout 到干净态 → 单次 python 全量重放 → 括号平衡校验 → stage0 引导冒烟 → 再构建。
+4. 当前 9c03e1f 状态 = 三处修复（形状 gen=#f、deps 下钻、暂定 top）已进树、全测试绿、基准无变化。下一会话第一步：**单次全量重放**完整变更集（l64 推断/发射设施 + gen 修正 + 计数器版探针），然后用探针数据定位识别链路断点。
