@@ -87,3 +87,20 @@ dotimes 展开后的形状可能未被 loop-forms 识别，这是最可疑的一
 - 已验证的事实链：`(loop …)` 宏转发到 `loop*` 特殊形式（core.clj:40）→ 降级为 label/jump；
   `:inline` 形状中 gen 元数据是 #f（需 `(not gen)` 判定）——此修正 + 全部设施已在本会话验证可构建、
   语义无损（583 测试绿），只是基准触发尚未打通（sum_loop 恒 ~1010-1070ms，与装箱基线一致）。
+
+### 第二轮调试的增量（2026-10-11 晚，已提交）
+
+三处修复已进树（583 测试全绿、基准未获益——发射仍未被触发）：
+1. 形状检查 gen 修正：`(null? gen)` → `(not gen)`（:inline 的 gen 元数据是 #f）。
+2. `deps` 下钻 clj 子树（clj-call/clj-invoke/clj-keyword-invoke/clj-static-call/clj-var-set!/clj-def）——
+   否则变量变化不会重排依赖它的候选（不动点缺依赖边）。
+3. `expr-type` 的 clj-call 情形改用**暂定 top** 语义：实参未定时返回 top 供不动点继续收敛，
+   而非直接塌缩 #f（#f 不可恢复）。
+
+下一步排查（按可疑度）：
+- loop-forms 旗标：`(GU #t (#f) 1)` 曾显示 -main 形式的旗标为 #f——dotimes/(loop…) 展开后的形状可能
+  未被 loop-forms 识别 → infer-var-types! 只对旗标为真的形式运行。在 compile-forms->lcil* 的
+  loop-forms 计算处加探针确认。
+- CallStatic 形状中 t 是字符串 "clojure.lang.Numbers"（已验证 parse-dot 走 type-spec→字符串），
+  但 add 的实参里 `(quote "add")` 的 quoted-datum 提取应无问题——若识别仍不中，dump lcil 文本
+  （clojure-compile-unit 加 lcil->string 一行）直接看 clj-call 节点的实际形状。

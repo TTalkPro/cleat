@@ -618,7 +618,7 @@ See docs/license.txt. |#
                (gen (quoted-datum (caddr e*))))
            (and (string? tp) (string=? tp "clojure.lang.Numbers")
                 (string? op) (member op '("add" "minus" "multiply" "inc" "lt"))
-                (null? gen)))))
+                (not gen)))))
 
   ;; 是 Numbers 算术且实参全为 l64 类型（env 为类型表）时返回实参列表，否则 #f
   (define (numbers-arith-args-list? d0 d1 e* env)
@@ -640,8 +640,15 @@ See docs/license.txt. |#
                         ((and (real? d) (exact? d) (clr-is System.Int64 d)) 'l64)
                         (else #f))]
       [(clj-call ,d0 ,d1 ,e* ...)
-       (let ((args (numbers-arith-args e env)))
-         (and args (if (string=? (quoted-datum (cadr e*)) "lt") #f 'l64)))]
+       ;; Numbers 的 int64 算术（cleat-042）：实参全为 l64 时结果为 l64；
+       ;; 实参未定（top）时暂为 top 供不动点重算；有已确定非 l64 的实参则 #f
+       (if (numbers-arith-shape? d0 d1 e*)
+           (let ((ts (map (lambda (x) (expr-type x env)) (list-tail e* 3))))
+             (cond ((not (pair? ts)) #f)
+                   ((exists (lambda (x) (eq? x 'top)) ts) 'top)
+                   ((for-all (lambda (x) (eq? x 'l64)) ts) 'l64)
+                   (else #f)))
+           #f)]
       [,x (hashtable-ref env x #f)]
       [(primcall ,pr ,e* ...)
        (cond ((memq pr fx-result-prims) 'fx) ((memq pr fl-result-prims) 'fl) (else #f))]
@@ -802,6 +809,12 @@ See docs/license.txt. |#
             [(if ,e0 ,e1 ,e2) (append (deps e1) (deps e2))]
             [(begin ,e* ... ,e) (deps e)]
             [(let ([,x* ,e*] ...) ,body) (deps body)]
+            [(clj-call ,d0 ,d1 ,e* ...) (apply append (map deps e*))]
+            [(clj-invoke ,e ,e* ...) (append (deps e) (apply append (map deps e*)))]
+            [(clj-keyword-invoke ,d ,e ,e* ...) (append (deps e) (apply append (map deps e*)))]
+            [(clj-static-call ,d0 ,d1 ,e* ...) (apply append (map deps e*))]
+            [(clj-var-set! ,d ,e) (deps e)]
+            [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (append (deps e0) (deps e1))]
             [else '()]))
         (for-each (lambda (x) (hashtable-set! env x 'top)) cands)
         (for-each (lambda (x)
@@ -876,7 +889,17 @@ See docs/license.txt. |#
   ;; Numbers 的 int64 算术原始发射（cleat-042）：实参全部已知 l64 时直接发 int64 IL——
   ;; 消除装箱与 ops 分派；溢出检查与 Numbers 的语义一致（位测试 + ThrowLongOverflow，
   ;; 抛 ArithmeticException "integer overflow"）。不适用时返回 #f 且不生成代码。
+  (define rawemit-n 0)
+
   (define (numbers-raw-emit! d0 d1 e* mc)
+    (when (and ($get-environment-variable "CLEAT_DEBUG_INFER")
+               (pair? e*) (string? d0) (string=? d0 "CallStatic")
+               (string? d1) (eq? d1 3))
+      (call-with-output-file "/tmp/opencode/rawemit.log"
+        (lambda (pt)
+          (write (list 'RAWHIT (quoted-datum (cadr e*))
+                       (map (lambda (x) (expr-type x var-types)) (list-tail e* 3))) pt)
+          (newline pt))))
     (if (and (numbers-arith-shape? d0 d1 e*)
              (numbers-arith-args-list? d0 d1 e* var-types))
         (begin
