@@ -17,9 +17,9 @@
     (((lambda (a b c d e f) (list f e d c b a)) 1 2 3 4 5 6) . (6 5 4 3 2 1))
     ((apply + 1 2 '(3 4)) . 10)
     ((let loop ((n 300000)) (if (= n 0) 'done (apply loop (list (- n 1))))) . done)
-    ;; cleat-047：没有 call/cc；guard 经 $try/catch 接住 raise，dynamic-wind 的 after 先于 catch 处理器运行（CLR 的两遍异常处理）
-    ((let ((log '())) (guard (e (#t (set! log (cons (list 'caught e) log)))) (dynamic-wind (lambda () #f) (lambda () (raise 'x)) (lambda () (set! log (cons 'after log))))) log) . ((caught x) after))
-    ((let ((log '())) (dynamic-wind (lambda () (set! log (cons 'in log))) (lambda () 'body) (lambda () (set! log (cons 'out log)))) log) . (out in))
+    ;; cleat-058：guard 的子句体经逃逸续延回到 guard 帧执行，finally 先于子句体（dynamic-wind 已删，用 try … (finally …)）
+    ((let ((log '())) (guard (e (#t (set! log (cons (list 'caught e) log)))) (try (raise 'x) (finally (set! log (cons 'after log))))) log) . ((caught x) after))
+    ((let ((log '())) (set! log (cons 'in log)) (try 'body (finally (set! log (cons 'out log)))) log) . (out in))
     ((guard (e ((symbol? e) (list 'caught e))) (raise 'oops)) . (caught oops))
     ((guard (e ((assertion-violation? e) (condition-message e))) (car 5)) . "not a pair")
     ((call-with-values (lambda () (values 1 2 3)) list) . (1 2 3))

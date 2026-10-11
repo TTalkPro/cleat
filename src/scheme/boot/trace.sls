@@ -11,6 +11,7 @@ See docs/license.txt. |#
   (import 
     (cleat scheme)
     (cleat scheme contracts)
+    (only (cleat scheme unsafe) $try/finally)
     (except (cleat scheme core) make-traced-macro make-traced-procedure ))
     
   (define/contract make-traced-procedure 
@@ -41,17 +42,16 @@ See docs/license.txt. |#
     (lambda args
       (let ([pp (if (symbol-bound? 'trace-printer) ((symbol-value 'trace-printer)) write)]
             [filt (lambda (x) (if filter (filter x) x))])
-        (dynamic-wind
-          (lambda () (set! depth (+ depth 1)))
-          (lambda ()
-            (let ([prefix (make-string depth #\|)])
-              (trace-print pp prefix " -> " name (single (map filt args)))
-              (call-with-values
-                (lambda () (apply proc args))
-                (lambda results
-                  (trace-print pp prefix " <- " name (filt (single results)))
-                  (apply values results)))))
-          (lambda () (set! depth (- depth 1)))))))
+        (set! depth (+ depth 1))
+        ($try/finally
+          (let ([prefix (make-string depth #\|)])
+            (trace-print pp prefix " -> " name (single (map filt args)))
+            (call-with-values
+              (lambda () (apply proc args))
+              (lambda results
+                (trace-print pp prefix " <- " name (filt (single results)))
+                (apply values results))))
+          (set! depth (- depth 1))))))
     
   (define make-traced-macro 
     (lambda (name x) 

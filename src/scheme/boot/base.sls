@@ -185,7 +185,6 @@ See docs/license.txt. |#
     apply
     call-with-return
     call-with-values
-    dynamic-wind
     procedure?
     
     quasiquote

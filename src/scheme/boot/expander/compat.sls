@@ -36,6 +36,7 @@
     (cleat scheme records printer)
     (only (cleat scheme) fprintf symbol-bound? remove-location)
     (only (cleat scheme unsafe) $make-param-slot $param-ref $param-set!
+          $try/finally
           $application-directory $current-directory $set-current-directory!
           $path-extension $string-replace $path-change-extension $path-file-name)
     (only (boot system bootstrap)
@@ -128,8 +129,10 @@
       (syntax-case x ()
         ((_ () b b* ...) (syntax (let () b b* ...)))
         ((_ ((olhs* orhs*) ...) b b* ...)
+         ;; 模板里的 $try/finally 用 datum->syntax 取定义侧上下文（$try/finally 不在使用方的导入里；cleat-058 删除 dynamic-wind）
          (with-syntax (((lhs* ...) (generate-temporaries #'(olhs* ...)))
-                       ((rhs* ...) (generate-temporaries #'(olhs* ...))))
+                       ((rhs* ...) (generate-temporaries #'(olhs* ...)))
+                       (tf (datum->syntax #'parameterize '$try/finally)))
            #'(let ((lhs* olhs*) ...
                    (rhs* orhs*) ...)
                (let ((swap 
@@ -138,10 +141,10 @@
                           (lhs* rhs*)
                           (set! rhs* t))
                         ...)))
-                 (dynamic-wind 
-                   swap
-                   (lambda () b b* ...)
-                   swap))))))))
+                 (begin
+                   (swap)
+                   (tf ((lambda () b b* ...))
+                       (swap))))))))))
                        
 (define-syntax define-record
   (lambda (x)

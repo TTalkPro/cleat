@@ -59,7 +59,7 @@
     (only (cleat scheme core) get-command-line format compile-library-dll load-library-dll load-fasl compress-constants? constant-fold)
     (boot enums)
     (boot files)
-    (only (cleat scheme unsafe) $fx+ $fx- $throw $program-failed
+    (only (cleat scheme unsafe) $fx+ $fx- $throw $try/finally $program-failed
           $console-foreground-color $set-console-foreground-color! $system-exception? $exception-message
           $path-change-extension $path-extension $string-lower $path-combine $directory-create
           $directory-exists? $path-full $path-trim-separator $string-replace $directory-files
@@ -82,18 +82,14 @@
         (void))))
     
   (define (load/unload filename)
-    (let ((libs #f)) 
-      (dynamic-wind
-        (lambda ()
-          (set! libs (installed-libraries)))
-        (lambda ()
-          (load filename))
-        (lambda ()          
-          (for-each
-            (lambda (lib)
-              (unless (memq lib libs)
-                (uninstall-library lib)))
-            (installed-libraries))))))
+    (let ((libs (installed-libraries)))
+      ($try/finally
+        (load filename)
+        (for-each
+          (lambda (lib)
+            (unless (memq lib libs)
+              (uninstall-library lib)))
+          (installed-libraries)))))
 
   (define (load/program filename)
     (when (with-guard

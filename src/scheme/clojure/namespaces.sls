@@ -55,7 +55,7 @@
     (only (cleat scheme) gensym set-symbol-value! expand->core with-clr-exception-handler parameterize make-parameter)
     (only (cleat scheme core) stx? stx-expr)
     (only (cleat scheme reader) make-annotation annotation? annotation-source annotation-stripped)
-    (only (cleat scheme unsafe) $throw)
+    (only (cleat scheme unsafe) $throw $try/finally)
     (cleat scheme syntax-ext)
     (cleat scheme clr)
     (clojure syntax-kinds))
@@ -429,10 +429,8 @@
   (define (with-ns-binding ns thunk)
     (clr-static-call clojure.lang.Var pushThreadBindings
       (clj-map current-ns-var ns))
-    (dynamic-wind
-      (lambda () #f)
-      thunk
-      (lambda () (clr-static-call clojure.lang.Var popThreadBindings))))
+    ($try/finally (thunk)
+      (clr-static-call clojure.lang.Var popThreadBindings)))
 
   (define (the-ns x)
     (if (clr-is clojure.lang.Namespace x)

@@ -31,10 +31,11 @@ See docs/license.txt. |#
     clr-new
     clr-new-array
     clr-guard
+    clr-exception-of?
     pinvoke-call)
   (import
     (rnrs)
-    (only (cleat scheme) with-clr-exception-handler)
+    (only (cleat scheme) clr-condition? clr-condition-exception)
     (cleat scheme clr helpers)
     (cleat scheme clr internal))
     
@@ -48,15 +49,23 @@ See docs/license.txt. |#
       [(_) 
         (clr-namespaces-internal)]))    
     
+  ;; clr-guard（cleat-058，skeg）：try 上的宏——接住 .NET 异常（var 绑定原异常）交给 cond 子句；与 guard / try 同一套处理器机制
   (define-syntax clr-guard
     (syntax-rules ()
       [(_ [var cls ...] b b* ...)
-        (with-clr-exception-handler
-          (lambda (var)
-            (cond cls ...))
-          (lambda ()
-            b b* ...))]))    
+        (try b b* ...
+          (catch System.Exception var
+            (cond cls ...)))]))
         
+  ;; ((clr-exception-of? Type) e)：e 是宿主异常包成的 &clr-exception 条件，且异常是 Type（含子类）（cleat-058，skeg）。
+  ;;   (guard (e [((clr-exception-of? System.IO.IOException) e) …]) (clr-static-call File ReadAllText "x"))
+  (define-syntax clr-exception-of?
+    (syntax-rules ()
+      [(_ type)
+        (lambda (e)
+          (and (clr-condition? e)
+               (clr-is type (clr-condition-exception e))))]))
+
   (define-syntax pinvoke-call
     (lambda (x)
       (define (->string id) 

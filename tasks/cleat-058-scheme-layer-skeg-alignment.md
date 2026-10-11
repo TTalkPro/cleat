@@ -66,3 +66,16 @@ cleat-047 为简化元层删掉了 call/cc 与处理器栈，`guard` 改为 `$tr
   因此 Clojure 的 `try` 不需要另装处理器。测试：四个 Clojure 脚本的外框把 `&clr-exception` 报成 `(exception 消息)`（意图不变）；
   `try-catch.sps` 的外框在用例期间清空处理器栈，"外层 guard 内 raise" 一例按 R6RS 改期望。
 - 种子：按两步法重生成两次（先让种子的库表认识新名字，再让 main.sls 用它们），两次都是不动点（镜像生成 = stage0 生成）。583 测试全绿。
+
+### 阶段 2（2026-10-12）：try / catch / finally / throw，删除 dynamic-wind
+
+- 展开器核心宏 `try`、`throw`（skeg 13 §3 / §3a 原样）：`try` 装处理器，catch 按 `clr-is` 匹配 `&clr-exception` 条件里的原异常，
+  经逃逸续延回到 try 帧分派；不匹配 `raise-continuable` 给外层；`finally` 是 `$try/finally`。从 `(cleat scheme)` 与 `(rnrs)` 导出，
+  两张构建脚本表都登记为系统宏。
+- 删除 `dynamic-wind`（定义与 `base.sls` / 两张表的导出）。原用处：`parameterize`（psyntax 与 compat 两份，compat 用 datum->syntax
+  取 `$try/finally`）、`with-gensym-scope`、`load/unload`、`trace`、`io/simple`（局部 try 宏删除）、Clojure 层的 `with-ns-binding`，
+  都改为 `$try/finally`。
+- `clr-guard` 改为 `try` 上的宏（catch System.Exception）；`(cleat scheme clr)` 加 `clr-exception-of?`。
+- 测试：新增 `tests/scheme/compiler/guard-try.sps`（移植 skeg host-smoke 的 guard / try / throw / call-with-return 部分，32 例）；
+  `compile-small.sps`、`try-catch.sps` 里用 dynamic-wind 的用例改为 `try … (finally …)`（guard 的子句体在 finally 之后执行）。
+- 种子：一步重生成（展开器文件只用到种子已认识的 `$try/finally`），不动点；种子里不再有 dynamic-wind。590 测试全绿。

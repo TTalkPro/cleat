@@ -14,7 +14,6 @@ See docs/license.txt. |#
     assertion-violation
     error
     raise-continuable
-    dynamic-wind
     io-decoding-error
     io-encoding-error
     undefined-error
@@ -37,7 +36,6 @@ See docs/license.txt. |#
       raise-continuable 
       assertion-violation 
       error
-      dynamic-wind
       values))
       
       
@@ -47,10 +45,7 @@ See docs/license.txt. |#
         (car x)
         ($make-multiple-values (list->vector x))))      
     
-  (define (dynamic-wind in proc out)
-    (in)
-    ($try/finally (proc)
-                  (out)))      
+  ;; dynamic-wind 已删除（cleat-058，skeg 13 §3）：用 try … (finally …) 或 $try/finally
 
   ;; 异常模型（cleat-058，按 skeg 13 恢复 R6RS 语义）：处理器栈在 C# 里（Cleat.Scheme.ExceptionHandlers，线程静态）——
   ;; 栈顶在前的过程列表，缺省是只含默认处理器（把条件包成 SchemeException 抛出）的表。

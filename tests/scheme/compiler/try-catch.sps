@@ -91,8 +91,8 @@
 (check "guard: loop inside the try region (no tail. there, still a loop)"
   '(guard (e (#t 'unexpected)) (let loop ((i 0)) (if (= i 200000) 'done (loop (+ i 1)))))
   'done)
-(check "guard: dynamic-wind after runs before the handler"
-  '(let ((log '())) (guard (e (#t (set! log (cons 'handler log)))) (dynamic-wind (lambda () (set! log (cons 'before log))) (lambda () (raise 'x)) (lambda () (set! log (cons 'after log))))) log)
+(check "guard: finally runs before the clause body (dynamic-wind removed, cleat-058)"
+  '(let ((log '())) (guard (e (#t (set! log (cons 'handler log)))) (set! log (cons 'before log)) (try (raise 'x) (finally (set! log (cons 'after log))))) log)
   '(handler after before))
 
 ;; Lcil：try 区域内不发 tail.；区域外照发

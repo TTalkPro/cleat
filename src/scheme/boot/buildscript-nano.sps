@@ -223,6 +223,8 @@
 
     ;;; new
     (guard                 (macro . guard))
+    (try                   (macro . try))
+    (throw                 (macro . throw))
     (eol-style             (macro . eol-style))
     (buffer-mode           (macro . buffer-mode))
     (file-options          (macro . file-options))
@@ -380,6 +382,8 @@
     (file-mtime                                 i)
     (allow-library-redefinition                 i)
     (with-clr-exception-handler                 i)
+    (try                                        i r)
+    (throw                                      i r)
     (typed-lambda                               i)
     (async-lambda                               i)
     (define-async                               i)
@@ -991,7 +995,6 @@
     (div0                                       i r ba)
     (mod0                                       i r ba)
     (div0-and-mod0                              i r ba)
-    (dynamic-wind                               i r ba se)
     (eq?                                        i r ba se)
     (equal?                                     i r ba se)
     (eqv?                                       i r ba se)

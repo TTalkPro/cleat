@@ -50,7 +50,7 @@
       syntax-violation syntax->datum make-variable-transformer
       null-environment scheme-report-environment)
     (only (cleat scheme) valuetype-vector?)  
-    (only (cleat scheme unsafe) $gensym-scope)
+    (only (cleat scheme unsafe) $gensym-scope $try/finally)
     (rnrs mutable-pairs)
     (boot expander library-manager)
     (boot expander builders)
@@ -1571,6 +1571,83 @@
                          (lambda args
                            (,outerk (lambda () (apply values args))))))))))))))))
 
+  ;; throw（cleat-058，skeg 13 §3a）：Clojure 式 (throw e)，直接映射为 .NET 的 throw（$throw 编译为 IL throw）；
+  ;; e 必须是 Exception 对象。抛出的异常回卷到最近的 with-exception-handler 时包成 &clr-exception 条件（guard 能接住），
+  ;; try 的 catch 按类型接住原异常。
+  (define throw-macro
+    (lambda (x)
+      (syntax-match x ()
+        ((_ e) (bless `($throw ,e))))))
+
+  ;; try（cleat-058，skeg 13 §3）：Clojure 式 (try body ... (catch Type e h ...) ... (finally f ...))。
+  ;; catch 按书写顺序以 clr-is 匹配 .NET 异常类型（含子类），e 绑定原始 Exception 对象；
+  ;; finally 总是执行（正常返回、catch 命中、异常穿透、续延逃逸）。
+  ;; .NET 异常回卷到 with-exception-handler 时以 &clr-exception 条件 raise。try 装一个处理器：异常类型匹配某个 catch 时
+  ;; 记下原异常、经逃逸续延回到 try 帧，在那里分派 catch；否则 raise-continuable 交给外层。
+  ;; catch / finally 按名字（datum）识别，不需要导入。
+  (define try-macro
+    (lambda (x)
+      (define (clause-head c)
+        (let ((d (stx->datum c)))
+          (and (pair? d) (memq (car d) '(catch finally)) (car d))))
+      (define (catch-parts c)
+        (syntax-match c ()
+          ((_ t v h* ...)
+           (and (id? t) (id? v))
+           (list t v (if (null? h*) '('()) h*)))
+          (_ (stx-error c "invalid catch clause"))))
+      (define (gen body catches fin)
+        (let* ((parts (map catch-parts catches))
+               (b `(let () ,@body))
+               (b (if (null? parts)
+                      b
+                      (let ((k (gensym)) (c (gensym)) (x (gensym)) (caught (gensym)) (r (gensym)))
+                        `(let ((,caught #f))
+                           (let ((,r (call-with-return
+                                       (lambda (,k)
+                                         (with-exception-handler
+                                           (lambda (,c)
+                                             (if (and (clr-condition? ,c)
+                                                      (let ((,x (clr-condition-exception ,c)))
+                                                        (or ,@(map (lambda (p) `(clr-is-internal ',(car p) ,x)) parts))))
+                                                 (begin
+                                                   (set! ,caught (clr-condition-exception ,c))
+                                                   (,k #f))
+                                                 (raise-continuable ,c)))
+                                           (lambda ()
+                                             (call-with-values
+                                               (lambda () ,b)
+                                               (lambda args
+                                                 (,k (lambda () (apply values args)))))))))))
+                             (if ,caught
+                                 (cond
+                                   ,@(map (lambda (p)
+                                            `((clr-is-internal ',(car p) ,caught)
+                                              (let ((,(cadr p) ,caught)) ,@(caddr p))))
+                                          parts))
+                                 (,r))))))))
+          (if fin
+              (syntax-match fin ()
+                ((_) b)
+                ((_ f f* ...) `($try/finally ,b (begin ,f ,@f*))))
+              b)))
+      (define (parse-clauses body cl* catches)
+        (cond
+          ((null? cl*) (gen body (reverse catches) #f))
+          ((eq? (clause-head (car cl*)) 'catch)
+           (parse-clauses body (cdr cl*) (cons (car cl*) catches)))
+          ((and (eq? (clause-head (car cl*)) 'finally) (null? (cdr cl*)))
+           (gen body (reverse catches) (car cl*)))
+          (else (stx-error (car cl*) "invalid try clause"))))
+      (syntax-match x ()
+        ((_ e* ...)
+         (let split ((e* e*) (body '()))
+           (cond
+             ((and (pair? e*) (not (clause-head (car e*))))
+              (split (cdr e*) (cons (car e*) body)))
+             ((null? body) (stx-error x "try without body"))
+             (else (bless (parse-clauses (reverse body) e* '())))))))))
+
   (define define-enumeration-macro
     (lambda (stx) 
       (define (set? x)
@@ -2290,10 +2367,11 @@
                                            (,lhs ,rhs)
                                            (set! ,rhs t)))
                                       lhs* rhs*))))
-                   (dynamic-wind 
-                     swap
-                     (lambda () ,b . ,b*)
-                     swap)))
+                   (begin
+                     (swap)
+                     ($try/finally
+                       ((lambda () ,b . ,b*))
+                       (swap)))))
                ,@(append olhs* orhs*))))))))
 
   
@@ -2881,6 +2959,8 @@
            ((assert)                assert-macro)
            ((endianness)            endianness-macro)
            ((guard)                 guard-macro)
+           ((try)                   try-macro)
+           ((throw)                 throw-macro)
            ((define-enumeration)    define-enumeration-macro)
            ((trace-lambda)          trace-lambda-macro)
            ((trace-define)          trace-define-macro)
@@ -4193,10 +4273,9 @@
   ;;; 非构建模式下作用域不影响 gensym 的名字。
   (define (with-gensym-scope name thunk)
     (let ((saved ($gensym-scope)))
-      (dynamic-wind
-        (lambda () ($gensym-scope name))
-        thunk
-        (lambda () ($gensym-scope saved)))))
+      ($gensym-scope name)
+      ($try/finally (thunk)
+                    ($gensym-scope saved))))
 
   (define (library-form-name x)
     (let-values (((name* exp* imp* b*) (parse-library x)))
