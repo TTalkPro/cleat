@@ -32,7 +32,7 @@ See docs/license.txt. |#
     (cleat scheme compiler primitives)
     (cleat scheme compiler constants)
     (only (cleat scheme unsafe) $immutable-string? $get-environment-variable)
-    (only (cleat scheme clr) clr-is clr-prop-get clr-call)
+    (only (cleat scheme clr) clr-is clr-prop-get clr-call clr-static-call)
     (cleat scheme compiler targets))
 
   ;; 规范 gensym 名（iron-030，designs/05-bootstrap.md §7 的后备方案）：设为 #t 时，常量表中本进程生成的 gensym
@@ -902,6 +902,83 @@ See docs/license.txt. |#
     (emit! mc `(call "clojure.lang.Numbers" ,op ,(map (lambda (x) int64-type) args)
                      ,(if (member op numbers-bool-ops) bool-type int64-type))))
 
+  ;; 宿主方法调用的编译期静态决议（cleat-042 第 3 项）：CallStatic / CallInstance 的类型在 Cleat.Core 中、重载能静态选定
+  ;; （ClojureStaticCalls.Resolve，JVM Clojure 的规则）时直接 call / callvirt，不经运行时的 Reflector。
+  ;; 返回 #(声明类型 成员名 #(形参类型 …) 返回类型 虚调用? 种类) 或 #f；种类 "method" / "field" / "volatile-field"（无实参的字段读）
+  (define static-calls-type "Cleat.Scheme.Clojure.ClojureStaticCalls")
+  ;; e* 的布局：CallStatic (t 名 gen 实参 …)、CallInstance (t 名 实例 gen 实参 …)、GetStaticField (t 名)、
+  ;; GetInstanceField (t 名 实例)。返回 (static? 实例或 #f 实参列表)，不是这四种时 #f
+  (define (host-call-layout d0 d1 e*)
+    (cond ((and (equal? d0 "CallStatic") (eqv? d1 3) (>= (length e*) 3)) (list #t #f (list-tail e* 3)))
+          ((and (equal? d0 "CallInstance") (eqv? d1 4) (>= (length e*) 4)) (list #f (list-ref e* 2) (list-tail e* 4)))
+          ((and (equal? d0 "GetStaticField") (not d1) (= (length e*) 2)) (list #t #f '()))
+          ((and (equal? d0 "GetInstanceField") (not d1) (= (length e*) 3)) (list #f (list-ref e* 2) '()))
+          (else #f)))
+
+  (define (host-call-signature d0 d1 e*)
+    (let ((layout (host-call-layout d0 d1 e*)))
+      (and layout
+           (let ((t (quoted-datum (car e*)))
+                 (name (quoted-datum (cadr e*)))
+                 (gen (if (member d0 '("CallStatic" "CallInstance")) (quoted-datum (list-ref e* (if (car layout) 2 3))) '())))
+             (and (clr-is System.Type t) (string? name) (or (null? gen) (not gen))
+                  (let ((sig (if (member d0 '("CallStatic" "CallInstance"))
+                                 (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls Resolve
+                                                  t name (list->vector (map static-arg-type (caddr layout))) (car layout))
+                                 (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls ResolveField t name (car layout)))))
+                    (and (> (vector-length sig) 0) (cons sig layout))))))))
+
+  ;; 实参的静态类型名（JVM Clojure 的 getJavaClass：数字与字符串字面量、推断为 long 的变量），未知为 #f
+  (define (static-arg-type e)
+    (nanopass-case (L3 Expr) e
+      [(quote ,d) (cond ((clr-is System.Int64 d) "System.Int64")
+                        ((flonum? d) "System.Double")
+                        ((string? d) "System.String")
+                        (else #f))]
+      [,x (and (eq? (hashtable-ref var-types x #f) 'l64) "System.Int64")]
+      [else #f]))
+
+  ;; sl：host-call-signature 的结果 (签名 static? 实例 实参列表)
+  (define (cg-static-host-call! sl mc ctx)
+    (let* ((sig (car sl)) (static? (cadr sl)) (inst (caddr sl)) (args (cadddr sl))
+           (decl (vector-ref sig 0)) (name (vector-ref sig 1))
+           (pts (vector->list (vector-ref sig 2))) (ret (vector-ref sig 3)) (virt? (vector-ref sig 4)))
+      ;; 栈顶 object → 形参类型 pt
+      (define (convert! pt)
+        (cond ((string=? pt "System.Object") (void))
+              ((assoc pt '(("System.Int32" . "ArgInt32") ("System.Int64" . "ArgInt64") ("System.Double" . "ArgDouble")
+                           ("System.Boolean" . "ArgBoolean") ("System.Char" . "ArgChar")))
+               => (lambda (c) (emit! mc `(call ,static-calls-type ,(cdr c) (,obj) ,pt))))
+              (else (emit! mc `(castclass ,pt)))))
+      ;; 操作数先各自求出 object；后面的操作数含 try 时（binding 等）全部先存 object 临时变量（同 operands!），
+      ;; 再逐个取回并转换——转换后的原始值不能进 object 临时变量
+      (let* ((opnds (append (if static? '() (list inst)) args))
+             (types (append (if static? '() (list 'instance)) pts))
+             (codes (map (lambda (x) (with-buffer mc (lambda () (cg x mc 'value)))) opnds))
+             (conv! (lambda (pt)
+                      (if (eq? pt 'instance)
+                          (emit! mc `(ldstr ,name) `(call ,static-calls-type "Instance" (,obj ,obj) ,obj) `(castclass ,decl))
+                          (convert! pt)))))
+        (if (and (pair? codes) (exists contains-try? (cdr codes)))
+            (let ((temps (map (lambda (c) (let ((t (new-local! mc obj))) (emit-code! mc c) (emit! mc `(stloc ,t)) t)) codes)))
+              (for-each (lambda (t pt) (emit! mc `(ldloc ,t)) (conv! pt)) temps types))
+            (for-each (lambda (c pt) (emit-code! mc c) (conv! pt)) codes types)))
+      (let ((kind (vector-ref sig 5)))
+        (if (string=? kind "method")
+            (emit! mc `(,(if virt? 'callvirt 'call) ,decl ,name ,pts ,ret))
+            (begin
+              (when (string=? kind "volatile-field") (emit! mc '(volatile.)))
+              (emit! mc (if static? `(ldsfld ,decl ,name) `(ldfld ,decl ,name))))))
+      (if (string=? ret "System.Boolean")
+          (finish-bool! mc ctx)
+          (begin
+            (cond ((string=? ret "System.Void") (emit! mc '(ldnull)))
+                  ((string=? ret "System.Object") (emit! mc `(call ,static-calls-type "RetObject" (,obj) ,obj)))
+                  ((string=? ret "System.Int32") (emit! mc `(call ,static-calls-type "RetInt32" (,int32-type) ,obj)))
+                  ((member ret '("System.Int64" "System.Double" "System.Char")) (emit! mc `(box ,ret)))
+                  (else (void)))
+            (finish-value! mc ctx)))))
+
   (define (raw-prim! pr e* mc)
     (define (args t) (operands! mc (map (lambda (x) (lambda () (cg-raw x mc t))) e*)))
     (let ((argc (length e*)))
@@ -1276,11 +1353,14 @@ See docs/license.txt. |#
          ((bool) (finish-bool! mc ctx))
          ((l64) (box-raw! mc 'l64) (finish-value! mc ctx))
          (else
+           (let ((sig (host-call-signature d0 d1 e*)))
+            (if sig
+             (cg-static-host-call! sig mc ctx)
              (let ((argc (length e*)))
                (operands! mc (map (lambda (x) (lambda () (cg x mc 'value))) e*))
                (when d1 (pack-array! mc (- argc d1)))
                (emit! mc `(call ,clojure-ops-type ,d0 ,(if d1 (append (objs d1) (list obj-array)) (objs argc)) ,obj))
-               (finish-value! mc ctx))))]
+               (finish-value! mc ctx))))))]
       [(clj-static-call ,d0 ,d1 ,e* ...)
        ;; 受保护的直接链接（cleat-033，designs/04 §6）：e0 取 Var 的当前根。实参先存入临时变量，根还是函数类 d0 时
        ;; newobj 一个实例作 self、直接 call d0::invokeStatic；被 with-redefs / 重定义换掉的根（别的类）走普通

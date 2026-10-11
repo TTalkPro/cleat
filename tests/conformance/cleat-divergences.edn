@@ -70,7 +70,6 @@
   {:suite "concurrency / ExecutorService.invokeAll" :label "invokeAll of no tasks, and with a timeout" :category :host/jvm-api :reason "JVM class statics: java.util.concurrent.TimeUnit/…"}
   {:suite "concurrency / ExecutorService.invokeAll" :label "invokeAny returns a successful result, skipping failures" :category :host/jvm-api :reason "JVM class statics: java.util.concurrent.Executors/…"}
   {:suite "concurrency / ExecutorService.invokeAll" :label "invokeAny with every task failing, or none" :category :host/jvm-api :reason "JVM class java.util.concurrent.ExecutionException"}
-  {:suite "host-interop / Var surface" :label "only the Namespace overload of Var/intern takes a root" :category :host/jvm-api :reason "clojure.lang.Var members by their Java names / Java field-miss messages"}
   {:suite "assert" :label "failed assert throws AssertionError" :category :host/exception-type :reason "AssertionError: the CLR has no java.lang.Error hierarchy; assert throws System.Exception"}
   {:suite "fn / pre-post" :label ":pre failure throws AssertionError" :category :host/exception-type :reason "AssertionError: the CLR has no java.lang.Error hierarchy; assert throws System.Exception"}
   {:suite "reader / nested syntax-quote" :label "the inner template is jolt's construction code, not the JVM's seq/concat" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :impl-detail)"}
@@ -151,7 +150,6 @@
   {:suite "core / with-precision" :label "rounding arg accepted" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
   {:suite "multimethods / hierarchies" :label "explicit :hierarchy" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :permissive)"}
   {:suite "namespaces / designators" :label "a nil namespace designator is a NullPointerException, as on the JVM" :category :host/exception-type :reason "a nil / non-symbol namespace designator fails as ArgumentNullException / a Reflector miss, not NullPointerException / ClassCastException"}
-  {:suite "namespaces / designators" :label "a designator that is not a symbol is a failed cast to Symbol" :category :host/exception-type :reason "a nil / non-symbol namespace designator fails as ArgumentNullException / a Reflector miss, not NullPointerException / ClassCastException"}
   {:suite "namespaces / ns operations" :label "in-ns switches" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "namespaces / ns operations" :label "standalone use" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "namespaces / unified alias store" :label "require :as registers the alias" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :namespace-model)"}
@@ -409,7 +407,6 @@
   {:suite "numbers / unsigned-bit-shift-right is logical over 64 bits" :label "a zero shift (or a multiple of 64) leaves a negative long unchanged" :category :host/jvm-api :reason "JVM class statics: Long/…"}
   {:suite "numbers / rationalize" :label "doubles go through shortest decimal print" :category :numeric :reason "rationalize uses the double's exact binary value (ClojureCLR), not BigDecimal of Double.toString; whole values come back as BigInt"}
   {:suite "hierarchy / derive asserts" :label "tag and parent must be namespaced Named (or a class)" :category :host/exception-type :reason "AssertionError: the CLR has no java.lang.Error hierarchy; assert throws System.Exception"}
-  {:suite "iref / atom ctor options" :label "non-map :meta is a ClassCastException" :category :host/exception-type :reason "a non-map :meta fails as a Reflector overload miss, not ClassCastException"}
   {:suite "casts / checked narrow" :label "out-of-range values throw IllegalArgumentException" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
   {:suite "casts / checked narrow" :label "the throw carries the JVM message" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
   {:suite "casts / checked narrow" :label "ratios and bigdecs truncate; non-numbers are CCE" :category :host/numeric-types :reason "CLR integer casts: byte is System.Byte (unsigned 0..255), unchecked-byte does not sign-fold, overflow messages / exception types are .NET's"}
@@ -431,7 +428,6 @@
   {:suite "conformance / core misc" :label "bases of Long includes Number" :category :host/jvm-api :reason "JVM class java.lang.Long"}
   {:suite "interop / class model" :label "an unbound var value is clojure.lang.Var$Unbound (not :object)" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
   {:suite "interop / class model" :label "print of a Class is the bare name (str keeps 'class X')" :category :host/jvm-api :reason "JVM class java.util.Date"}
-  {:suite "conformance / r3" :label "conj on non-coll is CCE" :category :host/exception-type :reason "conj on a number fails as a Reflector overload miss, not ClassCastException"}
   {:suite "regex / V2 sre-parser" :label "p{L} supplementary" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
   {:suite "regex / V2 sre-parser" :label "intersection class" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
   {:suite "regex / V2 sre-parser" :label "\\Q..\\E literal quote" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\Q.+*?\\\\E': Unrecognized escape sequence \\\\Q."}
@@ -465,7 +461,6 @@
   {:suite "errors / host operations carry a JVM class" :label "a ^long hint rejects a non-number" :category :not-yet :reason "^long / ^double on fn params are hints only (no primitive fn coercion); target cleat-042"}
   {:suite "errors / host operations carry a JVM class" :label "a ^double hint rejects nil" :category :not-yet :reason "^long / ^double on fn params are hints only (no primitive fn coercion); target cleat-042"}
   {:suite "errors / host operations carry a JVM class" :label "a Math static rejects a non-number" :category :host/jvm-api :reason "Java member Math.sqrt (no CLR counterpart under that name)"}
-  {:suite "errors / host operations carry a JVM class" :label "keyword rejects a non-string name" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
   {:suite "errors / host operations carry a JVM class" :label "re-seq rejects a non-string" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
   {:suite "errors / host operations carry a JVM class" :label "split rejects a non-string" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
   {:suite "errors / host operations carry a JVM class" :label "a System static rejects a non-string" :category :host/jvm-api :reason "JVM class statics: System/…"}

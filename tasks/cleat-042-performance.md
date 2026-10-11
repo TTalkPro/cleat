@@ -77,3 +77,40 @@
 
 数学语义方向（2026-10-11 用户决定）：数学层面不必逐条对照 JVM Clojure，优先贴合 CLR 自身特性；
 具体取舍（溢出异常类型、checked 指令、整数类型族等）在后续项中逐个定。
+
+### 第 3 项（第一步）：宿主调用的编译期静态决议（2026-10-11）
+
+先测后做：分项计时显示瓶颈不是分派缓存，而是**所有 `(. T (m …))` 互操作调用都在运行时走 Reflector**
+（`ClojureOps.CallStatic/CallInstance/Get…Field` → 每次分配实参数组与缓存键、查表、委托调用，~100 ns）。
+core 的 `:inline`（`nth`、`rem`、`long`、`get` …）、协议函数里的 `.fnFor` / 接口方法调用、record 的 `valAt` 全在这条路上。
+真正的内联缓存在它面前是次要的。
+
+改法：
+- `ClojureStaticCalls.Resolve` / `ResolveField`（C#，编译期由 codegen 调用）：按 JVM Clojure 的
+  `paramArgTypeMatch` / 最具体规则选重载；实参静态类型来自数字 / 字符串字面量与推断为 long 的变量，
+  未知实参对 clojure.lang 的方法只匹配引用类型形参（`Numbers.add(object, object)`、字面量 `(/ 1.0 0.0)` → `divide(double, double)`）。
+  **其余类型（BCL、用户类型）只在唯一相容重载时静态决议**，形参限 object / 原始类型 / String / Core 类型、不含委托
+  （`String.IndexOf(char|string)` 这类按运行时类型选的重载、IFn → 委托的转换仍交给 Reflector）。
+- codegen：`call`/`callvirt`/`ldfld` 直发；实参转换 `ArgInt32/…`（= Reflector.Convert）、引用形参 `castclass`（JVM 的 checkcast），
+  返回值同 Reflector 的 ToClojure；后面操作数含 try 时先全部存 object 临时变量再转换。无实参且无方法时读公共字段（含 volatile.）。
+- deftype / defrecord 方法体里 `this` 是桩类型：桩登记 deftype 的接口表（`HostSyntax.DefineStub` 新重载），
+  `(.valAt this …)` 按接口 callvirt。
+- 协议方法构造器给 `cache#` 加 `^clojure.lang.MethodImplCache` 提示（JVM 靠局部类型推断得到）。
+- 发射器：`"类型, eval$N"` 指向本单元重定义的同名类型时，方法 / 字段也在本单元的定义里找（AOT 镜像里的协议接口）。
+- 调试：`CLEAT_DUMP_LCIL=1` 时 AOT 单元旁写 `.clj.dll.lcil`。
+
+符合性：5 条语料分歧消失（"Reflector 重载未命中而不是 ClassCastException"——现在是 castclass 给出 CCE），从分歧表删除；
+cts `not-eq` +1 通过（基线已重写）。583 测试全绿。
+
+| 基准 | 基线 | 拆箱后 | 现在 |
+|---|---|---|---|
+| sum_loop | 1006 | 13 | 12 |
+| protocol | 517 | 471 | 112 |
+| keyword_invoke | 631 | 541 | 163 |
+| lazy_chain | 349 | 328 | 147 |
+| assoc_map | 219 | 173 | 83 |
+| reduce_vec | 119 | 107 | 54 |
+| fib | 49 | 45 | 19 |
+
+第 3 项剩余：extend-protocol 路径的 `MethodImplCache.fnFor`（~50 ns）可做调用点单态缓存；
+`(m k)`（map 作为函数）与 `(:k m)` 的站点缓存；局部变量的类型推断（let 绑定取初值的静态类型，省去 `^Type` 提示）。

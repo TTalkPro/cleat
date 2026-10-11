@@ -1,0 +1,152 @@
+using System;
+using System.Linq;
+using System.Reflection;
+using Cleat.Core.Runtime;
+
+namespace Cleat.Scheme.Clojure;
+
+/// <summary>
+/// 宿主方法调用的编译期静态决议（cleat-042 第 3 项）。<c>(. T (m a …))</c> 原先一律经 <see cref="ClojureOps.CallStatic"/> 走运行时的
+/// <see cref="Reflector"/>：每次调用分配实参数组与缓存键、查表、经委托调用，<c>:inline</c> 的 <c>nth</c> / <c>rem</c> / <c>long</c> 等热点
+/// 每次约 100 ns 以上。这里按 JVM Clojure 的规则在编译期选定重载，codegen 直接发 <c>call</c>：
+/// <list type="bullet">
+/// <item>该名字、该参数个数的（非泛型、无 ref/params 的）公共方法只有一个时选它，实参按 Reflector 的规则转换（<see cref="Reflector.Convert{T}"/>）；</item>
+/// <item>有多个时，实参类型静态未知（object），只选形参全为 object 的那一个（<c>Numbers.add(object, object)</c>）；</item>
+/// <item>否则交回运行时决议。</item>
+/// </list>
+/// 决议任何能按名字引用的公共类型（含 eval 生成的 deftype / 协议接口）；重载有歧义时（如未知实参的 StringBuilder.Append）交回运行时。
+/// 返回值的转换与 Reflector 的 ToClojure 相同。
+/// </summary>
+public static class ClojureStaticCalls
+{
+    private static readonly Assembly s_core = typeof(Reflector).Assembly;
+
+    /// <summary>codegen 能直接写出转换的值类型形参</summary>
+    private static bool ValueParamOk(Type p) =>
+        p == typeof(int) || p == typeof(long) || p == typeof(double) || p == typeof(bool) || p == typeof(char);
+
+    /// <summary>能按名字（HostSyntax.TypeName）在 Lcil 中引用的类型：非泛型、非嵌套的公共类型，不是 deftype 的桩</summary>
+    private static bool Nameable(Type t) =>
+        t.IsPublic && !t.IsNested && !t.IsGenericType && !t.IsArray && !t.IsByRef && !t.IsPointer && !HostSyntax.IsStub(t)
+        && !(t is System.Reflection.Emit.TypeBuilder);
+
+    /// <summary>
+    /// 形参类型：object、五种原始类型，引用类型发 castclass——Cleat.Core 的方法任何引用类型都可以（JVM 的 checkcast）；其余只允许 String 与 Core 的类型，
+    /// 不碰委托等 Reflector 会转换的形参（IFn → 委托）
+    /// </summary>
+    private static bool ParamOk(Type p, bool core) =>
+        p == typeof(object) || ValueParamOk(p)
+        || (!p.IsValueType && Nameable(p) && !typeof(Delegate).IsAssignableFrom(p) && (core || p == typeof(string) || p.Assembly == s_core));
+
+    private static bool ReturnOk(Type r) =>
+        r == typeof(void) || r == typeof(object) || ValueParamOk(r) || (!r.IsValueType && Nameable(r));
+
+    /// <summary>
+    /// 编译期决议 t 的 name 方法（isStatic 为真时静态方法）。argTypes：每个实参的静态类型名（数字 / 字符串字面量、
+    /// 推断为 long 的变量），未知为 #f。可决议时返回 [声明类型名, 成员名, 形参类型名数组, 返回类型名, 是否虚调用, "method" | "field" | "volatile-field"]，否则返回空数组。
+    /// 规则同 JVM Clojure 的 Compiler.paramArgTypeMatch / subsumes：静态类型未知的实参只匹配非值类型形参；
+    /// 有多个匹配时选与已知实参类型精确相符最多的那个，并列则交回运行时。
+    /// </summary>
+    public static object[] Resolve(object t, object name, object argTypes, object isStatic)
+    {
+        if (t is not Type type || name is not string member) return Array.Empty<object>();
+        // deftype 方法体里的 this（桩类型）：在 deftype 声明的接口里找，callvirt 接口方法（真正的类型实现它们）
+        Type[] stubIfaces = HostSyntax.IsStub(type) ? HostSyntax.StubInterfaces(type) : null;
+        if (stubIfaces == null && !Nameable(type)) return Array.Empty<object>();
+        Type[] ats = ((object[])argTypes).Select(a => a is string s ? Type.GetType(s) : null).ToArray();
+        int n = ats.Length;
+        bool st = isStatic is bool b && b;
+        if (!st && type.IsValueType || stubIfaces != null && st) return Array.Empty<object>();
+        var flags = BindingFlags.Public | (st ? BindingFlags.Static : BindingFlags.Instance) | (st ? BindingFlags.DeclaredOnly : BindingFlags.FlattenHierarchy);
+        var fit = type.GetMember(member, MemberTypes.Method, flags).Cast<MethodInfo>()
+            .Where(m => !m.ContainsGenericParameters && !m.IsGenericMethodDefinition)
+            .Where(m =>
+            {
+                var ps = m.GetParameters();
+                return ps.Length == n && !ps.Any(p => p.ParameterType.IsByRef || p.ParameterType.IsPointer || p.IsDefined(typeof(ParamArrayAttribute), false));
+            })
+            .ToList();
+        if (stubIfaces != null)
+            fit = stubIfaces.Concat(stubIfaces.SelectMany(i => i.GetInterfaces())).Distinct().SelectMany(i => i.GetMethods())
+                .Where(m => m.Name == member && m.GetParameters().Length == n && !m.ContainsGenericParameters
+                            && !m.GetParameters().Any(p => p.ParameterType.IsByRef || p.ParameterType.IsPointer))
+                .ToList();
+        // 接口继承的方法不在 FlattenHierarchy 里
+        else if (!st && fit.Count == 0 && type.IsInterface)
+            fit = type.GetInterfaces().SelectMany(i => i.GetMethods())
+                .Where(m => m.Name == member && m.GetParameters().Length == n && !m.ContainsGenericParameters).ToList();
+        // Cleat.Core（clojure.lang）按 JVM 规则；其余类型的重载按运行时实参类型选，只有唯一相容的重载时才静态决议
+        bool core = stubIfaces == null ? type.Assembly == s_core : fit.Count > 0 && fit.All(m => m.DeclaringType.Assembly == s_core);
+        var matching = fit.Where(m => m.GetParameters().Select((p, i) => Match(p.ParameterType, ats[i], core)).All(x => x)).ToList();
+        MethodInfo chosen = null;
+        if (matching.Count == 1) chosen = matching[0];
+        else if (core && matching.Count > 1)
+        {
+            int Score(MethodInfo m) => m.GetParameters().Select((p, i) => ats[i] != null && p.ParameterType == ats[i] ? 1 : 0).Sum();
+            int best = matching.Max(Score);
+            var top = matching.Where(m => Score(m) == best).ToList();
+            if (top.Count == 1) chosen = top[0];
+        }
+        // 没有相符的方法、无实参时：公共字段（Reflector 的顺序：方法优先，再字段 / 属性；属性由 get_X 方法覆盖）
+        if (chosen == null && n == 0 && matching.Count == 0 && stubIfaces == null)
+        {
+            return FieldSig(type.GetField(member, BindingFlags.Public | (st ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.FlattenHierarchy));
+        }
+        if (chosen == null || !Nameable(chosen.DeclaringType)) return Array.Empty<object>();
+        var pts = chosen.GetParameters().Select(p => p.ParameterType).ToArray();
+        if (!pts.All(p => ParamOk(p, core)) || !ReturnOk(chosen.ReturnType)) return Array.Empty<object>();
+        return new object[]
+        {
+            HostSyntax.TypeName(chosen.DeclaringType), chosen.Name,
+            pts.Select(p => (object)HostSyntax.TypeName(p)).ToArray(),
+            HostSyntax.TypeName(chosen.ReturnType),
+            !chosen.IsStatic && !chosen.DeclaringType.IsValueType,
+            "method",
+        };
+    }
+
+    /// <summary>
+    /// (. x -f) / (. T -f)：t 的公共字段 name（Reflector.GetField 先找字段）。可决议时返回与 Resolve 相同格式的
+    /// [声明类型名, 字段名, [], 字段类型名, false, "field" | "volatile-field"]；常量、属性、桩类型交回运行时
+    /// </summary>
+    public static object[] ResolveField(object t, object name, object isStatic)
+    {
+        if (t is not Type type || name is not string member || !Nameable(type)) return Array.Empty<object>();
+        bool st = isStatic is bool b && b;
+        if (!st && type.IsValueType) return Array.Empty<object>();
+        var f = type.GetField(member, BindingFlags.Public | (st ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.FlattenHierarchy);
+        return FieldSig(f);
+    }
+
+    private static object[] FieldSig(FieldInfo f) =>
+      f != null && !f.IsLiteral && Nameable(f.DeclaringType) && ReturnOk(f.FieldType) && f.FieldType != typeof(void)
+        ? new object[]
+          {
+              HostSyntax.TypeName(f.DeclaringType), f.Name, Array.Empty<object>(), HostSyntax.TypeName(f.FieldType), false,
+              f.GetRequiredCustomModifiers().Contains(typeof(System.Runtime.CompilerServices.IsVolatile)) ? "volatile-field" : "field",
+          }
+        : Array.Empty<object>();
+
+    /// <summary>形参类型 p 能否接受静态类型为 a（null 为未知：core 时只匹配引用类型形参，否则什么都可能）的实参</summary>
+    private static bool Match(Type p, Type a, bool core)
+    {
+        if (a == null) return !core || !p.IsValueType;
+        if (p == a || p == typeof(object)) return true;
+        if (p == typeof(int) && a == typeof(long)) return true;
+        return !p.IsValueType && !a.IsValueType && p.IsAssignableFrom(a);
+    }
+
+    // —— 实参转换（Reflector.ConvertArg 的规则：同类型直接拆箱，否则 Convert<T>）；引用类型形参由 codegen 发 castclass（同 JVM 的 checkcast）——
+    public static int ArgInt32(object v) => v is int i ? i : Reflector.Convert<int>(v);
+    public static long ArgInt64(object v) => v is long l ? l : Reflector.Convert<long>(v);
+    public static double ArgDouble(object v) => v is double d ? d : Reflector.Convert<double>(v);
+    public static bool ArgBoolean(object v) => v is bool b ? b : Reflector.Convert<bool>(v);
+    public static char ArgChar(object v) => v is char c ? c : Reflector.Convert<char>(v);
+
+    // —— 返回值（Reflector.ToClojure）——
+    public static object RetObject(object v) => Reflector.ConvertFrom(v, typeof(object));
+    public static object RetInt32(int v) => (long)v;
+
+    /// <summary>实例调用的实例为 nil 时与 ClojureOps.CallInstance 同样报错</summary>
+    public static object Instance(object inst, object name) => ClojureOps.NotNil(inst, name);
+}

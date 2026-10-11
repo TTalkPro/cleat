@@ -795,9 +795,9 @@
           (check (cdr fs))))
       ;; 方法体可以引用正在定义的类型（(new Foo …)、^Foo）：先登记同名的桩类型（HostSyntax.DefineStub，运行时换成真正的类型）
       (unless reify?
-        (clr-static-call Cleat.Scheme.Clojure.HostSyntax (DefineStub System.String System.Object System.String) class-name
+        (clr-static-call Cleat.Scheme.Clojure.HostSyntax (DefineStub System.String System.Object System.String System.Object) class-name
           (list->vector (map (lambda (f) (munge (sym-name (cadr f)))) fields))
-          tagname))
+          tagname ifaces))
       (let loop ((ms method-forms) (specs '()) (rs '()) (lambdas '()))
         (if (pair? ms)
             (syntax-case (car ms) ()

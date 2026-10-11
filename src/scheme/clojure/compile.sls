@@ -94,6 +94,11 @@
                       cores))
            (asm (clr-static-call System.IO.Path GetFileNameWithoutExtension dll-path))
            (lcil (compile-forms->lcil cores asm "#Module")))
+      ;; 调试：设置环境变量 CLEAT_DUMP_LCIL 时旁边写 Lcil 文本（名字.clj.dll.lcil；镜像总是写）
+      (when (string? (clr-static-call System.Environment GetEnvironmentVariable "CLEAT_DUMP_LCIL"))
+        (let ((f (string-append dll-path ".lcil")))
+          (when (file-exists? f) (delete-file f))
+          (call-with-output-file f (lambda (p) (put-string p (compile->lcil-text-from-sexpr lcil))))))
       (when (file-exists? dll-path) (delete-file dll-path))
       (clr-static-call Cleat.Emit.LcilEmitter (SaveData Object String String Boolean) lcil dll-path dll-path #f)
       (clr-static-call Cleat.Scheme.Clojure.Driver (WriteInterfaceFile String Object Object) dll-path cores lcil)

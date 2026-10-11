@@ -99,7 +99,7 @@ public static class ClojureOps
         return r;
     }
 
-    private static object NotNil(object instance, object name) =>
+    internal static object NotNil(object instance, object name) =>
       instance ?? throw new NullReferenceException($"Cannot invoke member {name} on nil");
 
     // —— 展开期使用（Clojure 数据的遍历，不经 Scheme 互操作的转换）——

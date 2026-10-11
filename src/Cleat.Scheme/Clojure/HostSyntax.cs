@@ -175,6 +175,18 @@ public static class HostSyntax
         lock (s_stubTags) return s_stubTags.TryGetValue(ns.Name.Name + "/" + name, out var t) ? t : null;
     }
 
+    // 桩 → deftype 声明的接口（cleat-042：方法体里 (.m this …) 按接口静态决议，ClojureStaticCalls）
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Type, Type[]> s_stubInterfaces = new();
+
+    internal static Type[] StubInterfaces(Type stub) => s_stubInterfaces.TryGetValue(stub, out var ifs) ? ifs : null;
+
+    public static Type DefineStub(string name, object fieldNames, string tagName, object interfaces)
+    {
+        var t = DefineStub(name, fieldNames, tagName);
+        if (interfaces is object[] ifs) s_stubInterfaces.AddOrUpdate(t, ifs.OfType<Type>().ToArray());
+        return t;
+    }
+
     public static Type DefineStub(string name, object fieldNames, string tagName)
     {
         var t = DefineStub(name, fieldNames);

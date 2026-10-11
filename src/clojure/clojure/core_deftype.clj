@@ -656,7 +656,7 @@
                           target (first gargs)]
                       (if extend-via-meta
                         `([~@gargs]
-                            (let [cache# (.__methodImplCache ~gthis)
+                            (let [^clojure.lang.MethodImplCache cache# (.__methodImplCache ~gthis)
                                   f# (.fnFor cache# (clojure.lang.Util/classOf ~target))]
                               (if (identical? f# ~ginterf)
                                 (f# ~@gargs)
@@ -666,7 +666,7 @@
                                     (f# ~@gargs)
                                     ((-cache-protocol-fn ~gthis ~target ~on-interface ~ginterf) ~@gargs))))))
                         `([~@gargs]
-                            (let [cache# (.__methodImplCache ~gthis)
+                            (let [^clojure.lang.MethodImplCache cache# (.__methodImplCache ~gthis)
                                   f# (.fnFor cache# (clojure.lang.Util/classOf ~target))]
                               (if f#
                                 (f# ~@gargs)

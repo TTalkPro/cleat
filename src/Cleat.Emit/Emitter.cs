@@ -387,7 +387,12 @@ public sealed partial class LcilEmitter
     {
         var ps = Ts(r.Params, pos);
         MethodBase found = null;
-        if (_methods.TryGetValue(r.Type, out var own))
+        // "类型, eval$N" 指向本单元重新定义的同名类型时（T 的 cleat-053 规则），成员也在本单元的定义里找（cleat-042）
+        string key = r.Type;
+        if (!_methods.ContainsKey(key) && QualifiedSplit(key) is int comma && _types.ContainsKey(key.Substring(0, comma).Trim())
+            && key.Substring(comma + 1).Trim().StartsWith("eval$", StringComparison.Ordinal))
+            key = key.Substring(0, comma).Trim();
+        if (_methods.TryGetValue(key, out var own))
             found = own.FirstOrDefault(x => (x.B is ConstructorInfo ? x.M.IsCctor ? ".cctor" : ".ctor" : x.M.Name) == r.Name && x.P.SequenceEqual(ps)).B;
         if (found == null)
         {
@@ -414,6 +419,9 @@ public sealed partial class LcilEmitter
     private FieldInfo Field(FieldRef r, SNode pos)
     {
         if (_fields.TryGetValue((r.Type, r.Name), out var fb)) return fb;
+        // "类型, eval$N" 指向本单元重新定义的同名类型（同 Method，cleat-042）
+        if (QualifiedSplit(r.Type) is int comma && r.Type.Substring(comma + 1).Trim().StartsWith("eval$", StringComparison.Ordinal)
+            && _fields.TryGetValue((r.Type.Substring(0, comma).Trim(), r.Name), out var own)) return own;
         var t = T(r.Type, pos);
         if (t is TypeBuilder) t = t.BaseType;
         var f = t?.GetField(r.Name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
