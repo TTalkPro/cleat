@@ -2079,6 +2079,9 @@ namespace clojure.lang
 
         public static int ThrowIntOverflow() { throw new ArithmeticException("integer overflow"); }
 
+        // cleat-042：编译器原始 int64 算术的溢出出口（IL 直接调用）；与 + / inc 的溢出语义完全一致
+        public static long ThrowLongOverflow() { throw new ArithmeticException("integer overflow"); }
+
         //public static object num(int x)
         //{
         //    return x;

@@ -41,3 +41,20 @@
   不能用无检查的 `add`）；已移植的 `infer-var-types!` 只认 Scheme 的 `$fx…`/int32 语义，
   对 Clojure 的 Int64 返回未知，需要为 `$clj-call` 节点补 Int64 类型的推断与原始发射。
   预期 sum_loop 1006 → ~150 ms。尚无对外的 C# 改动（实验已回退）。
+
+### 第 2 项的实现状态（2026-10-11，WIP）
+
+已落地（全部测试绿、语义无损）：
+- `l64` 类型接入 codegen：`type-clr`（int64 局部）、`box-raw!`（box int64）、`quote` 的 Int64 字面量识别
+  （`real?`+`exact?`+`clr-is System.Int64`；注意 `exact?` 对非数会抛异常，必须放在 `real?` 之后）、
+  `infer-var-types!` 收敛判据纳入 l64、label/jump/tlocal 链路通用。
+- `numbers-arith-shape?` / `numbers-arith-args`（识别 `($clj-call "CallStatic" 3 "clojure.lang.Numbers" op '() 实参…)`）
+  与 `numbers-raw-emit!` / `numbers-raw-emit-args!`（int64 原始 add/sub/clt + 位测试溢出检查 + ThrowLongOverflow，
+  异常与 Numbers 完全一致）、`cg-raw` 外壳（l64 上下文走原始发射，否则 cg-raw/default）、
+  cg 的 clj-call 情形挂钩（全 l64 时绕过 CallStatic/Reflector）。
+
+未通（下一步调试）：sum_loop 未获益（1006 → 1042 ms，噪声内）。推断/识别/发射三段中至少一段对基准形式未生效。
+已排除：`:inline` 缺失、`ops` 分派开销、`mctx-big?`（基准已改为独立小方法）、陈旧 dll（bench 目录 dll 已删）。
+调试入口：`CLEAT_DEBUG_INFER=1` 环境变量 + codegen.sls 的 infer 探针（当前为 display 版，注意 fasl 需重生成才生效）；
+建议先确认 infer-walk 是否真的为 loop 形式的变量登记了 l64 候选（`(GU #t (#f) 1)` 曾显示 -main 形式的 loop 旗标为 #f——
+dotimes 展开后的形状可能未被 loop-forms 识别，这是最可疑的一环）。

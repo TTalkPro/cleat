@@ -32,6 +32,7 @@ See docs/license.txt. |#
     (cleat scheme compiler primitives)
     (cleat scheme compiler constants)
     (only (cleat scheme unsafe) $immutable-string? $get-environment-variable)
+    (only (cleat scheme clr) clr-is)
     (cleat scheme compiler targets))
 
   ;; 规范 gensym 名（iron-030，designs/05-bootstrap.md §7 的后备方案）：设为 #t 时，常量表中本进程生成的 gensym
@@ -87,6 +88,7 @@ See docs/license.txt. |#
   (define-target-type obj object)
   (define-target-type obj-array object-array)
   (define-target-type int32-type int32)
+  (define-target-type int64-type int64)
   (define-target-type double-type double)
   (define-target-type bool-type boolean)
   (define-target-type char-type char)
@@ -600,9 +602,46 @@ See docs/license.txt. |#
   (define fl-result-prims '($fl+ $fl- $fl* $fl/ $as-flonum))
 
   ;; 表达式的类型：fx / fl / #f；env：变量 → fx | fl | top（还没定）| #f
+  ;; (quote d) 的 d，否则 (void)（L3 引用字面量的数据）
+  (define (quoted-datum e)
+    (nanopass-case (L3 Expr) e
+      [(quote ,d) d]
+      [else (void)]))
+
+  ;; Numbers 的 int64 算术（cleat-042）：(. Numbers (add x y)) 等 :inline 展开为
+  ;; ($clj-call "CallStatic" 3 "clojure.lang.Numbers" "op" '() 实参 …)
+  (define (numbers-arith-shape? d0 d1 e*)
+    (and (string? d0) (string=? d0 "CallStatic")
+         (eq? d1 3) (>= (length e*) 5)
+         (let ((tp (quoted-datum (car e*)))
+               (op (quoted-datum (cadr e*)))
+               (gen (quoted-datum (caddr e*))))
+           (and (string? tp) (string=? tp "clojure.lang.Numbers")
+                (string? op) (member op '("add" "minus" "multiply" "inc" "lt"))
+                (null? gen)))))
+
+  ;; 是 Numbers 算术且实参全为 l64 类型（env 为类型表）时返回实参列表，否则 #f
+  (define (numbers-arith-args-list? d0 d1 e* env)
+    (let ((ts (map (lambda (x) (expr-type x env)) (list-tail e* 3))))
+      (and (pair? ts) (for-all (lambda (x) (eq? x 'l64)) ts))))
+
+  (define (numbers-arith-args e env)
+    (nanopass-case (L3 Expr) e
+      [(clj-call ,d0 ,d1 ,e* ...)
+       (and (numbers-arith-shape? d0 d1 e*)
+            (numbers-arith-args-list? d0 d1 e* env)
+            (cons (quoted-datum (cadr e*)) (list-tail e* 3)))]
+      [else #f]))
+
   (define (expr-type e env)
     (nanopass-case (L3 Expr) e
-      [(quote ,d) (cond ((and (fixnum? d) (exact? d)) 'fx) ((flonum? d) 'fl) (else #f))]
+      [(quote ,d) (cond ((and (fixnum? d) (exact? d)) 'fx)
+                        ((flonum? d) 'fl)
+                        ((and (real? d) (exact? d) (clr-is System.Int64 d)) 'l64)
+                        (else #f))]
+      [(clj-call ,d0 ,d1 ,e* ...)
+       (let ((args (numbers-arith-args e env)))
+         (and args (if (string=? (quoted-datum (cadr e*)) "lt") #f 'l64)))]
       [,x (hashtable-ref env x #f)]
       [(primcall ,pr ,e* ...)
        (cond ((memq pr fx-result-prims) 'fx) ((memq pr fl-result-prims) 'fl) (else #f))]
@@ -629,7 +668,7 @@ See docs/license.txt. |#
   (define-pass infer-walk : L3 (ir add-def! exclude! labels candidate? use!) -> * (v)
     ;; 处理器只取一个参数，for-each 直接传处理器，不为每个节点新建闭包
     (MaybeTyped : Expr (ir) -> * (b)
-      [(quote ,d) (or (fixnum? d) (flonum? d))]
+      [(quote ,d) (or (fixnum? d) (flonum? d) (and (real? d) (exact? d) (clr-is System.Int64 d)))]
       [,x (candidate? x)]
       [(primcall ,pr ,e* ...) (and (or (memq pr fx-result-prims) (memq pr fl-result-prims)) #t)]
       [(call ,e0 ,e* ...) (and (inline-op e0 (length e*)) #t)]
@@ -698,7 +737,10 @@ See docs/license.txt. |#
       [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (Expr e0) (Expr e1)]
       [(clj-invoke ,e ,e* ...) (Expr e) (for-each Expr e*)]
       [(clj-keyword-invoke ,d ,e ,e* ...) (Expr e) (for-each Expr e*)]
-      [(clj-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
+      [(clj-call ,d0 ,d1 ,e* ...)
+       (if (numbers-arith-shape? d0 d1 e*)
+           (for-each Raw (list-tail e* 3))
+           (for-each Expr e*))]
       [(clj-static-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
       [(clj-case ,d ,e0 ,e1 ,e* ...) (Expr e0) (Expr e1) (for-each Expr e*)]
       [(clj-deftype ,d (,x* ...) ,le* ...) (for-each exclude! x*) (for-each Expr le*)]
@@ -782,15 +824,28 @@ See docs/license.txt. |#
                   (loop (cdr work))))))
         (for-each (lambda (x)
                     (let ((t (hashtable-ref env x #f)))
-                      (when (and (memq t '(fx fl))
+                      (when (and (memq t '(fx fl l64))
                                  (<= (hashtable-ref boxed-uses x 0) (hashtable-ref raw-uses x 0)))
                         (hashtable-set! var-types x t))))
                   cands))))
 
-  (define (type-clr t) (if (eq? t 'fl) double-type int32-type))
+  (define (type-clr t)
+    (case t
+      ((fl) double-type)
+      ((l64) int64-type)
+      (else int32-type)))
 
   ;; 把 e 的值以 t（fx / fl）的原始形式压栈；e 的类型必须已知是 t（expr-type 保证），否则先求值再 unbox.any
+  ;; l64 上下文的原始算术（cleat-042）：clj-call 是 Numbers 算术时直接发 int64 IL
   (define (cg-raw e mc t)
+    (if (eq? t 'l64)
+        (let ((oa (numbers-arith-args e var-types)))
+          (if oa
+              (begin (numbers-raw-emit-args! (cdr oa) (car oa) mc) (void))
+              (cg-raw/default e mc t)))
+        (cg-raw/default e mc t)))
+
+  (define (cg-raw/default e mc t)
     (define (fallback) (cg e mc 'value) (emit! mc `(unbox.any ,(type-clr t))))
     (nanopass-case (L3 Expr) e
       [(quote ,d)
@@ -815,7 +870,61 @@ See docs/license.txt. |#
              (fallback)))]
       [else (fallback)]))
 
-  ;; $fx… / $fl… 算术原语的原始结果（不装箱）；不认识时返回 #f 且不生成代码
+  ;; Numbers 的 int64 算术原始发射（cleat-042）：实参全部已知 l64 时直接发 int64 IL——
+  ;; 消除装箱与 ops 分派；溢出检查与 Numbers 的语义一致（位测试 + ThrowLongOverflow，
+  ;; 抛 ArithmeticException "integer overflow"）。不适用时返回 #f 且不生成代码。
+  ;; Numbers 的 int64 算术原始发射（cleat-042）：实参全部已知 l64 时直接发 int64 IL——
+  ;; 消除装箱与 ops 分派；溢出检查与 Numbers 的语义一致（位测试 + ThrowLongOverflow，
+  ;; 抛 ArithmeticException "integer overflow"）。不适用时返回 #f 且不生成代码。
+  (define (numbers-raw-emit! d0 d1 e* mc)
+    (if (and (numbers-arith-shape? d0 d1 e*)
+             (numbers-arith-args-list? d0 d1 e* var-types))
+        (begin
+          (numbers-raw-emit-args! (list-tail e* 3) (quoted-datum (cadr e*)) mc)
+          #t)
+        #f))
+
+  (define (numbers-raw-emit-args! args op mc)
+    (case op
+      ((lt)
+       (for-each (lambda (x) (cg-raw x mc 'l64)) args)
+       (emit! mc '(clt)))
+      ((inc)
+       ;; inc：仅 MaxValue 溢出（tx >= 0 且结果 <= 0）
+       (let ((tx (new-local! mc int64-type)) (ovf (new-label! mc)) (ok (new-label! mc)))
+         (cg-raw (car args) mc 'l64)
+         (emit! mc `(stloc ,tx)
+                `(ldloc ,tx) '(ldc.i4 0) `(blt ,ok)
+                `(ldloc ,tx) '(ldc.i4 1) '(add) '(dup) '(ldc.i4 0) `(ble ,ovf)
+                `(br ,ok)
+                `(label ,ovf) '(pop)
+                `(call "clojure.lang.Numbers" "ThrowLongOverflow" () ,int64-type)
+                `(label ,ok))))
+      ((add)
+       (let ((tx (new-local! mc int64-type)) (ty (new-local! mc int64-type)) (tr (new-local! mc int64-type))
+             (ok (new-label! mc)))
+         (cg-raw (car args) mc 'l64) (emit! mc `(stloc ,tx))
+         (cg-raw (cadr args) mc 'l64) (emit! mc `(stloc ,ty))
+         ;; 溢出 ⇔ (ret^x) < 0 且 (ret^y) < 0
+         (emit! mc `(ldloc ,tx) `(ldloc ,ty) '(add) '(dup) `(stloc ,tr))
+         (emit! mc `(ldloc ,tr) `(ldloc ,tx) '(xor) '(ldc.i4 0) `(bge ,ok))
+         (emit! mc `(ldloc ,tr) `(ldloc ,ty) '(xor) '(ldc.i4 0) `(bge ,ok))
+         (emit! mc '(pop)
+                `(call "clojure.lang.Numbers" "ThrowLongOverflow" () ,int64-type)
+                `(label ,ok))))
+      ((minus)
+       (let ((tx (new-local! mc int64-type)) (ty (new-local! mc int64-type)) (tr (new-local! mc int64-type))
+             (ok (new-label! mc)))
+         (cg-raw (car args) mc 'l64) (emit! mc `(stloc ,tx))
+         (cg-raw (cadr args) mc 'l64) (emit! mc `(stloc ,ty))
+         ;; 溢出 ⇔ (ret^x) < 0 且 (ret^~y) < 0
+         (emit! mc `(ldloc ,tx) `(ldloc ,ty) '(sub) '(dup) `(stloc ,tr))
+         (emit! mc `(ldloc ,tr) `(ldloc ,tx) '(xor) '(ldc.i4 0) `(bge ,ok))
+         (emit! mc `(ldloc ,tr) `(ldloc ,ty) '(ldc.i4 -1) '(xor) '(ldc.i4 0) `(bge ,ok))
+         (emit! mc '(pop)
+                `(call "clojure.lang.Numbers" "ThrowLongOverflow" () ,int64-type)
+                `(label ,ok))))))
+
   (define (raw-prim! pr e* mc)
     (define (args t) (operands! mc (map (lambda (x) (lambda () (cg-raw x mc t))) e*)))
     (let ((argc (length e*)))
@@ -836,9 +945,10 @@ See docs/license.txt. |#
         (else #f))))
 
   (define (box-raw! mc t)
-    (if (eq? t 'fl)
-        (emit! mc `(box ,double-type))
-        (emit! mc `(call ,rt-type "Box" (,int32-type) ,obj))))
+    (case t
+      ((fl) (emit! mc `(box ,double-type)))
+      ((l64) (emit! mc `(box ,int64-type)))
+      (else (emit! mc `(call ,rt-type "Box" (,int32-type) ,obj)))))
 
   ;; ———————————————— 变量 ————————————————
 
@@ -1183,12 +1293,16 @@ See docs/license.txt. |#
          (emit! mc `(call ,clj-rt-type "get" ,(objs (+ 2 (length defs))) ,obj) `(label ,end))
          (finish-value! mc ctx))]
       [(clj-call ,d0 ,d1 ,e* ...)
-       ;; ClojureOps 的静态方法：参数与返回都是 object；d1 为固定参数个数时其余实参打包成 object[]
-       (let ((argc (length e*)))
-         (operands! mc (map (lambda (x) (lambda () (cg x mc 'value))) e*))
-         (when d1 (pack-array! mc (- argc d1)))
-         (emit! mc `(call ,clojure-ops-type ,d0 ,(if d1 (append (objs d1) (list obj-array)) (objs argc)) ,obj))
-         (finish-value! mc ctx))]
+       ;; ClojureOps 的静态方法：参数与返回都是 object；d1 为固定参数个数时其余实参打包成 object[]。
+       ;; Numbers 的 int64 算术（cleat-042）在实参类型全知时直接发 int64 原始运算
+       (if (numbers-raw-emit! d0 d1 e* mc)
+           (finish-value! mc ctx)
+           (begin
+             (let ((argc (length e*)))
+               (operands! mc (map (lambda (x) (lambda () (cg x mc 'value))) e*))
+               (when d1 (pack-array! mc (- argc d1)))
+               (emit! mc `(call ,clojure-ops-type ,d0 ,(if d1 (append (objs d1) (list obj-array)) (objs argc)) ,obj))
+               (finish-value! mc ctx))))]
       [(clj-static-call ,d0 ,d1 ,e* ...)
        ;; 受保护的直接链接（cleat-033，designs/04 §6）：e0 取 Var 的当前根。实参先存入临时变量，根还是函数类 d0 时
        ;; newobj 一个实例作 self、直接 call d0::invokeStatic；被 with-redefs / 重定义换掉的根（别的类）走普通

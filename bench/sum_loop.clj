@@ -2,12 +2,16 @@
 ;; 由 tools/build.cs bench 聚合（最小 / 中位），--write 记录基线到 bench/baseline.edn。
 (ns bench.sum-loop)
 
+(defn run []
+  (loop [i 0 acc 0]
+    (if (< i 5000000)
+      (recur (inc i) (+ acc i))
+      acc)))
+
 (defn -main [& _]
+  (assert (= (run) 12499997500000))
   (dotimes [_ 5]
     (let [sw (System.Diagnostics.Stopwatch/StartNew)]
-      (loop [i 0 acc 0]
-        (if (< i 5000000)
-          (recur (inc i) (+ acc i))
-          (assert (= acc 12499997500000))))
-      (printf "BENCH sum-loop %d%n" (.ElapsedMilliseconds sw))
+      (run)
+      (printf "BENCH sum_loop %d%n" (.ElapsedMilliseconds sw))
       (flush))))

@@ -38,6 +38,7 @@ See docs/license.txt. |#
       '((object . "System.Object")
         (object-array . "System.Object[]")
         (int32 . "System.Int32")
+        (int64 . "System.Int64")
         (double . "System.Double")
         (boolean . "System.Boolean")
         (char . "System.Char")
