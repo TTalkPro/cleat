@@ -3,12 +3,17 @@
     <Project Path="src/Cleat.Core/Cleat.Core.csproj" />
     <Project Path="src/Cleat.Emit/Cleat.Emit.csproj" />
     <Project Path="src/Cleat.Host/Cleat.Host.csproj" />
+    <Project Path="src/Cleat.Hosting/Cleat.Hosting.csproj" />
     <Project Path="src/Cleat.PrimGen/Cleat.PrimGen.csproj" />
     <Project Path="src/Cleat.Scheme/Cleat.Scheme.csproj" />
     <Project Path="src/Cleat.Stage0/Cleat.Stage0.csproj" />
   </Folder>
+  <Folder Name="/examples/">
+    <Project Path="examples/WebServer/WebServer.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Cleat.Core.Tests/Cleat.Core.Tests.csproj" />
+    <Project Path="tests/Cleat.Examples.Tests/Cleat.Examples.Tests.csproj" />
     <Project Path="tests/Cleat.Host.Tests/Cleat.Host.Tests.csproj" />
     <Project Path="tests/Cleat.Scheme.Tests/Cleat.Scheme.Tests.csproj" />
   </Folder>

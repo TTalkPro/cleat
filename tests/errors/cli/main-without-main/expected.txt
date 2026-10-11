@@ -1,0 +1,3 @@
+Execution error (InvalidOperationException) at (REPL:1).
+namespace clojure.string has no -main
+exit: 1

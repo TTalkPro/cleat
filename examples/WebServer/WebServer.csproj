@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- 嵌入示例（cleat-035，IronScheme designs/07 §5 的 examples/WebServer 对应物）：Kestrel 最小接口在 C# 一侧，
+       处理函数用 Clojure 写（handlers.clj），经 Cleat.Hosting 调用。 -->
+  <PropertyGroup>
+    <RootNamespace>Cleat.Examples.WebServer</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cleat.Hosting\Cleat.Hosting.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="handlers.clj" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

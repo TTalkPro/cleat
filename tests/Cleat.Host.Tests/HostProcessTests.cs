@@ -20,7 +20,7 @@ public class HostProcessTests
 
     private static string TestDir => TestContext.CurrentContext.TestDirectory;
     internal static string RepoDir => Path.GetFullPath(Path.Combine(TestDir, "..", "..", "..", "..", ".."));
-    private static string HostDll =>
+    internal static string HostDll =>
       Path.Combine(RepoDir, "src", "Cleat.Host", "bin", new DirectoryInfo(TestDir).Parent.Name, new DirectoryInfo(TestDir).Name, "cleat.dll");
 
     internal sealed class Result
