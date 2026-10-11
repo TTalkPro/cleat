@@ -1,7 +1,7 @@
 ;;; iron-026 验收：小程序端到端 —— 展开器展开得到 Lcore → 新编译器生成 Lcil → 发射器（内存模式）→ 运行，结果与期望一致。
-(import (rnrs) (rnrs eval) (ironscheme) (ironscheme compiler))
+(import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme compiler))
 
-(define env (environment '(rnrs) '(rnrs mutable-pairs) '(rnrs mutable-strings) '(ironscheme) '(ironscheme clr)))
+(define env (environment '(rnrs) '(rnrs mutable-pairs) '(rnrs mutable-strings) '(cleat scheme) '(cleat scheme clr)))
 
 (define (run expr)
   ((compile-core (expand->core expr env))))

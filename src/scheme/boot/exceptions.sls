@@ -26,10 +26,10 @@ See docs/license.txt. |#
     values)
   (import 
     ;(boot config) 
-    (only (ironscheme) import make-stacktrace-condition stacktrace-condition? display-stacktrace ungensym)
-    (only (ironscheme clr) clr-new)
-    (ironscheme unsafe)
-    (ironscheme contracts)
+    (only (cleat scheme) import make-stacktrace-condition stacktrace-condition? display-stacktrace ungensym)
+    (only (cleat scheme clr) clr-new)
+    (cleat scheme unsafe)
+    (cleat scheme contracts)
     (except (rnrs) 
       raise 
       raise-continuable 

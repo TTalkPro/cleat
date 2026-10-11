@@ -1,9 +1,9 @@
 ;;; cleat-048：可扩展语法对象（designs/15 §2）的端到端测试，在镜像上运行。
 ;;; 导入 (clojure syntax-kinds) 即登记 Clojure 的向量 / map / set / 列表为语法扩展；
 ;;; Scheme 的 reader 读不出 Clojure 字面量，含 Clojure 数据的形式用准引用拼出来再 eval（展开 → 编译 → 运行）。
-(import (rnrs) (rnrs eval) (ironscheme) (ironscheme clr) (ironscheme syntax-ext) (clojure syntax-kinds))
+(import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme clr) (cleat scheme syntax-ext) (clojure syntax-kinds))
 
-(define env (environment '(rnrs) '(ironscheme) '(ironscheme clr) '(ironscheme syntax-ext) '(clojure syntax-kinds)))
+(define env (environment '(rnrs) '(cleat scheme) '(cleat scheme clr) '(cleat scheme syntax-ext) '(clojure syntax-kinds)))
 (define (run expr) (eval expr env))
 (define failures 0)
 (define checks 0)

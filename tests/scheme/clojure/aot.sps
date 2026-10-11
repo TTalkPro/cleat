@@ -2,7 +2,7 @@
 ;;; deftype*（可变字段）、reify*、try / catch、各种常量）经 (clojure compile) 编成持久化程序集；ILVerify（装了的话）校验；
 ;;; 然后在**新的进程**里（stage0 + 同一个 Scheme 镜像）只加载这个 dll——命名空间与 Var 由常量表的 (var ns name) 在加载时
 ;;; intern，Initialize 执行全部顶层形式——再从 Clojure 代码调用其中的函数与类型，比较结果。
-(import (rnrs) (rnrs eval) (ironscheme) (ironscheme clr) (ironscheme compiler)
+(import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme clr) (cleat scheme compiler)
         (clojure syntax-kinds) (clojure namespaces) (clojure syntax) (clojure compile))
 
 (clr-static-call clojure.lang.RT Init)
@@ -95,7 +95,7 @@
 (when (file-exists? loader) (delete-file loader))
 (call-with-output-file loader
   (lambda (p)
-    (write '(import (rnrs) (ironscheme) (ironscheme clr) (clojure syntax-kinds) (clojure namespaces) (clojure syntax)) p)
+    (write '(import (rnrs) (cleat scheme) (cleat scheme clr) (clojure syntax-kinds) (clojure namespaces) (clojure syntax)) p)
     (write
       `(begin
          (clr-static-call clojure.lang.RT Init)

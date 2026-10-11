@@ -10,7 +10,7 @@ See docs/license.txt. |#
 ;;;   (primitive-table-file [路径])     原语表文件，默认 "boot/primitives.ss"（相对当前目录）
 ;;;   (primitive-info 名字)             → primitive 记录或 #f
 ;;;   (primitive-overload 信息 实参个数) → 匹配的重载或 #f
-(library (ironscheme compiler primitives)
+(library (cleat scheme compiler primitives)
   (export
     primitive-table-file
     primitive-info
@@ -19,7 +19,7 @@ See docs/license.txt. |#
     primitive-overload
     overload-type overload-method overload-fixed overload-rest? overload-flags overload-inline
     overload-pure? overload-allow-tail-call?)
-  (import (rnrs) (only (ironscheme) make-parameter))
+  (import (rnrs) (only (cleat scheme) make-parameter))
 
   (define-record-type primitive
     (fields name overloads special))

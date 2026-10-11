@@ -32,10 +32,10 @@
   (import 
     (rnrs)
     (rnrs r5rs)
-    (ironscheme reader)
-    (ironscheme records printer)
-    (only (ironscheme) fprintf symbol-bound? remove-location)
-    (only (ironscheme unsafe) $make-param-slot $param-ref $param-set!
+    (cleat scheme reader)
+    (cleat scheme records printer)
+    (only (cleat scheme) fprintf symbol-bound? remove-location)
+    (only (cleat scheme unsafe) $make-param-slot $param-ref $param-set!
           $application-directory $current-directory $set-current-directory!
           $path-extension $string-replace $path-change-extension $path-file-name)
     (only (boot system bootstrap)

@@ -13,7 +13,7 @@ See docs/license.txt. |#
 ;;;   (compile-bootfile forms [文件]) 核心形式列表 → boot 镜像 dll（入口 #Module::Initialize）
 ;;;
 ;;; 编译器只读 Lcore 与原语表，不读运行时状态（03 §1）。发射器（Cleat.Emit，程序集 cleat-emit）在同一进程中以库 API 调用。
-(library (ironscheme compiler)
+(library (cleat scheme compiler)
   (export
     compile-forms->lcil compile->lcil-text compile->lcil-text-from-sexpr
     compile-core compile-library-dll compile-bootfile
@@ -24,18 +24,18 @@ See docs/license.txt. |#
     current-compile-target)
   (import
     (rnrs)
-    (only (ironscheme) make-parameter parameterize gensym)
-    (ironscheme clr)
-    (ironscheme compiler primitives)
-    (ironscheme compiler parse)
-    (ironscheme compiler loops)
-    (ironscheme compiler languages)
-    (ironscheme compiler front)
-    (ironscheme compiler closures)
-    (ironscheme compiler codegen)
-    (ironscheme compiler targets)
-    (ironscheme compiler lcil)
-    (only (ironscheme unsafe) $set-compile-target! $try/catch $throw))
+    (only (cleat scheme) make-parameter parameterize gensym)
+    (cleat scheme clr)
+    (cleat scheme compiler primitives)
+    (cleat scheme compiler parse)
+    (cleat scheme compiler loops)
+    (cleat scheme compiler languages)
+    (cleat scheme compiler front)
+    (cleat scheme compiler closures)
+    (cleat scheme compiler codegen)
+    (cleat scheme compiler targets)
+    (cleat scheme compiler lcil)
+    (only (cleat scheme unsafe) $set-compile-target! $try/catch $throw))
 
   (clr-reference cleat-emit)
 

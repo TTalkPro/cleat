@@ -22,17 +22,17 @@ See docs/license.txt. |#
 ;;;   谓词原语在 test 上下文直接生成比较。
 ;;; - try 要求进入时求值栈为空：多操作数的形式中，若排在后面的操作数含 try，先把各操作数存入临时变量（lift-try）。
 ;;; - 常量：fixnum、布尔、'()、字符、字符串直接生成；其余进常量表（iron-020 的编码）。
-(library (ironscheme compiler codegen)
+(library (cleat scheme compiler codegen)
   (export generate-unit canonical-gensyms current-target unit-interface loop-forms)
   (import
     (rnrs)
-    (only (ironscheme) void unspecified? make-parameter gensym symbol-bound? symbol-value)
+    (only (cleat scheme) void unspecified? make-parameter gensym symbol-bound? symbol-value)
     (nanopass)
-    (ironscheme compiler languages)
-    (ironscheme compiler primitives)
-    (ironscheme compiler constants)
-    (only (ironscheme unsafe) $immutable-string? $get-environment-variable)
-    (ironscheme compiler targets))
+    (cleat scheme compiler languages)
+    (cleat scheme compiler primitives)
+    (cleat scheme compiler constants)
+    (only (cleat scheme unsafe) $immutable-string? $get-environment-variable)
+    (cleat scheme compiler targets))
 
   ;; 规范 gensym 名（iron-030，designs/05-bootstrap.md §7 的后备方案）：设为 #t 时，常量表中本进程生成的 gensym
   ;; （名字以本进程的 TICKS 后缀结尾）按首次出现的顺序改名为 g$名字$序号$%b。构建过程本身用非确定性 gensym，

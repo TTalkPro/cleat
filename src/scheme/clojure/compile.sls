@@ -10,16 +10,16 @@
 ;;;     各形式已经由驱动展开、求值过（顺序即求值顺序，顶层 do 已拆开），这里只编译保存：dll 加上旁边的接口文件（Driver.WriteInterfaceFile）；
 ;;;     镜像id（编译时运行的 Clojure boot 镜像）不是 #f 时，入口第一个形式是 BootInterface.Check（镜像换了则加载器回退源码）。
 ;;;
-;;;   Clojure 值的常量编码器（编译器 (ironscheme compiler constants) 的外来常量挂钩）在本库体执行时登记。
+;;;   Clojure 值的常量编码器（编译器 (cleat scheme compiler constants) 的外来常量挂钩）在本库体执行时登记。
 
 (library (clojure compile)
   (export clojure-compile-forms clojure-compile-unit clojure-compile-boot-unit encode-clojure-constant)
   (import
     (rnrs)
-    (only (ironscheme) parameterize)
-    (ironscheme clr)
-    (only (ironscheme compiler) compile-forms->lcil compile-core compile->lcil-text-from-sexpr canonical-gensyms)
-    (only (ironscheme compiler constants) set-foreign-constant-encoder!)
+    (only (cleat scheme) parameterize)
+    (cleat scheme clr)
+    (only (cleat scheme compiler) compile-forms->lcil compile-core compile->lcil-text-from-sexpr canonical-gensyms)
+    (only (cleat scheme compiler constants) set-foreign-constant-encoder!)
     (clojure syntax-kinds)
     (clojure namespaces)
     (clojure syntax))

@@ -49,8 +49,8 @@
       bound-identifier=? datum->syntax syntax-error
       syntax-violation syntax->datum make-variable-transformer
       null-environment scheme-report-environment)
-    (only (ironscheme) valuetype-vector?)  
-    (only (ironscheme unsafe) $gensym-scope)
+    (only (cleat scheme) valuetype-vector?)  
+    (only (cleat scheme unsafe) $gensym-scope)
     (rnrs mutable-pairs)
     (boot expander library-manager)
     (boot expander builders)
@@ -4535,7 +4535,7 @@
 
   (define new-interaction-environment
     (case-lambda 
-      [() (new-interaction-environment '(ironscheme))]    
+      [() (new-interaction-environment '(cleat scheme))]    
       [(libname)
         (let ((lib (find-library-by-name libname))
               (rib (make-empty-rib)))

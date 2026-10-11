@@ -26,7 +26,7 @@
     current-library-collection library-path library-extensions alternative-file-locator
     serialize-all current-precompiled-library-loader allow-library-redefinition
     library-content source-libraries)
-  (import (rnrs) (boot expander compat) (rnrs r5rs) (only (ironscheme) format printf))
+  (import (rnrs) (boot expander compat) (rnrs r5rs) (only (cleat scheme) format printf))
   
   (define (make-collection)
     (let ((set '()))

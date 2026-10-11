@@ -57,11 +57,11 @@ See docs/license.txt. |#
     fxadd1
     fxsub1)
   (import 
-    (ironscheme core)
-    (ironscheme typed)
-    (ironscheme unsafe)
-    (ironscheme integrable)
-    (except (ironscheme) 
+    (cleat scheme core)
+    (cleat scheme typed)
+    (cleat scheme unsafe)
+    (cleat scheme integrable)
+    (except (cleat scheme) 
       fixnum-width
       fxif
       fxcopy-bit

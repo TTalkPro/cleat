@@ -16,10 +16,10 @@ See docs/license.txt. |#
     add-custom-printer!
     add-record-printer!)
   (import 
-    (except (ironscheme) write-char write display generic-write initialize-default-printers textual-output-port? writeln displayln shorthand-syntax-output)
-    (ironscheme contracts)
-    (ironscheme unsafe)
-    (ironscheme typed))
+    (except (cleat scheme) write-char write display generic-write initialize-default-printers textual-output-port? writeln displayln shorthand-syntax-output)
+    (cleat scheme contracts)
+    (cleat scheme unsafe)
+    (cleat scheme typed))
 
   (define shorthand-syntax-output
     (make-parameter #t))

@@ -1,5 +1,5 @@
 ;;; iron-022 验收：文本种子中的全部核心形式都能通过 parse-core。
-(import (rnrs) (ironscheme) (nanopass) (ironscheme compiler languages) (ironscheme compiler parse))
+(import (rnrs) (cleat scheme) (nanopass) (cleat scheme compiler languages) (cleat scheme compiler parse))
 
 (define forms
   (call-with-input-file "boot/boot-seed.core"

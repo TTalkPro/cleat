@@ -29,10 +29,10 @@
           current-ctx clojure-locals-env special-form-names)
   (import
     (rnrs)
-    (only (ironscheme) parameterize make-parameter with-clr-exception-handler format)
-    (only (ironscheme unsafe) $throw $try/catch $try/finally)
-    (ironscheme syntax-ext)
-    (ironscheme clr)
+    (only (cleat scheme) parameterize make-parameter with-clr-exception-handler format)
+    (only (cleat scheme unsafe) $throw $try/catch $try/finally)
+    (cleat scheme syntax-ext)
+    (cleat scheme clr)
     (clojure syntax-kinds)
     (clojure namespaces))
 

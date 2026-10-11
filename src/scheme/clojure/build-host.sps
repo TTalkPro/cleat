@@ -7,7 +7,7 @@
 ;;;      program program.fasl         启动时运行（登记钩子）
 ;;;      deferred libN.fasl (库名)    第一次 AOT 编译时再按序装入
 ;;; 宿主（Cleat.Scheme.Clojure.ClojureHost）读清单；fasl 对旧镜像编译时退回源码。
-(import (rnrs) (rnrs eval) (ironscheme))
+(import (rnrs) (rnrs eval) (cleat scheme))
 
 (define out-dir
   (let ((args (command-line)))

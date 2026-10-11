@@ -55,7 +55,7 @@ See docs/license.txt. |#
     string-normalize-nfkd
     string-normalize-nfc
     string-normalize-nfkc)
-  (import (except (ironscheme)
+  (import (except (cleat scheme)
     char=?
     char<?
     char>?
@@ -101,8 +101,8 @@ See docs/license.txt. |#
     string-foldcase
     string-compare
     string-ci-compare)
-    (ironscheme unsafe)
-    (ironscheme contracts))
+    (cleat scheme unsafe)
+    (cleat scheme contracts))
     
   
   ;; 字符分类与大小写映射经 $char-* 原语（IronScheme.Core.HostPrimitives，iron-056）；

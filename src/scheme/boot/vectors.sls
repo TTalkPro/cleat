@@ -8,10 +8,10 @@ See docs/license.txt. |#
   (export)
   (import 
     (rnrs)
-    (only (ironscheme) void export)
-    (ironscheme unsafe)
-    (ironscheme typed)
-    (ironscheme syntax utils))
+    (only (cleat scheme) void export)
+    (cleat scheme unsafe)
+    (cleat scheme typed)
+    (cleat scheme syntax utils))
 
   (define-syntax define-vector-type
     (lambda (x)

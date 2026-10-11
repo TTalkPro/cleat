@@ -13,13 +13,13 @@ See docs/license.txt. |#
 ;;;   (write-lcil-datum x port) → 按 Lcil 词法（04 §2.1）写出编码等 S 表达式
 ;;;   (set-foreign-constant-encoder! proc) → 登记"外来常量"的编码器 (proc 对象 encode) → 编码 | #f，最先查（cleat-051：
 ;;;                              Clojure 的 Var、long、关键字、符号、集合等由 (clojure compile) 登记；编译器本身不认识它们）
-(library (ironscheme compiler constants)
+(library (cleat scheme compiler constants)
   (export encode-constant encode-constants write-lcil-datum set-foreign-constant-encoder!)
   (import
     (rnrs)
     (rnrs mutable-strings)
-    (only (ironscheme) unspecified?)
-    (only (ironscheme unsafe)
+    (only (cleat scheme) unspecified?)
+    (only (cleat scheme unsafe)
           $compound-condition? $record? $record-rtd $record-fields $rtd? $rcd? $rcd-rtd $rcd-parent $rcd-protocol
           $annotation? $annotation-expression $annotation-source $annotation-stripped
           $string-mutable? $eq-hashtable? $string->immutable $plain-string?))

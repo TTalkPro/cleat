@@ -5,14 +5,14 @@ This source code is subject to terms and conditions of the BSD License.
 See docs/license.txt. |#
 
 ;;; lower-loops：L0 → L0，接在 parse-core 之后（IronScheme iron-034b）。
-;;; 从 IronScheme 的 (ironscheme compiler async) 拆出（cleat-046）：那个库的 lower-async（async-lambda 体的状态机整理）
+;;; 从 IronScheme 的 (cleat scheme compiler async) 拆出（cleat-046）：那个库的 lower-async（async-lambda 体的状态机整理）
 ;;; 随 async 一起不纳入；这里只保留它的通用工具（kids、check-refs、jumpify、fresh）与 lower-loops 本身，一字未改。
 ;;;
 ;;;   D9  单绑定 letrec 的 lambda，全部引用都是参数个数相符的尾调用 ⇒ (label f (x …) body fbody)，调用 ⇒ (jump f e …)
 ;;;   let 绑定、只在尾位置调用的 lambda 也变成 label；消费者是字面 lambda 的 call-with-values 内联（D6）
-(library (ironscheme compiler loops)
+(library (cleat scheme compiler loops)
   (export lower-loops reset-fresh-names! loops-made)
-  (import (rnrs) (only (ironscheme unsafe) $get-environment-variable) (nanopass) (ironscheme compiler languages))
+  (import (rnrs) (only (cleat scheme unsafe) $get-environment-variable) (nanopass) (cleat scheme compiler languages))
 
   ;; —— 通用工具 ——
 

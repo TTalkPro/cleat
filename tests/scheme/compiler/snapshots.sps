@@ -1,9 +1,9 @@
 ;;; 快照测试（iron-022 ~ iron-026）：手写 Lcore 经各 pass 后的 L0、L2、L3 与 Lcil 文本，与 tests/scheme/compiler/snapshots/ 下的文件比较（在 src/scheme 目录下运行）。
 ;;; 文件不存在时生成；不一致时写出 .actual 文件并失败。更新快照：删除对应文件后重跑。
-(import (rnrs) (ironscheme) (nanopass)
-        (ironscheme compiler languages) (ironscheme compiler parse) (ironscheme compiler front)
-        (ironscheme compiler closures) (ironscheme compiler) (ironscheme compiler loops)
-        (only (ironscheme compiler lcil) lcil->string))
+(import (rnrs) (cleat scheme) (nanopass)
+        (cleat scheme compiler languages) (cleat scheme compiler parse) (cleat scheme compiler front)
+        (cleat scheme compiler closures) (cleat scheme compiler) (cleat scheme compiler loops)
+        (only (cleat scheme compiler lcil) lcil->string))
 
 (define cases
   '((closure

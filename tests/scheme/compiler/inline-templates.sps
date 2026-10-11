@@ -1,6 +1,6 @@
 ;;; iron-025 验收：每个内联模板（以及几个静态调用的原语）与 C# 原语实现对照。
 ;;; 对每组实参分别在值上下文、谓词上下文（if 的测试）编译，实参经 lambda 参数传入以免被常量折叠。
-(import (rnrs) (ironscheme) (ironscheme compiler))
+(import (rnrs) (cleat scheme) (cleat scheme compiler))
 
 (define cases
   ;; (原语 实参组 …)

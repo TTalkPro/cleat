@@ -8,8 +8,8 @@
 (library (boot equal)
   (export equal?)
   (import 
-    (except (ironscheme) equal?)
-    (only (ironscheme unsafe) $make-random $random-next))
+    (except (cleat scheme) equal?)
+    (only (cleat scheme unsafe) $make-random $random-next))
     
   (define k0 400)
   (define kb -40)    
@@ -17,7 +17,7 @@
   (module UNSAFE 
     (< <= > >= = + - vector-ref car cdr)
     (import 
-      (rename (ironscheme unsafe)
+      (rename (cleat scheme unsafe)
         ($vector-ref vector-ref)
         ($car   car)
         ($cdr   cdr)

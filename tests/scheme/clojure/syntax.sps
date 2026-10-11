@@ -3,7 +3,7 @@
 ;;; 允许不同；cleat-051 起 deftype* / reify* 编译为真实类型，断言其行为）；错误一律断言 Clojure 的文本。
 ;;; 另有 test_clojure/special.clj、macros.clj 里不依赖 clojure.core 的回归用例。clojure.core 未加载：测试需要的
 ;;; 几个函数（list、=、inc …）在下面用 def + fn* + 互操作定义。
-(import (rnrs) (rnrs eval) (ironscheme) (ironscheme clr) (ironscheme compiler)
+(import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme clr) (cleat scheme compiler)
         (clojure syntax-kinds) (clojure namespaces) (clojure syntax))
 
 (clr-static-call clojure.lang.RT Init)

@@ -13,14 +13,14 @@ See docs/license.txt. |#
 ;;;                      右边引用了"之后才绑定"的变量时，这些变量先绑定为未初始化，再按顺序 set!
 ;;;   cp0-lite           L1 → L1：if 的常量测试、begin 中无副作用的常量、少量纯原语的常量折叠
 ;;;   convert-assignments L1 → L2：既被赋值又被捕获的词法变量改为 Box
-(library (ironscheme compiler front)
+(library (cleat scheme compiler front)
   (export analyze simplify-letrec check-forward cp0-lite convert-assignments
           analysis-assigned analysis-captured analysis-massigned)
   (import
     (rnrs)
-    (only (ironscheme) void)
+    (only (cleat scheme) void)
     (nanopass)
-    (ironscheme compiler languages))
+    (cleat scheme compiler languages))
 
   ;; —— 小集合（无重复的列表）——
   (define (set-add x s) (if (memq x s) s (cons x s)))

@@ -16,7 +16,7 @@ See docs/license.txt. |#
     record-type-opaque?
     record-type-field-names
     record-field-mutable?)
-  (import (except (ironscheme)
+  (import (except (cleat scheme)
             record-type-name
             record-type-parent
             record-type-uid
@@ -25,8 +25,8 @@ See docs/license.txt. |#
             record-type-opaque?
             record-type-field-names
             record-field-mutable?)
-          (ironscheme contracts)
-          (ironscheme unsafe))
+          (cleat scheme contracts)
+          (cleat scheme unsafe))
           
           
   (define/contract (record-type-name rtd:record-type-descriptor)

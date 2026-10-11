@@ -3,7 +3,7 @@
 
 (library (tests unit-test-helpers-implementation)
   (export with-output-to-string display-condition format-error-message)
-  (import (ironscheme))
+  (import (cleat scheme))
 
   ;; easy enough to define ;p
   (define (with-output-to-string thunk)

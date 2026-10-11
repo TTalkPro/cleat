@@ -8,7 +8,7 @@
 // 命令：
 //   scheme-stage1 [输出目录]
 //                         编译 C# 项目后，stage0 执行文本种子 src/scheme/boot/boot-seed.core、运行
-//                         boot/ironscheme-buildscript-nano.sps，把 cleat.scheme.boot.{lcil,dll,ifc} 输出到指定目录
+//                         boot/buildscript-nano.sps，把 cleat.scheme.boot.{lcil,dll,ifc} 输出到指定目录
 //                         （默认 src/boot/，此时等同 dotnet build 的 GenerateSchemeBootImage，但总是重新生成）  [cleat-046]
 //   seed [--stage0]       重新生成 Scheme 文本种子 src/scheme/boot/boot-seed.core（IronScheme 05 §5）：默认在新系统上运行
 //                         （stage0 --boot src/boot/cleat.scheme.boot.dll），--stage0 由 stage0 执行现有种子来运行；产物相同 [cleat-046]
@@ -216,11 +216,11 @@ void Stage1(string[] a)
 void BuildCSharp() => Run("dotnet", ["build", solution, "-c", "Release", "-p:BuildBootImage=false", "-v", "quiet", "-nologo"]);
 
 // stage0 执行种子 → 运行 nano 构建脚本 → stage1 Scheme boot 镜像（IronScheme 05 §3 Phase A）。在 src/scheme 目录下运行：
-// 库搜索路径 lib（编译器、(ironscheme clr)、nanopass 的适配库）与 nanopass（框架本身）
+// 库搜索路径 lib（编译器、(cleat scheme clr)、nanopass 的适配库）与 nanopass（框架本身）
 void SchemeStage1(string[] a)
 {
     string outDir = a.Length > 0 ? Path.GetFullPath(a[0]) : bootDir;
-    Run("dotnet", [stage0, "-I", "lib", "-I", "nanopass", "boot/boot-seed.core", "boot/ironscheme-buildscript-nano.sps", outDir], schemeDir);
+    Run("dotnet", [stage0, "-I", "lib", "-I", "nanopass", "boot/boot-seed.core", "boot/buildscript-nano.sps", outDir], schemeDir);
 }
 
 // 文本种子再生成（IronScheme 05 §5）：seed-buildscript.sps 只展开 boot 源码、不编译，写回 boot/boot-seed.core

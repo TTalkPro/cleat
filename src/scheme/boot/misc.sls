@@ -23,9 +23,9 @@ See docs/license.txt. |#
     )
   (import 
     (rnrs)
-    (only (ironscheme) string-compare)
-    (ironscheme contracts)
-    (ironscheme unsafe))
+    (only (cleat scheme) string-compare)
+    (cleat scheme contracts)
+    (cleat scheme unsafe))
   
   
   (define/contract (procedure-arity proc:procedure)

@@ -13412,7 +13412,7 @@
   (void))
 
 (library-letrec*
-  (ironscheme constant-fold)
+  (cleat scheme constant-fold)
   ((g$set-allow-constant-fold!$14613$%seed g$set-allow-constant-fold!$14618$%seed (case-lambda ((g$proc$14616$%seed) g$proc$14616$%seed)))
     (g$enable-constant-fold$14614$%seed
       g$enable-constant-fold$14619$%seed
@@ -17848,7 +17848,7 @@
     (g$new-interaction-environment$15840$%seed
       g$new-interaction-environment$19918$%seed
       (case-lambda
-        (() (g$new-interaction-environment$15840$%seed (quote (ironscheme))))
+        (() (g$new-interaction-environment$15840$%seed (quote (cleat scheme))))
         ((g$libname$19606$%seed)
           ((case-lambda ((g$lib$19607$%seed g$rib$19608$%seed) (begin ((case-lambda ((g$subst$19609$%seed) (begin (g$set-rib-sym*!$15361$%seed g$rib$19608$%seed (g$map$9196$%seed car g$subst$19609$%seed)) (g$set-rib-mark**!$15362$%seed g$rib$19608$%seed (g$map$9196$%seed (case-lambda ((g$x$19610$%seed) g$top-mark*$15343$%seed)) g$subst$19609$%seed)) (g$set-rib-label*!$15363$%seed g$rib$19608$%seed (g$map$9196$%seed cdr g$subst$19609$%seed))))) (g$library-subst$15016$%seed g$lib$19607$%seed)) (g$make-interaction-env$15783$%seed g$rib$19608$%seed (quote ()) (quote ())))))
             (g$find-library-by-name$15067$%seed g$libname$19606$%seed)
@@ -17870,7 +17870,7 @@
         (g$make-eq-hashtable$8927$%seed)))
     (g$install-library$15072$%seed
       (quote g$gen18672$%seed)
-      (quote (ironscheme))
+      (quote (cleat scheme))
       (quote ())
       (quote ())
       (quote ())
@@ -17887,7 +17887,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18673$%seed)
-      (quote (ironscheme library))
+      (quote (cleat scheme library))
       (quote ())
       (quote ())
       (quote ())
@@ -17904,7 +17904,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18674$%seed)
-      (quote (ironscheme reader))
+      (quote (cleat scheme reader))
       (quote ())
       (quote ())
       (quote ())
@@ -17921,7 +17921,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18675$%seed)
-      (quote (ironscheme serialization))
+      (quote (cleat scheme serialization))
       (quote ())
       (quote ())
       (quote ())
@@ -17938,7 +17938,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18676$%seed)
-      (quote (ironscheme core))
+      (quote (cleat scheme core))
       (quote ())
       (quote ())
       (quote ())
@@ -17955,7 +17955,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18677$%seed)
-      (quote (ironscheme unsafe))
+      (quote (cleat scheme unsafe))
       (quote ())
       (quote ())
       (quote ())
@@ -17972,7 +17972,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18678$%seed)
-      (quote (ironscheme records printer))
+      (quote (cleat scheme records printer))
       (quote ())
       (quote ())
       (quote ())
@@ -17989,7 +17989,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18679$%seed)
-      (quote (ironscheme clr internal))
+      (quote (cleat scheme clr internal))
       (quote ())
       (quote ())
       (quote ())
@@ -18482,7 +18482,7 @@
       (quote #f))
     (g$install-library$15072$%seed
       (quote g$gen18708$%seed)
-      (quote (ironscheme syntax-ext))
+      (quote (cleat scheme syntax-ext))
       (quote ())
       (quote ())
       (quote ())

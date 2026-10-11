@@ -13,7 +13,7 @@ See docs/license.txt. |#
 |#
 
 (library
-  (ironscheme constant-fold)
+  (cleat scheme constant-fold)
   (export constant-fold)
   (import
     (only (rnrs) define for-each)

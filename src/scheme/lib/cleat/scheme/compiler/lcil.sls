@@ -6,9 +6,9 @@ See docs/license.txt. |#
 
 ;;; pass 15 emit-lcil：Lcil 的 S 表达式 → 文本（designs/04-lcil-and-emitter.md §2）。
 ;;; lcil / constants / type / method / body / try / catch / finally 的子项各占一行，其余写在一行，便于 diff。
-(library (ironscheme compiler lcil)
+(library (cleat scheme compiler lcil)
   (export write-lcil lcil->string)
-  (import (rnrs) (ironscheme compiler constants))
+  (import (rnrs) (cleat scheme compiler constants))
 
   (define block-heads '(lcil constants type method body try catch finally))
 

@@ -15,9 +15,9 @@ See docs/license.txt. |#
     record-accessor
     record-mutator)
   (import 
-    (except (ironscheme) record-type-descriptor? record-constructor-descriptor?)
-    (ironscheme contracts)
-    (ironscheme unsafe))
+    (except (cleat scheme) record-type-descriptor? record-constructor-descriptor?)
+    (cleat scheme contracts)
+    (cleat scheme unsafe))
     
   
   (define (record-type-descriptor? obj)

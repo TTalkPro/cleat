@@ -32,9 +32,9 @@ See docs/license.txt. |#
     bitwise-reverse-bit-field)
     
   (import 
-    (ironscheme unsafe)
-    (ironscheme core)
-    (except (ironscheme) 
+    (cleat scheme unsafe)
+    (cleat scheme core)
+    (except (cleat scheme) 
       bitwise-if 
       bitwise-copy-bit 
       bitwise-bit-field 

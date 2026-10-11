@@ -9,9 +9,9 @@ See docs/license.txt. |#
     make-traced-macro
     make-traced-procedure )
   (import 
-    (ironscheme)
-    (ironscheme contracts)
-    (except (ironscheme core) make-traced-macro make-traced-procedure ))
+    (cleat scheme)
+    (cleat scheme contracts)
+    (except (cleat scheme core) make-traced-macro make-traced-procedure ))
     
   (define/contract make-traced-procedure 
     (case-lambda 

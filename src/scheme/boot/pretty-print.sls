@@ -16,7 +16,7 @@ See docs/license.txt. |#
     pretty-gensyms)
   (import 
     (rename 
-      (except (ironscheme) 
+      (except (cleat scheme) 
         generic-write
         pretty-gensyms
         pretty-print 

@@ -14,15 +14,15 @@ See docs/license.txt. |#
 ;;; - Clojure 节点（cleat-051）：$clj-var-ref $clj-var-set! $clj-def $clj-invoke $clj-keyword-invoke $clj-call
 ;;;   $clj-static-call（cleat-033 直接链接）$clj-fn $clj-deftype
 ;;;   （头部是这些名字且未被词法绑定时；只由 (clojure syntax) 产生）→ L0 的 clj-… 节点。
-(library (ironscheme compiler parse)
+(library (cleat scheme compiler parse)
   (export parse-core typed-clauses-made)
   (import
     (rnrs)
-    (only (ironscheme) void)
-    (only (ironscheme unsafe) $get-environment-variable)
+    (only (cleat scheme) void)
+    (only (cleat scheme unsafe) $get-environment-variable)
     (nanopass)
-    (ironscheme compiler languages)
-    (ironscheme compiler primitives))
+    (cleat scheme compiler languages)
+    (cleat scheme compiler primitives))
 
   (define (bad-form who x)
     (syntax-violation 'parse-core (string-append "invalid " who) x))

@@ -34,10 +34,10 @@ See docs/license.txt. |#
       enum-set-projection
       enum-set-subset?
       enum-set-union)
-      (only (ironscheme) fprintf format)
-      (only (ironscheme core) reverse!) ; for reverse!
-      (ironscheme contracts)
-      (ironscheme records printer)) 
+      (only (cleat scheme) fprintf format)
+      (only (cleat scheme core) reverse!) ; for reverse!
+      (cleat scheme contracts)
+      (cleat scheme records printer)) 
  
    ; type for enumerations
   (define-record-type enum (fields value info))

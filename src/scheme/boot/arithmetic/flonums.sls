@@ -63,8 +63,8 @@ See docs/license.txt. |#
     flexpt)
     
   (import
-    (ironscheme integrable)
-    (ironscheme unsafe) 
+    (cleat scheme integrable)
+    (cleat scheme unsafe) 
     (except (rnrs)
     
     flinteger?

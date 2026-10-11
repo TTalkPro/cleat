@@ -20,7 +20,7 @@ internal static class SchemePaths
     public static string Stage0 => Path.Combine(SrcDir, "Cleat.Stage0", "bin", Configuration, Framework, "stage0.dll");
     /// <summary>工作区的 Scheme boot 镜像（dotnet build 的 GenerateSchemeBootImage 生成）；可用环境变量 CLEAT_SCHEME_BOOT 覆盖。</summary>
     public static string Boot => Environment.GetEnvironmentVariable("CLEAT_SCHEME_BOOT") ?? Path.Combine(SrcDir, "boot", "cleat.scheme.boot.dll");
-    /// <summary>stage0 的库搜索路径：lib（编译器、(ironscheme clr)、nanopass 适配库）与 nanopass（框架）。</summary>
+    /// <summary>stage0 的库搜索路径：lib（编译器、(cleat scheme clr)、nanopass 适配库）与 nanopass（框架）。</summary>
     public static readonly string[] IncludeArgs = { "-I", "lib", "-I", "nanopass" };
 
     internal sealed class ProcessResult

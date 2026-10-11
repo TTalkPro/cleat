@@ -5,7 +5,7 @@
 ## §1 IronScheme（`~/workspace/IronScheme`，nanopass 分支）
 
 **事实**
-- 结构：`src/IronScheme.Core`（C# 运行时）、`IronScheme.Emit`（Lcil → Reflection.Emit）、`IronScheme.Stage0`（约 1000 行 C# 核心形式解释器）、`IronScheme.Host`、`IronScheme.PrimGen`；Scheme 侧 `src/scheme/boot/`（进入 boot 镜像的库、展开器、原语表、种子）、`lib/ironscheme/compiler/`（nanopass 编译器，约 3500 行）。
+- 结构：`src/IronScheme.Core`（C# 运行时）、`IronScheme.Emit`（Lcil → Reflection.Emit）、`IronScheme.Stage0`（约 1000 行 C# 核心形式解释器）、`IronScheme.Host`、`IronScheme.PrimGen`；Scheme 侧 `src/scheme/boot/`（进入 boot 镜像的库、展开器、原语表、种子）、`lib/cleat/scheme/compiler/`（nanopass 编译器，约 3500 行）。
 - 自举：旧系统一次性生成文本种子 `boot-seed.core`（boot 源码展开后的核心形式）→ stage0 解释种子得到展开器 → 从源码展开并解释运行 nanopass 与编译器 → 编译全部 boot 源码为 Lcil → `IronScheme.Emit` 汇编为 `ironscheme.boot.dll`（stage1）→ 新系统编译自己到 stage2、stage3，Lcil 文本与 dll 逐字节相同。
 - 关键决策（`designs/00-overview.md` D1 ~ D15）：新运行时与旧并存；每个 lambda 一个 `Procedure` 子类，`Invoke0..4`/`InvokeN`；符号值槽；编译器输入固定文法、纯函数；输出文本 Lcil；常量中立编码 + fasl；原语表是数据文件；重载决议在发射器；`tail.` 前缀；逃逸续延；记录不生成 CLR 类型；手写 reader；运行时钩子；stage0 是精简解释器。
 - 可移植性（`designs/11-portability.md`）：互操作三层（宿主绑定 / 可移植包装 / 核心只用原语）；"把托管运行时当作目标机器"：L0 ~ L3 宿主中性，codegen 按 `target` 查机器描述表；另一个宿主靠交叉编译自举，不写第二个 stage0。

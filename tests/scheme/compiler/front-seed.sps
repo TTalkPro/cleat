@@ -1,6 +1,6 @@
 ;;; iron-023 验收：boot 源文件（文本种子的全部形式）通过前中端 pass；打印一个小样本的 L2。
-(import (rnrs) (ironscheme) (nanopass)
-        (ironscheme compiler languages) (ironscheme compiler parse) (ironscheme compiler front))
+(import (rnrs) (cleat scheme) (nanopass)
+        (cleat scheme compiler languages) (cleat scheme compiler parse) (cleat scheme compiler front))
 
 (define (front x)
   (let* ((l0 (parse-core x))

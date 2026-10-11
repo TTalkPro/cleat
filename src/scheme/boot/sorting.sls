@@ -12,9 +12,9 @@ See docs/license.txt. |#
   (import 
     (except (rnrs) list-sort vector-sort vector-sort!)
     (rnrs mutable-pairs)
-    (ironscheme unsafe)
-    (only (ironscheme) with-clr-exception-handler void)
-    (ironscheme contracts))
+    (cleat scheme unsafe)
+    (only (cleat scheme) with-clr-exception-handler void)
+    (cleat scheme contracts))
   
   (define/contract (list-sort less?:procedure seq:list)
     ;; "sort.scm" from SLIB

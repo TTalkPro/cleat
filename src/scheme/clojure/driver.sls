@@ -9,7 +9,7 @@
 ;;;                                    结束后编成一个持久化程序集 a.b.clj.dll（ClojureCLR 的命名）与接口文件 a.b.clj.ifc。
 ;;;   (install-clojure-hooks!)          登记 eval / load-source / compile / macroexpand-1 / report-error。
 ;;;
-;;; 不导入 (ironscheme compiler)（它与 nanopass 不是镜像里登记的库，导入就要另外装入一份）：eval 用镜像自己的 compile-core；
+;;; 不导入 (cleat scheme compiler)（它与 nanopass 不是镜像里登记的库，导入就要另外装入一份）：eval 用镜像自己的 compile-core；
 ;;; AOT 需要的 (clojure compile) 在第一次 compile 时才装入（宿主的延后库，或源码）。
 (library (clojure driver)
   (export clojure-eval-toplevel clojure-load-reader clojure-compile-reader install-clojure-hooks!
@@ -17,8 +17,8 @@
   (import
     (rnrs)
     (rnrs eval)
-    (only (ironscheme) symbol-value parameterize make-parameter)
-    (ironscheme clr)
+    (only (cleat scheme) symbol-value parameterize make-parameter)
+    (cleat scheme clr)
     (clojure syntax-kinds)
     (clojure namespaces)
     (clojure syntax))

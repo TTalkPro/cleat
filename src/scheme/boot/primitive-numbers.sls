@@ -17,9 +17,9 @@ See docs/license.txt. |#
       -
       *
       /)
-    (ironscheme core)
-    (ironscheme unsafe)
-    (ironscheme contracts))
+    (cleat scheme core)
+    (cleat scheme unsafe)
+    (cleat scheme contracts))
 
   (define-syntax reduce
     (syntax-rules ()

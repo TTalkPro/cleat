@@ -34,7 +34,7 @@ See docs/license.txt. |#
     hashtable-hash-function)
     
   (import 
-    (except (ironscheme)
+    (except (cleat scheme)
       make-eq-hashtable
       make-eqv-hashtable
       make-hashtable
@@ -61,9 +61,9 @@ See docs/license.txt. |#
 
       hashtable-equivalence-function
       hashtable-hash-function)
-    (except (ironscheme core) eqv-hash)
-    (ironscheme contracts)
-    (ironscheme unsafe))
+    (except (cleat scheme core) eqv-hash)
+    (cleat scheme contracts)
+    (cleat scheme unsafe))
     
   
   ;; 散列表是宿主对象，经 $hashtable-* 原语操作（IronScheme.Core.HostPrimitives，iron-056）

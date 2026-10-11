@@ -7,7 +7,7 @@ namespace Cleat.Scheme.Tests;
 
 /// <summary>
 /// Scheme 元层的自举不动点（cleat-046；IronScheme iron-030，designs/05-bootstrap.md §3）：
-///   stage0（文本种子 + 解释器）运行 ironscheme-buildscript-nano.sps → stage1；
+///   stage0（文本种子 + 解释器）运行 buildscript-nano.sps → stage1；
 ///   stage0 --boot 加载 stage1 镜像（eval 走镜像内的编译器）运行同一脚本 → stage2；加载 stage2 → stage3。
 /// 判据：stage2 与 stage3 的 Lcil 文本一致、dll 逐字节一致，stage1 的 dll 也与之相同；ILVerify 通过。
 /// 最后把 stage3 装为工作区的镜像 src/boot/cleat.scheme.boot.dll。每级约 40 ~ 60 秒。
@@ -22,7 +22,7 @@ public class BootstrapTests
     private static string Dll(int n) => Path.Combine(StageDir(n), "cleat.scheme.boot.dll");
     private static string Lcil(int n) => Path.Combine(StageDir(n), "cleat.scheme.boot.lcil");
 
-    private const string Script = "boot/ironscheme-buildscript-nano.sps";
+    private const string Script = "boot/buildscript-nano.sps";
 
     [Test, Order(1)]
     public void Stage1_FromStage0()

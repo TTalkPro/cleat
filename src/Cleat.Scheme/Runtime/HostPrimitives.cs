@@ -10,7 +10,7 @@ using BigInteger = System.Numerics.BigInteger;
 namespace Cleat.Scheme;
 
 /// <summary>
-/// boot 与 (ironscheme std …) 用的宿主原语（iron-056，designs/11-portability.md §1 D3）：语言核心不再直接写 clr-*，
+/// boot 与 (cleat scheme std …) 用的宿主原语（iron-056，designs/11-portability.md §1 D3）：语言核心不再直接写 clr-*，
 /// 每个用到的 .NET 成员在这里包成一个 $ 原语（PortPrimitives.cs 是端口部分）。参数不做类型检查（$ 原语）。
 /// 原语表因此是完整的宿主接口（02 §5）；另一个宿主只要提供同名原语。
 /// </summary>
@@ -1027,7 +1027,7 @@ public static class HostPrimitives
 
     #endregion
 
-    #region 线程、时间与区域（(ironscheme std …)）
+    #region 线程、时间与区域（(cleat scheme std …)）
 
     [Primitive("$make-semaphore", Flags = PrimitiveFlags.Unsafe)]
     public static object MakeSemaphore(object initial) => new SemaphoreSlim((int)initial);

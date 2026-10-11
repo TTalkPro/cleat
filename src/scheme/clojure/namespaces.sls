@@ -52,12 +52,12 @@
   (import
     (rnrs)
     (rnrs eval)
-    (only (ironscheme) gensym set-symbol-value! expand->core with-clr-exception-handler parameterize make-parameter)
-    (only (ironscheme core) stx? stx-expr)
-    (only (ironscheme reader) make-annotation annotation? annotation-source annotation-stripped)
-    (only (ironscheme unsafe) $throw)
-    (ironscheme syntax-ext)
-    (ironscheme clr)
+    (only (cleat scheme) gensym set-symbol-value! expand->core with-clr-exception-handler parameterize make-parameter)
+    (only (cleat scheme core) stx? stx-expr)
+    (only (cleat scheme reader) make-annotation annotation? annotation-source annotation-stripped)
+    (only (cleat scheme unsafe) $throw)
+    (cleat scheme syntax-ext)
+    (cleat scheme clr)
     (clojure syntax-kinds))
 
   ;;; —— 互操作小工具 ——

@@ -1,6 +1,6 @@
 ;;; iron-027 验收：用新编译器编译文本种子中的库 (boot lists)：Lcore → Lcil → 发射器 → dll，
 ;;; 在当前进程（stage0）中加载执行，之后经 eval 调用的列表过程即为编译后的版本。
-(import (rnrs) (rnrs eval) (ironscheme) (ironscheme clr) (ironscheme compiler))
+(import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme clr) (cleat scheme compiler))
 
 (define (seed-form name)
   (call-with-input-file "boot/boot-seed.core"
@@ -35,7 +35,7 @@
 ;; 加载执行：入口先预链接，把库中的过程写入各自的位置
 (clr-static-call Cleat.Scheme.ModuleLoader (LoadModule String Boolean) dll-path #f)
 
-(define env (environment '(rnrs) '(ironscheme)))
+(define env (environment '(rnrs) '(cleat scheme)))
 (define failures 0)
 (define (check name expr expected)
   (let ((got (eval expr env)))

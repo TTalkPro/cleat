@@ -38,7 +38,7 @@ See docs/license.txt. |#
       boolean?
       procedure?
       condition?)
-    (ironscheme unsafe))
+    (cleat scheme unsafe))
     
   
   (define (valuetype-vector? obj)

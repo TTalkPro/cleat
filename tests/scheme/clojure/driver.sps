@@ -2,7 +2,7 @@
 ;;; 简单形式的解释与编译两条路径结果一致（逐个形式对照，关掉快速路径再求值一遍）、哪些形式走快速路径、load 的命名空间切换与恢复、
 ;;; 以宏 Var 对象开头的形式（展开与 macroexpand-1、私有宏的报错）、带位置的执行错误文本、钩子已登记。
 ;;; 宿主（进程级）的 REPL / 脚本 / require / compile 在 tests/Cleat.Host.Tests。
-(import (rnrs) (ironscheme) (ironscheme clr)
+(import (rnrs) (cleat scheme) (cleat scheme clr)
         (clojure syntax-kinds) (clojure namespaces) (clojure syntax) (clojure driver))
 
 (clr-static-call Cleat.Core.Runtime.PrimitiveRegistry RegisterAll)

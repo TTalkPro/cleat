@@ -121,11 +121,11 @@ See docs/license.txt. |#
     annotation-source
     annotation-stripped)  
   (import 
-    (ironscheme contracts)
-    (ironscheme unsafe)
-    (only (ironscheme reader) read-annotated)
+    (cleat scheme contracts)
+    (cleat scheme unsafe)
+    (only (cleat scheme reader) read-annotated)
     (only (boot expander compat) parameterize)
-    (except (ironscheme) 
+    (except (cleat scheme) 
       parameterize
       latin-1-codec
       utf-8-codec

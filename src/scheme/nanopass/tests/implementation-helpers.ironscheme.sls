@@ -3,7 +3,7 @@
 
 (library (tests implementation-helpers)
   (export time printf system interpret pretty-print format)
-  (import (ironscheme))
+  (import (cleat scheme))
 
   ;; this seems to be only used for a pass not enabled. not sure how to use...
   (define (system . args) #f)
@@ -15,7 +15,7 @@
             quotient remainder sub1 vector vector-length vector-ref void
             set-car! set-cdr! vector-set! quote set! if begin lambda let
             letrec)
-    (import (rnrs) (rnrs mutable-pairs) (ironscheme)))
+    (import (rnrs) (rnrs mutable-pairs) (cleat scheme)))
 
   
   (define interpret

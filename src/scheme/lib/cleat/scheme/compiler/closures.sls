@@ -6,9 +6,9 @@ See docs/license.txt. |#
 
 ;;; pass 6 uncover-free：L2 → L3，每个 lambda 记下自由的词法变量（designs/03-compiler.md §4）。
 ;;; 库变量是模块的静态字段，不算自由变量。自由变量的顺序由遍历顺序决定，结果确定。
-(library (ironscheme compiler closures)
+(library (cleat scheme compiler closures)
   (export uncover-free)
-  (import (rnrs) (nanopass) (ironscheme compiler languages))
+  (import (rnrs) (nanopass) (cleat scheme compiler languages))
 
   (define (set-add x s) (if (memq x s) s (append s (list x))))
   (define (set-union a b) (fold-left (lambda (s x) (set-add x s)) a b))

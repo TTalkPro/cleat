@@ -56,16 +56,16 @@
     (boot expander internal)
     (boot expander library-manager)
     (boot expander core)
-    (only (ironscheme core) get-command-line format compile-library-dll load-library-dll load-fasl compress-constants? constant-fold)
+    (only (cleat scheme core) get-command-line format compile-library-dll load-library-dll load-fasl compress-constants? constant-fold)
     (boot enums)
     (boot files)
-    (only (ironscheme unsafe) $fx+ $fx- $throw $try/catch $program-failed
+    (only (cleat scheme unsafe) $fx+ $fx- $throw $try/catch $program-failed
           $console-foreground-color $set-console-foreground-color! $system-exception? $exception-message
           $path-change-extension $path-extension $string-lower $path-combine $directory-create
           $directory-exists? $path-full $path-trim-separator $string-replace $directory-files
           $procedure-form $procedure-arity)
-    (except (ironscheme library) file-locator alternative-file-locator)
-    (only (ironscheme) with-clr-exception-handler printf pretty-print initialize-default-printers debug-mode? compile-to-current-directory? serialize-port deserialize-port time time-it string=?))
+    (except (cleat scheme library) file-locator alternative-file-locator)
+    (only (cleat scheme) with-clr-exception-handler printf pretty-print initialize-default-printers debug-mode? compile-to-current-directory? serialize-port deserialize-port time time-it string=?))
     
   (define trace-printer (make-parameter pretty-print))
   (define display-stacktrace (make-parameter #f))

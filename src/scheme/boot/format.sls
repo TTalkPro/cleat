@@ -9,9 +9,9 @@ See docs/license.txt. |#
           fprintf
           format)
   (import 
-    (except (ironscheme) printf fprintf format)
-    (ironscheme unsafe)
-    (ironscheme contracts))
+    (except (cleat scheme) printf fprintf format)
+    (cleat scheme unsafe)
+    (cleat scheme contracts))
   
   ;; dofmt does all of the work.  It loops through the control string
   ;; recognizing format directives and printing all other characters

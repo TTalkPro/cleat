@@ -38,8 +38,8 @@ See docs/license.txt. |#
     textual-input-port?
     textual-output-port?)    
   (import 
-    (ironscheme contracts)
-    (except (ironscheme)
+    (cleat scheme contracts)
+    (except (cleat scheme)
         peek-char 
         write-char
         read-char

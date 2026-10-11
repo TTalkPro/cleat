@@ -64,11 +64,11 @@
   (import 
     (rnrs) 
     (rnrs eval) 
-    (ironscheme) 
+    (cleat scheme) 
     (nanopass syntactic-property)
-    (ironscheme core)
-    (ironscheme clr)
-    (ironscheme reader))
+    (cleat scheme core)
+    (cleat scheme clr)
+    (cleat scheme reader))
 
   (define optimize-level (make-parameter 0)) ;; not sure what this is used for (yet)
 

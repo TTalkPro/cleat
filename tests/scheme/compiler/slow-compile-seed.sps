@@ -1,6 +1,6 @@
 ;;; 用新编译器把文本种子的全部核心形式编译成一个 boot 镜像（Lcil 与 dll），输出统计（iron-024、iron-027）。
 ;;; 不加载执行（那是 Phase A，iron-028）。
-(import (rnrs) (ironscheme) (ironscheme clr) (ironscheme compiler))
+(import (rnrs) (cleat scheme) (cleat scheme clr) (cleat scheme compiler))
 
 (define forms
   (call-with-input-file "boot/boot-seed.core"

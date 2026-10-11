@@ -80,9 +80,9 @@ See docs/license.txt. |#
     
     bytevector-fold-left)
   (import 
-    (ironscheme integrable)
-    (ironscheme unsafe)
-    (except (ironscheme) 
+    (cleat scheme integrable)
+    (cleat scheme unsafe)
+    (except (cleat scheme) 
       bytevector-u16-ref
       bytevector-s16-ref
       bytevector-u16-native-ref
@@ -150,8 +150,8 @@ See docs/license.txt. |#
       bytevector-sint-set!
       
       bytevector-fold-left)
-    (ironscheme contracts)
-    (ironscheme typed))
+    (cleat scheme contracts)
+    (cleat scheme typed))
   
      
   (define (native-endianness) 'little)

@@ -26,8 +26,8 @@ See docs/license.txt. |#
   (import 
     (rnrs)
     (rnrs mutable-pairs)
-    (ironscheme contracts)
-    (ironscheme records printer)
+    (cleat scheme contracts)
+    (cleat scheme records printer)
     (only (rnrs r5rs) 
       delay    
       null-environment

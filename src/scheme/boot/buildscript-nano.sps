@@ -41,13 +41,13 @@
   (boot expander compat)
   (boot expander library-manager)
   (boot expander core)
-  (ironscheme unsafe)
-  (ironscheme clr internal)
-  (only (ironscheme core) format)
-  (only (ironscheme) time-it include import library)
-  (only (ironscheme clr) clr-static-call clr-static-prop-get)
-  (only (ironscheme compiler) compile-forms->lcil compile->lcil-text-from-sexpr canonical-gensyms unit-interface)
-  (only (ironscheme) ungensym symbol-bound?)
+  (cleat scheme unsafe)
+  (cleat scheme clr internal)
+  (only (cleat scheme core) format)
+  (only (cleat scheme) time-it include import library)
+  (only (cleat scheme clr) clr-static-call clr-static-prop-get)
+  (only (cleat scheme compiler) compile-forms->lcil compile->lcil-text-from-sexpr canonical-gensyms unit-interface)
+  (only (cleat scheme) ungensym symbol-bound?)
   (prefix (only (rnrs eval) eval environment) running:))
 
 ;; 注意：上面导入的 (boot expander …) 库在运行中系统里没有作为库安装，是从源码重新加载的副本，
@@ -283,14 +283,14 @@
 
 (define library-legend
   ;; abbr.       name                             visible? required?
-  '((i           (ironscheme)                          #t    #t)
-    (il          (ironscheme library)                  #f    #t)
-    (ir          (ironscheme reader)                   #f    #t)
-    (iser        (ironscheme serialization)            #f    #t)
-    (ic          (ironscheme core)                     #f    #t)
-    (iu          (ironscheme unsafe)                   #t    #t)
-    (irp         (ironscheme records printer)          #t    #t)
-    (is-clr-int  (ironscheme clr internal)             #t    #t)
+  '((i           (cleat scheme)                          #t    #t)
+    (il          (cleat scheme library)                  #f    #t)
+    (ir          (cleat scheme reader)                   #f    #t)
+    (iser        (cleat scheme serialization)            #f    #t)
+    (ic          (cleat scheme core)                     #f    #t)
+    (iu          (cleat scheme unsafe)                   #t    #t)
+    (irp         (cleat scheme records printer)          #t    #t)
+    (is-clr-int  (cleat scheme clr internal)             #t    #t)
     (ne          (boot null-environment-5)          #f    #f)
     (se          (boot scheme-report-environment-5) #f    #f)
     (r           (rnrs)                                #t    #t)
@@ -319,7 +319,7 @@
     (ri          (rnrs records inspection)             #t    #t)
     (rp          (rnrs records procedural)             #t    #t)
     (rs          (rnrs records syntactic)              #t    #t)
-    (isx         (ironscheme syntax-ext)               #t    #t)
+    (isx         (cleat scheme syntax-ext)               #t    #t)
     ($all        (boot system all)                 #f    #t)
     ($boot       (boot system bootstrap)           #f    #t)
     ))
@@ -2075,7 +2075,7 @@
       files)
     (values (reverse code*) subst env)))
 
-(define compiler-library '(ironscheme compiler))
+(define compiler-library '(cleat scheme compiler))
 
 (define (list-head l n) (if (= n 0) '() (cons (car l) (list-head (cdr l) (- n 1)))))
 

@@ -80,7 +80,7 @@ See docs/license.txt. |#
     )
   (import 
     (except 
-      (ironscheme)
+      (cleat scheme)
       =
       <
       >
@@ -151,9 +151,9 @@ See docs/license.txt. |#
       fx*/carry
       add1
       sub1)
-    (ironscheme core)
-    (ironscheme contracts)
-    (ironscheme unsafe))
+    (cleat scheme core)
+    (cleat scheme contracts)
+    (cleat scheme unsafe))
     
     
   ;; 数的宿主表示经 $ 原语操作（IronScheme.Core.HostPrimitives，iron-056）

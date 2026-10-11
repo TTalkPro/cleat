@@ -44,10 +44,10 @@ See docs/license.txt. |#
     length
     list)
   (import 
-    (ironscheme core)
-    (ironscheme unsafe)
+    (cleat scheme core)
+    (cleat scheme unsafe)
     (only (rnrs mutable-pairs) set-cdr!) 
-    (ironscheme integrable)
+    (cleat scheme integrable)
     (except (rnrs)
       find
       partition

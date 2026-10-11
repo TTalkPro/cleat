@@ -205,7 +205,7 @@ See docs/license.txt. |#
     string-fill!
     string-format)
   (import 
-    (except (ironscheme) 
+    (except (cleat scheme) 
       caar
       cadr
       cdar
@@ -272,10 +272,10 @@ See docs/license.txt. |#
       vector->list
       char->integer
       integer->char)
-    (ironscheme contracts)
-    (ironscheme typed)
-    (ironscheme core)
-    (ironscheme unsafe))
+    (cleat scheme contracts)
+    (cleat scheme typed)
+    (cleat scheme core)
+    (cleat scheme unsafe))
     
   
   (define (char->integer chr)

@@ -24,8 +24,8 @@
 | 目标 | 来源 | 规模 | 说明 |
 |---|---|---|---|
 | `src/scheme/boot/` | `src/scheme/boot/` | 37 个 `.sls` 14,686 行（展开器 6,008）；`primitives.ss` 1,100 行（PrimGen 生成）；`boot-seed.core` 1,562,847 字节 / 18,777 行；两个构建脚本 4,329 行 | 全部原样（不含 `*.dll` / `*.lcil` / `*.ifc`） |
-| `src/scheme/lib/ironscheme/compiler/`、`compiler.sls` | `lib/ironscheme/compiler/` | 11 个文件 3,623 行 | **不在** `src/scheme/compiler/`：psyntax 的文件定位器把 `(ironscheme compiler parse)` 固定映射到 `<搜索目录>/ironscheme/compiler/parse.sls`，库名不改（cleat-054）就只能放这里。`async.sls`（536 行）不纳入；其中与 async 无关的 `lower-loops` / `reset-fresh-names!` / `loops-made` 及其工具（`kids`、`check-refs`、`jumpify`、`fresh`）一字不改地拆到新库 `loops.sls`（228 行，`(ironscheme compiler loops)`） |
-| `src/scheme/lib/ironscheme/{clr,contracts,contracts-helper,integrable,typed}.sls`、`clr/helpers.sls`、`syntax/utils.sls`、`typed/{core,parsing,parsing-helper}.sls` | `lib/ironscheme/` | 10 个文件 704 行 | boot 源码、编译器与 nanopass 适配库导入的、不在镜像里的库（按 import 传递闭包算出：boot 的 `(ironscheme contracts)`、`(ironscheme typed)` 等，构建时从源码加载） |
+| `src/scheme/lib/cleat/scheme/compiler/`、`compiler.sls` | `lib/cleat/scheme/compiler/` | 11 个文件 3,623 行 | **不在** `src/scheme/compiler/`：psyntax 的文件定位器把 `(ironscheme compiler parse)` 固定映射到 `<搜索目录>/ironscheme/compiler/parse.sls`，库名不改（cleat-054）就只能放这里。`async.sls`（536 行）不纳入；其中与 async 无关的 `lower-loops` / `reset-fresh-names!` / `loops-made` 及其工具（`kids`、`check-refs`、`jumpify`、`fresh`）一字不改地拆到新库 `loops.sls`（228 行，`(ironscheme compiler loops)`） |
+| `src/scheme/lib/cleat/scheme/{clr,contracts,contracts-helper,integrable,typed}.sls`、`clr/helpers.sls`、`syntax/utils.sls`、`typed/{core,parsing,parsing-helper}.sls` | `lib/cleat/scheme/` | 10 个文件 704 行 | boot 源码、编译器与 nanopass 适配库导入的、不在镜像里的库（按 import 传递闭包算出：boot 的 `(ironscheme contracts)`、`(ironscheme typed)` 等，构建时从源码加载） |
 | `src/scheme/lib/nanopass/implementation-helpers.ironscheme.sls` | `lib/nanopass/` | 209 行 | IronScheme 的覆盖适配库，搜索路径里先于框架找到 |
 | `src/scheme/nanopass/` | 子模块 `lib/nanopass-framework-scheme`（`c14d3924`） | 54 个文件（代码 12,450 行，含 doc / tests） | 原样快照，不含 `.git`；`Copyright` 即 MIT 许可 |
 | `tests/scheme/compiler/` | `src/scheme/tests/compiler/` | 8 个脚本 593 行 + 44 个快照文件 | 去 `async-snapshots.sps` 与 `async-*` 快照 |
@@ -33,7 +33,7 @@
 
 ### 每一处文本改动（Scheme 一侧）
 
-1. 类型名 `IronScheme.Core.*` → `Cleat.Scheme.*`：`targets.sls`（机器描述表，含 `async-frame` 条目改名并注明不存在）、`codegen.sls`（`static-proc-type`）、`compiler.sls`（`Fasl`、`ModuleLoader`）、`lib/ironscheme/typed/parsing-helper.sls`（`->` 过程类型 → `Cleat.Scheme.Procedure`，这是种子里 `IronScheme.Core.Procedure` 的来源）、构建脚本（`BootInterface`）、`boot-seed.core`（36 处 `IronScheme.Core.Procedure`，文本替换）、测试脚本与快照。保留：nanopass 适配库的 `clr-static-call IronScheme.Runtime.Builtins`（cleat-045 在 `TypeResolver` 里映射，镜像 Lcil 中仍是这个名字）以及 `"not an IronScheme compiled file"` 等消息字符串。
+1. 类型名 `IronScheme.Core.*` → `Cleat.Scheme.*`：`targets.sls`（机器描述表，含 `async-frame` 条目改名并注明不存在）、`codegen.sls`（`static-proc-type`）、`compiler.sls`（`Fasl`、`ModuleLoader`）、`lib/cleat/scheme/typed/parsing-helper.sls`（`->` 过程类型 → `Cleat.Scheme.Procedure`，这是种子里 `IronScheme.Core.Procedure` 的来源）、构建脚本（`BootInterface`）、`boot-seed.core`（36 处 `IronScheme.Core.Procedure`，文本替换）、测试脚本与快照。保留：nanopass 适配库的 `clr-static-call IronScheme.Runtime.Builtins`（cleat-045 在 `TypeResolver` 里映射，镜像 Lcil 中仍是这个名字）以及 `"not an IronScheme compiled file"` 等消息字符串。
 2. 发射器：`(clr-reference IronScheme.Emit)` → `(clr-reference cleat-emit)`，`IronScheme.Emit.LcilEmitter` → `Cleat.Emit.LcilEmitter`（`compiler.sls`、构建脚本、测试脚本）。
 3. `codegen.sls` 的 Lcil 程序集头加 **`(runtime scheme)`**：cleat 的发射器缺省按 Clojure 运行时解释互操作指令与常量表（LCIL.md §2），Scheme 编译器的产物必须声明。快照 `.lcil` 同步加这一子句（`(references "Cleat.Scheme") (runtime scheme) (entry …)`），之后 44 个快照全部逐字相同。
 4. 镜像名 `ironscheme.boot` → `cleat.scheme.boot`：`codegen.sls` 的 `boot-assembly-name`（接口文件里的类名带程序集名）、`compiler.sls` 的 `compile-bootfile` 缺省文件名、构建脚本的程序集名与 `.lcil` / `.dll` / `.ifc` 路径、C# `BootInterface.BootAssemblyName`。接口文件头 `(ironscheme-interface 1 …)` 不改（格式标记）。
@@ -72,7 +72,7 @@ stage0（种子）→ stage1；`stage0 --boot stage1` → stage2；`stage0 --boo
 
 ### 未做 / 留给后续
 
-- 库名仍是 `(ironscheme …)`、`(boot …)`，文件名 `ironscheme-buildscript-nano.sps` 等也未改（cleat-054）。
+- 库名仍是 `(ironscheme …)`、`(boot …)`，文件名 `buildscript-nano.sps` 等也未改（cleat-054）。
 - `codegen.sls` 的 async 死代码、`languages.sls` 的 async 节点、`targets.sls` 的 `async-frame` / `escape-continuation` / `continuation-exception` 条目：cleat-047 改异常模型时一起清。
 - 原语表里 IronScheme 有而 cleat 没有的只有 `await`、`task-*`、`ffi-*`、`pinvoke-call-internal`（cleat-045 删的运行时），boot 源码不引用它们；`(ironscheme clr)` 的 `pinvoke-call` 宏保留但不可用。
 - `src/scheme/nanopass/` 带了上游的 `doc/`（LaTeX）与 `tests/`，占 54 个文件中的 23 个；要瘦身可以删。

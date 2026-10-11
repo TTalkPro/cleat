@@ -22,9 +22,9 @@
 
   <!--
     Scheme 元层的 boot 镜像（cleat-046；designs/15 §1，IronScheme designs/05-bootstrap.md §3 Phase A）：
-    stage0 执行文本种子 src/scheme/boot/boot-seed.core，运行 boot/ironscheme-buildscript-nano.sps，
+    stage0 执行文本种子 src/scheme/boot/boot-seed.core，运行 boot/buildscript-nano.sps，
     用 Scheme 编译器（nanopass）编译出 src/boot/cleat.scheme.boot.{lcil,dll,ifc}。
-    按输入增量：种子、构建脚本、原语表、boot 源码、lib（编译器、(ironscheme clr)、nanopass 适配库）、nanopass 框架，
+    按输入增量：种子、构建脚本、原语表、boot 源码、lib（编译器、(cleat scheme clr)、nanopass 适配库）、nanopass 框架，
     以及 stage0 / Cleat.Scheme / Cleat.Core / cleat-emit 程序集都没变时跳过（生成一次约 45 秒）。
     dotnet build -p:BuildBootImage=false 只编译 C#。输出到其他目录（自举比对）用 tools/build.cs scheme-stage1 <目录>。
   -->
@@ -38,7 +38,7 @@
     <DotnetHost Condition="'$(DOTNET_HOST_PATH)' == ''">dotnet</DotnetHost>
   </PropertyGroup>
   <ItemGroup>
-    <SchemeBootImageInput Include="$(SchemeDir)\boot\boot-seed.core;$(SchemeDir)\boot\ironscheme-buildscript-nano.sps;$(SchemeDir)\boot\primitives.ss" />
+    <SchemeBootImageInput Include="$(SchemeDir)\boot\boot-seed.core;$(SchemeDir)\boot\buildscript-nano.sps;$(SchemeDir)\boot\primitives.ss" />
     <SchemeBootImageInput Include="$(SchemeDir)\boot\**\*.sls" />
     <SchemeBootImageInput Include="$(SchemeDir)\lib\**\*.sls" />
     <SchemeBootImageInput Include="$(SchemeDir)\nanopass\nanopass.ss;$(SchemeDir)\nanopass\nanopass\**\*.ss;$(SchemeDir)\nanopass\nanopass\**\*.sls" />
@@ -47,7 +47,7 @@
   <Target Name="GenerateSchemeBootImage" BeforeTargets="CopyFilesToOutputDirectory" Condition="'$(BuildBootImage)' == 'true'"
           Inputs="@(SchemeBootImageInput)" Outputs="$(SchemeBootImage)">
     <Message Importance="high" Text="Cleat: generating the Scheme boot image with stage0 (about 45 seconds) -> $(SchemeBootImage)" />
-    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(Stage0Dir)\stage0.dll&quot; -I lib -I nanopass boot/boot-seed.core boot/ironscheme-buildscript-nano.sps &quot;$(SchemeBootDir)&quot;"
+    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(Stage0Dir)\stage0.dll&quot; -I lib -I nanopass boot/boot-seed.core boot/buildscript-nano.sps &quot;$(SchemeBootDir)&quot;"
           WorkingDirectory="$(SchemeDir)" />
   </Target>
 

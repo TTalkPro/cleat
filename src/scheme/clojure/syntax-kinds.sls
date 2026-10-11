@@ -18,9 +18,9 @@
           clj-vector clj-map clj-set clj-list clj-keyword seq->list)
   (import
     (rnrs)
-    (only (ironscheme reader) make-annotation)
-    (ironscheme syntax-ext)
-    (ironscheme clr))
+    (only (cleat scheme reader) make-annotation)
+    (cleat scheme syntax-ext)
+    (cleat scheme clr))
 
   ;;; ISeq / map → Scheme 列表。经 C# 过程（ClojureOps）而不是 clr-call：Scheme 互操作会把返回的 long 变成 fixnum（cleat-050）
   (define seq->list (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps SeqToList))

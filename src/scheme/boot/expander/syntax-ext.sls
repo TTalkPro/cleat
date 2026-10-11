@@ -20,7 +20,7 @@
 
 ;;; 可扩展语法对象的注册表（cleat-048，designs/15 §2）。展开器 (boot expander core) 导入本库：
 ;;; 凡按"语法对象里的数据种类"分支的地方都查语法扩展表，凡遇到不认识的绑定种类都查绑定扩展表，
-;;; 语法错误经 syntax-error-hook 抛出。经图例库 (ironscheme syntax-ext) 对外导出。
+;;; 语法错误经 syntax-error-hook 抛出。经图例库 (cleat scheme syntax-ext) 对外导出。
 ;;;
 ;;; 语法扩展 (kind pred children rebuild)：
 ;;;   kind      符号（vector、clj-vector …）

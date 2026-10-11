@@ -11,7 +11,7 @@ See docs/license.txt. |#
 ;;;   (target-tail-calls? t)       → 是否发 tail. 前缀（CLR 为真）
 ;;;   (target-type t 'object)      → 运行时类型名（Lcil 里的类型引用字符串）
 ;;;   (target-core-assembly t)     → 运行时程序集名（Lcil 的 references）
-(library (ironscheme compiler targets)
+(library (cleat scheme compiler targets)
   (export target-of target? target-name target-tail-calls? target-clojure-tail-calls? target-type target-core-assembly target-interop)
   (import (rnrs))
 

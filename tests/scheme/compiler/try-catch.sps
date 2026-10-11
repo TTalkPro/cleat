@@ -1,8 +1,8 @@
 ;;; cleat-047：核心形式 $try/catch 与 guard 的端到端测试（在镜像上运行：展开 → 编译 → 发射到内存 → 运行），
 ;;; 以及"try 区域内不发 tail."的 Lcil 检查。异常模型见 designs/15 §3。
-(import (rnrs) (rnrs eval) (ironscheme) (ironscheme compiler) (ironscheme unsafe))
+(import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme compiler) (cleat scheme unsafe))
 
-(define env (environment '(rnrs) '(ironscheme) '(ironscheme unsafe) '(ironscheme clr)))
+(define env (environment '(rnrs) '(cleat scheme) '(cleat scheme unsafe) '(cleat scheme clr)))
 (define (run expr) ((compile-core (expand->core expr env))))
 (define failures 0)
 (define (fail! name expected got)

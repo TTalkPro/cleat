@@ -3,7 +3,7 @@
 ;;; Var 重定义对已编译调用者可见、动态 Var 的线程绑定、关键字调用、互操作、deftype* / reify*（含 C# 调用生成的方法）、
 ;;; try / catch / finally 的顺序；以及编译结果的形状（Lcore 节点、Lcil 里的 IFn.invoke、没有 tail.、没有过程常量）。
 ;;; clojure.core 未加载：用到的函数在下面用 def + fn* + 互操作定义（这本身也是被测的编译路径）。
-(import (rnrs) (rnrs eval) (ironscheme) (ironscheme clr) (ironscheme compiler)
+(import (rnrs) (rnrs eval) (cleat scheme) (cleat scheme clr) (cleat scheme compiler)
         (clojure syntax-kinds) (clojure namespaces) (clojure syntax) (clojure compile))
 
 (clr-static-call clojure.lang.RT Init)

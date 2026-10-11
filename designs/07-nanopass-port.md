@@ -1,6 +1,6 @@
 # 07 nanopass 框架移植到 Clojure（`cleat.nanopass`）
 
-> 蓝本：`~/workspace/nanopass-framework-scheme`（R6RS，约 4900 行核心 + 每宿主约 200 行适配）与 IronScheme 对它的使用（`src/scheme/lib/ironscheme/compiler/`：4 个语言、10 个 `define-pass`、58 个 `nanopass-case`）。
+> 蓝本：`~/workspace/nanopass-framework-scheme`（R6RS，约 4900 行核心 + 每宿主约 200 行适配）与 IronScheme 对它的使用（`src/scheme/lib/cleat/scheme/compiler/`：4 个语言、10 个 `define-pass`、58 个 `nanopass-case`）。
 > 目标：用 Clojure 重写一个**语义等价、表面按 Clojure 习惯调整**的 nanopass，供 [04](04-compiler.md) 的编译器使用；它必须能在 stage0 解释器上展开并运行（[08](08-bootstrap.md)）。
 
 ## §0 事实

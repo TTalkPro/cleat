@@ -27,7 +27,7 @@
     build-data build-sequence build-void build-letrec build-letrec*
     build-global-define build-library-letrec*)
   (import (rnrs) (boot expander compat)
-          (only (ironscheme) debug-mode? lw-debug-mode?))
+          (only (cleat scheme) debug-mode? lw-debug-mode?))
   
   (define (build-global-define x)
     (build-void))

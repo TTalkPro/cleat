@@ -35,7 +35,7 @@
 | `src/IronScheme.Stage0/` | `src/Cleat.Stage0/`（本来就是这个名字，现在是 **Scheme** Lcore 的解释器，不再是 Clojure 的） | 去 `escape-frame` / `call/cc`，加 `$try/catch` |
 | `src/IronScheme.PrimGen/` | 并入 `src/Cleat.PrimGen/` | 反射两个程序集（`Cleat.Scheme` 的 `[Primitive]` + `Cleat.Core` 的 `Primitives.Table`）生成一张表（`src/boot/primitives.ss` 供 Scheme 编译器、`primitives.edn` 保留供工具） |
 | `src/scheme/boot/`（含 `expander/`、`boot-seed.core`、`primitives.ss`、构建脚本） | `src/scheme/boot/` | 库名 `(ironscheme …)` **第一阶段不改**：它们不对外（第 3 层看不见），改名要同步重生成种子；待自举在本仓库跑通后作为独立任务改为 `(cleat scheme …)` |
-| `src/scheme/lib/ironscheme/compiler/`、`compiler.sls` | `src/scheme/compiler/` | 去 `async.sls`；`targets.sls` 的运行时类名改为 `Cleat.Scheme.*` |
+| `src/scheme/lib/cleat/scheme/compiler/`、`compiler.sls` | `src/scheme/compiler/` | 去 `async.sls`；`targets.sls` 的运行时类名改为 `Cleat.Scheme.*` |
 | `src/scheme/lib/nanopass-framework-scheme/` | `src/scheme/nanopass/`（**原样**，含 `implementation-helpers.ironscheme.sls` 与 IronScheme 的覆盖库） | 不改 |
 | `tests/IronScheme.Core.Tests/`、`tests/IronScheme.Tests/` 的运行时、发射器、stage0、自举测试 | `tests/Cleat.Scheme.Tests/` | R6RS 符合性测试（`tests/r6rs/`）不纳入：第 3 层没有 R6RS 表面；保留编译器快照测试与自举不动点测试 |
 | `tools/build.cs` 的 `stage1` / `seed` / `ilverify` | 合并进 cleat 的 `tools/build.cs` | — |

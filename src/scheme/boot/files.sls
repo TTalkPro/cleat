@@ -14,9 +14,9 @@ See docs/license.txt. |#
     
   (import 
     (except (rnrs) file-exists? delete-file)
-    (only (ironscheme) typed-lambda)
-    (ironscheme contracts)
-    (ironscheme unsafe))
+    (only (cleat scheme) typed-lambda)
+    (cleat scheme contracts)
+    (cleat scheme unsafe))
     
 
   ;; 文件系统经 $ 原语（IronScheme.Core.HostPrimitives，iron-056）

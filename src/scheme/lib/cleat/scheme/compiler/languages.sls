@@ -7,7 +7,7 @@ See docs/license.txt. |#
 ;;; 编译器的中间语言（designs/03-compiler.md §4）。
 ;;;
 ;;;   L0  parse-core 的输出：固定文法，符号已分为词法变量 x、全局位置 (gref s)、库变量 (mref x)、原语 pr。
-;;;       let 与 label / jump 由 lower-loops 产生（(ironscheme compiler loops)，iron-034b），parse-core 不产生
+;;;       let 与 label / jump 由 lower-loops 产生（(cleat scheme compiler loops)，iron-034b），parse-core 不产生
 ;;;   L1  recognize-let、simplify-letrec 之后：letrec 只绑定 lambda
 ;;;   L2  convert-assignments 之后：被捕获且被赋值的词法变量改为 Box（box / unbox / set-box!）
 ;;;   L3  uncover-free 之后：lambda 带自由变量表
@@ -16,7 +16,7 @@ See docs/license.txt. |#
 ;;; Clojure 节点（cleat-051，clj- 开头）：Var 的读 / 写 / def、IFn 调用、关键字调用、ClojureOps 静态方法调用、deftype* / reify*；
 ;;; fn* 是名字位置放 clj-fn-name 记录的 lambda（前中端与普通 lambda 相同，codegen 生成 AFunction / RestFn 的子类）。
 ;;; 库变量（library-letrec* 绑定的变量）编译为模块类型的静态字段，不是词法变量，不会被闭包捕获。
-(library (ironscheme compiler languages)
+(library (cleat scheme compiler languages)
   (export
     L0 unparse-L0
     L1 unparse-L1

@@ -9,7 +9,7 @@ See docs/license.txt. |#
     exit)
   (import 
     (except (rnrs) exit)
-    (ironscheme unsafe))
+    (cleat scheme unsafe))
   
   (define exit
     (case-lambda

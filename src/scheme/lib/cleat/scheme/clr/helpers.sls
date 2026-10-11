@@ -4,7 +4,7 @@ All rights reserved.
 This source code is subject to terms and conditions of the BSD License.
 See docs/license.txt. |#
 
-(library (ironscheme clr helpers)
+(library (cleat scheme clr helpers)
   (export 
     symbol->syntax
     prefix-syntax)
