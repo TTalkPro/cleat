@@ -314,6 +314,54 @@ public class HostProcessTests
     }
 
     [Test]
+    public void ReportTargetFollowsClojureMainSemantics()
+    {
+        // cleat-034：错误报告默认写 stderr，--report stdio 时写 stdout（clojure.main 的 --report 语义）
+        var e = Cleat(null, "-e", "(throw (ex-info \"boom\" {:k 1}))");
+        Assert.That(e.ExitCode, Is.Not.EqualTo(0), e.ToString());
+        Assert.That(e.Err, Does.Contain("boom"));
+        Assert.That(e.Out, Is.Empty);
+        var s = Cleat(null, "--report", "stdio", "-e", "(throw (ex-info \"boom\" {:k 1}))");
+        Assert.That(s.ExitCode, Is.Not.EqualTo(0), s.ToString());
+        Assert.That(s.Out, Does.Contain("boom"));
+        Assert.That(s.Err, Does.Not.Contain("boom"));
+    }
+
+    [Test, Category("Bootstrap"), NonParallelizable]
+    public void PublishedDirectoryRunsStandalone()
+    {
+        // cleat-034 的验收：tools/build.cs publish 的目录在宿主之外可运行（-e、脚本、随发布的 AOT 库）。
+        // 无 SDK 机器上的运行在验收时用无 .NET 的容器验证过；这里冒烟发布产物本身。
+        string outDir = Path.Combine(_dir, "pub");
+        var psi = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            WorkingDirectory = RepoDir,
+        };
+        psi.ArgumentList.Add("dotnet");
+        psi.ArgumentList.Add("run");
+        psi.ArgumentList.Add("tools/build.cs");
+        psi.ArgumentList.Add("--");
+        psi.ArgumentList.Add("publish");
+        psi.ArgumentList.Add("-o");
+        psi.ArgumentList.Add(outDir);
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("cannot start dotnet");
+        string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        Assert.That(p.ExitCode, Is.EqualTo(0), output);
+        Assert.That(File.Exists(Path.Combine(outDir, "cleat")) || File.Exists(Path.Combine(outDir, "cleat.exe")), Is.True, output);
+        Assert.That(File.Exists(Path.Combine(outDir, "cleat.boot.dll")), Is.True, "Clojure 镜像随发布");
+        Assert.That(File.Exists(Path.Combine(outDir, "cleat.scheme.boot.dll")), Is.True, "Scheme 镜像随发布");
+        Assert.That(File.Exists(Path.Combine(outDir, "clojure.core.server.clj.dll")), Is.True, "AOT 库随发布");
+        string cleat = Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat");
+        var r = CleatIn(outDir, null, null, "-e", "(+ 1 2)", "-e", "(require 'clojure.test.tap)", "-e", ":published-ok");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        var lines = r.Out.TrimEnd('\n').Split('\n');
+        Assert.That(lines[0], Is.EqualTo("3"), r.ToString());
+        Assert.That(lines[^1], Is.EqualTo(":published-ok"), r.ToString());
+    }
+
+    [Test]
     public void StdinScript()
     {
         var r = Cleat("(def a 2)\n(. System.Console (WriteLine (cleat.kernel/add a 3)))\n", "-");

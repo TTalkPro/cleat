@@ -37,6 +37,7 @@ public static class Program
         public bool NoBoot;            // --no-boot：不加载 Clojure 镜像（从源码构建镜像时）
         public string CompileBoot;     // --compile-boot out.dll：编译 Clojure 镜像（cleat-053）
         public string BootOrder;       // --boot-order edn（缺省 out.dll 旁的 boot-order.edn）
+        public string Report;          // --report stdio|stderr：REPL / -e 的错误报告写到哪（clojure.main 的语义）
     }
 
     public static Options Parse(string[] args)
@@ -54,6 +55,7 @@ public static class Program
                 case "--no-boot": o.NoBoot = true; break;
                 case "--compile-boot" when i + 1 < args.Length: o.CompileBoot = args[++i]; break;
                 case "--boot-order" when i + 1 < args.Length: o.BootOrder = args[++i]; break;
+                case "--report" when i + 1 < args.Length && (args[i + 1] == "stdio" || args[i + 1] == "stderr"): o.Report = args[++i]; break;
                 case "-e": case "--eval": if (i + 1 >= args.Length) throw new ArgumentException("-e needs an expression"); o.Inits.Add(("eval", args[++i])); break;
                 case "-i": case "--init": if (i + 1 >= args.Length) throw new ArgumentException("-i needs a file"); o.Inits.Add(("init", args[++i])); break;
                 case "-m": case "--main": if (i + 1 >= args.Length) throw new ArgumentException("-m needs a namespace"); o.MainNs = args[++i]; i++; goto done;
@@ -95,6 +97,7 @@ public static class Program
         try
         {
             Start(o);
+            Cleat.Scheme.Clojure.Driver.ReportToStdOut = ReportToStdOut = o.Report == "stdio";
             return RunActions(o);
         }
         catch (Exception e)
@@ -217,7 +220,9 @@ public static class Program
             if (o.Repl)
             {
                 ReplRequires();
-                return Repl(Console.In, Console.Out, Console.Error);
+                return !Console.IsInputRedirected && !Console.IsOutputRedirected
+                    ? InteractiveRepl(Console.Out, Console.Error)
+                    : Repl(Console.In, Console.Out, Console.Error);
             }
             return 0;
         }
@@ -328,19 +333,27 @@ public static class Program
         Console.Out.Flush();
     }
 
-    /// <summary>最简 REPL：逐个形式读—求值—打印，*1 *2 *3 *e，:repl/quit 退出；行编辑留给 cleat-034。</summary>
+    /// <summary>REPL 的 *1 *2 *3 *e（clojure.main 的绑定）+ user 对 clojure.core 的 refer；返回要 pushThreadBindings 的映射。</summary>
+    private static IPersistentMap ReplBindings(out Var v1, out Var v2, out Var v3, out Var ve)
+    {
+        var core = Namespace.findOrCreate(Symbol.intern("clojure.core"));
+        v1 = Var.intern(core, Symbol.intern("*1"), null).setDynamic();
+        v2 = Var.intern(core, Symbol.intern("*2"), null).setDynamic();
+        v3 = Var.intern(core, Symbol.intern("*3"), null).setDynamic();
+        ve = Var.intern(core, Symbol.intern("*e"), null).setDynamic();
+        ReferClojureCore((Namespace)RT.CurrentNSVar.deref());
+        return RT.map(v1, null, v2, null, v3, null, ve, null);
+    }
+
+    /// <summary>最简 REPL：逐个形式读—求值—打印，*1 *2 *3 *e，:repl/quit 退出。标准输入被重定向时用（终端上走 InteractiveRepl）。</summary>
     public static int Repl(TextReader input, TextWriter output, TextWriter error)
     {
         var eval = RuntimeHooks.Require(RuntimeHooks.Eval, "eval");
-        var core = Namespace.findOrCreate(Symbol.intern("clojure.core"));
-        Var v1 = Var.intern(core, Symbol.intern("*1"), null).setDynamic(), v2 = Var.intern(core, Symbol.intern("*2"), null).setDynamic(),
-            v3 = Var.intern(core, Symbol.intern("*3"), null).setDynamic(), ve = Var.intern(core, Symbol.intern("*e"), null).setDynamic();
-        ReferClojureCore((Namespace)RT.CurrentNSVar.deref());
-        Var.pushThreadBindings(RT.map(v1, null, v2, null, v3, null, ve, null));
         var r = new LineNumberingTextReader(input);
         var opts = RT.map(Keyword.intern("read-cond"), Keyword.intern("allow"));
         object eof = new object();
         var quit = Keyword.intern("repl", "quit");
+        Var.pushThreadBindings(ReplBindings(out var v1, out var v2, out var v3, out var ve));
         try
         {
             while (true)
@@ -360,27 +373,129 @@ public static class Program
                 }
                 if (form == eof) { output.WriteLine(); return 0; }
                 if (quit.Equals(form)) return 0;
-                try
+                EvalPrint(eval, output, error, form, v1, v2, v3, ve);
+            }
+        }
+        finally { Var.popThreadBindings(); }
+    }
+
+    /// <summary>终端 REPL（cleat-034）：行编辑器读入一个完整输入（可跨行、可含多个形式），逐个求值打印。终端不支持所需的控制时由调用方退回 Repl。</summary>
+    private static int InteractiveRepl(TextWriter output, TextWriter error)
+    {
+        var eval = RuntimeHooks.Require(RuntimeHooks.Eval, "eval");
+        var opts = RT.map(Keyword.intern("read-cond"), Keyword.intern("allow"));
+        object eof = new object();
+        var quit = Keyword.intern("repl", "quit");
+        Var.pushThreadBindings(ReplBindings(out var v1, out var v2, out var v3, out var ve));
+        try
+        {
+            var editor = new LineEditor(new ReplServices(),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cleat_history"));
+            while (true)
+            {
+                string text = editor.Read(((Namespace)RT.CurrentNSVar.deref()).Name + "=> ", "  ");
+                if (text == null) { output.WriteLine(); return 0; }
+                if (text.Trim().Length == 0) continue;
+                var r = new LineNumberingTextReader(new StringReader(text));
+                while (true)
                 {
-                    object val = eval(form);
-                    output.WriteLine(RT.printString(val));
-                    output.Flush();
-                    v3.set(v2.deref()); v2.set(v1.deref()); v1.set(val);
-                }
-                catch (Exception e)
-                {
-                    Report(e, error);
-                    ve.set(e);
+                    object form;
+                    try { form = LispReader.read(r, false, eof, false, opts); }
+                    catch (Exception e) { Report(e, error); ve.set(e); break; }
+                    if (form == eof) break;
+                    if (quit.Equals(form)) return 0;
+                    EvalPrint(eval, output, error, form, v1, v2, v3, ve);
                 }
             }
         }
         finally { Var.popThreadBindings(); }
     }
 
+    /// <summary>一个形式的求值—打印—*1 *2 *3 轮转；异常交给 Report 并记入 *e。</summary>
+    private static void EvalPrint(Func<object, object> eval, TextWriter output, TextWriter error,
+        object form, Var v1, Var v2, Var v3, Var ve)
+    {
+        try
+        {
+            object val = eval(form);
+            output.WriteLine(RT.printString(val));
+            output.Flush();
+            v3.set(v2.deref()); v2.set(v1.deref()); v1.set(val);
+        }
+        catch (Exception e)
+        {
+            Report(e, error);
+            ve.set(e);
+        }
+    }
+
+    /// <summary>REPL 行编辑器的补全与提示（cleat-034）：Var（当前命名空间的映射与 ns/name）、命名空间名、关键字；提示取 Var 的 :arglists。</summary>
+    private sealed class ReplServices : IReplServices
+    {
+        public IReadOnlyList<string> Complete(string prefix)
+        {
+            var ns = (Namespace)RT.CurrentNSVar.deref();
+            if (prefix.StartsWith(":", StringComparison.Ordinal))
+            {
+                // 关键字：进程内存活的关键字；无限定的词只补无限定的关键字
+                string p = prefix.Substring(1), tail = prefix.Contains('/') ? p : null;
+                return Keyword.All()
+                    .Select(k => k.Symbol)
+                    .Where(s => tail != null ? s.ToString().StartsWith(tail, StringComparison.Ordinal)
+                                             : s.Name.StartsWith(p, StringComparison.Ordinal) && s.Namespace == null)
+                    .Select(s => ":" + s.ToString())
+                    .Distinct().OrderBy(x => x, StringComparer.Ordinal).Take(500).ToList();
+            }
+            int slash = prefix.IndexOf('/');
+            var result = new List<string>();
+            if (slash > 0)
+            {
+                // ns/name：该命名空间的公有映射
+                var target = Namespace.find(Symbol.intern(prefix.Substring(0, slash)));
+                string name = prefix.Substring(slash + 1);
+                if (target != null)
+                    for (ISeq s = RT.seq(target.getMappings()); s != null; s = s.next())
+                        if (((IMapEntry)s.first()).key() is Symbol sym && sym.Name.StartsWith(name, StringComparison.Ordinal))
+                            result.Add(target.Name.Name + "/" + sym.Name);
+            }
+            else
+            {
+                for (ISeq s = RT.seq(ns.getMappings()); s != null; s = s.next())
+                    if (((IMapEntry)s.first()).key() is Symbol sym && sym.Name.StartsWith(prefix, StringComparison.Ordinal))
+                        result.Add(sym.Name);
+                // 命名空间名（require / alias 用）：读到的映射之后
+                for (ISeq s = RT.seq(Namespace.all); s != null; s = s.next())
+                    if (s.first() is Namespace m && m.Name.Name.StartsWith(prefix, StringComparison.Ordinal))
+                        result.Add(m.Name.Name);
+            }
+            return result.Distinct().OrderBy(x => x, StringComparer.Ordinal).Take(500).ToList();
+        }
+
+        public string Hint(string name)
+        {
+            var ns = (Namespace)RT.CurrentNSVar.deref();
+            var sym = Symbol.intern(name);
+            if (sym.Namespace != null) ns = Namespace.find(Symbol.intern(sym.Namespace)) ?? ns;
+            if (ns?.GetMapping(Symbol.intern(sym.Name)) is not Var v) return null;
+            var arglists = v.meta()?.valAt(Keyword.intern("arglists")) as IPersistentVector;
+            if (arglists == null || arglists.count() == 0) return null;
+            var parts = new List<string>();
+            for (ISeq s = RT.seq(arglists); s != null; s = s.next())
+            {
+                string text = RT.printString(s.first());       // "(inc2 x)"（名字是定义时的）
+                if (text != null) parts.Add(text);
+            }
+            return parts.Count > 0 ? string.Join(" ", parts) : null;
+        }
+    }
+
+    /// <summary>--report stdio：错误报告写到 *out* 而不是 *err*（clojure.main 的 --report 语义，cleat-034）。</summary>
+    public static bool ReportToStdOut;
+
     private static void Report(Exception e, TextWriter error = null)
     {
-        error ??= Console.Error;
         if (RuntimeHooks.ReportError != null) { RuntimeHooks.ReportError(e); return; }
+        error ??= ReportToStdOut ? Console.Out : Console.Error;
         for (var x = e; x != null; x = x.InnerException)
             error.WriteLine((x == e ? "" : "  caused by: ") + x.GetType().Name + ": " + x.Message);
         if (Environment.GetEnvironmentVariable("CLEAT_TRACE_ERRORS") != null) error.WriteLine(e);

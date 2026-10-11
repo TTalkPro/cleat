@@ -111,6 +111,13 @@ namespace clojure.lang
         /// <param name="nsname">The keyword's name</param>
         /// <returns>A keyword</returns>
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
+        /// <summary>所有仍存活的关键字（REPL 的 Tab 补全用，cleat-034）。顺序不确定。</summary>
+        public static System.Collections.Generic.IEnumerable<Keyword> All()
+        {
+            foreach (var wr in _symKeyMap.Values)
+                if (wr?.Target is Keyword k) yield return k;
+        }
+
         public static Keyword intern(String nsname)
         {
             return intern(Symbol.intern(nsname));

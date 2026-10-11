@@ -454,7 +454,10 @@ public static class Driver
         hook(list, Path.GetFullPath(dllPath));
     }
 
-    /// <summary>登记 Clojure 风格的错误报告（写到 *err*）。</summary>
+    /// <summary>--report stdio（cleat-034，clojure.main 的语义）：错误报告写到 *out* 而不是 *err*。宿主按命令行设置。</summary>
+    public static bool ReportToStdOut;
+
+    /// <summary>登记 Clojure 风格的错误报告（写到 *err*，或 --report stdio 时的 *out*）。</summary>
     public static void InstallReportError() => CoreHooks.ReportError = ReportError;
 
     /// <summary>
@@ -464,7 +467,9 @@ public static class Driver
     /// </summary>
     public static void ReportError(Exception e)
     {
-        var w = clojure.lang.RT.errPrintWriter();
+        TextWriter w = ReportToStdOut
+            ? (TextWriter)(clojure.lang.RT.OutVar.deref() as TextWriter ?? Console.Out)
+            : clojure.lang.RT.errPrintWriter();
         w.Write(FormatError(e));
         w.WriteLine();
         string trace = Environment.GetEnvironmentVariable("CLEAT_TRACE_ERRORS");

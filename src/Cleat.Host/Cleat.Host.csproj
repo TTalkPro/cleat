@@ -4,6 +4,8 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>Cleat.Host</RootNamespace>
     <AssemblyName>cleat</AssemblyName>
+    <!-- 自包含发布（cleat-034）在任何 Linux 发行版可跑：不用 ICU（运行时只用 InvariantCulture） -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
@@ -11,6 +13,11 @@
     <ProjectReference Include="..\Cleat.Stage0\Cleat.Stage0.csproj" />
     <!-- 只为构建顺序：生成 Scheme 镜像前先由 PrimGen 重生成原语表 src/scheme/boot/primitives.ss（不引用其程序集） -->
     <ProjectReference Include="..\Cleat.PrimGen\Cleat.PrimGen.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!-- 行编辑器的词法函数（IsComplete 等）由 Host.Tests 单元测试 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cleat.Host.Tests" />
   </ItemGroup>
 
   <!--

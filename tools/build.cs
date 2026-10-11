@@ -28,6 +28,10 @@
 //                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为 .clj.dll，写在其
 //                         源码旁边（*compile-path* 未设时驱动就写在那里）；加载器的同目录新旧比较让 require 在 dll
 //                         不旧于源码时用 dll，否则回退源码                                          [cleat-033]
+//   publish [-r RID] [-o 目录]
+//                         自包含发布（cleat-034）：.NET 运行时随发布，目标机器不需要 SDK 或 .NET；Scheme 镜像、
+//                         驱动库（cleat.scheme.clojure/）、Clojure 镜像与 AOT 库随发布。默认 RID 为当前平台，
+//                         默认输出 artifacts/publish/cleat-<RID>/。REPL 与脚本直接可用
 using System.Diagnostics;
 
 string root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName((string)AppContext.GetData("EntryPointFilePath")!)!, ".."));
@@ -70,6 +74,9 @@ try
             BuildCSharp();
             CompileLibs(rest);
             break;
+        case "publish":
+            Publish(rest);
+            break;
         default:
             return Usage();
     }
@@ -83,7 +90,7 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...]");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir]");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }
@@ -105,14 +112,62 @@ void CompileLibs(string[] a)
     }
     if (nses.Length == 0) throw new CommandFailed("compile-libs: no namespaces found in boot-order.edn");
     string host = Bin("Cleat.Host", "cleat.dll");
+    int ok = 0;
+    var failed = new List<string>();
     foreach (string ns in nses)
     {
         Console.WriteLine($"compile-libs: {ns}");
         var args = new List<string> { host, "-I", Path.Combine(srcDir, "clojure"),
             "-e", $"(binding [*compile-files* true] (compile '{ns}))" };
-        Run("dotnet", args.ToArray(), root);
+        try { Run("dotnet", args.ToArray(), root); ok++; }
+        catch (CommandFailed e)
+        {
+            // 从源码都加载不了的命名空间（clojure.repl.deps 需要未内置的 clojure/clr/basis）跳过并说明
+            Console.Error.WriteLine($"compile-libs: warning: {ns} failed (see above); skipped");
+            failed.Add(ns);
+            if (!File.Exists(Path.Combine(srcDir, "clojure", ns.Replace('.', '/').Replace('-', '_') + ".clj.dll"))
+                && !Directory.GetFiles(Path.Combine(srcDir, "clojure"), ns.Replace('-', '_') + "*.dll").Any())
+                Console.Error.WriteLine("compile-libs: (no dll was produced)");
+        }
     }
-    Console.WriteLine($"compile-libs: {nses.Length} namespace(s) compiled");
+    if (failed.Count > 0) Console.WriteLine($"compile-libs: {ok}/{nses.Length} compiled, skipped: {string.Join(" ", failed)}");
+    else Console.WriteLine($"compile-libs: {nses.Length} namespace(s) compiled");
+}
+
+// 自包含发布（cleat-034，做法沿用 IronScheme designs/07 §3）：宿主与其 .NET 运行时 + 两个 boot 镜像 + 驱动库 fasl
+// + AOT 库。发布目录本身在加载路径上（AppContext.BaseDirectory），宿主自动找到镜像与库；不裁剪（互操作靠反射元数据）。
+void Publish(string[] a)
+{
+    string rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, outDir = null;
+    for (int i = 0; i < a.Length; i++)
+    {
+        switch (a[i])
+        {
+            case "-r" when i + 1 < a.Length: rid = a[++i]; break;
+            case "-o" when i + 1 < a.Length: outDir = Path.GetFullPath(a[++i]); break;
+            default: throw new CommandFailed("publish: unexpected argument " + a[i]);
+        }
+    }
+    outDir ??= Path.Combine(root, "artifacts", "publish", "cleat-" + rid);
+    CompileLibs([]);                      // AOT 库随发布，先刷新
+    Run("dotnet", ["build", solution, "-c", "Release", "-v", "quiet", "-nologo"]);
+    if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
+    Run("dotnet", ["publish", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-r", rid,
+                   "--self-contained", "-o", outDir, "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-nodeReuse:false"]);
+    File.Copy(schemeBoot, Path.Combine(outDir, "cleat.scheme.boot.dll"));
+    CopyDir(Path.Combine(bootDir, "cleat.scheme.clojure"), Path.Combine(outDir, "cleat.scheme.clojure"));
+    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "boot-order.edn" })
+        if (File.Exists(Path.Combine(bootDir, f))) File.Copy(Path.Combine(bootDir, f), Path.Combine(outDir, f));
+    foreach (var f in Directory.GetFiles(Path.Combine(srcDir, "clojure"), "*.clj.*"))
+        File.Copy(f, Path.Combine(outDir, Path.GetFileName(f)));
+    foreach (var f in Directory.GetFiles(outDir, "*.pdb")) File.Delete(f);
+    Console.WriteLine("published " + Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat"));
+}
+
+void CopyDir(string from, string to)
+{
+    Directory.CreateDirectory(to);
+    foreach (var f in Directory.GetFiles(from)) File.Copy(f, Path.Combine(to, Path.GetFileName(f)));
 }
 
 // 语料（tests/conformance/corpus.edn，designs/09）。现在只做解析与统计（cleat-002）；对宿主求值在 cleat-018 / cleat-032 接入
