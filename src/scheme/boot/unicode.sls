@@ -105,7 +105,7 @@ See docs/license.txt. |#
     (cleat scheme contracts))
     
   
-  ;; 字符分类与大小写映射经 $char-* 原语（IronScheme.Core.HostPrimitives，iron-056）；
+  ;; 字符分类与大小写映射经 $char-* 原语（Cleat.Scheme 的 HostPrimitives，iron-056）；
   ;; BMP 之外的字符（SchemeChar）按 Unicode 不变区域映射（iron-055；原来原样返回）
   (define/contract (char-upcase chr:char)
     ($char-upcase chr))

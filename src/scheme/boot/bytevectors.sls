@@ -156,7 +156,7 @@ See docs/license.txt. |#
      
   (define (native-endianness) 'little)
   
-  ;; 宿主操作经 $ 原语（IronScheme.Core.HostPrimitives，iron-056）：$bytevector-ref 给出 fixnum，$bytevector-set! 收 fixnum
+  ;; 宿主操作经 $ 原语（Cleat.Scheme 的 HostPrimitives，iron-056）：$bytevector-ref 给出 fixnum，$bytevector-set! 收 fixnum
   (define utf8    ($utf-8-codec))
   (define utf16le ($make-utf16-codec #f))
   (define utf16be ($make-utf16-codec #t))

@@ -89,8 +89,8 @@ See docs/license.txt. |#
   (define typed-count 0)
   (define (typed-clauses-made) typed-count)
 
-  ;; 测量开关：IRONSCHEME_NO_034 含 typed 时不用 typed-lambda 的类型说明
-  (define typed-on? (let ((v ($get-environment-variable "IRONSCHEME_NO_034")))
+  ;; 测量开关：CLEAT_SCHEME_NO_034 含 typed 时不用 typed-lambda 的类型说明
+  (define typed-on? (let ((v ($get-environment-variable "CLEAT_SCHEME_NO_034")))
                       (not (and (string? v) (let loop ((i 0)) (and (<= (+ i 5) (string-length v))
                                                                     (or (string=? (substring v i (+ i 5)) "typed") (loop (+ i 1)))))))))
   (define (typed-kind t)
@@ -297,7 +297,7 @@ See docs/license.txt. |#
                  (for-each (lambda (f) (bind! f 'lex)) fields)
                  `(clj-deftype ,info (,fields ...)
                     ,(map (lambda (m) (Lambda (lambda-clauses m x) #f #f x)) (cdr body)) ...))))
-            ;; ffi-callout-internal 等是运行时原语（IronScheme.Core.Ffi，iron-032），按普通原语调用
+            ;; ffi-callout-internal 等是运行时原语（运行时原语，iron-032），按普通原语调用
             ((define-clr-class-internal)
              `(unsupported ,(symbol->string h)))
             (else

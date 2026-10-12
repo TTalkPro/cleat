@@ -23,7 +23,7 @@
 ;;; 展开 boot 源文件、nanopass 与新编译器，用新编译器编译成 stage1 boot 镜像（Lcil 与 dll）。
 ;;; 运行（在 src/scheme 目录下）：
 ;;;   dotnet ../Cleat.Stage0/bin/Release/net10.0/stage0.dll -I lib -I nanopass \
-;;;     boot/boot-seed.core boot/ironscheme-buildscript-nano.sps [输出目录]
+;;;     boot/boot-seed.core boot/buildscript-nano.sps [输出目录]
 ;;; 输出 <输出目录>/cleat.scheme.boot.lcil 与 cleat.scheme.boot.dll（cleat：默认输出目录 ../boot/，即 src/boot/）。
 
 (import 
@@ -1691,10 +1691,10 @@
     (ffi-callback-internal                      is-clr-int)
     (pinvoke-call-internal                      is-clr-int)
     
-    (ironscheme-build                           i)
-    (ironscheme-test                            i)
-    (ironscheme-version                         i)
-    (ironscheme-runtime                         i)
+    (cleat-scheme-build                         i)
+    (cleat-scheme-test                          i)
+    (cleat-scheme-version                       i)
+    (cleat-scheme-runtime                       i)
     (last-pair                                  i)
     (make-list                                  i)
     (unspecified?                               i)
@@ -2124,7 +2124,7 @@
            (contents '()))
       (parameterize ((current-library-collection bootstrap-collection)
                      (library-path '("." "lib/" "nanopass/"))   ; cleat：nanopass 框架在 src/scheme/nanopass/
-                     (library-extensions '(".ironscheme.sls" ".sls" ".ss")))
+                     (library-extensions '(".cleat-scheme.sls" ".sls" ".ss")))
         (find-library-by-name compiler-library)
         (serialize-all
           (lambda (name content)
@@ -2173,7 +2173,7 @@
                 (when (file-exists? ifc-path) (delete-file ifc-path))
                 (call-with-output-file ifc-path
                   (lambda (p)
-                    (put-string p "(ironscheme-interface 1 ")
+                    (put-string p "(cleat-scheme-interface 1 ")
                     (write (clr-static-call Cleat.Scheme.BootInterface AssemblyFileId dll-path) p)
                     (for-each (lambda (e) (newline p) (write e p)) entries)
                     (put-string p ")\n")))

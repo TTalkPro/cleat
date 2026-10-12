@@ -54,7 +54,7 @@ See docs/license.txt. |#
       bitwise-arithmetic-shift))
       
       
-  ;; 大整数的位运算经 $bignum-* 原语（IronScheme.Core.HostPrimitives，iron-056），结果已规范为 fixnum 或 bignum
+  ;; 大整数的位运算经 $bignum-* 原语（Cleat.Scheme 的 HostPrimitives，iron-056），结果已规范为 fixnum 或 bignum
   (define (->bignum ei)
     (cond
       [(bignum? ei) ei]

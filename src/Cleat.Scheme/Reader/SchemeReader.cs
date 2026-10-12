@@ -21,7 +21,7 @@ public sealed class ReaderException : Exception
 /// <list type="bullet">
 /// <item>R6RS 数据语法：( ) [ ]、缩写 ' ` , ,@ #' #` #, #,@、#( 向量、字符串、字符、布尔、数字、标识符；</item>
 /// <item>注释 ; #| |#（可嵌套）#;；指令 #!r6rs 等（忽略）、#!fold-case、#!no-fold-case、#!eof（之后的输入全部忽略）、#!/… 与 #! /…（整行忽略）；</item>
-/// <item>IronScheme 扩展：中缀点号 (a . op . b …) 读作 (op a b …)；值向量 #vu8( #u8( #fl( #fx(；标识符中的 [] 对（CLR 数组类型名）；</item>
+/// <item>本 reader 的扩展（沿自 IronScheme）：中缀点号 (a . op . b …) 读作 (op a b …)；值向量 #vu8( #u8( #fl( #fx(；标识符中的 [] 对（CLR 数组类型名）；</item>
 /// <item>字符：BMP 内读为 System.Char，之外读为 SchemeChar（与旧系统一致）；字符串中的裸 \r 被删除。</item>
 /// </list>
 /// 与旧实现的差别：逐个数据读取（旧实现首次读取时读完整个端口并缓存剩余数据），read 与 read-char 可以交替使用。

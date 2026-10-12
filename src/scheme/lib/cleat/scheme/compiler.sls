@@ -48,11 +48,11 @@ See docs/license.txt. |#
           ($set-compile-target! name)
           name))))
 
-  ;; 调试：设置环境变量 IRONSCHEME_DUMP_PASSES=前缀 时，把各阶段的中间语言写到 <前缀>.l0 / .la / .l1 / .l2 / .l3
+  ;; 调试：设置环境变量 CLEAT_SCHEME_DUMP_PASSES=前缀 时，把各阶段的中间语言写到 <前缀>.l0 / .la / .l1 / .l2 / .l3
   ;; （eval 的单元另写 <前缀>.lcil）
   ;; （.la 是 lower-loops 的输出；IronScheme 里是 lower-async 的）
   (define (dump-pass tag unparse x)
-    (let ((prefix (clr-static-call System.Environment GetEnvironmentVariable "IRONSCHEME_DUMP_PASSES")))
+    (let ((prefix (clr-static-call System.Environment GetEnvironmentVariable "CLEAT_SCHEME_DUMP_PASSES")))
       (when (string? prefix)
         (let ((f (string-append prefix "." tag)))
           (when (file-exists? f) (delete-file f))
@@ -62,8 +62,8 @@ See docs/license.txt. |#
   (define (front-end x)
     (let* ((l0 (parse-core x))
            (_ (dump-pass "l0" unparse-L0 l0))
-           (l0 (let ((l l0))           ; lower-loops：局部循环降级（iron-034b；IRONSCHEME_NO_034 时关，测量用）；lower-async 不纳入（cleat-046）
-                 (let ((v (clr-static-call System.Environment GetEnvironmentVariable "IRONSCHEME_NO_034")))
+           (l0 (let ((l l0))           ; lower-loops：局部循环降级（iron-034b；CLEAT_SCHEME_NO_034 时关，测量用）；lower-async 不纳入（cleat-046）
+                 (let ((v (clr-static-call System.Environment GetEnvironmentVariable "CLEAT_SCHEME_NO_034")))
                    (if (and (string? v) (or (string=? v "1") (string=? v "loops"))) l (lower-loops l)))))
            (_ (dump-pass "la" unparse-L0 l0))
            (an (analyze l0))
@@ -102,9 +102,9 @@ See docs/license.txt. |#
 
   (define eval-counter 0)
 
-  ;; 调试：设置环境变量 IRONSCHEME_DUMP_FAILED_CORE=文件 时，编译失败的输入写到该文件
+  ;; 调试：设置环境变量 CLEAT_SCHEME_DUMP_FAILED_CORE=文件 时，编译失败的输入写到该文件
   (define (dump-failed-core e)
-    (let ((f (clr-static-call System.Environment GetEnvironmentVariable "IRONSCHEME_DUMP_FAILED_CORE")))
+    (let ((f (clr-static-call System.Environment GetEnvironmentVariable "CLEAT_SCHEME_DUMP_FAILED_CORE")))
       (when (string? f)
         (when (file-exists? f) (delete-file f))
         ;; 用 fasl 写出：输入中可能有语法对象等常量
@@ -121,7 +121,7 @@ See docs/license.txt. |#
     (let*-values (((name) (string-append "eval$" (number->string eval-counter)))
                   ((lcil consts) (compile-forms->lcil* (list e) name "#Module" #t))
                   ((_) (dump-pass "lcil" compile->lcil-text-from-sexpr lcil))
-                  ;; 直接交出 Lcil 的 S 表达式，不经文本（iron-033）；IRONSCHEME_DUMP_PASSES 的 .lcil 仍可用 compile->lcil-text 得到
+                  ;; 直接交出 Lcil 的 S 表达式，不经文本（iron-033）；CLEAT_SCHEME_DUMP_PASSES 的 .lcil 仍可用 compile->lcil-text 得到
                   ((asm) (clr-static-call Cleat.Emit.LcilEmitter (EmitInMemoryData Object String Object[])
                                           lcil name (list->vector consts))))
       (lambda ()
@@ -157,7 +157,7 @@ See docs/license.txt. |#
       (unless (null? entries)
         (call-with-output-file ifc
           (lambda (p)
-            (put-string p "(ironscheme-interface 1 ")
+            (put-string p "(cleat-scheme-interface 1 ")
             (write asm p)
             (for-each (lambda (x) (newline p) (write x p)) entries)
             (put-string p ")\n"))))))

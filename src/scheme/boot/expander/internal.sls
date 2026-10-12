@@ -32,7 +32,7 @@
         (assert (procedure? p))
         p)))
 
-  ; the output is the input language of IronScheme
+  ; the output is the input language of the Scheme compiler
   (define (rewrite x)
     (define (f x)
       (cond

@@ -1,8 +1,8 @@
 ;;; Copyright (c) 2000-2018 Dipanwita Sarkar, Andrew W. Keep, R. Kent Dybvig, Oscar Waddell
 ;;; See the accompanying file Copyright for details
 ;;;
-;;; IronScheme 的覆盖版本（iron-034）：nanopass 框架（cleat 里是 src/scheme/nanopass/，IronScheme 里是子模块 lib/nanopass-framework-scheme）中同名文件的副本，库搜索路径中
-;;; lib 在子模块之前，所以用这一份（designs/03-compiler.md §1：对子模块的修改放在子模块之外）。
+;;; Scheme 元层的覆盖版本（源自 IronScheme iron-034）：nanopass 框架 src/scheme/nanopass/ 中 implementation-helpers.ironscheme.sls 的副本。
+;;; 库扩展名 .cleat-scheme.sls（cleat-059；expander/main.sls 与构建脚本的 library-extensions）只选中这一份，上游目录原样不动。
 ;;; 唯一的改动是 define-nanopass-record：原版在每个 define-pass 的过程体里展开 define-record-type，
 ;;; 每次调用 pass（包括每次 nanopass-case）都要重新求 rtd / rcd / 谓词 / 访问器，每次约 350 字节分配。
 ;;; 这里改为在本库中定义一次（同一个 nongenerative uid），define-nanopass-record 只把名字绑定到它们。
@@ -153,7 +153,7 @@
     (protocol
       (lambda (new)
         (lambda (a type)
-          (let* ([as (annotation-source a)][cp (car (clr-static-call IronScheme.Runtime.Builtins SourceLocation (cdr as)))])
+          (let* ([as (annotation-source a)][cp (car (clr-static-call Cleat.Scheme.Builtins SourceLocation (cdr as)))])
             (let ([fn (car as)] [line (car cp)][col (cdr cp)])
               ;; the line/col info from the reader is pretty accurate, do I need the stuff below?
               (if (provide-full-source-information)

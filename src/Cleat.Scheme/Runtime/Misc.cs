@@ -33,10 +33,10 @@ public partial class Builtins
     /// <summary>由宿主设置；默认为运行时版本。</summary>
     public static string VersionString = CoreInfo.Version;
 
-    [Primitive("ironscheme-version")]
+    [Primitive("cleat-scheme-version")]
     public static object Version() => VersionString;
 
-    [Primitive("ironscheme-runtime")]
+    [Primitive("cleat-scheme-runtime")]
     public static object GetRuntime() => RuntimeInformation.FrameworkDescription;
 
     /// <summary>由宿主设置。</summary>

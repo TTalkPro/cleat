@@ -36,7 +36,7 @@ public class TypeResolverTests
           Is.EqualTo(typeof(Dictionary<string, int>)));
         Assert.That(TypeResolver.Resolve("System.Collections.Hashtable", null), Is.EqualTo(typeof(Hashtable)));
         Assert.That(TypeResolver.Resolve(Symbol.Intern("NoSuchType"), s_ns), Is.Null);
-        Assert.That(TypeResolver.Resolve(Symbol.Intern("IronScheme.Runtime.Builtins"), null), Is.EqualTo(typeof(Builtins)));
+        Assert.That(TypeResolver.Resolve(Symbol.Intern("Cleat.Scheme.Builtins"), null), Is.EqualTo(typeof(Builtins)));
     }
 
     [Test]

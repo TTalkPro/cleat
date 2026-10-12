@@ -18,7 +18,7 @@ C# 一侧在 `src/Cleat.Scheme`（运行时）、`src/Cleat.Stage0`（Lcore 解�
 | `boot/` | IronScheme `src/scheme/boot/` | 编进 boot 镜像的库（`(boot …)`、`expander/` 展开器）、原语表 `primitives.ss`（由 `Cleat.PrimGen` 生成）、文本种子 `boot-seed.core`、构建脚本 `buildscript-nano.sps`（Phase A / B）与 `seed-buildscript.sps`（种子再生成） |
 | `lib/cleat/scheme/compiler/`、`lib/cleat/scheme/compiler.sls` | `src/scheme/lib/cleat/scheme/compiler/` | nanopass 编译器与驱动；`async.sls` 不纳入，其中的 `lower-loops` 拆到 `loops.sls` |
 | `lib/cleat/scheme/{clr,contracts,contracts-helper,integrable,typed}.sls`、`lib/cleat/scheme/{clr,syntax,typed}/` | `src/scheme/lib/cleat/scheme/` | boot 源码、编译器与 nanopass 适配库导入的、不在镜像里的库（从源码加载） |
-| `lib/nanopass/implementation-helpers.ironscheme.sls` | `src/scheme/lib/nanopass/` | IronScheme 对 nanopass 的覆盖适配库（在搜索路径里先于 `nanopass/` 找到） |
+| `lib/nanopass/implementation-helpers.cleat-scheme.sls` | `src/scheme/lib/nanopass/` | 元层对 nanopass 的覆盖适配库（库扩展名 `.cleat-scheme.sls` 只选中它；源自 IronScheme 的 `implementation-helpers.ironscheme.sls`，cleat-059 改名） |
 | `nanopass/` | 子模块 `src/scheme/lib/nanopass-framework-scheme/` | nanopass 框架原样快照（不含 `.git`） |
 | `clojure/` | cleat 新增（cleat-048 起） | 按需加载、不进 Scheme 镜像的 Clojure 侧库，如 `(clojure syntax-kinds)`（把 Clojure 集合登记为语法扩展）、`(clojure namespaces)`（命名空间模型，cleat-049）、`(clojure syntax)`（特殊形式与 defmacro 垫片，cleat-050）、`(clojure compile)`（存 dll，cleat-051）、`(clojure driver)`（编译驱动与钩子登记，cleat-052；宿主程序 `host.sps` 与预编译脚本 `build-host.sps`）；库名 `(clojure x)` 由搜索目录 `.` 找到 |
 

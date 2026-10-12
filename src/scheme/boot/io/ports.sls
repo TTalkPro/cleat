@@ -202,7 +202,7 @@ See docs/license.txt. |#
       standard-input-port
       standard-output-port))
   
-  ;; 宿主操作全部经 $port-* 原语（IronScheme.Core.PortPrimitives，iron-056）：端口对象是 .NET 的 Stream / TextReader /
+  ;; 宿主操作全部经 $port-* 原语（Cleat.Scheme 的 PortPrimitives，iron-056）：端口对象是 .NET 的 Stream / TextReader /
   ;; TextWriter，文本双向端口是 CustomTextReaderWriter；原语对双向端口自动取输入端或输出端。
   ;; 宿主抛出的异常用 with-clr-exception-handler 接住，转成 &i/o-port 条件。
   (define-syntax host-guard

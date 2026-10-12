@@ -29,8 +29,8 @@
     load/args
     load/program
     load/unload
-    ironscheme-build
-    ironscheme-test
+    cleat-scheme-build
+    cleat-scheme-test
     emacs-mode?
     display-stacktrace
     compile
@@ -107,8 +107,8 @@
       (lambda ()
         (load/unsafe filename))))
     
-  (define (ironscheme-test)
-    ;; 先找当前目录（新宿主在 IronScheme.Host/bin 下，测试在 src/scheme 中），再找宿主所在目录
+  (define (cleat-scheme-test)
+    ;; 先找当前目录（在 src/scheme 中运行时），再找宿主所在目录
     (let ((path (if (file-exists? "tests/r6rs/run.sps")
                     "tests/r6rs/run.sps"
                     (string-append (application-directory) "/tests/r6rs/run.sps"))))
@@ -116,11 +116,11 @@
         (lambda () 
           (load path)))))
       
-  (define (ironscheme-build)
+  (define (cleat-scheme-build)
      (time-it "the entire bootstrap process"
         (lambda () 
-          (load "ironscheme-buildscript-nano.sps")))   ; 新编译器构建 boot/ironscheme.boot.dll（iron-032）
-     (display "IronScheme build completed.\n"))
+          (load "boot/buildscript-nano.sps")))   ; 在 src/scheme 下运行：构建 Scheme boot 镜像 src/boot/cleat.scheme.boot.dll
+     (display "Scheme boot image build completed.\n"))
     
   (define foreground-color
     (case-lambda
@@ -317,8 +317,8 @@
 
   ;;; ———————————————— compile-file / compile-library / compile-program（iron-037，designs/07-tooling-and-embedding.md §2）————————————————
   ;;; 编译产物 .fasl 是一个程序集（与库 dll 同一格式），入口返回
-  ;;;   (ironscheme-fasl 1 libraries (库描述 …))         库文件：加载时逐个安装
-  ;;;   (ironscheme-fasl 1 program ((id 名字) …) thunk)   顶层程序：核对依赖库的编译实例后调用 thunk
+  ;;;   (cleat-scheme-fasl 1 libraries (库描述 …))         库文件：加载时逐个安装
+  ;;;   (cleat-scheme-fasl 1 program ((id 名字) …) thunk)   顶层程序：核对依赖库的编译实例后调用 thunk
   ;;; 依赖库按 id 核对（与 try-load-from-file 一致）：库若重新展开（例如从源码重新加载），其位置与 id 都会变，编译产物不能再用。
 
   ;; 为真时，编译期间从源码加载的库也编译为各自源文件旁的 .fasl（Chez 的 compile-imported-libraries）
@@ -344,7 +344,7 @@
       (and (pair? x) (eq? (strip (car x)) 'library))))
 
   (define (fasl-content? x kind)
-    (and (pair? x) (eq? (car x) 'ironscheme-fasl) (pair? (cdr x)) (eqv? (cadr x) 1)
+    (and (pair? x) (eq? (car x) 'cleat-scheme-fasl) (pair? (cdr x)) (eqv? (cadr x) 1)
          (pair? (cddr x)) (eq? (caddr x) kind)))
 
   (define (write-fasl out expr)
@@ -359,7 +359,7 @@
           (unless (or (member name except)
                       (fasl-file? src)
                       (and (file-exists? out) (file-newer? out src)))
-            (write-fasl out `(list 'ironscheme-fasl 1 'libraries
+            (write-fasl out `(list 'cleat-scheme-fasl 1 'libraries
                                    (list ,(library-content->expr (library-content name compile-core-expr))))))))
       (source-libraries)))
 
@@ -380,7 +380,7 @@
                             name))
                         forms)))
               (when (compile-imported-libraries) (compile-source-libraries! names))
-              (write-fasl out `(list 'ironscheme-fasl 1 'libraries
+              (write-fasl out `(list 'cleat-scheme-fasl 1 'libraries
                                      (list ,@(map (lambda (n) (library-content->expr (library-content n compile-core-expr))) names))))
               out)))]))
 
@@ -392,7 +392,7 @@
           (let-values (((lib* invoke-code macro* export-subst export-env)
                         (top-level-expander (read-source-forms filename))))
             (when (compile-imported-libraries) (compile-source-libraries! '()))
-            (write-fasl out `(list 'ironscheme-fasl 1 'program
+            (write-fasl out `(list 'cleat-scheme-fasl 1 'program
                                    ',(map (lambda (lib) (let ((s (library-spec lib))) (list (car s) (cadr s)))) lib*)
                                    (lambda () ,(compile-core-expr invoke-code))))
             out))]))
@@ -442,10 +442,10 @@
               (unless (install-library-content (cadr desc) filename desc)
                 (assertion-violation 'load "compiled library is out of date with its dependencies; recompile it" filename (cadr desc))))
             (cadddr content)))
-        (else (assertion-violation 'load "not an IronScheme compiled file" filename))))
+        (else (assertion-violation 'load "not a compiled Scheme file" filename))))
 
   ;; 整个程序编译到 out-dir（自包含发布，iron-036）：程序展开期间从源码加载的每个库一个 libN.fasl（按安装顺序，
-  ;; 依赖在前），程序本身 program.fasl，清单 ironscheme.app 每行 "library 文件" 或 "program 文件"。
+  ;; 依赖在前），程序本身 program.fasl，清单 cleat-scheme.app 每行 "library 文件" 或 "program 文件"。
   ;; 展开时不使用已有的编译产物（.fasl、库 dll），保证每个库都从源码展开、都能序列化。
   (define (compile-whole-program filename out-dir)
     (define (out name) ($path-combine out-dir name))
@@ -457,15 +457,15 @@
         (let loop ((libs (source-libraries)) (i 0) (manifest '()))
           (if (pair? libs)
               (let ((file (string-append "lib" (number->string i) ".fasl")))
-                (write-fasl (out file) `(list 'ironscheme-fasl 1 'libraries
+                (write-fasl (out file) `(list 'cleat-scheme-fasl 1 'libraries
                                               (list ,(library-content->expr (library-content (caar libs) compile-core-expr)))))
                 (loop (cdr libs) (+ i 1) (cons (string-append "library " file) manifest)))
               (begin
                 (write-fasl (out "program.fasl")
-                            `(list 'ironscheme-fasl 1 'program
+                            `(list 'cleat-scheme-fasl 1 'program
                                    ',(map (lambda (lib) (let ((s (library-spec lib))) (list (car s) (cadr s)))) lib*)
                                    (lambda () ,(compile-core-expr invoke-code))))
-                (let ((m (out "ironscheme.app")))
+                (let ((m (out "cleat-scheme.app")))
                   (when (file-exists? m) (delete-file m))
                   (call-with-output-file m
                     (lambda (p)
@@ -537,7 +537,7 @@
                         (let* ((rel (substring file (+ (string-length full) 1) (string-length file)))
                                (rel ($string-replace rel "\\" "/"))
                                (base (cond
-                                       ((string-suffix? ".ironscheme.sls" rel) (substring rel 0 (- (string-length rel) 15)))
+                                       ((string-suffix? ".cleat-scheme.sls" rel) (substring rel 0 (- (string-length rel) 17)))
                                        (else (substring rel 0 (- (string-length rel) 4))))))
                           (library-name->string
                             (map (lambda (c) (string->symbol (decode-component c)))
@@ -628,7 +628,7 @@
   (set-symbol-value! 'expanded2core expanded->core)
   
   (set-symbol-value! 'trace-printer trace-printer)
-  ;; 构建脚本（ironscheme-buildscript-nano.sps）在新系统上运行时经它取运行中系统的原语位置表（iron-030）
+  ;; 构建脚本（buildscript-nano.sps）在新系统上运行时经它取运行中系统的原语位置表（iron-030）
   (set-symbol-value! 'current-primitive-locations current-primitive-locations)
   (set-symbol-value! 'pretty-print pretty-print)
   (set-symbol-value! 'assertion-violation assertion-violation)
@@ -641,7 +641,7 @@
   (compile-to-current-directory? #t)
   (library-path (get-library-paths))
   
-  (library-extensions (cons ".ironscheme.sls" (library-extensions)))
+  (library-extensions (cons ".cleat-scheme.sls" (library-extensions)))
 
   (constant-fold)
   

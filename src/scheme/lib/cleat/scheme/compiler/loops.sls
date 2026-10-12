@@ -146,8 +146,8 @@ See docs/license.txt. |#
   ;; ((letrec ((f le)) f) e …)（命名 let 的展开形状）先归一成 (letrec ((f le)) (f e …))。
   ;; 至今生成的 label 个数：编译驱动据此只对含循环的形式做类型推断（codegen 的 loop-forms）
   (define loops-count 0)
-  ;; 测量开关：IRONSCHEME_NO_034 含 letlab 时不做 let 的降级
-  (define let-labels? (let ((v ($get-environment-variable "IRONSCHEME_NO_034")))
+  ;; 测量开关：CLEAT_SCHEME_NO_034 含 letlab 时不做 let 的降级
+  (define let-labels? (let ((v ($get-environment-variable "CLEAT_SCHEME_NO_034")))
                         (not (and (string? v) (let loop ((i 0)) (and (<= (+ i 6) (string-length v))
                                                                       (or (string=? (substring v i (+ i 6)) "letlab") (loop (+ i 1)))))))))
   (define (loops-made) loops-count)

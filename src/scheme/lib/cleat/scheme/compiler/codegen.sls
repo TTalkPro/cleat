@@ -161,7 +161,7 @@ See docs/license.txt. |#
 
   ;; 034d（D3）：无自由变量的同步过程不各生成一个类，子句方法放进共享持有类（每 200 个一个），
   ;; 过程对象是单元的 StaticProcedure 子类的实例（委托），由持有类的静态构造函数创建。
-  ;; IRONSCHEME_NO_034 含 shared 时关（opt-shared? 定义在 opt-off? 之后）
+  ;; CLEAT_SCHEME_NO_034 含 shared 时关（opt-shared? 定义在 opt-off? 之后）
   (define shared-per-holder 200)
 
   ;; 分配一个共享位置：(持有类名 . 前缀 "P<id>$")
@@ -478,9 +478,9 @@ See docs/license.txt. |#
   ;; 原始签名子句的 L / D 形参（cleat-042）：类型固定（不是推断候选），推断与代码生成都当作已知
   (define fixed-types (make-eq-hashtable))
 
-  ;; 测量用（iron-034）：环境变量 IRONSCHEME_NO_034 设置时关掉 034 的生成优化（内联算术、拆箱、单元内直接调用），
+  ;; 测量用（iron-034）：环境变量 CLEAT_SCHEME_NO_034 设置时关掉 034 的生成优化（内联算术、拆箱、单元内直接调用），
   ;; 同一个 boot 镜像里对照编译时间与运行时间
-  (define no-034 (or ($get-environment-variable "IRONSCHEME_NO_034") ""))
+  (define no-034 (or ($get-environment-variable "CLEAT_SCHEME_NO_034") ""))
   (define (opt-off? name)
     (or (string=? no-034 "1")
         (let ((n (string-length name)) (m (string-length no-034)))
@@ -492,7 +492,7 @@ See docs/license.txt. |#
 
   ;; ———————————————— boot 镜像的接口（iron-034e，D5）————————————————
   ;; nano 构建脚本在镜像旁写出 cleat.scheme.boot.ifc：
-  ;;   (ironscheme-interface 1 "镜像 id" ("位置符号名" "类名" ((固定参数个数 . 剩余?) …)) …)
+  ;;   (cleat-scheme-interface 1 "镜像 id" ("位置符号名" "类名" ((固定参数个数 . 剩余?) …)) …)
   ;; 编译别的单元时，接口文件的 id 与正在运行的镜像一致才用；(gref 位置) 若是其中的已知过程，
   ;; 值就是那个类的 Instance，参数个数相符的调用直接 call 类::C<i>（类名带程序集名 cleat.scheme.boot）。
   ;; 用过的单元在入口核对镜像 id（BootInterface.Check），镜像重新构建后旧的编译产物报错 / 退回源码。
@@ -520,7 +520,7 @@ See docs/license.txt. |#
            (let ((file (file-of)) (id (id-of)))
              (and (string? file) (string? id)
                   (let ((x (guard (e (#t #f)) (call-with-input-file file read))))
-                    (and (pair? x) (eq? (car x) 'ironscheme-interface)
+                    (and (pair? x) (eq? (car x) 'cleat-scheme-interface)
                          (pair? (cdr x)) (eqv? (cadr x) 1)
                          (pair? (cddr x)) (equal? (caddr x) id)
                          (let ((table (make-hashtable string-hash string=?)))
@@ -546,7 +546,7 @@ See docs/license.txt. |#
              (library-known u s))))
 
   ;; 用户库的接口文件（iron-034e）：compile-library-dll 在 .fasl / 库 dll 旁写出 名字.ifc，
-  ;;   (ironscheme-interface 1 "程序集名" ("位置符号名" "类名" 子句形状) …)
+  ;;   (cleat-scheme-interface 1 "程序集名" ("位置符号名" "类名" 子句形状) …)
   ;; 运行时加载这些产物时登记旁边的接口文件（原语 $library-interface-files，按加载顺序）。
   ;; 只用真正加载过的产物的接口：装入的库实例就是那个产物，它的程序集已加载、模块字段由其入口初始化。
   ;; 同一进程里刚编译、但装入的是源码展开实例的库（compile-library 之后）不用——它的产物程序集没有加载。
@@ -565,7 +565,7 @@ See docs/license.txt. |#
 
   (define (read-library-interface! file)
     (let ((x (guard (e (#t #f)) (call-with-input-file file read))))
-      (when (and (pair? x) (eq? (car x) 'ironscheme-interface)
+      (when (and (pair? x) (eq? (car x) 'cleat-scheme-interface)
                  (pair? (cdr x)) (eqv? (cadr x) 1) (pair? (cddr x)) (string? (caddr x)))
         (add-interface-entries! library-ifc-table (caddr x) (cdddr x)))))
 

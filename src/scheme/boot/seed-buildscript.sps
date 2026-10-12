@@ -1640,10 +1640,10 @@
     (ffi-callback-internal                      is-clr-int)
     (pinvoke-call-internal                      is-clr-int)
     
-    (ironscheme-build                           i)
-    (ironscheme-test                            i)
-    (ironscheme-version                         i)
-    (ironscheme-runtime                         i)
+    (cleat-scheme-build                         i)
+    (cleat-scheme-test                          i)
+    (cleat-scheme-version                       i)
+    (cleat-scheme-runtime                       i)
     (last-pair                                  i)
     (make-list                                  i)
     (unspecified?                               i)
@@ -2195,7 +2195,7 @@
         forms))))
 
 ;; 种子构建：只展开，不编译（designs/05-bootstrap.md §5），结果写成 boot-seed.core；
-;; 另把无 Scheme 定义的 core-prim（应由 IronScheme.Core 的 C# 原语或 stage0 提供）列到标准错误。
+;; 另把无 Scheme 定义的 core-prim（应由 Cleat.Scheme 的 C# 原语或 stage0 提供）列到标准错误。
 (let-values (((core* locs)
                (time-it "macro expansion"
                  (lambda ()

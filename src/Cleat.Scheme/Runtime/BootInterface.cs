@@ -50,7 +50,7 @@ public static class BootInterface
         if (!File.Exists(ifc)) return;
         string head;
         using (var r = new StreamReader(ifc)) head = r.ReadLine() ?? "";
-        if (!head.StartsWith("(ironscheme-interface 1 \"" + asm.GetName().Name + "\"", StringComparison.Ordinal)) return;
+        if (!head.StartsWith("(cleat-scheme-interface 1 \"" + asm.GetName().Name + "\"", StringComparison.Ordinal)) return;
         lock (s_ifcGate)
         {
             // 不可变的表：新表 = 旧表 + 新元素（文件数很少）

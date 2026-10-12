@@ -13,16 +13,16 @@
             (else (loop))))))))
 
 (define out-dir
-  (let ((d (string-append (clr-static-call System.IO.Path GetTempPath) "iron-compile-library")))
+  (let ((d (string-append (clr-static-call System.IO.Path GetTempPath) "cleat-compile-library")))
     (clr-static-call System.IO.Directory CreateDirectory d)
     d))
 
 (define form (seed-form '(boot lists)))
 (define t0 (clr-static-prop-get System.Environment TickCount))
-(define text (compile->lcil-text (list form) "ironscheme.lists" "#Module"))
+(define text (compile->lcil-text (list form) "cleat.scheme.lists" "#Module"))
 (define t1 (clr-static-prop-get System.Environment TickCount))
 (define lcil-path (string-append out-dir "/lists.lcil"))
-(define dll-path (string-append out-dir "/ironscheme.lists.dll"))
+(define dll-path (string-append out-dir "/cleat.scheme.lists.dll"))
 (when (file-exists? lcil-path) (delete-file lcil-path))
 (call-with-output-file lcil-path (lambda (p) (put-string p text)))
 (clr-static-call Cleat.Emit.LcilEmitter (Save String String String Boolean) text lcil-path dll-path #f)
@@ -46,7 +46,7 @@
 (define (compiled? name)
   (let ((t (clr-call System.Object GetType (eval name env))))
     (string=? (clr-prop-get System.Reflection.AssemblyName Name (clr-call System.Reflection.Assembly GetName (clr-prop-get System.Type Assembly t)))
-              "ironscheme.lists")))
+              "cleat.scheme.lists")))
 
 (for-each
   (lambda (name)

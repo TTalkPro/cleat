@@ -156,7 +156,7 @@ See docs/license.txt. |#
     (cleat scheme unsafe))
     
     
-  ;; 数的宿主表示经 $ 原语操作（IronScheme.Core.HostPrimitives，iron-056）
+  ;; 数的宿主表示经 $ 原语操作（Cleat.Scheme 的 HostPrimitives，iron-056）
   (define (make-rectnum r1 r2)
     ($make-rectnum r1 r2))
     
@@ -1244,6 +1244,6 @@ See docs/license.txt. |#
                 (display (- k 1) p)
                 (r)])))]))
 
-  ;; 新运行时（IronScheme.Core）经 RuntimeHooks 回调这些过程（见 boot/exceptions.sls）
+  ;; 运行时（Cleat.Scheme）经 RuntimeHooks 回调这些过程（见 boot/exceptions.sls）
   ($set-runtime-hook! 'exact exact)
   ($set-runtime-hook! 'inexact inexact))

@@ -66,7 +66,7 @@ See docs/license.txt. |#
     (cleat scheme unsafe))
     
   
-  ;; 散列表是宿主对象，经 $hashtable-* 原语操作（IronScheme.Core.HostPrimitives，iron-056）
+  ;; 散列表是宿主对象，经 $hashtable-* 原语操作（Cleat.Scheme 的 HostPrimitives，iron-056）
   (define (hashtable? obj)
     ($hashtable? obj))
     

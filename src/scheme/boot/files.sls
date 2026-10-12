@@ -19,7 +19,7 @@ See docs/license.txt. |#
     (cleat scheme unsafe))
     
 
-  ;; 文件系统经 $ 原语（IronScheme.Core.HostPrimitives，iron-056）
+  ;; 文件系统经 $ 原语（Cleat.Scheme 的 HostPrimitives，iron-056）
   (define/contract (file-exists? fn:string)
     ($file-exists? fn))
     

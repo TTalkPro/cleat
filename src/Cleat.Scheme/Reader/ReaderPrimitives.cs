@@ -67,8 +67,7 @@ public partial class Builtins
 
     /// <summary>
     /// "(行,列) - (行,列)" → ((起始行 . 起始列) (结束行 . 结束列))。
-    /// nanopass 的 IronScheme 适配文件按名字调用 IronScheme.Runtime.Builtins.SourceLocation（见 iron-002），
-    /// 新运行时提供同签名方法；命名空间差异由覆盖适配文件或 iron-013 的源码适配解决。
+    /// nanopass 的覆盖适配库 lib/nanopass/implementation-helpers.cleat-scheme.sls 按名字调用 Cleat.Scheme.Builtins.SourceLocation。
     /// </summary>
     public static object SourceLocation(string location)
     {

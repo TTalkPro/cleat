@@ -6,7 +6,7 @@
 ;;;   （cleat-051 起：运行时操作全部是编译器的 Clojure 节点 $clj-…，不再是 Scheme 过程常量，见各形式与 designs/04 §6）
 ;;;   def        Var 在展开期 intern（Namespace.intern 的语义），运行时 $clj-def（setDynamic / bindRoot / setMeta），值为 Var
 ;;;   if         (if 测试 then else)：Clojure 的 nil（CLR null = Scheme 的 #nil）与 false 在 Scheme 里本来就为假（cleat-058）
-;;;   do         begin；let* / loop* → let* / 命名 let（recur = 调用循环标签，只在尾位置，IronScheme 降为循环）
+;;;   do         begin；let* / loop* → let* / 命名 let（recur = 调用循环标签，只在尾位置，Scheme 编译器降为循环）
 ;;;   fn*        $clj-fn：编译为 AFunction / RestFn 的子类（固定子句 invoke(k)，变长子句 doInvoke）；子句体是命名 let，recur 回到子句开头
 ;;;   letfn*     letrec；quote → 常量；var → Var 常量；throw → $throw；try → $try/catch + $try/finally
 ;;;   monitor-*  Monitor.Enter / Exit；import* → 运行时导入 *ns*；new / . / set! → Reflector（Clojure 的转换规则）；

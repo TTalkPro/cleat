@@ -772,6 +772,10 @@
     (overload "Cleat.Scheme.Builtins" "Car" 1 #f () car))
   (primitive cdr
     (overload "Cleat.Scheme.Builtins" "Cdr" 1 #f () cdr))
+  (primitive cleat-scheme-runtime
+    (overload "Cleat.Scheme.Builtins" "GetRuntime" 0 #f () #f))
+  (primitive cleat-scheme-version
+    (overload "Cleat.Scheme.Builtins" "Version" 0 #f () #f))
   (primitive cleat.kernel/add
     (overload "clojure.lang.Numbers" "add" 2 #f (pure inline) #f))
   (primitive cleat.kernel/assoc
@@ -974,10 +978,6 @@
     (overload "Cleat.Scheme.HostPrimitives" "HostVersion" 0 #f (pure) #f))
   (primitive inexact=?
     (overload "Cleat.Scheme.Builtins" "InexactEqual" 2 #f (pure) #f))
-  (primitive ironscheme-runtime
-    (overload "Cleat.Scheme.Builtins" "GetRuntime" 0 #f () #f))
-  (primitive ironscheme-version
-    (overload "Cleat.Scheme.Builtins" "Version" 0 #f () #f))
   (primitive list*
     (overload "Cleat.Scheme.Builtins" "ListStar" 1 #t () #f)
     (overload "Cleat.Scheme.Builtins" "ListStar" 2 #f () #f)

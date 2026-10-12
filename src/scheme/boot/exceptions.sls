@@ -175,7 +175,7 @@ See docs/license.txt. |#
         (make-who-condition (string->symbol ($type-name ex)))
         (make-message-condition ($exception-message ex)))))
 
-  ;; 新运行时（IronScheme.Core）经 RuntimeHooks 回调这些过程，取代旧 Glue.il 对 boot dll 的直接引用
+  ;; 运行时（Cleat.Scheme）经 RuntimeHooks 回调这些过程，取代旧 Glue.il 对 boot dll 的直接引用
   ($set-runtime-hook! 'raise raise)
   ($set-runtime-hook! 'raise-continuable raise-continuable)
   ($set-runtime-hook! 'with-exception-handler with-exception-handler)
