@@ -1,4 +1,4 @@
-﻿/**
+/**
  *   Copyright (c) Rich Hickey. All rights reserved.
  *   The use and distribution terms for this software are covered by the
  *   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
@@ -721,10 +721,14 @@ namespace clojure.lang
         }
 
 #pragma warning disable IDE0059 // Unnecessary assignment of a value
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-042：转发帧不抓实参（tier-0 把实参报告为整个调用期间活着）
+
         public object invoke()
         {
             return GetFn().invoke();
         }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-042：转发帧不抓实参（tier-0 把实参报告为整个调用期间活着）
 
         public object invoke(object arg1)
         {
@@ -732,12 +736,16 @@ namespace clojure.lang
                 Util.Ret1(arg1,arg1=null));
         }
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-042：转发帧不抓实参（tier-0 把实参报告为整个调用期间活着）
+
         public object invoke(object arg1, object arg2)
         {
             return GetFn().invoke(
                 Util.Ret1(arg1,arg1=null),
                 Util.Ret1(arg2,arg2=null));
         }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-042：转发帧不抓实参（tier-0 把实参报告为整个调用期间活着）
 
         public object invoke(object arg1, object arg2, object arg3)
         {
@@ -1084,6 +1092,8 @@ namespace clojure.lang
                 (Object[])Util.Ret1(args,args=null));
         }
 #pragma warning restore IDE0059 // Unnecessary assignment of a value
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-042：转发帧不抓实参（tier-0 把实参报告为整个调用期间活着）
+
         public object applyTo(ISeq arglist)
         {
             return GetFn().applyTo(arglist);
@@ -1210,6 +1220,8 @@ namespace clojure.lang
 
         class AssocFn : AFn
         {
+            [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-042：转发帧不抓实参（tier-0 把实参报告为整个调用期间活着）
+
             public override object invoke(object m, object k, object v)
             {
                 return RT.assoc(m,k,v);
@@ -1223,6 +1235,8 @@ namespace clojure.lang
 
         class DissocFn : AFn
         {
+            [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-042：转发帧不抓实参（tier-0 把实参报告为整个调用期间活着）
+
             public override object invoke(object m, object k)
             {
                 return RT.dissoc(m, k);

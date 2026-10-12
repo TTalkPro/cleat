@@ -251,8 +251,44 @@ min 是稳态指标，中位数呈双峰（keyword_invoke 21 / 69、protocol 33 
 
 剩余：第 5 项 locals-clearing；内联只覆盖 AOT 单元（REPL / 源码加载的 defn 还没有内联体）；局部变量按初值类型推断。
 
-### 第 5 项（暂停，2026-10-11）
+### 第 5 项：局部变量清除（2026-10-12）
 
-locals clearing 的半成品在分支 `wip/cleat-042-locals-clearing`（1de4aec）：按生成顺序数引用、循环钉住、if 分支感知、转发参数与调用临时变量清除。
-已知：512 MB 堆上限下 `(reduce + (map inc (range 3e7)))` 仍保留头（`count` / `last` / `doseq` / `loop` 通过）；未跑全量测试。
-用户要求先做 cleat-058（Scheme 元层按 skeg 对齐），之后回到这里。
+目标同 JVM 的 locals clearing：惰性序列的头不被调用者的局部变量 / 参数 / 临时变量钉住，`(reduce + (map inc (range 3e7)))` 这类在小堆上能跑完。
+（分支 `wip/cleat-042-locals-clearing` 的半成品合入后继续。）
+
+**codegen（只对 Clojure fn / deftype 方法；Scheme 代码不变，种子不动）**：
+- 方法入口按生成顺序数每个局部 / 参数的引用（`init-clearing!` / `walk-var-refs`）；最后一次引用取值即清：
+  `ldloca`/`ldarga` + `Cleat.Scheme.Locals.Take(ref object)`（读出并置 null，AggressiveInlining）。
+  deftype 方法的形参有类型，不能按 `ref object` 取地址，退回读后 `starg null`（`clear-args-by-ref`）。
+- `if` 分支感知：两支各自数引用，少的一支在入口补清；循环体引用的外层变量钉住不清（`loop-outer-refs`）。
+- 转发方法（`invoke` → `invokeStatic`）、桥方法的实参同样经 Take 传出；静态调用、`jump`、变长打包的临时变量用完即清。
+- reify* 的构造参数是方法闭包捕获的外层变量（`deftype-caps`），计数要算它们——第一次全量测试 aot.sps
+  `(let* [k (:k {:k v})] (reify* … [k v]))` 的 v 被提前清成 nil、cts add-watch 两处断言失败都是这个。
+
+**tier-0 的问题与 `AggressiveOptimization`**：只清 IL 层的局部变量不够。tier-0 JIT 把所有局部与求值栈溢出的临时槽在整个方法内都报告为活的
+（不做活跃性分析），`ldloc; ldnull; stloc` 本身还会生成新的溢出槽。用 `DOTNET_DbgEnableMiniDump` + FailFast 取堆转储看根：
+钉住序列头的是转发 `invoke` 的 tier-0 帧与 C# `Var.invoke` 的帧。所以：
+- 所有 Clojure fn 的方法（子句方法、invokeStatic(Prim)、桥、转发 `invoke`）标 `optimize` → `MethodImplAttributes.AggressiveOptimization`
+  （Lcil 方法属性；Emitter 设置实现标志）；`Var.invoke` / `applyTo` 的 7 个重载同样标注。
+- 代价：这些方法跳过分层编译，直接以完全优化 JIT，但**没有动态 PGO**（tier-0 插桩 → tier-1 的接口 / 委托去虚化、热冷布局）。
+- 场景（20 个保留头用例：N = 3e7、512 MB 堆上限 `DOTNET_GCHeapHardLimit`）：let / 参数 / 转发 / doseq / dorun / reduce / internal-reduce / 嵌套 fn 全部跑完。
+
+调试开关：`CLEAT_NO_INLINE` 环境变量关闭第 4 项的内联（对比剖析用）。
+
+| 基准（min，ms） | 第 5 项前 | 第一次测 | 修正后再测 |
+|---|---|---|---|
+| sum_loop | 11 | — | 12 |
+| protocol | 32 | 34 | 34 |
+| keyword_invoke | 21 | — | 18 |
+| lazy_chain | 80 | 91 | 79 |
+| assoc_map | 50 | 56 | 51 |
+| reduce_vec | 18 | 22 | 20 |
+| fib | 10 | — | 9 |
+| prim_fib | 4 | — | 4 |
+
+启动（`-e "(+ 1 2)"`）：第 5 项前 ~1.13 s，第一次测 ~1.24 s，再测 1.15–1.19 s（clojure.core 的方法都改为直接完全优化 JIT）。
+第一次测与再测之间 codegen 只改了 reify 计数，差别主要是机器噪声；稳定的代价是 protocol / reduce_vec 的 ~5–10% 与启动的数十毫秒。
+收窄方案（只给转发 `invoke` 与 `Var.invoke` 标 `optimize`，子句方法留在分层编译）未做：子句方法自身的 tier-0 帧同样会钉住参数，
+需要逐例验证；需要时再做。
+
+符合性：cts 与基线一致、语料与分歧表一致、ILVerify 通过、591 测试全绿。

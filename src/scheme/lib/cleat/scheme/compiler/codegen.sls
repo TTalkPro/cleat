@@ -26,7 +26,7 @@ See docs/license.txt. |#
   (export generate-unit canonical-gensyms current-target unit-interface loop-forms)
   (import
     (rnrs)
-    (only (cleat scheme) void unspecified? make-parameter gensym symbol-bound? symbol-value)
+    (only (cleat scheme) void unspecified? make-parameter parameterize gensym symbol-bound? symbol-value)
     (nanopass)
     (cleat scheme compiler languages)
     (cleat scheme compiler primitives)
@@ -316,10 +316,13 @@ See docs/license.txt. |#
             arg-base             ; 第一个形参的 ldarg 下标（实例方法为 1）
             labels               ; eq 哈希表：label 的名字 → (IL 标签 . 形参表)（局部循环，iron-034b）
             (mutable big?)       ; 方法体很大（只执行一次的测试过程之类）：不内联算术（iron-034f）
-            (mutable ret-type)))  ; 原始签名的方法（cleat-042）：返回 l64 / fl，尾位置的值转换成原始值再 ret；否则 #f
+            (mutable ret-type)    ; 原始签名的方法（cleat-042）：返回 l64 / fl，尾位置的值转换成原始值再 ret；否则 #f
+            uses                 ; 局部变量清除（cleat-042 第 5 项）：变量 → 还没生成的引用个数（只登记做清除的方法）
+            pinned))             ; 变量 → 所在循环层数：循环体外绑定、体内引用的变量在循环里不清除
 
   (define (make-method-ctx u class static? loop-label loop-arity self-mref)
-    (make-mctx u class static? (make-eq-hashtable) '() 0 '() 0 0 loop-label loop-arity self-mref (if static? 0 1) (make-eq-hashtable) #f #f))
+    (make-mctx u class static? (make-eq-hashtable) '() 0 '() 0 0 loop-label loop-arity self-mref (if static? 0 1) (make-eq-hashtable) #f #f
+               (make-eq-hashtable) (make-eq-hashtable)))
 
   ;; code（指令树）里有没有 (br L)
   (define (branches-to? code l)
@@ -388,7 +391,9 @@ See docs/license.txt. |#
       (emit! mc `(ldc.i4 ,n) `(newarr ,obj))
       (let loop ((ts (reverse temps)) (i 0))
         (unless (null? ts)
-          (emit! mc '(dup) `(ldc.i4 ,i) `(ldloc ,(car ts)) '(stelem.ref))
+          (emit! mc '(dup) `(ldc.i4 ,i))
+          (ldloc-clear! mc (car ts))
+          (emit! mc '(stelem.ref))
           (loop (cdr ts) (+ i 1))))))
 
   ;; ———————————————— 结果按上下文收尾 ————————————————
@@ -964,7 +969,7 @@ See docs/license.txt. |#
              (else (fallback)))]
       [,x (let ((loc (hashtable-ref (mctx-vars mc) x #f)))
             (if (and loc (memq (car loc) '(tlocal targ)) (eq? (cddr loc) t))
-                (emit! mc (if (eq? (car loc) 'targ) `(ldarg ,(cadr loc)) `(ldloc ,(cadr loc))))
+                (begin (ref-var! mc x #f) (emit! mc (if (eq? (car loc) 'targ) `(ldarg ,(cadr loc)) `(ldloc ,(cadr loc)))))
                 (fallback)))]
       [(primcall ,pr ,e* ...)
        (if (and (eq? (expr-type e var-types) t) (raw-prim! pr e* mc))
@@ -1133,6 +1138,127 @@ See docs/license.txt. |#
     (or (hashtable-ref (mctx-vars mc) x #f)
         (error 'codegen "unbound variable" x)))
 
+  ;; ———————————————— 局部变量清除（cleat-042 第 5 项，JVM 的 locals clearing）————————————————
+  ;; CLR 的 tier-0 代码把方法的全部局部变量与参数都报告为活的（优化后的代码才按活跃区间），只调用一次的长调用
+  ;; （reduce → coll-reduce → seq-reduce …）一直停在 tier-0：各帧的 coll 参数、循环变量抓着惰性序列的头，整条序列无法回收。
+  ;; 做法：方法体里按生成顺序数每个变量的引用，生成最后一个引用时读出后把槽置 null（ldnull stloc / starg）。
+  ;; if 的两支按生成顺序数，前一支里不清（保守）；循环体外绑定、体内引用的变量在循环里不清（下一轮还要用）；
+  ;; try 的处理器 / finally 在体之后生成，引用它们的变量不会在体里被清。原始值的局部变量不必清，只计数
+  (define (init-clearing! mc body)
+    (let ((uses (mctx-uses mc)))
+      (walk-var-refs body (lambda (x) (hashtable-update! uses x (lambda (n) (+ n 1)) 0)) (lambda (x) (void)))))
+
+  ;; 引用变量 x：计数减一；load? 为真时压栈；是最后一个引用、不在钉住的循环里、是 object 局部变量或参数时清掉槽
+  (define (ref-var! mc x load?)
+    (let* ((uses (mctx-uses mc))
+           (n (hashtable-ref uses x #f))
+           (last? (and n (begin (hashtable-set! uses x (- n 1)) (= n 1))
+                       (= 0 (hashtable-ref (mctx-pinned mc) x 0)))))
+      (let ((loc (and last? (hashtable-ref (mctx-vars mc) x #f))))
+        (cond
+          ;; 最后一次读：经地址取出并清空（Locals.Take），不留求值栈上的副本给 tier-0 溢出成活着的临时变量
+          ((and load? loc (eq? (car loc) 'local)) (emit! mc `(ldloca ,(cdr loc))) (take-slot! mc))
+          ((and load? loc (eq? (car loc) 'arg) (clear-args-by-ref)) (emit! mc `(ldarga ,(cdr loc))) (take-slot! mc))
+          (else
+           (when load? (load-var! mc x))
+           (when last? (clear-var! mc x)))))))
+
+  ;; 参数经地址取出只对 object 形参（Clojure fn 的方法）；deftype 方法的形参有类型，退回读后置 null
+  (define clear-args-by-ref (make-parameter #t))
+  ;; 做局部变量清除的方法（Clojure fn / deftype 方法）才清临时变量；Scheme 代码的 jump / 打包临时变量照旧
+  (define (clearing? mc) (> (hashtable-size (mctx-uses mc)) 0))
+
+  (define (take-slot! mc)
+    (emit! mc `(call "Cleat.Scheme.Locals" "Take" (,(string-append obj "&")) ,obj)))
+
+  (define (clear-var! mc x)
+    (let ((loc (hashtable-ref (mctx-vars mc) x #f)))
+      (when loc
+        (case (car loc)
+          ((local) (emit! mc '(ldnull) `(stloc ,(cdr loc))))
+          ((arg) (emit! mc '(ldnull) `(starg ,(cdr loc))))
+          (else (void))))))
+
+  ;; 分支 e 里各（做清除的）变量的引用数：((变量 . 个数) …)
+  (define (branch-ref-counts mc e)
+    (let ((uses (mctx-uses mc)) (t (make-eq-hashtable)))
+      (if (= (hashtable-size uses) 0)
+          '()
+          (begin
+            (walk-var-refs e (lambda (x) (when (hashtable-contains? uses x) (hashtable-update! t x (lambda (n) (+ n 1)) 0)))
+                           (lambda (x) (void)))
+            (let-values (((ks vs) (hashtable-entries t)))
+              (map cons (vector->list ks) (vector->list vs)))))))
+
+  (define (adjust-uses! mc counts op)
+    (let ((uses (mctx-uses mc)))
+      (for-each (lambda (p) (hashtable-update! uses (car p) (lambda (n) (op n (cdr p))) 0)) counts)))
+
+  ;; 只读一次的 object 临时变量：读出后置 null
+  (define (ldloc-clear! mc t)
+    (if (clearing? mc)
+        (begin (emit! mc `(ldloca ,t)) (take-slot! mc))
+        (emit! mc `(ldloc ,t))))
+
+  ;; 遍历 L3 表达式的变量引用（on-ref）与约束（on-bind）。不进入嵌套 lambda 的体（另一个方法），
+  ;; 但闭包创建时读的自由变量算引用（lambda 全部自由变量；letrec 的 lambda 除去自己）
+  (define (walk-var-refs e on-ref on-bind)
+    (define (free-of le self)
+      (nanopass-case (L3 LambdaExpr) le
+        [(lambda ,nm (,x* ...) ,cl* ...) (for-each on-ref (if self (remq self x*) x*))]))
+    (let walk ((e e))
+      (nanopass-case (L3 Expr) e
+        [,x (on-ref x)]
+        [(if ,e0 ,e1 ,e2) (walk e0) (walk e1) (walk e2)]
+        [(begin ,e* ... ,e) (for-each walk e*) (walk e)]
+        [(set! ,x ,e) (walk e)]
+        [(gset! ,s ,e) (walk e)]
+        [(mset! ,x ,e) (walk e)]
+        [(primcall ,pr ,e* ...) (for-each walk e*)]
+        [(lambda ,nm (,x* ...) ,cl* ...) (for-each on-ref x*)]
+        [(letrec ([,x* ,le*] ...) ,body)
+         (for-each on-bind x*)
+         (for-each (lambda (x le) (free-of le x)) x* le*)
+         (walk body)]
+        [(let ([,x* ,e*] ...) ,body) (for-each walk e*) (for-each on-bind x*) (walk body)]
+        [(library ,d ([,x* ,s* ,e*] ...) ,body) (for-each walk e*) (walk body)]
+        [(call ,e ,e* ...) (walk e) (for-each walk e*)]
+        [(and ,e* ...) (for-each walk e*)]
+        [(or ,e* ...) (for-each walk e*)]
+        [(throw ,e) (walk e)]
+        [(try-finally ,e0 ,e1) (walk e0) (walk e1)]
+        [(try-catch ,e (,d* ,e*) ...) (walk e) (for-each walk e*)]
+        [(label ,x (,x* ...) ,body0 ,body1) (for-each on-bind x*) (walk body0) (walk body1)]
+        [(jump ,x ,e* ...) (for-each walk e*)]
+        [(host-call ,d0 ,d1 ,st ,e* ...) (for-each walk e*)]
+        [(host-field-get ,d0 ,d1 ,st ,e* ...) (for-each walk e*)]
+        [(host-field-set ,d0 ,d1 ,st ,e* ...) (for-each walk e*)]
+        [(host-new ,d ,e* ...) (for-each walk e*)]
+        [(host-new-array ,d ,e) (walk e)]
+        [(host-cast ,d ,e) (walk e)]
+        [(host-is ,d ,e) (walk e)]
+        [(unsupported ,d ,e* ...) (for-each walk e*)]
+        [(box ,e) (walk e)]
+        [(unbox ,x) (on-ref x)]
+        [(set-box! ,x ,e) (on-ref x) (walk e)]
+        [(clj-var-set! ,d ,e) (walk e)]
+        [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (walk e0) (walk e1)]
+        [(clj-invoke ,e ,e* ...) (walk e) (for-each walk e*)]
+        [(clj-keyword-invoke ,d ,e ,e* ...) (walk e) (for-each walk e*)]
+        [(clj-call ,d0 ,d1 ,e* ...) (for-each walk e*)]
+        [(clj-static-call ,d0 ,d1 ,e* ...) (for-each walk e*)]
+        [(clj-case ,d ,e0 ,e1 ,e* ...) (walk e0) (walk e1) (for-each walk e*)]
+        [(clj-deftype ,d (,x* ...) ,le* ...)
+         (when (and (deftype-info-reify? d) (not (deftype-interface? d))) (for-each on-ref (deftype-caps x* le*)))]
+        [else (void)])))
+
+  ;; 循环体 body 里引用、在体外绑定的变量（params 是这个循环自己的形参，每轮重新赋值，不算）
+  (define (loop-outer-refs body params)
+    (let ((refs (make-eq-hashtable)) (bound (make-eq-hashtable)))
+      (for-each (lambda (p) (hashtable-set! bound p #t)) params)
+      (walk-var-refs body (lambda (x) (hashtable-set! refs x #t)) (lambda (x) (hashtable-set! bound x #t)))
+      (filter (lambda (x) (not (hashtable-ref bound x #f))) (vector->list (hashtable-keys refs)))))
+
   (define (load-var! mc x)
     (let ((loc (var-location mc x)))
       (case (car loc)
@@ -1250,7 +1376,7 @@ See docs/license.txt. |#
 
   (define (cg* e mc ctx)
     (nanopass-case (L3 Expr) e
-      [,x (unless (eq? ctx 'effect) (load-var! mc x) (finish-value! mc ctx))]
+      [,x (ref-var! mc x (not (eq? ctx 'effect))) (unless (eq? ctx 'effect) (finish-value! mc ctx))]
       [(label ,x (,x* ...) ,body0 ,body1)
        ;; 局部循环（iron-034b，lower-loops 产生）：形参是 IL 局部变量，
        ;; jump 给它们赋值后 br 到循环体。body0 一次都没跳到循环体时循环体不可达，不生成
@@ -1263,7 +1389,11 @@ See docs/license.txt. |#
            (when (branches-to? code lf)
              (unless (eq? ctx 'tail) (emit! mc `(br ,end-l)))
              (emit! mc `(label ,lf))
-             (cg body1 mc ctx)
+             ;; 体外绑定、体内引用的变量在循环里钉住（不清除）
+             (let ((outer (loop-outer-refs body1 x*)) (pinned (mctx-pinned mc)))
+               (for-each (lambda (v) (hashtable-update! pinned v (lambda (n) (+ n 1)) 0)) outer)
+               (cg body1 mc ctx)
+               (for-each (lambda (v) (hashtable-update! pinned v (lambda (n) (- n 1)) 0)) outer))
              (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))))]
       [(jump ,x ,e* ...)
        (let* ((entry (or (hashtable-ref (mctx-labels mc) x #f) (error 'codegen "jump to unknown label" x)))
@@ -1273,7 +1403,7 @@ See docs/license.txt. |#
                               (if rt (cg-raw a mc rt) (cg a mc 'value))
                               (let ((t (new-local! mc (if rt (type-clr rt) obj)))) (emit! mc `(stloc ,t)) t)))
                           (cdr entry) e*)))
-         (for-each (lambda (p t) (emit! mc `(ldloc ,t)) (store-var! mc p)) (cdr entry) temps)
+         (for-each (lambda (p t) (if (var-raw-type mc p) (emit! mc `(ldloc ,t)) (ldloc-clear! mc t)) (store-var! mc p)) (cdr entry) temps)
          (emit! mc `(br ,(car entry)))
          ;; 之后的代码不可达；补一个值保持栈形状一致（同 throw）
          (case ctx
@@ -1289,7 +1419,12 @@ See docs/license.txt. |#
        (let ((else-l (new-label! mc)) (end-l (new-label! mc)))
          (cg (or (truthy-bool-call e0) e0) mc 'test)
          (emit! mc `(brfalse ,else-l))
-         (cg e1 mc ctx)
+         ;; 局部变量清除按分支：生成 then 支时先扣掉 else 支的引用数，then 支里的最后一个引用在 if 之后没有引用时就清；
+         ;; 生成 else 支前加回（if 之后的计数与不分支时相同）
+         (let ((c2 (branch-ref-counts mc e2)))
+           (adjust-uses! mc c2 -)
+           (cg e1 mc ctx)
+           (adjust-uses! mc c2 +))
          (unless (eq? ctx 'tail) (emit! mc `(br ,end-l)))
          (emit! mc `(label ,else-l))
          (cg e2 mc ctx)
@@ -1570,12 +1705,15 @@ See docs/license.txt. |#
          (emit! mc `(stloc ,root))
          (for-each (lambda (x l) (cg x mc 'value) (emit! mc `(stloc ,l))) (cdr e*) defs)
          (emit! mc `(ldloc ,root) `(isinst ,d0) `(brfalse ,slow))
-         ;; self 就是 Var 的根（已确认是 d0 的实例；普通 invoke 的 this 也是它）——不再每次调用 newobj（cleat-042）
-         (emit! mc `(ldloc ,root))
-         (for-each (lambda (l) (emit! mc `(ldloc ,l))) defs)
+         ;; self 就是 Var 的根（已确认是 d0 的实例；普通 invoke 的 this 也是它）——不再每次调用 newobj（cleat-042）。
+         ;; 临时变量在两条路上各读一次，读后置 null（局部变量清除）
+         (ldloc-clear! mc root)
+         (for-each (lambda (l) (ldloc-clear! mc l)) defs)
          (emit! mc `(call ,d0 "invokeStatic" ,(objs (+ n 1)) ,obj) `(br ,end))
-         (emit! mc `(label ,slow) `(ldloc ,root) `(castclass ,ifn-type))
-         (for-each (lambda (l) (emit! mc `(ldloc ,l))) defs)
+         (emit! mc `(label ,slow))
+         (ldloc-clear! mc root)
+         (emit! mc `(castclass ,ifn-type))
+         (for-each (lambda (l) (ldloc-clear! mc l)) defs)
          (emit! mc `(callvirt ,ifn-type "invoke" ,(objs n) ,obj))
          (emit! mc `(label ,end))
          (finish-value! mc ctx))]
@@ -1625,7 +1763,7 @@ See docs/license.txt. |#
        (let ((c (if (deftype-interface? d) (interface-class! mc d) (deftype-class! mc d x* le*))))
          (if (and (deftype-info-reify? d) (not (deftype-interface? d)))
              (begin
-               (for-each (lambda (v) (load-var! mc v)) (cdr c))
+               (for-each (lambda (v) (ref-var! mc v #t)) (cdr c))
                (emit! mc '(ldnull) `(newobj ,(car c) ,(append (objs (length (cdr c))) (list obj)))))
              (emit! mc `(ldtoken ,(car c)) `(call ,type-type "GetTypeFromHandle" (,type-handle-type) ,type-type)
                     `(call ,clojure-ops-type "DefineType" (,obj) ,obj)))
@@ -1635,12 +1773,14 @@ See docs/license.txt. |#
        (emit! mc `(newobj ,box-type (,obj)))
        (finish-value! mc ctx)]
       [(unbox ,x)
-       (unless (eq? ctx 'effect)
-         (load-var! mc x)
+       (if (eq? ctx 'effect)
+         (ref-var! mc x #f)
+         (begin
+         (ref-var! mc x #t)
          (emit! mc `(castclass ,box-type) `(ldfld ,box-type "Value"))
-         (finish-value! mc ctx))]
+         (finish-value! mc ctx)))]
       [(set-box! ,x ,e)
-       (operands! mc (list (lambda () (load-var! mc x) (emit! mc `(castclass ,box-type)))
+       (operands! mc (list (lambda () (ref-var! mc x #t) (emit! mc `(castclass ,box-type)))
                            (lambda () (cg e mc 'value))))
        (emit! mc `(stfld ,box-type "Value"))
        (finish-none! mc ctx)]))
@@ -2200,11 +2340,12 @@ See docs/license.txt. |#
          (for-each (lambda (f n) (hashtable-set! (mctx-vars mc) f (cons 'field n))) fields field-names)
          (when self (hashtable-set! (mctx-vars mc) self '(self)))
          (mctx-big?-set! mc (bigger-than? body big-body-nodes))
+         (init-clearing! mc body)
          (cg body mc 'tail)
          (if sig
-             (append (finish-method mc mname '() (sig-param-types sig) (sig-char-type (sig-ret sig)))
+             (append (finish-method mc mname '(optimize) (sig-param-types sig) (sig-char-type (sig-ret sig)))
                      `((implements ,(string-append primifs-prefix sig) "invokePrim")))
-             (finish-method mc mname '(override) (objs (length x*)))))]))
+             (finish-method mc mname '(override optimize) (objs (length x*)))))]))
 
   ;; 子句形参的位置：从下标 j0 起的参数；有原始签名时 L / D 形参是原始值的参数（targ），返回类型记入 mctx
   (define (bind-clause-params! mc x* j0 sig)
@@ -2225,10 +2366,11 @@ See docs/license.txt. |#
          (when self (hashtable-set! (mctx-vars mc) self (cons 'arg 0)))
          (bind-clause-params! mc x* 1 sig)
          (mctx-big?-set! mc (bigger-than? body big-body-nodes))
+         (init-clearing! mc body)
          (cg body mc 'tail)
          (if sig
-             (finish-method mc "invokeStaticPrim" '(static) (cons obj (sig-param-types sig)) (sig-char-type (sig-ret sig)))
-             (finish-method mc "invokeStatic" '(static) (objs (+ (length x*) 1)))))]))
+             (finish-method mc "invokeStaticPrim" '(static optimize) (cons obj (sig-param-types sig)) (sig-char-type (sig-ret sig)))
+             (finish-method mc "invokeStatic" '(static optimize) (objs (+ (length x*) 1)))))]))
 
   ;; ———— 原始签名（cleat-042）————
   ;; 签名字符串：每个形参一个字母、最后是返回，O = object、L = long、D = double（clojure.lang.primifs 的接口名）
@@ -2267,32 +2409,33 @@ See docs/license.txt. |#
       (case kind
         ((static)
          (emit! mc '(ldarg 0))
-         (let loop ((cs cs) (j 1)) (unless (null? cs) (emit! mc `(ldarg ,j)) (unbox-to-sig! mc (car cs)) (loop (cdr cs) (+ j 1))))
+         (let loop ((cs cs) (j 1)) (unless (null? cs) (emit! mc `(ldarga ,j)) (take-slot! mc) (unbox-to-sig! mc (car cs)) (loop (cdr cs) (+ j 1))))
          (emit! mc `(call ,class "invokeStaticPrim" ,(cons obj ptypes) ,rtype))
          (box-from-sig! mc rc)
          (emit! mc '(ret))
-         (finish-method mc "invokeStatic" '(static) (objs (+ n 1))))
+         (finish-method mc "invokeStatic" '(static optimize) (objs (+ n 1))))
         ((prim)
          (emit! mc '(ldarg 0))
          (let loop ((j 1)) (unless (> j n) (emit! mc `(ldarg ,j)) (loop (+ j 1))))
          (emit! mc `(call ,class "invokeStaticPrim" ,(cons obj ptypes) ,rtype) '(ret))
-         (append (finish-method mc "invokePrim" '() ptypes rtype)
+         (append (finish-method mc "invokePrim" '(optimize) ptypes rtype)
                  `((implements ,(string-append primifs-prefix sig) "invokePrim"))))
         (else
          (emit! mc '(ldarg 0))
-         (let loop ((cs cs) (j 1)) (unless (null? cs) (emit! mc `(ldarg ,j)) (unbox-to-sig! mc (car cs)) (loop (cdr cs) (+ j 1))))
+         (let loop ((cs cs) (j 1)) (unless (null? cs) (emit! mc `(ldarga ,j)) (take-slot! mc) (unbox-to-sig! mc (car cs)) (loop (cdr cs) (+ j 1))))
          (emit! mc `(call ,class "invokePrim" ,ptypes ,rtype))
          (box-from-sig! mc rc)
          (emit! mc '(ret))
-         (finish-method mc "invoke" '(override) (objs n))))))
+         (finish-method mc "invoke" '(override optimize) (objs n))))))
 
   ;; 实例 invoke 的转发变体（cleat-033）：this 作 self，形参原样传给静态 invokeStatic，返回它的值
   (define (clj-forward-method u class cl)
     (nanopass-case (L3 Clause) cl
       [(clause (,x* ...) ,x ,body)
-       `(method "invoke" (attrs override) (params ,@(objs (length x*))) (ret ,obj)
+       `(method "invoke" (attrs override optimize) (params ,@(objs (length x*))) (ret ,obj)
+          ;; 实参读出后把参数槽置 null（局部变量清除）：tier-0 的转发帧在被调用者运行期间不再抓着它们
           (body (ldarg 0)
-                ,@(let loop ((j 1)) (if (> j (length x*)) '() (cons `(ldarg ,j) (loop (+ j 1)))))
+                ,@(let loop ((j 1)) (if (> j (length x*)) '() (cons* `(ldarga ,j) `(call "Cleat.Scheme.Locals" "Take" (,(string-append obj "&")) ,obj) (loop (+ j 1)))))
                 (call ,class "invokeStatic" ,(objs (+ (length x*) 1)) ,obj)
                 (ret)))]))
 
@@ -2377,16 +2520,19 @@ See docs/license.txt. |#
   (define (value-type? t) (cdr t))
 
   ;; 返回 (类名 . 自由变量)
+  ;; reify* 的方法闭包捕获的外层变量（按出现顺序，去掉字段 x*）：构造参数，也是局部变量清除要计数的引用
+  (define (deftype-caps x* le*)
+    (fold-left (lambda (acc le)
+                 (nanopass-case (L3 LambdaExpr) le
+                   [(lambda ,nm (,x1* ...) ,cl* ...)
+                    (fold-left (lambda (a v) (if (or (memq v a) (memq v x*)) a (append a (list v)))) acc x1*)]))
+               '() le*))
   (define (deftype-class! mc d x* le*)
     (let* ((u (mctx-unit mc))
            (name (deftype-info-class d))
            (reify? (deftype-info-reify? d))
            (fnames (map car (deftype-info-fields d)))
-           (caps (fold-left (lambda (acc le)
-                              (nanopass-case (L3 LambdaExpr) le
-                                [(lambda ,nm (,x1* ...) ,cl* ...)
-                                 (fold-left (lambda (a v) (if (or (memq v a) (memq v x*)) a (append a (list v)))) acc x1*)]))
-                            '() le*))
+           (caps (deftype-caps x* le*))
            (cnames (let loop ((cs caps) (i 0))
                      (if (null? cs) '() (cons (string-append "c" (number->string i)) (loop (cdr cs) (+ i 1))))))
            (specs (deftype-info-methods d))
@@ -2448,10 +2594,12 @@ See docs/license.txt. |#
                             (for-each (lambda (c n) (hashtable-set! (mctx-vars mc) c (cons 'field n))) caps cnames)))))
             (emit-code! mc entry)
             (mctx-big?-set! mc (bigger-than? body big-body-nodes))
+            (init-clearing! mc body)
+            (parameterize ((clear-args-by-ref #f))
             (cond
               ((string=? (tname ret) void-type) (cg body mc 'effect) (emit! mc '(ret)))
               ((string=? (tname ret) obj) (cg body mc 'tail))
-              (else (cg body mc 'value) (convert-return! mc ret) (emit! mc '(ret))))
+              (else (cg body mc 'value) (convert-return! mc ret) (emit! mc '(ret)))))
             `(method ,mname (attrs ,@(if iface '() '(override))) (params ,@(map tname ptypes)) (ret ,(tname ret))
                (locals ,@(reverse (mctx-locals mc)))
                (,(interop 'namespaces))
@@ -2589,7 +2737,7 @@ See docs/license.txt. |#
     (let loop ((fs fv*) (i 0))
       (unless (null? fs)
         (if load (begin (load) (emit! mc `(castclass ,(cadr c)))) (emit! mc '(dup)))
-        (load-var! mc (car fs))
+        (ref-var! mc (car fs) #t)
         (emit! mc `(stfld ,(cadr c) ,(string-append "c" (number->string i))))
         (loop (cdr fs) (+ i 1)))))
 

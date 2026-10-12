@@ -1050,7 +1050,8 @@
   ;;;   ((lambda (r a …) (if ($clj-call "IsInstanceOf" #f '函数类 r) ((case-lambda 子句) a …) ($clj-invoke r a …))) Var读 实参 …)
   ;;; 守卫保证 with-redefs / 重定义照常生效；实参只求值一次。子句的约束变量逐一改名（同一个体内联多次时名字不重复，
   ;;; 前端按符号建表）。构建 Clojure 镜像时关闭（inline-calls? 为 #f）：镜像里的子句不含内联结果，各级镜像的接口文件相同，不动点成立
-  (define inline-calls? (make-parameter #t))
+  ;; 测量开关：环境变量 CLEAT_NO_INLINE 设置时不内联
+  (define inline-calls? (make-parameter (not (string? (clr-static-call System.Environment GetEnvironmentVariable "CLEAT_NO_INLINE")))))
   (define (inline-target v n)
     (let ((r (clr-static-call Cleat.Scheme.Clojure.Driver InlineTarget v n)))
       (and (vector? r) r)))

@@ -342,6 +342,9 @@ public sealed partial class LcilEmitter
             if (m.Attrs.Contains("abstract")) ma |= MethodAttributes.Virtual | MethodAttributes.Abstract | MethodAttributes.NewSlot;
             if (m.ImplementsType != null) ma |= MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot;
             var mb = tb.DefineMethod(m.Name, ma, T(m.Ret, m.Pos), ps);
+            // (attrs optimize)：JIT 直接按优化编译（不经 tier-0）——tier-0 把局部变量与溢出的临时变量都报告为整个方法内活着，
+            // 只调用一次的长调用里抓着惰性序列的头（cleat-042 第 5 项）；优化代码按活跃区间报告
+            if (m.Attrs.Contains("optimize")) mb.SetImplementationFlags(MethodImplAttributes.AggressiveOptimization);
             if (m.ImplementsType != null)
             {
                 var it = T(m.ImplementsType, m.Pos);
