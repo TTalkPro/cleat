@@ -1,6 +1,6 @@
 # 13 探讨：语法对象、Scheme 元语言与"Clojure 建在 Scheme 核心之上"
 
-> 状态：**探讨**，不是决定。起因是 `notes/jolt-macro-architecture.md` 的两个发现（jolt 的宏系统接缝只有一处；整个 Clojure 建在 17 个特殊形式 + 87 个 native op + 一道宿主契约之上）。本文回答三个问题：
+> 状态：**探讨**，不是决定。（2026-10-12：其中用户级卫生宏 `defsyntax` 的部分已搁置，见 [cleat-057](../tasks/cleat-057-clojure-defsyntax.md) 的搁置原因；元层内部的卫生展开照旧。）起因是 `notes/jolt-macro-architecture.md` 的两个发现（jolt 的宏系统接缝只有一处；整个 Clojure 建在 17 个特殊形式 + 87 个 native op + 一道宿主契约之上）。本文回答三个问题：
 > 1. 能否按"增加语法对象"的思路重塑 Clojure 的底层流程；
 > 2. 直接用 nanopass（Scheme 版）为我们编译，最少需要哪些 Scheme 元语言；
 > 3. 能否在这些元语言上构建 Clojure，并给 Clojure 加卫生宏。

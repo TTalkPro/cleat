@@ -116,7 +116,7 @@
 | | cleat-047 | 异常模型简化（§3）：删 call/cc 与处理器栈，加 `$try/catch`，重生成种子，不动点再次通过 |
 | | cleat-048 | 可扩展语法对象（§2）：三张扩展表与 8 处改造，Scheme 数据行为不变（快照与不动点通过），Clojure 集合注册并有往返测试 |
 | M4′ Clojure 在元层上 | cleat-049 | psyntax 的 Clojure 扩展：命名空间模型（交互环境 + ns 表 + 别名 / refer / 重定义 / `resolve`）、交互 rib 的哈希索引、`macroexpand-1`、错误钩子（14 §6） |
-| | cleat-050 | `(clojure syntax)` 库：全部特殊形式、`defmacro` 垫片、语法引用、`&env`；以 cleat-013/014 的 `ExpanderTests` 为规格（Lcore 形状可以不同，语义相同）。**用户级卫生宏（`defsyntax`）推迟到 cleat-057**：先保证 Clojure 语法兼容 |
+| | cleat-050 | `(clojure syntax)` 库：全部特殊形式、`defmacro` 垫片、语法引用、`&env`；以 cleat-013/014 的 `ExpanderTests` 为规格（Lcore 形状可以不同，语义相同）。**用户级卫生宏（`defsyntax`）推迟到 cleat-057**：先保证 Clojure 语法兼容（2026-10-12：cleat-057 搁置，Clojure 的数据层展开契约使卫生无法保证，见该任务） |
 | | cleat-051 | 编译器的 Clojure 节点：`var-ref` / `def`、`IFn.invoke(k)` 调用约定与 `ClojureFn : Procedure, IFn`、多类型 `$try/catch`、`deftype` / `reify`（Lcil `type` + `implements`）、`switch`、`keyword-invoke`、集合字面量、`loop` / `recur`；`compile-small` 的 Clojure 版本 |
 | | cleat-052 | 编译驱动：`eval`（简单形式解释）、`load` / `compile` 钩子登记、`.clj.dll` + 接口文件；cleat-030 的宿主接上 |
 | M5′ Clojure 自举 | cleat-053 | 用 Scheme 镜像编译 `core.clj` 等 → `cleat.boot.dll`；镜像不动点（A 编 core 得 B，B 编得 C，B == C） |

@@ -39,7 +39,7 @@ namespace clojure.lang
             Symbol.intern("def"), Symbol.intern("loop*"), Symbol.intern("recur"), Symbol.intern("if"), Symbol.intern("case*"),
             Symbol.intern("let*"), Symbol.intern("letfn*"), Symbol.intern("do"), Symbol.intern("fn*"), Symbol.intern("quote"),
             Symbol.intern("var"), Symbol.intern("clojure.core", "import*"), Symbol.intern("."), Symbol.intern("set!"),
-            Symbol.intern("deftype*"), Symbol.intern("reify*"), Symbol.intern("proxy-class*"), Symbol.intern("gen-class*"), Symbol.intern("await*"), Symbol.intern("syntax-case*"), Symbol.intern("syntax*"), Symbol.intern("try"), Symbol.intern("throw"),
+            Symbol.intern("deftype*"), Symbol.intern("reify*"), Symbol.intern("proxy-class*"), Symbol.intern("gen-class*"), Symbol.intern("await*"), Symbol.intern("try"), Symbol.intern("throw"),
             Symbol.intern("monitor-enter"), Symbol.intern("monitor-exit"), Symbol.intern("catch"), Symbol.intern("finally"),
             Symbol.intern("new"), Symbol.intern("&"));
 

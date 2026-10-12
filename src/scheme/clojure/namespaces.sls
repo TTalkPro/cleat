@@ -24,8 +24,7 @@
 ;;;                  set! → $clj-var-set!（Var.set）（cleat-051）；
 ;;;                  以它开头的调用交给 set-var-call-handler! 登记的过程（(clojure syntax)：:inline、instance?、IFn.invoke）
 ;;;     clj-macro    值为转换器（defmacro 垫片：Clojure 数据进、Clojure 数据出、使用处上下文，&env 由
-;;;                  set-macro-env-provider! 给出；Var 元数据 :hygienic 为真时是卫生宏：语法对象进、语法对象出，
-;;;                  cleat-057）；macroexpand-1 展开它
+;;;                  set-macro-env-provider! 给出）；macroexpand-1 展开它
 ;;;     clj-type     值为 Type：引用 → 常量
 ;;;     clj-special  值为转换器；按未限定名字登记（register-clj-special!），先于命名空间映射；macroexpand-1 不展开它
 ;;;     clj-form     值为过程 (e expand) → 核心形式（register-clj-form!，cleat-050 的特殊形式）；macroexpand-1 不展开它
@@ -47,16 +46,15 @@
           namespace-for namespace-environment eval-in-ns expand-in-ns macroexpand-1-in-ns macroexpand-in-ns
           symbol-label register-clj-special! register-clj-form! register-hidden-clj-form! var-label type-label make-label
           set-unresolved-lookup! set-macro-env-provider! set-var-call-handler!
-          clojure-expanding? clojure-form? clj-op var-reference macro-transformer direct-link-target make-identity-table
+          clojure-expanding? clojure-form? clj-op var-reference macro-transformer direct-link-target
           clojure-error-hook expander-exception syntax-position source-path
-          macro-var-head call-macro
-          hygienic-var? special-head-key fix-special-head mixed->syntax)
+          macro-var-head call-macro)
   (import
     (rnrs)
     (rnrs eval)
     (only (cleat scheme) gensym set-symbol-value! expand->core with-clr-exception-handler parameterize make-parameter)
-    (only (cleat scheme core) stx? stx-expr stx-mark* stx-subst*)
-    (only (cleat scheme reader) make-annotation annotation? annotation-source annotation-stripped annotation-expression)
+    (only (cleat scheme core) stx? stx-expr)
+    (only (cleat scheme reader) make-annotation annotation? annotation-source annotation-stripped)
     (only (cleat scheme unsafe) $throw $try/finally)
     (cleat scheme syntax-ext)
     (cleat scheme clr)
@@ -396,15 +394,11 @@
   ;;;   ArgumentException / InvalidOperationException / IExceptionInfo / 恰为 System.Exception（JVM 的受检异常）→ macro-syntax-check；
   ;;;   其余 → macroexpand（"Unexpected error (类型) macroexpanding m at"）。符号是形式里写的运算符。
   (define (call-macro v form pos)
-    (call-macro* v form pos #t (lambda () (apply-macro v form (macro-env-provider)))))
-
-  ;;; arity-fix?：宏函数的 ArityException 是否按 (&form &env …) 减 2（卫生宏的转换器只收一个语法对象，不减）
-  (define (call-macro* v form pos arity-fix? thunk)
     (with-clr-exception-handler
       (lambda (ex)
         (if (clr-is Cleat.Core.Expand.ExpanderException ex)
             ($throw ex)
-            (let* ((fixed (if arity-fix? (macro-arity-fix v ex) ex))
+            (let* ((fixed (macro-arity-fix v ex))
                    (arity? (not (eq? fixed ex)))
                    (ex fixed)
                    (op (clr-static-call clojure.lang.RT (first System.Object) form))
@@ -418,137 +412,13 @@
                            'macro-syntax-check)
                           (else 'macroexpand))
                         (clr-call System.Exception get_Message ex) ex sym)))))
-      thunk))
-
-  ;;; —— 卫生宏（cleat-057，clojure.syntax/defsyntax）：Var 的元数据 :hygienic 为真的宏。根值是转换器（IFn）：
-  ;;; 收整个调用形式的语法对象（psyntax 已加反标记），返回语法对象（语法对象 / 含语法对象叶子的序对、Clojure 集合；
-  ;;; 裸 Clojure 符号按使用处上下文挂上）；psyntax 的 do-macro-call 再给输出加新标记——模板引入的标识符因此不捕获、
-  ;;; 也不被用户的同名局部捕获。模式与模板的运行时引擎在 (clojure syntax)。
-  (define kw-hygienic (clj-keyword "hygienic"))
-  (define (hygienic-var? v)
-    (and (var-macro? v) (nil->f (op-get (op-meta v) kw-hygienic)) #t))
-
-  (define op-invoke (clj-op Invoke))
-
-  (define (hygienic-call v stx head)
-    (let ((out (call-macro* v (syntax->clj stx) (syntax-position stx) #f
-                 (lambda () (op-invoke (op-var-get v) stx)))))
-      (mixed->syntax head out)))
-
-  ;;; 列表头部若是特殊形式名的标识符，换成该特殊形式的 gensym 键（与 clj->scheme 对列表头部的处理相同），上下文照旧
-  (define (fix-special-head h)
-    (if (identifier? h)
-        (let* ((csym (syntax->clj h)) (key (and (clj-symbol? csym) (special-head-key csym))))
-          (if key (datum->syntax h (make-annotation key #f csym)) h))
-        h))
-
-  ;;; 卫生宏的输出 → 语法结构。返回 (values 语法 纯数据?)：纯数据（不含语法对象）的子树一次 datum->syntax 挂 head 的上下文
-  ;;; （与 defmacro 垫片相同）；含语法对象的 Clojure 列表变成序对（头部的特殊形式名换键）、集合按子项重建，不加注解
-  ;;; （注解的 stripped 必须是纯数据）
-  (define (mixed->syntax head x)
-    (define (convert x pos)
-      (cond
-        ((or (stx? x) (annotation? x)) (values x #f))
-        ((pair? x)
-         (let-values (((a pa) (convert (car x) pos)) ((d pd) (convert (cdr x) pos)))
-           (values (cons a d) #f)))
-        ((null? x) (values x #f))
-        ((clj-symbol? x) (values x #t))
-        ((clj-kind x) =>
-         (lambda (e)
-           (let ((kids ((syntax-extension-children e) x)))
-             (if (null? kids)
-                 (values x #t)
-                 (let* ((own (or (clojure-source-of x) pos))
-                        (rs (map (lambda (k) (let-values (((s p) (convert k own))) (cons s p))) kids)))
-                   (if (for-all cdr rs)
-                       (values x #t)
-                       (let ((new (map (lambda (r k p) (if p (clj-datum->syntax* head k) (car r))) rs kids (map cdr rs))))
-                         (if (eq? (syntax-extension-kind e) 'clj-list)
-                             (values (cons (fix-special-head (car new)) (cdr new)) #f)
-                             (values ((syntax-extension-rebuild e) x new) #f)))))))))
-        (else (values x #t))))
-    (let-values (((s pure?) (convert x #f)))
-      (if pure? (clj-datum->syntax* head s) s)))
-
-  ;;; —— defmacro 垫片的标识符跟踪（cleat-057）——
-  ;;; 宏调用形式里 wrap 与头部不同的标识符（卫生宏模板传进来的用户子形式、模板引入的标识符、%ctx 等拼装的形式）按
-  ;;; Clojure 符号对象（身份：reader 给每个出现各一个对象，strip 得回原对象）记下其语法对象；宏输出里同一个符号对象
-  ;;; 原样放回（保住它自己的标记与 rib），其余符号挂使用处（头部）上下文——Clojure 的不卫生语义不变。
-  ;;; 全部标识符都与头部同 wrap（普通的 Clojure 代码）时返回 #f：走原来的快速路径（整个输出一次 datum->syntax）。
-  ;;; 同一 wrap：标记与 subst 逐项 eq?（add-mark 给每个叶子各 cons 一份表，同一语法对象放在模板两处后表不再 eq?）
-  (define (same-list? a b)
-    (or (eq? a b)
-        (and (pair? a) (pair? b) (eq? (car a) (car b)) (same-list? (cdr a) (cdr b)))
-        (and (null? a) (null? b))))
-  (define (same-wrap? a b) (and (same-list? (stx-mark* a) (stx-mark* b)) (same-list? (stx-subst* a) (stx-subst* b))))
-
-  ;;; 按引用相等的表：Clojure 符号的 Equals 按名字，make-eq-hashtable 分不开同名的两个对象
-  (define op-identity-table (clj-op IdentityTable))
-  (define (make-identity-table) (op-identity-table #f))
-
-  (define (track-identifiers stx head)
-    (let ((table (make-identity-table)) (mixed? #f))
-      (let walk ((x stx))
-        (syntax-case x ()
-          ((a . d) (begin (walk #'a) (walk #'d)))
-          (() #f)
-          (_ (cond
-               ((identifier? x)
-                (let ((key (syntax->clj x)) (same? (same-wrap? x head)))
-                  (unless same? (set! mixed? #t))
-                  (cond
-                    ((not (hashtable-contains? table key)) (hashtable-set! table key (if same? 'head x)))
-                    ((let ((old (hashtable-ref table key #f)))
-                       (and old (if (eq? old 'head) same? (and (not same?) (same-wrap? old x)))))
-                     #f)
-                    (else (hashtable-set! table key #f)))))   ; 同一符号对象带不同 wrap：不跟踪，挂使用处上下文
-               ((syntax-ext-kind x) => (lambda (k) (for-each walk (syntax-ext->list x k))))
-               (else #f)))))
-      (and mixed? table)))
-
-  ;;; 宏输出（Clojure 数据）→ 语法结构：跟踪到的符号对象放回其语法对象，其余同 clj->scheme 并挂 head 的上下文；
-  ;;; 列表与集合保留注解（位置、stripped 为输出数据本身，与 strip 的结果一致）
-  (define (rewrap-output head out table)
-    (define (tracked x)
-      (let ((v (hashtable-ref table x #f)))
-        (and v (not (eq? v 'head)) v)))
-    (let convert ((x out) (pos #f))
-      (cond
-        ((clj-symbol? x)
-         (or (tracked x) (datum->syntax head (make-annotation (clj-symbol->scheme x) pos x))))
-        ((clj-kind x) =>
-         (lambda (e)
-           (let ((kids ((syntax-extension-children e) x)))
-             (if (null? kids)
-                 (datum->syntax head x)
-                 (let* ((own (or (clojure-source-of x) pos))
-                        (new (map (lambda (k) (convert k own)) kids)))
-                   (if (eq? (syntax-extension-kind e) 'clj-list)
-                       (let ((key (special-head-key (car kids))))
-                         (make-annotation
-                           (if key
-                               (cons (datum->syntax (or (tracked (car kids)) head) (make-annotation key own (car kids))) (cdr new))
-                               new)
-                           own x))
-                       (make-annotation ((syntax-extension-rebuild e) x new) own x)))))))
-        (else (datum->syntax head x)))))
-
-  (define (shim-call v stx head)
-    (let ((table (track-identifiers stx head))
-          (form (syntax->clj stx)))
-      (let ((out (call-macro v form (syntax-position stx))))
-        (if table
-            (rewrap-output head out table)
-            (clj-datum->syntax* head out)))))
+      (lambda () (apply-macro v form (macro-env-provider)))))
 
   (define (macro-transformer v)
     (lambda (stx)
       (syntax-case stx ()
         ((head . _)
-         (if (hygienic-var? v)
-             (hygienic-call v stx #'head)
-             (shim-call v stx #'head))))))
+         (clj-datum->syntax* #'head (call-macro v (syntax->clj stx) (syntax-position stx)))))))
 
   ;;; —— 当前命名空间与运行时的命名空间操作（Clojure 的 in-ns / refer / alias / import 的最小形式）——
 
@@ -595,14 +465,11 @@
   (define (source-path)
     (->string (clr-call clojure.lang.Var deref (clr-static-field-get clojure.lang.RT SourcePathVar))))
 
-  ;;; 语法对象（或宏输出里的裸注解，cleat-057）的注解，或 #f
-  (define (form-annotation x)
-    (let ((e (if (stx? x) (stx-expr x) x)))
-      (and (annotation? e) e)))
-
   ;;; 语法对象的源位置 → (行 列 文件或#f)，或 #f
   (define (syntax-position x)
-    (let ((src (let ((a (form-annotation x))) (and a (annotation-source a)))))
+    (let ((src (and (stx? x)
+                    (let ((e (stx-expr x)))
+                      (and (annotation? e) (annotation-source e))))))
       (and (pair? src) (string? (cdr src))
            (let* ((s (cdr src))
                   (comma (string-index s #\,))
@@ -630,7 +497,7 @@
 
   ;;; 出错形式的特殊形式名（Clojure 只对特殊形式报 "compiling recur at"，普通调用为 "compiling at"），否则 #f
   (define (special-form-op form)
-    (and (form-annotation form)
+    (and (stx? form)
          (let ((d (syntax->clj form)))
            (and (clr-is clojure.lang.ISeq d)
                 (let ((h (clr-static-call clojure.lang.RT (first System.Object) d)))
@@ -663,10 +530,11 @@
   ;;; 正在展开 Clojure 形式（(clojure syntax) 的数据挂钩只在此时处理 Scheme 的 '() 等数据）
   (define clojure-expanding? (make-parameter #f))
 
-  ;;; e 是否来自 Clojure 数据（clj->scheme 产生的列表注解，stripped 为 Clojure 的 seq；宏输出里可以是裸注解，cleat-057）
+  ;;; e 是否来自 Clojure 数据（clj->scheme 产生的列表注解，stripped 为 Clojure 的 seq）
   (define (clojure-form? e)
-    (let ((a (form-annotation e)))
-      (and a (clr-is clojure.lang.ISeq (annotation-stripped a)))))
+    (and (stx? e)
+         (let ((x (stx-expr e)))
+           (and (annotation? x) (clr-is clojure.lang.ISeq (annotation-stripped x))))))
 
   (define (in-clojure thunk)
     (parameterize ((syntax-error-hook clojure-error-hook) (clojure-expanding? #t))
@@ -705,23 +573,9 @@
                   (y (environment-macroexpand-1 x (namespace-environment (current-ns)))))
              (if (eq? y x) form (scheme->clj y))))))))
 
-  ;;; 以卫生宏开头的形式（cleat-057）：顶层的数据级预展开到此为止（展开结果是数据，标记会丢；交给语法对象路径）
-  (define (hygienic-head? form)
-    (and (clr-is clojure.lang.ISeq form)
-         (let ((op (clr-static-call clojure.lang.RT (first System.Object) form)))
-           (cond
-             ((var? op) (hygienic-var? op))
-             ((and (clj-symbol? op) (not (special-head-key op)))
-              (let-values (((o msg p?) (resolve-in (current-ns) op)))
-                (and (var? o) (hygienic-var? o))))
-             (else #f)))))
-
-  ;;; 驱动的顶层预展开（Compiler.eval 的 macroexpand）：重复 macroexpand-1 直到不变或遇到卫生宏。
-  ;;; Clojure 的 macroexpand 函数自己循环调 macroexpand-1 钩子，不经这里
+  ;;; Clojure 的 macroexpand：重复 macroexpand-1 直到不变
   (define (macroexpand-in-ns form)
-    (if (hygienic-head? form)
-        form
-        (let ((x (macroexpand-1-in-ns form)))
-          (if (eq? x form) form (macroexpand-in-ns x)))))
+    (let ((x (macroexpand-1-in-ns form)))
+      (if (eq? x form) form (macroexpand-in-ns x))))
 
   (register-kinds!))

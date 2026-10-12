@@ -60,8 +60,8 @@
 | [cleat-053](tasks/cleat-053-clojure-boot-image.md) | Clojure 自举：Scheme 镜像编译 core.clj → cleat.boot.dll，镜像不动点 | M5′ | cleat-052 | 完成 |
 | [cleat-054](tasks/cleat-054-rename-scheme-libraries.md) | Scheme 库名 `(ironscheme …)` → `(cleat scheme …)`，同步重生成种子 | 后续 | cleat-053 | 完成 |
 | [cleat-055](tasks/cleat-055-scheme-invisibility-boundaries.md) | "看不到 Scheme"的三道边界：macroexpand 停止点、值边界、诊断边界的测试与黄金文件 | M4′ | cleat-052 | 完成 |
-| [cleat-056](tasks/cleat-056-nanopass-clojure-surface.md) | Clojure 表面的 nanopass：在 defsyntax 上给原版 nanopass 套 Clojure 语法 | 后续 | cleat-057 | 未开始 |
-| [cleat-057](tasks/cleat-057-clojure-defsyntax.md) | Clojure 的用户级卫生宏（defsyntax / syntax-rules） | 后续 | cleat-053 | 完成 |
+| [cleat-056](tasks/cleat-056-nanopass-clojure-surface.md) | Clojure 表面的 nanopass：在 Scheme 侧给原版 nanopass 套 Clojure 语法 | 后续 | cleat-053 | 未开始 |
+| [cleat-057](tasks/cleat-057-clojure-defsyntax.md) | Clojure 的用户级卫生宏（defsyntax / syntax-rules） | 后续 | cleat-053 | 搁置 |
 | [cleat-058](tasks/cleat-058-scheme-layer-skeg-alignment.md) | Scheme 元层按 skeg 对齐：guard / call-with-return / try·catch·finally·throw / #nil / EmptyList | 后续 | cleat-047、cleat-054 | 完成 |
 
 ## 里程碑
@@ -79,7 +79,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、057、056、058 | 性能、gen-class / proxy / 异步、库名更名、用户级卫生宏、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、056、058（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
@@ -96,5 +96,5 @@ cleat-045 → 046 → 047 → 048 → 049 → 050 → 051 → 052 → 055 → 05
 | 异常模型简化为 try / catch，无 call/cc（15 §3） | 047 |
 | 命名空间模型是通过 / 不通过判据（14 §8） | 049 |
 | Clojure 完全看不到 Scheme 的三道边界（13 §7） | 055 |
-| defmacro 完全兼容（2026-10-10：先保证 Clojure 语法兼容，用户级卫生宏不急） | 050；卫生宏推迟到 057 |
+| defmacro 完全兼容（2026-10-10：先保证 Clojure 语法兼容，用户级卫生宏不急） | 050；卫生宏 057 搁置（2026-10-12：无法保证完整卫生） |
 | Clojure 用户也能用 nanopass（可选） | 056 |

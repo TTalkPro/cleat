@@ -1644,8 +1644,6 @@
     (load-fasl                                  ic)
     (stx?                                       ic)
     (stx-expr                                   ic)
-    (stx-mark*                                  ic)   ; cleat-057
-    (stx-subst*                                 ic)   ; cleat-057
     (library-name->file-name                    ic)
     (library-name->dll-name                     ic)
     (compiled-library-exists?                   ic)

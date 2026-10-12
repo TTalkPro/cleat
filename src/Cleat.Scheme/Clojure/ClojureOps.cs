@@ -114,9 +114,6 @@ public static class ClojureOps
         return r;
     });
 
-    /// <summary>(identity-table _)：按引用相等的哈希表（Clojure 的符号按名字 Equals，make-eq-hashtable 分不开两个同名符号对象；cleat-057）。</summary>
-    public static readonly Procedure IdentityTable = new Op1("clojure-identity-table", _ => new System.Collections.Hashtable(System.Collections.Generic.ReferenceEqualityComparer.Instance));
-
     /// <summary>(map->list m)：k v k v … 的 Scheme 列表（seq 顺序）。</summary>
     public static readonly Procedure MapToList = new Op1("clojure-map->list", m =>
     {
@@ -320,19 +317,6 @@ public static class ClojureOps
         var f = GenClassFn(main) ?? throw new NotImplementedException(main + " is not defined");
         if (f.applyTo(clojure.lang.RT.seq(args)) is System.Threading.Tasks.Task t) t.GetAwaiter().GetResult();
     }
-
-    // —— 卫生宏（cleat-057）：syntax-case* / syntax* 的运行时（Scheme 过程在 SyntaxOps 的槽里）——
-
-    /// <summary>(syntax-case* 的一个子句)：x 按模式 pat 匹配（字面量 lits 按定义处命名空间 ns 的顶层上下文比较）→ 值的 object[] 或 #f。
-    /// 常量（ns、lits、pat）在前、子形式 x 在后：%node 的约定。</summary>
-    public static object SyntaxMatch(object ns, object lits, object pat, object x) => SyntaxOps.Need(SyntaxOps.Match, "syntax-case").Invoke4(ns, lits, pat, x);
-
-    /// <summary>syntax-case* 没有子句匹配。</summary>
-    public static object SyntaxNoMatch(object x) =>
-        throw new InvalidOperationException("no syntax-case clause matches: " + clojure.lang.RT.printString(SyntaxOps.SyntaxToDatum(x)));
-
-    /// <summary>(syntax* 模板)：实例化模板 tmpl（定义处命名空间 ns），vars 为 ((变量名 . 深度) …)，vals 为模式变量的值。</summary>
-    public static object SyntaxTemplate(object ns, object tmpl, object vars, object[] vals) => SyntaxOps.Need(SyntaxOps.Template, "syntax").Invoke4(ns, tmpl, vars, vals);
 
     // —— deftype* / reify* 方法的值转换（cleat-051）——
 
