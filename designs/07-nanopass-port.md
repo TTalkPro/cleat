@@ -1,7 +1,12 @@
 # 07 nanopass 框架移植到 Clojure（`cleat.nanopass`）
 
+> **状态（2026-10-12）：搁置，部分失效。** 本文为"Clojure 编译器在 stage0 上解释运行"的旧路线而写，该路线随 cleat-023 搁置，
+> 现行方向是原生 Scheme nanopass 一行不改（[15 §4](15-scheme-core-vendoring.md)）。凡以"stage0 解释运行本库"为前提的内容
+> （文首目标的最后一句、§1 D7、§3 第二条、§4 后两条）已失效，下文以 **【失效】** 标注；§0 事实与 D1 ~ D6 的表面设计仍可作参考。
+> 若在编译后的 Clojure 镜像上重做（"第三段"），见 [评估笔记](../notes/clojure-nanopass-plan-review.md)。
+
 > 蓝本：`~/workspace/nanopass-framework-scheme`（R6RS，约 4900 行核心 + 每宿主约 200 行适配）与 IronScheme 对它的使用（`src/scheme/lib/cleat/scheme/compiler/`：4 个语言、10 个 `define-pass`、58 个 `nanopass-case`）。
-> 目标：用 Clojure 重写一个**语义等价、表面按 Clojure 习惯调整**的 nanopass，供 [04](04-compiler.md) 的编译器使用；它必须能在 stage0 解释器上展开并运行（[08](08-bootstrap.md)）。
+> 目标：用 Clojure 重写一个**语义等价、表面按 Clojure 习惯调整**的 nanopass，供 [04](04-compiler.md) 的编译器使用；~~它必须能在 stage0 解释器上展开并运行（[08](08-bootstrap.md)）。~~ **【失效】** 第三段路线下本库编译后在镜像上运行。
 
 ## §0 事实
 
@@ -94,6 +99,8 @@
 
 **D6 运行时表示**：每个产生式一个 `deftype`（CIL 目标是真实 CLR 类；LLVM 目标是带类型标签的结构体，[06](06-llvm-backend.md)）。`extends` 不共享类型（与上游相同：L1 的 `if` 与 L0 的 `if` 不是同一类型，自动生成的复制子句因此必要）。所有记录实现 `cleat.nanopass/INode`（`tag`、`language`、`unparse`）。确定性：类型名与标签只取决于定义顺序，不含 gensym（[08 §7](08-bootstrap.md) 的不动点需要）。
 
+**【失效】** 第三段路线下本库编译后在镜像上运行，可用完整的 `clojure.core`，下列子集限制不再适用。
+
 **D7 对 stage0 的要求**。编译器在 stage0 上以解释方式运行，nanopass 宏在 stage0 的宏展开中执行。所以 `cleat.nanopass` 只能用 [03](03-language-core.md) 核心语法与 `clojure.core` 中 stage0 能跑的部分：`deftype*`（stage0 用发射器生成真实类型，08 §4）、`case`、`defmacro`、`macroexpand-all`（由 `cleat.nanopass` 自带一个只认核心形式的版本，不依赖 `clojure.walk`）、`gensym`。禁止：`eval`、反射、`proxy`、`gen-class`。
 
 ## §2 不做的
@@ -105,11 +112,13 @@
 ## §3 验证
 
 - 把上游 `tests/`（约 4700 行的测试编译器 `compiler.ss` 与 `tests.ss`）翻译成 Clojure，作为 `cleat.nanopass` 的验收用例：语言定义、`extends`、省略号多层、`maybe`、catamorphism 各种写法、自动生成处理器与子句、`trace`。
-- 在 stage0 上展开并运行上述测试（任务 [cleat-020](../tasks/cleat-020-nanopass-port.md)），记录展开与运行耗时，作为 08 §4 对 stage0 速度要求的依据。
+- **【失效】** ~~在 stage0 上展开并运行上述测试（任务 cleat-020），记录展开与运行耗时，作为 08 §4 对 stage0 速度要求的依据。~~
+  （原链接的任务号有误，应为 [cleat-023](../tasks/cleat-023-nanopass-port.md)，已搁置。）
 - 展开结果确定：同一源码两次展开得到相同形式（类型名、标签、临时变量名不含进程相关成分）。
 
 ## §4 与其他文档的关系
 
 - [04](04-compiler.md) 的 L0 ~ L3 用本库定义；04 §9 的"应用产生式带关键字"规则来自上游陷阱。
-- [08 §4](08-bootstrap.md)：stage0 必须支持本库用到的核心形式。
-- [03](03-language-core.md)：本库是 "核心语法 + `clojure.core` 子集" 的第一个真实用户，决定 stage0 必须覆盖的 core 范围。
+- **【失效】** [08 §4](08-bootstrap.md)：stage0 必须支持本库用到的核心形式。
+- **【失效】** [03](03-language-core.md)：本库是 "核心语法 + `clojure.core` 子集" 的第一个真实用户，决定 stage0 必须覆盖的 core 范围。
+- [16](16-nanopass-host-survey.md)：宿主语言调研与可行性背书；[评估笔记](../notes/clojure-nanopass-plan-review.md)：第三段路线的范围、门控与迁移建议。
