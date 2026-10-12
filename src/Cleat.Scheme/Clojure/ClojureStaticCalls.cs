@@ -99,6 +99,16 @@ public static class ClojureStaticCalls
             var top = matching.Where(m => Score(m) == best).ToList();
             if (top.Count == 1) chosen = top[0];
         }
+        // 其余类型（cleat-043，按 CLR / C# 的做法）：有多个相容的重载时，取形参与全部已知实参类型逐一相同的那一个——
+        // 只在静态类型未知的位置上各重载的形参都一样时（运行时的实参类型不会改变选择），例如 gen-class 的
+        // foo(Object, Int32) 与 foo(Object, Object) 对 (.foo x o (int 1))
+        else if (!core && matching.Count > 1 && ats.Any(a => a != null))
+        {
+            var exact = matching.Where(m => m.GetParameters().Select((p, i) => ats[i] == null || p.ParameterType == ats[i]).All(x => x)).ToList();
+            bool unknownAgree = Enumerable.Range(0, n).Where(i => ats[i] == null)
+                .All(i => matching.Select(m => m.GetParameters()[i].ParameterType).Distinct().Count() == 1);
+            if (exact.Count == 1 && unknownAgree) chosen = exact[0];
+        }
         // 没有相符的方法、无实参时：公共字段（Reflector 的顺序：方法优先，再字段 / 属性；属性由 get_X 方法覆盖）
         if (chosen == null && n == 0 && matching.Count == 0 && stubIfaces == null)
         {

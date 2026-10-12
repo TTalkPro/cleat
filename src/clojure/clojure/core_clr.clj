@@ -308,7 +308,11 @@
   "Load an assembly given its name"
   {:added "1.3"}
   [^String assembly-name]
-  (System.Reflection.Assembly/Load assembly-name))
+  ;; CLEAT-043: ClojureCLR 把 AOT 的 gen-class 类型写进以类名命名的程序集；cleat 的在编译单元的程序集里，
+  ;; 以已生成类型的全名作程序集名时给出它所在的程序集
+  (if-let [^Type t (Cleat.Core.Runtime.Loader/FindDefinedType assembly-name)]
+    (.Assembly t)
+    (System.Reflection.Assembly/Load assembly-name)))
 
 (defn assembly-load-from
   "Load an assembly given its path"

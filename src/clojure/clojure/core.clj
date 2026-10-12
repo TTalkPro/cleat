@@ -339,8 +339,8 @@
 		        ;;todo - restore propagation of fn name
 				;;must figure out how to convey primitive hints to self calls first
 								;;(cons `fn fdecl)
-								;; CLEAT-017: 去掉 ClojureCLR 的 :async defn 支持（await* 不支持）
-								(with-meta (cons `fn fdecl) {:rettag (:tag m)})))))
+								;; CLEAT-043: ^:async defn（ClojureCLR）：:async 放在 fn 形式上，fn* 把体编成 async（见 (clojure syntax) 的 expand-fn*）
+								(with-meta (cons `fn fdecl) (if (:async m) {:rettag (:tag m) :async true} {:rettag (:tag m)}))))))
 
 (. (var defn) (setMacro))       
 
@@ -3286,7 +3286,8 @@
     (when *agent*
       (throw (new Exception "Can't await in agent action")))
     (let [latch (new clojure.lang.CountDownLatch (count agents))  ;;; java.util.concurrent.CountDownLatch
-          count-down (fn [agent] (. latch (CountDown)) agent)]    ;;; countDown
+          ;; CLEAT-043: 动作（含 watch 通知）完成后才 CountDown，见 clojure.lang.AwaitAction
+          count-down (clojure.lang.AwaitAction. latch)]           ;;; (fn [agent] (. latch (countDown)) agent)
       (doseq [agent agents]
         (send agent count-down))
       (. latch (Await)))))                                        ;;; await
@@ -3308,7 +3309,7 @@
      (when *agent*
        (throw (new Exception "Can't await in agent action")))
      (let [latch (new clojure.lang.CountDownLatch (count agents))   ;;; java.util.concurrent.CountDownLatch
-           count-down (fn [agent] (. latch (CountDown)) agent)]     ;;; countDown
+           count-down (clojure.lang.AwaitAction. latch)]            ;;; (fn [agent] (. latch (countDown)) agent)  CLEAT-043
        (doseq [agent agents]
            (send agent count-down))
        (. latch (Await timeout-ms)))))   ;;;(await  timeout-ms (. java.util.concurrent.TimeUnit MILLISECONDS))))))

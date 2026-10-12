@@ -13,7 +13,7 @@ namespace Cleat.Scheme.Clojure;
 /// ParseTypeMethod，cleat-013/014）；那里是私有方法，这里是 Scheme 侧可调用的静态入口。
 /// 返回值只有 Type、字符串、布尔与 object[]（经 Scheme 互操作不变形）；错误以字符串返回，由调用方报语法错误。
 /// </summary>
-public static class HostSyntax
+public static partial class HostSyntax
 {
     private static readonly char[] s_triggerTypeChars = ['`', ',', '[', '&', '*'];
 

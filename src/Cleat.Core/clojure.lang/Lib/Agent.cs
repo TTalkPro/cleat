@@ -487,6 +487,8 @@ namespace clojure.lang
                 finally
                 {
                     Nested = null;
+                    // CLEAT-043: await 的动作在整个完成之后才放行等待者（见 AwaitAction）
+                    AwaitAction.SignalPending();
                 }
             }
 

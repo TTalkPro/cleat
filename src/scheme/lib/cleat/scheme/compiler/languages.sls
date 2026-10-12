@@ -23,14 +23,15 @@ See docs/license.txt. |#
     L2 unparse-L2
     L3 unparse-L3
     datum? name? flag?
-    make-clj-fn-name clj-fn-name? clj-fn-name-class clj-fn-name-variadic clj-fn-name-prims)
+    make-clj-fn-name clj-fn-name? clj-fn-name-class clj-fn-name-variadic clj-fn-name-prims clj-fn-name-async?)
   (import (rnrs) (nanopass))
 
   (define (datum? x) #t)
   ;; Clojure 的 fn*（cleat-051）：class 是 Clojure 的类名（ns$name），variadic 是变长子句（总是最后一个子句，
   ;; 形参为"必需参数 + 剩余 seq"）的必需参数个数，没有变长子句为 #f
   ;; prims：固定子句的原始签名（cleat-042）((参数个数 . "LL") …)，形参与返回各一个字母 O / L / D（clojure.lang.primifs 的接口名）
-  (define-record-type clj-fn-name (fields class variadic prims))
+  ;; async?：^:async fn 的体 thunk（cleat-043）——运行时 async 可用时子句方法返回 Task<object> 并带 async 标志
+  (define-record-type clj-fn-name (fields class variadic prims async?))
   ;; 过程名（错误信息与打印用）：符号、字符串或 #f；Clojure fn* 为 clj-fn-name 记录
   (define (name? x) (or (symbol? x) (string? x) (not x) (clj-fn-name? x)))
   (define (flag? x) (boolean? x))

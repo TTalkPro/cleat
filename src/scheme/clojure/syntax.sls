@@ -134,14 +134,22 @@
 
   (define (find-local csym)
     (let ((name (->string csym)))
-      (find (lambda (l) (string=? (->string (local-sym l)) name)) (ctx-locals (cur)))))
+      (find (lambda (l) (and (not (marker? l)) (string=? (->string (local-sym l)) name))) (ctx-locals (cur)))))
+
+  ;;; ^:async 的体与 catch / finally 区域的标记（cleat-043）：放在局部变量表里随上下文传下去，await* 找最内层的一个；
+  ;;; fn* / deftype 的方法体去掉它们（嵌套函数不是 async 的）。名字不是合法的符号，不会与局部变量重名
+  (define async-marker (make-local (clj-symbol "\x0;async") #f #f 'async))
+  (define no-await-marker (make-local (clj-symbol "\x0;no-await") #f #f 'no-await))
+  (define (marker? l) (memq (local-kind l) '(async no-await)))
+  (define (without-markers ls) (filter (lambda (l) (not (marker? l))) ls))
+  (define (ctx-no-await c) (make-ctx (ctx-tail? c) (ctx-loop c) (cons no-await-marker (ctx-locals c)) (ctx-fn-name c) (ctx-hint c)))
 
   (define (make-local* csym kind . mutable)
     (make-local csym (tag-of csym) (and (pair? mutable) (car mutable)) kind))
 
   ;;; &env：词法局部的 符号 → LocalBinding map（Clojure 的 LOCAL_ENV；没有局部时为 nil）
   (define (clojure-locals-env)
-    (let ((ls (reverse (ctx-locals (cur)))))
+    (let ((ls (reverse (without-markers (ctx-locals (cur))))))
       (if (null? ls)
           #nil
           (fold-left
@@ -224,7 +232,7 @@
   (define special-form-names
     (map string->symbol
       '("def" "if" "do" "let*" "loop*" "recur" "fn*" "quote" "var" "throw" "try" "monitor-enter" "monitor-exit" "." "new"
-        "set!" "letfn*" "case*" "deftype*" "reify*" "import*" "catch" "finally" "&")))
+        "set!" "letfn*" "case*" "deftype*" "reify*" "proxy-class*" "gen-class*" "await*" "import*" "catch" "finally" "&")))
 
   ;;; 库体里定义与表达式不能交错：登记写成定义
   (define-syntax registration
@@ -394,6 +402,25 @@
               (when (sym-is? sym "&") (err e "Can't use & as a local binding"))
               (loop (cddr items) (cons (cons (car items) (cadr items)) acc)))))))
 
+;;; 没有提示的 let 局部取初值的类（JVM 的 LocalBinding 取 init 的 javaClass；cleat-043）：(new T …)、(T. …) 或带 ^T 提示的初值。
+  ;;; 只取引用类型——值类型的提示会把局部变成原始类型的局部（推断另有规则）。loop 的局部会被 recur 重新赋值，不推断
+  (define (init-tag d)
+    (let ((t (cond
+               ((tag-of d) => tag-type)
+               ((and (clj-list? d) (> (count* d) 0))
+                (let ((h (clr-static-call clojure.lang.RT (first System.Object) d)))
+                  (cond
+                    ((sym-is? h "new") (and (> (count* d) 1) (maybe-type (clr-static-call clojure.lang.RT (second System.Object) d))))
+                    ((and (clj-symbol? h) (not (sym-ns h)))
+                     (let* ((n (sym-name h)) (k (string-length n)))
+                       (and (> k 1) (char=? (string-ref n (- k 1)) #\.) (not (char=? (string-ref n 0) #\.))
+                            (not (find-local h))
+                            (maybe-type (clj-symbol (substring n 0 (- k 1)))))))
+                    (else #f))))
+               (else #f))))
+      (and t (not (clr-call System.Type get_IsValueType t)) (not (clr-call System.Type get_ContainsGenericParameters t))
+           (clj-symbol (clr-call System.Type get_FullName t)))))
+
   (define (let-special loop?)
     (lambda (e)
       (syntax-case e ()
@@ -404,8 +431,10 @@
            ;; 每个初值在非尾位置、能看到之前的绑定
            (let loop ((ps pairs) (locals '()) (out '()))
              (if (pair? ps)
-                 (let ((init (in-ctx head (ctx-nontail (ctx-with-locals c locals)) (cdar ps)))
-                       (l (make-local* (syntax->clj (caar ps)) 'local)))
+                 (let* ((init (in-ctx head (ctx-nontail (ctx-with-locals c locals)) (cdar ps)))
+                        (s (syntax->clj (caar ps)))
+                        (it (and (not loop?) (not (tag-of s)) (init-tag (syntax->clj (cdar ps)))))
+                        (l (if it (make-local s it #f 'local) (make-local* s 'local))))
                    (loop (cdr ps) (append locals (list l)) (cons (list (caar ps) init) out)))
                  (let ((bindings (reverse out))
                        (bc (ctx-with-locals c locals)))
@@ -504,11 +533,43 @@
                     (else (string-append "fn__" (op-next-id #f))))))
       (string-append base "$" simple)))
 
-  (define-special fn* (e)
+  (define-special fn* (e) (expand-fn* e #f))
+
+  ;;; ^:async fn（cleat-043，ClojureCLR 的写法：(defn ^:async f …)、(async …) 即 ((^:async fn* [] …))）：每个子句的体包成
+  ;;; 无参的体 thunk (fn* [] 体…)——运行时 async 可用时 thunk 的方法是 async 方法（返回 Task<object>，体里的 await* 由运行时
+  ;;; 挂起），子句返回 thunk 的 Task；否则同步运行 thunk、值包成已完成的 Task（await* 同步等待）。recur 不能跨过这层 thunk。
+  (define kw-async (clj-keyword "async"))
+  (define (async-body head bc forms)
+    (let* ((runtime? (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_RuntimeAsync))
+           (thunk (with-syntax ((h head) (v (const-stx (clj-vector))) ((b ...) forms)) #'(h v b ...)))
+           (node (parameterize ((current-ctx bc)) (expand-fn* thunk #t))))
+      (with-syntax ((k (node-id head)) (data (const-stx (list (if runtime? "AsyncStart" "AsyncRunSync") #f))) (node node))
+        #'(k $clj-call data node))))
+
+  (define-special await* (e)
+    (syntax-case e ()
+      ((head x)
+       (let ((m (find marker? (ctx-locals (cur)))))
+         (cond ((not m) (err e "(await* ...) can only be used inside a ^:async function or (async ...) block"))
+               ((eq? (local-kind m) 'no-await) (err e "(await* ...) cannot appear inside a catch or finally clause")))
+         (with-syntax ((k (node-id #'head))
+                       (data (const-stx (list (if (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_RuntimeAsync) "AwaitAsync" "AwaitBlocking") #f)))
+                       (x (in-ctx #'head (ctx-nontail (ctx-clear (cur))) #'x)))
+           #'(k $clj-call data x))))
+      (_ (err e "Wrong number of arguments to await*, expected: (await* expr)"))))
+
+  (define (expand-fn* e thunk?)
     (syntax-case e ()
       ((head . rest)
        (let* ((head #'head)
               (c (cur))
+              ;; :async 在 fn* 形式上（defn / fn 宏）或在 fn* 符号上（(^:async fn* [] …)，async 宏）
+              (async? (and (not thunk?)
+                           (or (nil->f (meta-get (meta-of (syntax->clj e)) kw-async))
+                               (let ((d (syntax->clj e)))
+                                 (and (clj-list? d)
+                                      (nil->f (meta-get (meta-of (clr-static-call clojure.lang.RT (first System.Object) d)) kw-async)))))
+                           #t))
               (rest (stx-list #'rest))
               (self (and (pair? rest) (clj-symbol? (syntax->clj (car rest))) (car rest)))
               (rest (if self (cdr rest) rest))
@@ -523,7 +584,7 @@
                               (syntax-case cl () ((p . b) (cons #'p (stx-list #'b))))))))
               (name (fn-class-name c self))
               (outer (append (if self (list (make-local (syntax->clj self) #f #f 'this)) '()) '()))
-              (base-ctx (make-ctx #t #f (append outer (ctx-locals c)) name #f)))
+              (base-ctx (make-ctx #t #f (append outer (if thunk? (list async-marker) '()) (without-markers (ctx-locals c))) name #f)))
          (define prims '())
          (let loop ((cls clauses) (fixed '()) (variadic #f) (arities '()))
            (if (pair? cls)
@@ -537,13 +598,13 @@
                    (cond
                      ((and rest variadic) (err e "Can't have more than 1 variadic overload"))
                      ((and (not rest) (memv n arities)) (err e "Can't have 2 overloads with same arity")))
-                   (unless rest
+                   (unless (or rest async? thunk?)
                      (let ((sig (prim-sig (syntax->clj (car cl)) (map syntax->clj req)
                                           (nil->f (meta-get (meta-of (syntax->clj e)) kw-rettag)))))
                        (when sig (set! prims (cons (cons n sig) prims)))))
                    (with-syntax (((p ...) (dedupe-ids params))
                                  ((lp) (generate-temporaries '(recur)))
-                                 (body (body-stx head (cdr cl) bc)))
+                                 (body (if async? (async-body head bc (cdr cl)) (body-stx head (cdr cl) bc))))
                      (with-syntax ((body (in-ctx/loop head bc #'lp (length params) #'body))
                                    ((init ...) (map (lambda (p) (prim-param-init head p)) (stx-list #'(p ...)))))
                        (let ((compiled #'((p ...) (let lp ((p init) ...) body))))
@@ -560,7 +621,10 @@
                  (let* ((m (let ((m (user-meta (syntax->clj e))))
                              (if (nil? m) m (let ((m (dissoc* m kw-rettag))) (if (= (count* m) 0) #nil m))))))
                    (with-syntax ((k (node-id head))
-                                 (data (const-stx (list name (and variadic (car variadic)) (reverse prims))))
+                                 (data (const-stx (append (list name (and variadic (car variadic)) (reverse prims))
+                                                          (if (and thunk? (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_RuntimeAsync))
+                                                              '(#t)
+                                                              '()))))
                                  ((cl ...) (append (reverse fixed) (if variadic (list (cdr variadic)) '()))))
                      (let* ((fn #'(k $clj-fn data (case-lambda cl ...)))
                             (fn (if (nil? m)
@@ -625,7 +689,7 @@
                          (let ((b (syntax->clj #'bsym)))
                            (unless (clj-symbol? b) (err e (string-append "Bad binding form, expected symbol, got: " (->string b))))
                            (when (sym-ns b) (err e (string-append "Can't bind qualified name:" (->string b))))
-                           (let* ((hc (ctx-with-locals (ctx-no-recur c tail?)
+                           (let* ((hc (ctx-with-locals (ctx-no-await (ctx-no-recur c tail?))
                                         (list (make-local b (clj-symbol (clr-call System.Type get_FullName t)) #f 'catch))))
                                   (h (in-ctx head hc (body-stx head #'(hform ...) hc))))
                              (loop (cdr fs) body (cons (list (type-name t) #'bsym h) catches) fin)))))
@@ -634,7 +698,7 @@
                     (unless (null? (cdr fs)) (err e "finally clause must be last in try expression"))
                     (syntax-case f ()
                       ((_ fform ...)
-                       (let ((fc (ctx-no-recur c #f)))
+                       (let ((fc (ctx-no-await (ctx-no-recur c #f))))
                          (loop (cdr fs) body catches (in-ctx head fc (body-stx head #'(fform ...) fc)))))))
                    (else
                     (unless (null? catches) (err e "Only catch or finally clause can follow catch in try expression"))
@@ -854,7 +918,7 @@
                       (locals (append field-locals
                                       (list (make-local (syntax->clj this) (clj-symbol class-name) #f 'this))
                                       (map (lambda (a t) (make-local (clj-symbol (sym-name (syntax->clj a))) (clj-symbol t) #f 'arg)) args ptypes)))
-                      (bc (make-ctx #t #f (append (reverse locals) (ctx-locals c)) (ctx-fn-name c) #f))
+                      (bc (make-ctx #t #f (append (reverse locals) (without-markers (ctx-locals c))) (ctx-fn-name c) #f))
                       (spec (list iface name (type-desc ret) (map type-desc ptypes))))
                  (with-syntax (((this a ...) (dedupe-ids (cons this args)))
                                ((lp) (generate-temporaries '(recur)))
@@ -940,6 +1004,54 @@
              (with-syntax ((k (node-id head)) (data (const-stx (list "WithMetaOf" #f)))
                            (node node) (m (in-ctx head (ctx-nontail (cur)) (clj-datum->syntax* head m))))
                #'(k $clj-call data node m)))))))
+
+;;; proxy-class*（cleat-043）：(proxy-class* 基类? 接口 …) → 生成的代理类型（值为 Type），core_proxy 的 proxy 宏与 get-proxy-class 用。
+  ;;; 布局（覆写哪些方法、转发哪些构造函数、类名）由 HostSyntax.ProxyLayout 在展开期算出；类型只取决于基类与接口，
+  ;;; 同一编译单元里同名的只生成一次。AOT 时与 deftype 一样进 .clj.dll。
+  (define-special proxy-class* (e)
+    (syntax-case e ()
+      ((head base ...)
+       (let* ((bases (apply clj-vector (map syntax->clj #'(base ...))))
+              (layout (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax ProxyLayout (ns-name* (current-ns)) bases)))
+              (info (list (vector-ref layout 0) 'proxy (vector-ref layout 1)
+                          (vector->list (vector-ref layout 2))
+                          (map (lambda (ps) (map type-desc (vector->list ps))) (vector->list (vector-ref layout 3)))
+                          (map (lambda (m)
+                                 (list (vector-ref m 0) (type-desc (vector-ref m 1)) (map type-desc (vector->list (vector-ref m 2)))
+                                       (vector-ref m 3) (vector-ref m 4) (vector->list (vector-ref m 5)) (vector-ref m 6)
+                                       (vector-ref m 7) (vector-ref m 8)))
+                               (vector->list (vector-ref layout 4))))))
+         (with-syntax ((k (node-id #'head)) (data (const-stx (list info))) (none (const-stx '())))
+           #'(k $clj-deftype data (lambda () (k $clj-methods none))))))))
+
+;;; gen-class*（cleat-043）：(gen-class* {:name … :extends … …}) → 生成的类型（值为 Type）。genclass.clj 的 gen-class 宏展开成它
+  ;;; （JVM 只在 AOT 编译时生成；这里 REPL / 源码加载也生成，AOT 时进 .clj.dll）。布局由 HostSyntax.GenClassLayout 算出。
+  (define-special gen-class* (e)
+    (syntax-case e ()
+      ((head opts)
+       (let* ((layout (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax GenClassLayout
+                                      (ns-name* (current-ns)) (syntax->clj #'opts))))
+              (v->l (lambda (x) (if (vector? x) (vector->list x) '())))
+              (descs (lambda (x) (map type-desc (v->l x))))
+              (info (list (vector-ref layout 0) 'genclass (vector-ref layout 1) (v->l (vector-ref layout 2))
+                          (vector-ref layout 3) (vector-ref layout 4)
+                          (map v->l (v->l (vector-ref layout 5)))
+                          (map (lambda (c) (list (descs (vector-ref c 0)) (descs (vector-ref c 1)))) (v->l (vector-ref layout 6)))
+                          (nil->f (vector-ref layout 7)) (nil->f (vector-ref layout 8)) (nil->f (vector-ref layout 9))
+                          (map (lambda (m)
+                                 (list (vector-ref m 0) (type-desc (vector-ref m 1)) (descs (vector-ref m 2))
+                                       (vector-ref m 3) (vector-ref m 4)
+                                       (let ((t (nil->f (vector-ref m 5)))) (and t (vector->list t)))
+                                       (vector-ref m 6) (vector-ref m 7) (nil->f (vector-ref m 8)) (vector-ref m 9)))
+                               (v->l (vector-ref layout 10)))
+                          (nil->f (vector-ref layout 11)) (nil->f (vector-ref layout 12))
+                          (map (lambda (x) (list (vector-ref x 0) (vector-ref x 1) (vector-ref x 2) (vector-ref x 3)
+                                                 (nil->f (vector-ref x 4)) (nil->f (vector-ref x 5))))
+                               (v->l (vector-ref layout 13)))
+                          (map (lambda (x) (list (vector-ref x 0) (vector-ref x 1) (v->l (vector-ref x 2)) (vector-ref x 3) (vector-ref x 4)))
+                               (v->l (vector-ref layout 14))))))
+         (with-syntax ((k (node-id #'head)) (data (const-stx (list info))) (none (const-stx '())))
+           #'(k $clj-deftype data (lambda () (k $clj-methods none))))))))
 
   ;;; ———————————————— 字面量与集合（boot 的 $datum 挂钩）————————————————
 

@@ -62,7 +62,6 @@
      'clojure.test-clojure.attributes support
      'clojure.test-clojure.clr.interop support
      'clojure.test-clojure.try-catch support
-     'clojure.test-clojure.clr.async.task "clojure.clr.async.task.alpha is not in cleat's src/clojure"
      'clojure.test-clojure.clr.process "clojure.clr.process is not in cleat's src/clojure"
      'clojure.test-clojure.repl.deps "clojure.repl.deps needs clojure.clr.basis (tools.deps)"
      'clojure.test-clojure.clojure-xml "clojure.xml is not in cleat's src/clojure"
@@ -81,6 +80,11 @@
      'clojure.test-clojure.proxy.examples helper
      'clojure.test-clojure.repl.example helper}))
 
+;; ClojureCLR 先 AOT 编译这些辅助命名空间（gen-class 的类型）再跑测试；测试文件开头 (assembly-load "类名")
+;; 在 cleat 里经 Loader 的程序集名桥接找到生成该类型的单元（cleat-043），所以先加载它们
+(def ^:private test-clojure-preload
+  {'clojure.test-clojure.genclass ['clojure.test-clojure.genclass.examples]})
+
 (defn- test-clojure-suite []
   (let [dir (path "tests" "test_clojure")
         tmp tmp-root
@@ -92,6 +96,7 @@
     {:baseline (path "tests" "test-clojure-baseline.edn")
      :load-path [tmp]
      :skip test-clojure-skip
+     :preload test-clojure-preload
      :namespaces (->> (files-under dir)
                       (map #(subs % (inc (count (str/replace dir "\\" "/")))))
                       (map #(symbol (str "clojure.test-clojure." (file->ns %)))))}))
@@ -118,11 +123,12 @@
         m (-> m (str/replace (str root "/") "") (str/replace (str tmp-root "/") ""))]
     (str (.Name (class e)) ": " (subs m 0 (min 160 (count m))))))
 
-(defn- run-one [ns-sym ms]
+(defn- run-one [ns-sym ms preload]
   (let [out (System.IO.StringWriter.)
         r (run-thread
             (fn []
               (binding [*out* out *err* out t/*test-out* out]
+                (doseq [p preload] (require p))
                 (require ns-sym)
                 (select-keys (t/test-ns ns-sym) [:test :pass :fail :error])))
             ms)]
@@ -146,7 +152,7 @@
         sw (System.Diagnostics.Stopwatch/StartNew)
         results (into (sorted-map)
                       (for [n nss]
-                        (let [r (run-one n ms)]
+                        (let [r (run-one n ms (get (:preload suite) n))]
                           (binding [*out* *err*] (println (format "%-55s %s" n (pr-str r))))
                           [n r])))
         tot (totals results)

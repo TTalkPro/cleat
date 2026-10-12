@@ -280,6 +280,44 @@ public static class ClojureOps
         return t;
     }
 
+    // —— proxy（cleat-043）：生成的方法按方法名在实例的 fn 映射里找实现，找不到（或值为 nil）时走基类方法 / 抛错 ——
+
+    public static IFn ProxyFn(IPersistentMap map, string name) => map?.valAt(name) as IFn;
+
+    /// <summary>update-proxy：并入新映射（值为 nil 的键保留，于是该方法回到缺省行为）。</summary>
+    public static IPersistentMap ProxyUpdate(IPersistentMap cur, IPersistentMap m) =>
+        (IPersistentMap)((IPersistentCollection)(cur ?? PersistentHashMap.EMPTY)).cons(m);
+
+    // —— ^:async / await*（cleat-043，见 AsyncSupport）——
+    public static object AwaitBlocking(object t) => AsyncSupport.AwaitBlocking(t);
+    public static object AsyncStart(object thunk) => AsyncSupport.Start(thunk);
+    public static object AsyncRunSync(object thunk) => AsyncSupport.RunSync(thunk);
+
+    // —— gen-class（cleat-043）：方法经类型的静态 Var 字段找实现函数 ——
+
+    /// <summary>Var 已绑定时的值（IFn），否则 null（方法走基类实现 / 抛 NotImplementedException）。</summary>
+    public static IFn GenClassFn(Var v) => v != null && v.isBound ? v.get() as IFn : null;
+
+    /// <summary>
+    /// 类型初始化时加载实现命名空间（:load-impl-ns，缺省为真）：还没加载（不在 *loaded-libs* 里）时 require 它。
+    /// 不能看命名空间在不在——初始化器先 intern 方法的 Var，命名空间已经建出来了；ns 形式在文件开头就登记 *loaded-libs*，
+    /// 所以加载该命名空间的过程中用到这个类型时不会再次加载。
+    /// </summary>
+    public static void GenClassLoadImpl(string ns)
+    {
+        var sym = clojure.lang.Symbol.intern(ns);
+        var loaded = ((IDeref)clojure.lang.RT.var("clojure.core", "*loaded-libs*").deref()).deref();
+        if (!clojure.lang.RT.booleanCast(clojure.lang.RT.contains(loaded, sym)))
+            clojure.lang.RT.var("clojure.core", "require").invoke(sym);
+    }
+
+    /// <summary>:main 生成的 Main(string[])：以命令行参数调用 -main；-main 返回 Task 时等它完成（ClojureCLR 的做法）。</summary>
+    public static void GenClassMain(Var main, string[] args)
+    {
+        var f = GenClassFn(main) ?? throw new NotImplementedException(main + " is not defined");
+        if (f.applyTo(clojure.lang.RT.seq(args)) is System.Threading.Tasks.Task t) t.GetAwaiter().GetResult();
+    }
+
     // —— deftype* / reify* 方法的值转换（cleat-051）——
 
     /// <summary>方法的原始类型实参装箱成 Clojure 的值（int → long 等，Reflector.ConvertFrom 的规则）。</summary>

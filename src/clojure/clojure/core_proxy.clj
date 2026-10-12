@@ -57,10 +57,8 @@
           ;; CLEAT-017: Compiler/IsCompilingSuffix（AOT 时的类名后缀）→ 空串
           [(.ToString ^int (hash inames) "X")] [""])))))                             ;;;[(Integer/toHexString (hash inames))])))))   Added type hint                
 
-;; CLEAT-017: GenProxy（生成子类）不支持；全接口的 proxy 由 proxy 宏改写为 reify*，其余运行时抛错（cleat-043）
-(defn- generate-proxy [^Type super interfaces attributes]
-  (throw (ex-info "proxy with a superclass or constructor args is not supported yet (cleat-043)"
-                  {:super super :interfaces (seq interfaces)})))
+;; CLEAT-043: 代理类由特殊形式 proxy-class* 在编译期生成（编译器按 HostSyntax.ProxyLayout 生成真正的子类，AOT 时进 .clj.dll）；
+;; 运行时的 get-proxy-class 求值 (proxy-class* 基类 …) 并按基类缓存。下面是 JVM 的 ASM 生成代码，保留作对照。
   
 ;;;  (let [cv (new ClassWriter (. ClassWriter COMPUTE_MAXS))
 ;;;        pname (proxy-name super interfaces)
@@ -288,6 +286,8 @@
     [Object bases (extract-attributes (meta bases))]
     [(first bases) (next bases) (extract-attributes (meta bases))]))
 
+(def ^:private proxy-class-cache (atom {}))
+
 (defn get-proxy-class 
   "Takes an optional single class followed by zero or more
   interfaces. If not supplied class defaults to Object.  Creates an
@@ -296,11 +296,12 @@
   requests for the same class set. Returns a Class object."  
   {:added "1.0"}
   [& bases]
-    (let [[super interfaces attributes] (get-super-and-interfaces bases)
-          pname (proxy-name super interfaces)]
-      (or  (RT/classForName pname)                            ;;; (RT/loadClassForName pname)  ;; TODO: This causes a problem with muliple compiles
-           (generate-proxy super interfaces attributes))))    ;;; (let [[cname bytecode] (generate-proxy super interfaces)]
-                                                              ;;;   (. ^DynamicClassLoader (deref clojure.lang.Compiler/LOADER) (defineClass pname bytecode))))))
+    ;; CLEAT-043: 求值 (proxy-class* 基类 …)（编译器生成子类），按基类缓存
+    (let [k (vec bases)]
+      (or (@proxy-class-cache k)
+          (let [c (eval (list* 'proxy-class* bases))]
+            (swap! proxy-class-cache assoc k c)
+            c))))
 
 (defn construct-proxy
   "Takes a proxy class and any arguments for its superclass ctor and
@@ -368,12 +369,8 @@
   proxied."
   {:added "1.0"}
   [class-and-interfaces args & fs]
-   ;; CLEAT-017: 子集（03 §4）：基类为 Object 且无构造参数时改写为 reify*；否则走运行时 get-proxy-class（cleat-043 前抛错）。
-   ;; 方法 fn 的首参仍绑定到 'this；proxy-super / update-proxy / proxy-mappings 在 reify* 子集上不可用。
-   (let [bases (map #(or (resolve %) (throw (Exception. (str "Can't resolve: " %))))
-                    class-and-interfaces)
-         [super interfaces attributes] (get-super-and-interfaces bases)
-         fmap (loop [fmap {} fs fs]
+   ;; CLEAT-043: 代理类在编译期由 proxy-class* 生成（JVM 在宏展开时 get-proxy-class）；fn 映射与 JVM 相同（方法名 → fn，首参为 this）
+   (let [fmap (loop [fmap {} fs fs]
                 (if fs
                   (let [[sym & meths] (first fs)
                         meths (if (vector? (first meths))
@@ -387,16 +384,12 @@
                       (throw (ArgumentException.
                               (str "Method '" (name sym) "' redefined")))))
                   fmap))]
-     (if (and (identical? super Object) (empty? args))
-       `(reify* ~(vec (map (fn [^Type c] (symbol (.FullName c))) interfaces))
-          ~@(for [[mname meths] fmap, [params & body] meths]
-              `(~(symbol mname) ~params ~@body)))
-       `(let [pc# (get-proxy-class ~@class-and-interfaces)
-              p# (construct-proxy pc# ~@args)]
-          ;; CLEAT-053: into 在 core.clj 加载 core_proxy 之后才定义，改用 reduce1
-          (init-proxy p#
-            ~(reduce1 (fn [m [mname meths]] (assoc m mname (cons `fn meths))) {} fmap))
-          p#))))
+     `(let [pc# (proxy-class* ~@class-and-interfaces)
+            p# (construct-proxy pc# ~@args)]
+        ;; CLEAT-053: into 在 core.clj 加载 core_proxy 之后才定义，改用 reduce1
+        (init-proxy p#
+          ~(reduce1 (fn [m [mname meths]] (assoc m mname (cons `fn meths))) {} fmap))
+        p#)))
 
 (defn proxy-call-with-super [call this meth]
  (let [m (proxy-mappings this)]
@@ -410,7 +403,9 @@
   Note, expansion captures 'this"
   {:added "1.0"}
   [meth & args]
- `(proxy-call-with-super (fn [] (. ~'this ~meth ~@args))  ~'this ~(name meth)))
+ ;; CLEAT-043: 代理类为每个可覆写的基类方法生成公开的非虚入口 proxy$super$名字，直接调基类实现
+ ;; （JVM 临时从映射里去掉该方法再调用，并发调用同一实例时不安全）
+ `(. ~'this ~(symbol (str "proxy$super$" (name meth))) ~@args))
 
 ;;;(defn bean
 ;;;  "Takes a Java object and returns a read-only implementation of the

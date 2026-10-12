@@ -92,10 +92,12 @@
   (let [[mname] (remove valid-java-method-name (map (comp str first) methods))]
     (when mname (throw (ArgumentException. (str "Not a valid method name: " mname))))))     ;;; IllegalArgumentException.
   
-;; CLEAT-017: GenClass/GenerateClass 不支持（cleat-043）；gen-class 宏保留，只在 *compile-files* 时走到这里
+;; CLEAT-043: GenClass/GenerateClass → 特殊形式 gen-class*：编译器按 HostSyntax.GenClassLayout 生成真正的 CLR 类型
+;; （基类的 public / protected 虚方法按原签名覆写、:methods 按声明的 CLR 类型、:main 生成 Main(string[])），
+;; AOT 时进 .clj.dll；不编译时（REPL、源码加载）也生成——JVM 只在 *compile-files* 时生成
  (defn- generate-class [options-map]
    (validate-generate-class-options options-map)
-   (throw (ex-info "gen-class is not supported yet (cleat-043)" {:options options-map})))
+   `(gen-class* ~options-map))
 		
 	 
  (defmacro gen-class 
@@ -226,10 +228,9 @@
   {:added "1.0"}
 
   [& options]
-    (let [x *compile-files*]
-      (when *compile-files*
-        (let [options-map (into1 {} (map vec (partition 2 options)))]
-          `'~(generate-class options-map)))))
+    ;; CLEAT-043: 编译与否都生成（见 generate-class）；值为生成的类型
+    (let [options-map (into1 {} (map vec (partition 2 options)))]
+      (generate-class options-map)))
           
           
           

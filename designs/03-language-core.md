@@ -6,7 +6,7 @@
 |---|---|---|
 | reader | 数字（含 `N`、`M`、`r` 基数、`0x`、ratio）、字符串、字符、符号、关键字（含 `::`）、列表 / 向量 / map / set、`'` `` ` `` `~` `~@` `#'` `#(…)` `#_` `#?` `#?@` `#"…"` `#{…}` `#inst` `#uuid` `#=` `^meta` `@` `#:ns{…}` `#::{…}` | `LispReader`（02 §7） |
 | 特殊形式 | `def`、`if`、`do`、`let*`、`loop*`、`recur`、`fn*`、`quote`、`var`、`throw`、`try`（`catch` / `finally`）、`monitor-enter`、`monitor-exit`、`.`、`new`、`set!`、`letfn*`、`case*`、`deftype*`、`reify*`、`import*` | 与 Clojure 相同的 21 个 |
-| 不支持的 | `parse-eval*`（ClojureCLR 专用）、`await*`（后续）、`proxy` 全量（第一版子集）、`gen-class`（后续）、`definterface` 以 `deftype*` 的接口生成实现（M3） | — |
+| 不支持的 | `parse-eval*`（ClojureCLR 专用）；`proxy` 全量、`gen-class`、`await*` 由 cleat-043 支持（见 §4），`definterface` 以 `deftype*` 的接口生成实现（M3） | — |
 | 核心库 | `clojure.core`、`core.protocols`、`core_deftype`、`core_proxy`（子集）、`core_print`、`gvec`、`instant`、`uuid`、`string`、`set`、`walk`、`edn`、`data`、`template`、`test`、`stacktrace`、`repl`、`main`、`pprint`、`zip`、`java.io` → `clojure.clr.io`、`clojure.clr.shell`、`reflect`（子集） | ClojureCLR `Clojure.Source/clojure/` |
 
 ## 2. 展开器（`Cleat.Core.Expander`，C#）
@@ -62,13 +62,14 @@ e ::= (const d)                                   ; 字面量 / quote；d 为任
 | 项 | Clojure / ClojureCLR | cleat |
 |---|---|---|
 | 反射互操作 | DLR 动态站点（CLR） | `Reflector` 缓存委托；语义相同 |
-| `proxy` | 生成子类 | 第一版：只支持"实现接口 + 无基类方法重写"的子集（等于 `reify`）；`proxy-super` 不支持 |
-| `gen-class` | 支持 | 后续 |
+| `proxy` | 生成子类 | 编译期生成真正的子类（cleat-043）：按原签名覆写基类的 public / protected 虚方法与抽象方法、实现接口，构造函数按原签名转发；fn 映射语义同 JVM；`proxy-super` 经生成的非虚入口直接调基类实现（JVM 临时改映射，并发不安全） |
+| `gen-class` | JVM：只在 AOT 编译时生成；ClojureCLR：每个类一个程序集 | 不论是否 AOT 都在当前编译单元生成（cleat-043）；全部选项；`:main` 为 CLR 入口 `Main(string[])`；`assembly-load` 类名桥接；attribute 与 by-ref 参数不支持 |
 | `definterface` | 生成接口 | 支持（M3 发射器生成接口类型） |
 | 原始类型签名 `IFn.LL` 等 | 支持 | 第一版不支持；`^long` 参数装箱传递（后续拆箱） |
 | 直接链接 | 可选 | 默认开（00 D13） |
-| `*compiler-options*` `:disable-locals-clearing` 等 | 支持 | 局部变量清除第一版不做（`^:once` 做） |
-| `ParseEval`、`await*` | ClojureCLR 专有 | 不支持 |
+| `*compiler-options*` `:disable-locals-clearing` 等 | 支持 | 局部变量清除见 cleat-042 第 5 项 |
+| `ParseEval` | ClojureCLR 专有 | 不支持 |
+| `^:async` / `await*` | ClojureCLR（.NET 11 运行时 async） | 支持（cleat-043）：运行时 async 可用时（.NET 11；.NET 10 要 `DOTNET_RuntimeAsync=1`）同 ClojureCLR，否则 await 同步等待、async 体返回已完成的 Task；库 `clojure.clr.async.task.alpha` |
 | 尾调用 | 无 | 无（00 D14） |
 | JVM 异常类名 | JVM：java.lang 隐式导入；ClojureCLR：不认 | 作为隐式导入映射到 Cleat.Core 实际抛出的 CLR 类型（下表，cleat-032） |
 | `str` / 打印的浮点数与布尔 | JVM：`1.0`、`1.0E100`、`Infinity`、`true`；ClojureCLR：`1`、`1E+100`、`∞`、`True` | 照 JVM（`Cleat.Core.Runtime.JvmText`，cleat-032） |

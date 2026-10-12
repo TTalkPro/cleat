@@ -323,6 +323,10 @@ public sealed partial class LcilEmitter
         _methods[t.Name] = new List<(LcilMethod, MethodBase, Type[])>();
     }
 
+    // (attrs protected)：覆写基类的 protected 方法（cleat-043 proxy / gen-class）；跨程序集的 protected internal 也只能覆写为 protected
+    private static MethodAttributes Access(LcilMethod m) =>
+        m.Attrs.Contains("private") ? MethodAttributes.Private : m.Attrs.Contains("protected") ? MethodAttributes.Family : MethodAttributes.Public;
+
     private void DefineMethod(LcilType t, TypeBuilder tb, LcilMethod m)
     {
         var ps = Ts(m.Params, m.Pos);
@@ -330,12 +334,12 @@ public sealed partial class LcilEmitter
         if (m.IsCctor) b = tb.DefineTypeInitializer();
         else if (m.IsCtor)
         {
-            var ca = (m.Attrs.Contains("private") ? MethodAttributes.Private : MethodAttributes.Public) | MethodAttributes.HideBySig;
+            var ca = Access(m) | MethodAttributes.HideBySig;
             b = tb.DefineConstructor(ca, CallingConventions.Standard, ps);
         }
         else
         {
-            var ma = (m.Attrs.Contains("private") ? MethodAttributes.Private : MethodAttributes.Public) | MethodAttributes.HideBySig;
+            var ma = Access(m) | MethodAttributes.HideBySig;
             if (m.IsStatic) ma |= MethodAttributes.Static;
             if (m.Attrs.Contains("virtual")) ma |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
             if (m.Attrs.Contains("override")) ma |= MethodAttributes.Virtual;
@@ -344,7 +348,11 @@ public sealed partial class LcilEmitter
             var mb = tb.DefineMethod(m.Name, ma, T(m.Ret, m.Pos), ps);
             // (attrs optimize)：JIT 直接按优化编译（不经 tier-0）——tier-0 把局部变量与溢出的临时变量都报告为整个方法内活着，
             // 只调用一次的长调用里抓着惰性序列的头（cleat-042 第 5 项）；优化代码按活跃区间报告
-            if (m.Attrs.Contains("optimize")) mb.SetImplementationFlags(MethodImplAttributes.AggressiveOptimization);
+            // (attrs async)：运行时 async 方法（MethodImplAttributes.Async = 0x2000，cleat-043）——声明返回 Task<T>，体返回 T，
+            // 体里的 AsyncHelpers.Await 由运行时挂起 / 恢复
+            var impl = (m.Attrs.Contains("optimize") ? MethodImplAttributes.AggressiveOptimization : 0)
+                     | (m.Attrs.Contains("async") ? (MethodImplAttributes)0x2000 : 0);
+            if (impl != 0) mb.SetImplementationFlags(impl);
             if (m.ImplementsType != null)
             {
                 var it = T(m.ImplementsType, m.Pos);

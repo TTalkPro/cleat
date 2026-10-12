@@ -126,6 +126,9 @@ public static class Loader
         return t;
     }
 
+    /// <summary>只在 deftype* / gen-class 等登记的类型里按全名找（cleat-043：assembly-load 的类名桥接）。</summary>
+    public static Type FindDefinedType(string fullName) => DefinedTypes.TryGetValue(fullName, out var t) ? t : null;
+
     /// <summary>在已登记的类型与模块程序集里按全名找类型（RT.classForName 的第一站；原来是 Compiler.FindDuplicateType）。</summary>
     public static Type FindType(string fullName)
     {

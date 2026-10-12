@@ -1044,9 +1044,19 @@ See docs/license.txt. |#
   (define (static-arg-type e env)
     (nanopass-case (L3 Expr) e
       [(quote ,d) (cond ((clr-is System.Int64 d) "System.Int64")
+                        ((clr-is System.Int32 d) "System.Int32")   ; (int 1) 折叠成的常量（cleat-043）
                         ((flonum? d) "System.Double")
                         ((string? d) "System.String")
                         (else #f))]
+      ;; 静态决议的宿主调用：返回 int / bool / char / String 时实参的类型就是它（(int x) 即 RT.intCast，cleat-043：
+      ;; 选 gen-class 的 foo(Object, Int32) 这类重载，同 JVM 的 getJavaClass）
+      [(clj-call ,d0 ,d1 ,e* ...)
+       (guard (equal? d0 "CallStatic"))
+       (let ((sl (host-call-signature d0 d1 e* env)))
+         (cond ((eq? sl 'pending) 'pending)
+               ((and sl (member (vector-ref (car sl) 3) '("System.Int32" "System.Boolean" "System.Char" "System.String")))
+                (vector-ref (car sl) 3))
+               (else (case (expr-type e env) ((l64) "System.Int64") ((fl) "System.Double") ((top) 'pending) (else #f)))))]
       [else (case (expr-type e env)
               ((l64) "System.Int64")
               ((fl) "System.Double")
@@ -1249,7 +1259,7 @@ See docs/license.txt. |#
         [(clj-static-call ,d0 ,d1 ,e* ...) (for-each walk e*)]
         [(clj-case ,d ,e0 ,e1 ,e* ...) (walk e0) (walk e1) (for-each walk e*)]
         [(clj-deftype ,d (,x* ...) ,le* ...)
-         (when (and (deftype-info-reify? d) (not (deftype-interface? d))) (for-each on-ref (deftype-caps x* le*)))]
+         (when (deftype-reify? d) (for-each on-ref (deftype-caps x* le*)))]
         [else (void)])))
 
   ;; 循环体 body 里引用、在体外绑定的变量（params 是这个循环自己的形参，每轮重新赋值，不算）
@@ -1668,6 +1678,14 @@ See docs/license.txt. |#
        ;; Numbers 的 int64 算术（cleat-042）在实参类型全知时直接发 int64 原始运算
        (cond
          ((equal? d0 "PrimInvoke") (cg-prim-invoke! e* mc ctx))
+         ;; (await* t) 在运行时 async 的方法里（cleat-043）：任意 Task / ValueTask → Task，AsyncHelpers.Await 挂起到它完成，再取结果
+         ((and (equal? d0 "AwaitAsync") (= (length e*) 1))
+          (let ((task "System.Threading.Tasks.Task") (support "Cleat.Scheme.Clojure.AsyncSupport"))
+            (cg (car e*) mc 'value)
+            (emit! mc `(call ,support "ToTask" (,obj) ,task) '(dup)
+                   `(call "System.Runtime.CompilerServices.AsyncHelpers" "Await" (,task) ,void-type)
+                   `(call ,support "ResultOf" (,task) ,obj))
+            (finish-value! mc ctx)))
          ;; (instance? T x)，T 是常量且能按名字引用：isinst（cleat-042；内联的守卫、用户代码的 instance?）
          ((and (equal? d0 "IsInstanceOf") (= (length e*) 2)
                (let ((t (quoted-datum (car e*))))
@@ -1760,8 +1778,11 @@ See docs/license.txt. |#
          (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))]
       [(clj-deftype ,d (,x* ...) ,le* ...)
        ;; deftype*：值为生成的类型（运行时登记，classForName 取最新的）；reify*：值为新实例（自由变量与 nil 元数据作构造参数）
-       (let ((c (if (deftype-interface? d) (interface-class! mc d) (deftype-class! mc d x* le*))))
-         (if (and (deftype-info-reify? d) (not (deftype-interface? d)))
+       (let ((c (cond ((deftype-interface? d) (interface-class! mc d))
+                      ((deftype-proxy? d) (proxy-class! mc d))
+                      ((deftype-genclass? d) (genclass-class! mc d))
+                      (else (deftype-class! mc d x* le*)))))
+         (if (deftype-reify? d)
              (begin
                (for-each (lambda (v) (ref-var! mc v #t)) (cdr c))
                (emit! mc '(ldnull) `(newobj ,(car c) ,(append (objs (length (cdr c))) (list obj)))))
@@ -2268,6 +2289,7 @@ See docs/license.txt. |#
            (arities (let loop ((cl* cl*) (i 0))
                       (if (null? cl*) '() (cons (car (clause-shape (car cl*))) (loop (cdr cl*) (+ i 1))))))
            (fixed (if variadic (list-head arities (- n 1)) arities))
+           (async? (clj-fn-name-async? nm))
            (methods '()))
       (define (add-method! m) (set! methods (cons m methods)))
       ;; invokeStatic（cleat-033，designs/04 §4/§6）：没有自由字段的 fn 把固定子句的体编成静态方法，供接口文件
@@ -2278,7 +2300,7 @@ See docs/license.txt. |#
       ;; 原始签名的固定子句（cleat-042，JVM 的 IFn$LL）：体编成有类型的方法——没有自由字段时是静态 invokeStaticPrim
       ;; （另有 object 签名的 invokeStatic 转换后转发给它，直接链接照旧），有字段时是实例 invokePrim；类实现
       ;; clojure.lang.primifs.<签名>，invokePrim 供按 Var 元数据生成的原始调用点使用
-      (when (null? fields)
+      (when (and (null? fields) (not async?))
         (for-each (lambda (cl)
                     (let ((sig (clause-sig nm cl)))
                       (add-method! (clj-static-clause-method u name cl self sig))
@@ -2290,6 +2312,11 @@ See docs/license.txt. |#
         (unless (null? cls)
           (let ((last-variadic? (and variadic (= i (- n 1)))))
             (cond
+              ;; ^:async 的体 thunk（cleat-043）：体编进返回 Task<object> 的 async 方法，invoke 转发
+              (async?
+               (add-method! (clj-async-clause-method u name (car cls) fields field-names self))
+               (add-method! `(method "invoke" (attrs override) (params) (ret ,obj)
+                               (body (ldarg 0) (call ,name "invokeAsync" () ,(task-of-object-type)) (ret)))))
               ((and (null? fields) (not last-variadic?))
                (add-method! (clj-forward-method u name (car cls))))
               ((and (not last-variadic?) (clause-sig nm (car cls)))
@@ -2346,6 +2373,22 @@ See docs/license.txt. |#
              (append (finish-method mc mname '(optimize) (sig-param-types sig) (sig-char-type (sig-ret sig)))
                      `((implements ,(string-append primifs-prefix sig) "invokePrim")))
              (finish-method mc mname '(override optimize) (objs (length x*)))))]))
+
+  ;; ^:async fn 的体 thunk（无参数，cleat-043）：运行时 async（.NET 11 起缺省；.NET 10 要 DOTNET_RuntimeAsync=1）——方法声明返回
+  ;; Task<object> 并带 async 实现标志，体照常返回 object，由运行时包成 Task；await* 在方法里直接调 AsyncHelpers.Await，
+  ;; 挂起与恢复由运行时完成（ClojureCLR 的做法）。方法内不发 tail.（try-depth 从 1 起），不做局部变量清除（取地址）
+  (define (task-of-object-type) (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_TaskOfObjectName))
+  (define (clj-async-clause-method u class cl fields field-names self)
+    (nanopass-case (L3 Clause) cl
+      [(clause (,x* ...) ,x ,body)
+       (unless (and (null? x*) (not x)) (error 'codegen "async body thunks take no parameters" x*))
+       (let ((mc (make-method-ctx u class #f #f #f #f)))
+         (for-each (lambda (f n) (hashtable-set! (mctx-vars mc) f (cons 'field n))) fields field-names)
+         (when self (hashtable-set! (mctx-vars mc) self '(self)))
+         (mctx-big?-set! mc (bigger-than? body big-body-nodes))
+         (mctx-try-depth-set! mc 1)
+         (cg body mc 'tail)
+         (finish-method mc "invokeAsync" '(async) '() (task-of-object-type)))]))
 
   ;; 子句形参的位置：从下标 j0 起的参数；有原始签名时 L / D 形参是原始值的参数（targ），返回类型记入 mctx
   (define (bind-clause-params! mc x* j0 sig)
@@ -2505,6 +2548,10 @@ See docs/license.txt. |#
 
   ;; gen-interface（cleat-053）：描述的 reify? 位置为 interface；方法规格 (#f 名字 返回类型 (参数类型 …))，接口为父接口
   (define (deftype-interface? d) (eq? (deftype-info-reify? d) 'interface))
+  ;; reify? 位置：#t reify*、#f deftype*、interface gen-interface、proxy proxy-class*（cleat-043）
+  (define (deftype-reify? d) (eq? (deftype-info-reify? d) #t))
+  (define (deftype-proxy? d) (eq? (deftype-info-reify? d) 'proxy))
+  (define (deftype-genclass? d) (eq? (deftype-info-reify? d) 'genclass))
 
   (define (interface-class! mc d)
     (let ((u (mctx-unit mc)) (name (deftype-info-class d)))
@@ -2514,6 +2561,232 @@ See docs/license.txt. |#
            ,@(map (lambda (sp)
                     `(method ,(cadr sp) (attrs abstract virtual) (params ,@(map tname (cadddr sp))) (ret ,(tname (caddr sp)))))
                   (deftype-info-methods d))))
+      (cons name '())))
+
+  ;; ———————————————— proxy-class*（cleat-043）————————————————
+  ;; 描述：(类名 proxy 基类 (接口 …) (构造函数参数类型 …) (方法 …))；方法为
+  ;;   (本类中的名字 返回类型 (参数类型 …) 访问性 种类 (声明类型 原名) 缺省行为 映射键 可分派?)，类型写作 ("名字" . 值类型?)。
+  ;; 生成真正的子类：字段 __clojureFnMap（IProxy 的 fn 映射）；每个方法按映射键取 fn，有则以 (this 实参 …) 调用（值类型实参装箱、
+  ;; 返回值转换为声明类型），没有则调基类的实现（非虚 call）或抛 NotImplementedException。基类方法另有公开的非虚
+  ;; proxy$super$名字，proxy-super 经它直接调基类实现（不必像 JVM 那样临时改映射）。构造函数按基类的原签名转发。
+  (define (deftype-proxy-super d) (list-ref d 2))
+  (define (deftype-proxy-ifaces d) (list-ref d 3))
+  (define (deftype-proxy-ctors d) (list-ref d 4))
+  (define (deftype-proxy-methods d) (list-ref d 5))
+
+  ;; 栈上的 object → 声明类型 t 的代码（void 时丢弃）
+  (define (convert-object-code t)
+    (cond
+      ((string=? (tname t) void-type) '((pop)))
+      ((string=? (tname t) obj) '())
+      ((value-type? t)
+       `((ldtoken ,(tname t)) (call ,type-type "GetTypeFromHandle" (,type-handle-type) ,type-type)
+         (call ,clojure-ops-type "ConvertReturn" (,obj ,type-type) ,obj) (unbox.any ,(tname t))))
+      (else `((castclass ,(tname t))))))
+
+  ;; 第 i 个实参（ldarg i）装成 Clojure 的值：值类型装箱并按 Clojure 的规则转换（int → long）
+  (define (boxed-arg-code i t)
+    (if (value-type? t)
+        `((ldarg ,i) (box ,(tname t)) (call ,clojure-ops-type "BoxArg" (,obj) ,obj))
+        `((ldarg ,i))))
+
+  (define (args-code n) (let loop ((i 1)) (if (> i n) '() (cons `(ldarg ,i) (loop (+ i 1))))))
+
+  (define (proxy-class! mc d)
+    (let* ((u (mctx-unit mc))
+           (name (deftype-info-class d))
+           (super (deftype-proxy-super d))
+           (fmap "__clojureFnMap")
+           (iproxy "clojure.lang.IProxy"))
+      (define (throw-code msg)
+        `((ldstr ,msg) (newobj "System.NotImplementedException" (,string-type)) (throw)))
+      (define (method-def m)
+        (let* ((mname (list-ref m 0)) (ret (list-ref m 1)) (ptypes (list-ref m 2)) (access (list-ref m 3))
+               (kind (list-ref m 4)) (target (list-ref m 5)) (fallback (list-ref m 6)) (key (list-ref m 7)) (ok? (list-ref m 8))
+               (n (length ptypes))
+               (call-base `((ldarg 0) ,@(args-code n)
+                            (call ,(car target) ,(cadr target) ,(map tname ptypes) ,(tname ret)) (ret)))
+               (default (if (string=? fallback "base")
+                            call-base
+                            (throw-code (string-append (cadr target) " is not implemented by proxy " name))))
+               (dispatch
+                (if ok?
+                    `((ldarg 0) (ldfld ,name ,fmap) (ldstr ,key)
+                      (call ,clojure-ops-type "ProxyFn" (,pmap-type ,string-type) ,ifn-type)
+                      (dup) (brfalse NOFN)
+                      ,@(if (< n 20)
+                            `((ldarg 0)
+                              ,@(apply append (map (lambda (t i) (boxed-arg-code i t)) ptypes (iota-from 1 n)))
+                              (callvirt ,ifn-type "invoke" ,(objs (+ n 1)) ,obj))
+                            `((ldc.i4 ,(+ n 1)) (newarr ,obj)
+                              (dup) (ldc.i4 0) (ldarg 0) (stelem.ref)
+                              ,@(apply append (map (lambda (t i) `((dup) (ldc.i4 ,i) ,@(boxed-arg-code i t) (stelem.ref)))
+                                                   ptypes (iota-from 1 n)))
+                              (call ,clojure-ops-type "InvokeIFn" (,ifn-type ,obj-array) ,obj)))
+                      ,@(convert-object-code ret)
+                      (ret)
+                      (label NOFN) (pop))
+                    '())))
+          `(method ,mname
+             (attrs ,@(cond ((string=? kind "override") `(override ,@(if (string=? access "protected") '(protected) '())))
+                            ((string=? mname (cadr target)) '())
+                            (else '(private))))
+             (params ,@(map tname ptypes)) (ret ,(tname ret))
+             ,@(if (string=? kind "implement") `((implements ,(car target) ,(cadr target))) '())
+             (body ,@dispatch ,@default))))
+      ;; proxy-super 用：基类实现的公开非虚入口
+      (define (super-def m)
+        (let ((ret (list-ref m 1)) (ptypes (list-ref m 2)) (target (list-ref m 5)))
+          `(method ,(string-append "proxy$super$" (cadr target)) (params ,@(map tname ptypes)) (ret ,(tname ret))
+             (body (ldarg 0) ,@(args-code (length ptypes))
+                   (call ,(car target) ,(cadr target) ,(map tname ptypes) ,(tname ret)) (ret)))))
+      (unless (hashtable-contains? (unit-type-names u) name)
+        (hashtable-set! (unit-type-names u) name #t)
+        (add-class! u
+          `(type ,name (base ,super) (interfaces ,@(deftype-proxy-ifaces d))
+             (field ,fmap ,pmap-type)
+             ,@(map (lambda (ps)
+                      `(method ".ctor" (attrs ctor) (params ,@(map tname ps))
+                         (body (ldarg 0) ,@(args-code (length ps)) (call ,super ".ctor" ,(map tname ps) ,void-type) (ret))))
+                    (deftype-proxy-ctors d))
+             (method "__initClojureFnMappings" (params ,pmap-type) (ret ,void-type) (implements ,iproxy "__initClojureFnMappings")
+               (body (ldarg 0) (ldarg 1) (stfld ,name ,fmap) (ret)))
+             (method "__updateClojureFnMappings" (params ,pmap-type) (ret ,void-type) (implements ,iproxy "__updateClojureFnMappings")
+               (body (ldarg 0) (ldarg 0) (ldfld ,name ,fmap) (ldarg 1)
+                     (call ,clojure-ops-type "ProxyUpdate" (,pmap-type ,pmap-type) ,pmap-type) (stfld ,name ,fmap) (ret)))
+             (method "__getClojureFnMappings" (params) (ret ,pmap-type) (implements ,iproxy "__getClojureFnMappings")
+               (body (ldarg 0) (ldfld ,name ,fmap) (ret)))
+             ,@(map method-def (deftype-proxy-methods d))
+             ,@(map super-def (filter (lambda (m) (string=? (list-ref m 6) "base")) (deftype-proxy-methods d))))))
+      (cons name '())))
+
+  (define (iota-from a n) (if (= n 0) '() (cons a (iota-from (+ a 1) (- n 1)))))
+
+  ;; ———————————————— gen-class*（cleat-043）————————————————
+  ;; 描述：(类名 genclass 基类 (接口 …) 实现命名空间 加载实现? ((Var 字段 Var 名) …) (((参数类型 …) (基类参数类型 …)) …)
+  ;;        init 字段 post-init 字段 state 字段 (方法 …) factory main 字段 (exposes …) (exposes-methods …))，见 HostSyntax.GenClassLayout。
+  ;; 方法经静态 Var 字段找实现（重载时先找 名字-参数类型… 的 Var，再找 名字 的 Var）：已绑定则以 (this 实参 …) 调用，
+  ;; 否则调基类实现或抛 NotImplementedException。类型初始化器 intern 这些 Var 并（缺省）加载实现命名空间。
+  (define (genclass-class! mc d)
+    (let* ((u (mctx-unit mc))
+           (name (list-ref d 0)) (super (list-ref d 2)) (ifaces (list-ref d 3)) (impl-ns (list-ref d 4)) (load-impl? (list-ref d 5))
+           (var-fields (list-ref d 6)) (ctors (list-ref d 7)) (init (list-ref d 8)) (post-init (list-ref d 9)) (state (list-ref d 10))
+           (methods (list-ref d 11)) (factory (list-ref d 12)) (main (list-ref d 13)) (exposes (list-ref d 14)) (exposes-methods (list-ref d 15)))
+      (define (get-fn f) `((ldsfld ,name ,f) (call ,clojure-ops-type "GenClassFn" (,clj-var-type) ,ifn-type)))
+      (define (not-defined what) `((ldstr ,(string-append what " is not defined for " name))
+                                   (newobj "System.NotImplementedException" (,string-type)) (throw)))
+      ;; 栈顶是 fn：压 this（可选）与实参 first..first+n-1，调用，结果（object）留在栈上
+      (define (invoke-code this? first ptypes)
+        (let* ((n (length ptypes)) (k (+ n (if this? 1 0))) (idx (iota-from first n)))
+          (if (< k 20)
+              `(,@(if this? '((ldarg 0)) '())
+                ,@(apply append (map (lambda (t i) (boxed-arg-code i t)) ptypes idx))
+                (callvirt ,ifn-type "invoke" ,(objs k) ,obj))
+              `((ldc.i4 ,k) (newarr ,obj)
+                ,@(if this? '((dup) (ldc.i4 0) (ldarg 0) (stelem.ref)) '())
+                ,@(apply append (map (lambda (t i j) `((dup) (ldc.i4 ,j) ,@(boxed-arg-code i t) (stelem.ref)))
+                                     ptypes idx (iota-from (if this? 1 0) n)))
+                (call ,clojure-ops-type "InvokeIFn" (,ifn-type ,obj-array) ,obj)))))
+      (define (method-def m)
+        (let* ((mname (list-ref m 0)) (ret (list-ref m 1)) (ptypes (list-ref m 2)) (access (list-ref m 3)) (kind (list-ref m 4))
+               (target (list-ref m 5)) (fallback (list-ref m 6)) (vf (list-ref m 7)) (ovf (list-ref m 8)) (ok? (list-ref m 9))
+               (static? (string=? kind "static")) (n (length ptypes)))
+          `(method ,mname
+             (attrs ,@(cond ((string=? kind "override") `(override ,@(if (string=? access "protected") '(protected) '())))
+                            ((string=? kind "implement") (if (string=? mname (cadr target)) '() '(private)))
+                            ((string=? kind "new") '(virtual))
+                            (else '(static))))
+             (params ,@(map tname ptypes)) (ret ,(tname ret))
+             ,@(if (string=? kind "implement") `((implements ,(car target) ,(cadr target))) '())
+             (body
+               ,@(if ok?
+                     `(,@(if ovf `(,@(get-fn ovf) (dup) (brtrue FOUND) (pop)) '())
+                       ,@(get-fn vf) (dup) (brfalse NOFN)
+                       (label FOUND)
+                       ,@(invoke-code (not static?) (if static? 0 1) ptypes)
+                       ,@(convert-object-code ret)
+                       (ret)
+                       (label NOFN) (pop))
+                     '())
+               ,@(if (string=? fallback "base")
+                     `((ldarg 0) ,@(args-code n) (call ,(car target) ,(cadr target) ,(map tname ptypes) ,(tname ret)) (ret))
+                     (not-defined mname))))))
+      (define (ctor-def c)
+        (let* ((ps (car c)) (sps (cadr c)) (n (length ps))
+               (same? (equal? (map tname ps) (map tname sps)))
+               (pass-through `((ldarg 0) ,@(args-code n) (call ,super ".ctor" ,(map tname sps) ,void-type)))
+               (nth '(call "clojure.lang.RT" "nth" ("System.Object" "System.Int32") "System.Object")))
+          `(method ".ctor" (attrs ctor) (params ,@(map tname ps)) (locals ,obj)
+             (body
+               ,@(if init
+                     `(,@(get-fn init) (dup) (brfalse NOINIT)
+                       ,@(invoke-code #f 1 ps) (stloc 0)
+                       (ldarg 0)
+                       ,@(apply append
+                           (map (lambda (t j) `((ldloc 0) (ldc.i4 0) ,nth (ldc.i4 ,j) ,nth ,@(convert-object-code t)))
+                                sps (iota-from 0 (length sps))))
+                       (call ,super ".ctor" ,(map tname sps) ,void-type)
+                       ,@(if state `((ldarg 0) (ldloc 0) (ldc.i4 1) ,nth (stfld ,name ,state)) '())
+                       (br AFTERINIT)
+                       (label NOINIT) (pop)
+                       ,@(if same? pass-through (not-defined "init"))
+                       (label AFTERINIT))
+                     (if same? pass-through (not-defined "init")))
+               ,@(if post-init
+                     `(,@(get-fn post-init) (dup) (brfalse NOPOST)
+                       ,@(invoke-code #t 1 ps) (pop) (br ENDPOST)
+                       (label NOPOST) (pop) ,@(not-defined "post-init")
+                       (label ENDPOST))
+                     '())
+               (ret)))))
+      (hashtable-set! (unit-type-names u) name #t)
+      (add-class! u
+        `(type ,name (base ,super) (interfaces ,@ifaces)
+           ,@(map (lambda (vf) `(field ,(car vf) ,clj-var-type static)) var-fields)
+           ,@(if state `((field ,state ,obj readonly)) '())
+           (method ".cctor" (attrs cctor) (params)
+             (body ,@(apply append
+                       (map (lambda (vf)
+                              `((ldstr ,impl-ns) (ldstr ,(cadr vf))
+                                (call ,clj-var-type "internPrivate" (,string-type ,string-type) ,clj-var-type)
+                                (stsfld ,name ,(car vf))))
+                            var-fields))
+                   ,@(if load-impl? `((ldstr ,impl-ns) (call ,clojure-ops-type "GenClassLoadImpl" (,string-type) ,void-type)) '())
+                   (ret)))
+           ,@(map ctor-def ctors)
+           ,@(map method-def methods)
+           ,@(if factory
+                 (map (lambda (c)
+                        (let ((ps (car c)))
+                          `(method ,factory (attrs static) (params ,@(map tname ps)) (ret ,name)
+                             (body ,@(let loop ((i 0)) (if (= i (length ps)) '() (cons `(ldarg ,i) (loop (+ i 1)))))
+                                   (newobj ,name ,(map tname ps)) (ret)))))
+                      ctors)
+                 '())
+           ,@(if main
+                 `((method "Main" (attrs static) (params "System.String[]") (ret ,void-type)
+                     (body (ldsfld ,name ,main) (ldarg 0)
+                           (call ,clojure-ops-type "GenClassMain" (,clj-var-type "System.String[]") ,void-type) (ret))))
+                 '())
+           ,@(apply append
+               (map (lambda (x)
+                      (let ((decl (list-ref x 0)) (f (list-ref x 1)) (ft (list-ref x 2)) (static? (list-ref x 3))
+                            (get (list-ref x 4)) (set (list-ref x 5)))
+                        (append
+                          (if get
+                              `((method ,get ,@(if static? '((attrs static)) '()) (params) (ret ,ft)
+                                  (body ,@(if static? `((ldsfld ,decl ,f)) `((ldarg 0) (ldfld ,decl ,f))) (ret))))
+                              '())
+                          (if set
+                              `((method ,set ,@(if static? '((attrs static)) '()) (params ,ft) (ret ,void-type)
+                                  (body ,@(if static? `((ldarg 0) (stsfld ,decl ,f)) `((ldarg 0) (ldarg 1) (stfld ,decl ,f))) (ret))))
+                              '()))))
+                    exposes))
+           ,@(map (lambda (x)
+                    (let ((pub (list-ref x 0)) (ret (list-ref x 1)) (ptypes (list-ref x 2)) (decl (list-ref x 3)) (sname (list-ref x 4)))
+                      `(method ,pub (params ,@ptypes) (ret ,ret)
+                         (body (ldarg 0) ,@(args-code (length ptypes)) (call ,decl ,sname ,ptypes ,ret) (ret)))))
+                  exposes-methods)))
       (cons name '())))
 
   (define (tname t) (car t))

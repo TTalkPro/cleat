@@ -90,8 +90,6 @@
   {:suite "host-interop / reader-feature toggle" :label "set + read back" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "host-interop / reader-feature toggle" :label "restore returns to default" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "host-interop / java.nio.file.Files" :label "move REPLACE_EXISTING over an undeletable target is AccessDenied on the target" :category :host/jvm-api :reason "JVM class statics: java.nio.file.Files/…"}
-  {:suite "host-interop / logging host shims" :label "pprint writes value" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
-  {:suite "host-interop / logging host shims" :label "pprint respects *print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
   {:suite "reader / digit separators" :label "underscores group a long decimal" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
   {:suite "reader / digit separators" :label "a run of underscores is one separator" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
   {:suite "reader / digit separators" :label "a separator survives a leading sign" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :read-error :reader/jolt)"}
@@ -273,11 +271,6 @@
   {:suite "ns / private var references" :label "a private fn passed as a value is refused" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
   {:suite "ns / private var references" :label "a private macro is refused" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
   {:suite "ns / private var references" :label "a private clojure.core name is not referred, so a bare use does not resolve" :category :error-model :reason "a compile error is one ExpanderException whose message carries the position (\"Syntax error (file:line:col) …\"), not a CompilerException wrapping a cause; the var prints as ns/name"}
-  {:suite "print / *print-length* and *print-level*" :label "pprint honors clojure.core/*print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
-  {:suite "print / *print-length* and *print-level*" :label "pprint counts a map's entries against *print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
-  {:suite "print / *print-length* and *print-level*" :label "pprint honors clojure.core/*print-level*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
-  {:suite "print / *print-length* and *print-level*" :label "pprint stops an infinite seq at *print-length*" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
-  {:suite "print / namespace maps" :label "pprint lifts a namespace map" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
   {:suite "ns / refer name checks" :label "refer :only a missing name throws IllegalAccessError" :category :host/jvm-api :reason "Java member RuntimeType.getSimpleName (no CLR counterpart under that name)"}
   {:suite "ns / refer name checks" :label "refer :only a private name throws IllegalAccessError" :category :host/jvm-api :reason "Java member RuntimeType.getSimpleName (no CLR counterpart under that name)"}
   {:suite "ns / refer name checks" :label "require :refer a missing name throws" :category :host/jvm-api :reason "Java member RuntimeType.getSimpleName (no CLR counterpart under that name)"}
@@ -359,6 +352,7 @@
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "class number" :category :host/jvm-api :reason "JVM class java.lang.Long"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "class string" :category :host/jvm-api :reason "JVM class java.lang.String"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "init-proxy" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
+  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "get-proxy-class throws" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "update-proxy" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "memfn upper" :category :host/jvm-api :reason "Java member String.toUpperCase (no CLR counterpart under that name)"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "memfn with args" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
@@ -406,7 +400,6 @@
   {:suite "instance? / bound-class" :label "instance? through a var" :category :host/jvm-api :reason "JVM class java.util.Map"}
   {:suite "instance? / bound-class" :label "instance? through a var negative" :category :host/jvm-api :reason "JVM class java.util.Map"}
   {:suite "instance? / bound-class" :label "instance? with a local class-var (java.util.Map on a jrec)" :category :host/jvm-api :reason "JVM class java.util.Map"}
-  {:suite "pprint / line-breaks" :label "broken lines carry no trailing spaces" :category :not-yet :reason "clojure.pprint's pretty-writer is a proxy of System.IO.TextWriter; proxy over a class is cleat-043"}
   {:suite "core / dynamic-vars" :label "*compile-path* default" :category :host/defaults :reason "*compile-path* defaults to \".\" (ClojureCLR; CLOJURE_COMPILE_PATH), not \"classes\""}
   {:suite "refs / ref" :label "ref creates a ref" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "refs / loaded-libs" :label "*loaded-libs* is a ref" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
