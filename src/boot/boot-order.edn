@@ -49,4 +49,5 @@
   {:ns clojure.core.server     :path "clojure/core/server.clj"       :boot false}
   {:ns clojure.test.junit      :path "clojure/test/junit.clj"        :boot false}
   {:ns clojure.test.tap        :path "clojure/test/tap.clj"          :boot false}
+  {:ns clojure.syntax          :path "clojure/syntax.clj"            :boot false}   ; cleat-057
   {:ns clojure.repl.deps       :path "clojure/repl/deps.cljc"        :boot false}]}

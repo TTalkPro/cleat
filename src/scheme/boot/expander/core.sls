@@ -41,7 +41,7 @@
           ellipsis-map assertion-error syntax-transpose
 		      environment environment? environment-symbols
           (rename (interaction-env? interaction-environment?))
-          stx? stx-expr)
+          stx? stx-expr stx-mark* stx-subst*)
   (import
     (except (rnrs)
       environment environment? identifier?
@@ -535,6 +535,13 @@
              (let* ([ls1 ((syntax-extension-children x) e)]
                     [ls2 (map (lambda (c) (f c m s1* ae*)) ls1)])
                (if (for-all eq? ls1 ls2) e ((syntax-extension-rebuild x) e ls2))))]
+          ;;; 注解（Clojure 的宏输出：列表注解包着已带 wrap 的子项，cleat-057）：像序对一样对 expression 递归，
+          ;;; 有变化才重建注解；标记与 shift 落到子项上，wrap 对齐不受影响
+          [(annotation? e)
+           (let ([x (f (annotation-expression e) m s1* ae*)])
+             (if (eq? x (annotation-expression e))
+                 e
+                 (make-annotation x (annotation-source e) (annotation-stripped e))))]
           [else (make-stx e (list m) s1* ae*)]))
       (mkstx (f expr mark '() '()) '() '() (list ae))))
 
