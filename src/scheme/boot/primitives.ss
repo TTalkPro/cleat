@@ -993,7 +993,7 @@
     (overload "Cleat.Scheme.Builtins" "List" 5 #f () #f))
   (primitive load-fasl
     (overload "Cleat.Scheme.ModuleLoader" "LoadFasl" 1 #f () #f))
-  (primitive load-library-dll
+  (primitive load-library-fasl
     (overload "Cleat.Scheme.ModuleLoader" "LoadLibraryDll" 1 #f () #f))
   (primitive lw-debug-mode?
     (overload "Cleat.Scheme.Builtins" "IsLightWeightDebugMode" 0 #f () #f)

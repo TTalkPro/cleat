@@ -22,7 +22,7 @@
   (export imported-label->binding library-subst installed-libraries
     visit-library library-name library-version library-exists? try-load-from-file
     find-library-by-name install-library library-spec invoke-library compiled-library-exists?
-    current-library-expander uninstall-library file-locator library-name->file-name library-name->dll-name
+    current-library-expander uninstall-library file-locator library-name->file-name library-name->fasl-name
     current-library-collection library-path library-extensions alternative-file-locator
     serialize-all current-precompiled-library-loader allow-library-redefinition
     library-content source-libraries)
@@ -130,7 +130,7 @@
           (f (cdr ls))))
       (extract)))
 
-  (define (library-name->dll-name x)
+  (define (library-name->fasl-name x)
     (let ((fn (let-values (((p extract) (open-string-output-port)))
                 (define (display-hex n)
                   (cond
@@ -160,14 +160,14 @@
                         (let ((d (symbol->string (car ls))))
                               d)))
                     (f (cdr ls))))
-                (string-append (extract) ".dll"))))
+                (string-append (extract) ".fasl"))))
            (substring fn 1 (string-length fn))))
     
   (define (compiled-library-exists? libname)
-    (let ((dllname (library-name->dll-name libname)))
+    (let ((faslname (library-name->fasl-name libname)))
       (exists 
         (lambda (p)
-          (let ((fn (string-append p "/" dllname)))
+          (let ((fn (string-append p "/" faslname)))
             (and (file-exists? fn) fn)))
         (library-path))))
       

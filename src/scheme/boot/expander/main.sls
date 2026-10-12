@@ -56,7 +56,7 @@
     (boot expander internal)
     (boot expander library-manager)
     (boot expander core)
-    (only (cleat scheme core) get-command-line format compile-library-dll load-library-dll load-fasl compress-constants? constant-fold)
+    (only (cleat scheme core) get-command-line format compile-library-fasl compile-library-fasl/asm load-library-fasl load-fasl compress-constants? constant-fold)
     (boot enums)
     (boot files)
     (only (cleat scheme unsafe) $fx+ $fx- $throw $try/finally $program-failed
@@ -200,7 +200,7 @@
   (define compile
     (case-lambda
       [()
-        (serialize-all compile-dll compile-core-expr)]
+        (serialize-all compile-fasl compile-core-expr)]
       [(filename)
         (compile filename #f)]
       [(filename gen-wrapper?)
@@ -209,7 +209,7 @@
         (with-guard
           (lambda ()
             (parameterize [(compress-constants? constant-compression?)]
-              (load-r6rs-top-level filename 'compile-dll))))]))
+              (load-r6rs-top-level filename 'compile-fasl))))]))
     
   (define (compile->closure filename)
     (load-r6rs-top-level filename 'closure))
@@ -259,9 +259,9 @@
           ((load)      
             (parameterize ([command-line (cons filename (map (lambda (x) (format "~a" x)) args))])
               ((compile-r6rs-top-level x*))))
-          ((compile-dll)
+          ((compile-fasl)
   		      (compile-r6rs-top-level x*)
-			      (serialize-all compile-dll compile-core-expr))))))
+			      (serialize-all compile-fasl compile-core-expr))))))
 
   (define fo (make-enumeration '(no-fail no-create no-truncate append)))
  
@@ -279,7 +279,7 @@
                         (display (format "WARNING: precompiled library ~a could not load. ~s\n" libname ($exception-message e)) 
                                  (current-error-port))
                         #f)]
-                (let ((content (load-library-dll dll-filename)))
+                (let ((content (load-library-fasl dll-filename)))
                   (and content (apply sk content))))
               (begin
                 (display (format "WARNING: precompiled library ~a is out of date.\n" libname) 
@@ -305,18 +305,18 @@
         (vector-set! v 12 `',(vector-ref v 12)) ; visible?
         (cons 'list (vector->list v))))
 
-  (define (compile-dll libname content)
-    (let ((filename (library-name->dll-name libname)))
+  (define (compile-fasl libname content)
+    (let ((filename (library-name->fasl-name libname)))
       (display "compiling ")
       (display (get-filename filename))
       (newline)
-      (if (compile-library-dll filename (library-content->expr content))
+      (if (compile-library-fasl/asm filename (library-content->expr content) #t)
           (parameterize ((allow-library-redefinition #t))
             (try-load-from-file libname filename))
           #f)))
 
   ;;; ———————————————— compile-file / compile-library / compile-program（iron-037，designs/07-tooling-and-embedding.md §2）————————————————
-  ;;; 编译产物 .fasl 是一个程序集（与库 dll 同一格式），入口返回
+  ;;; 编译产物 .fasl 是一个程序集（与库路径上按库名命名的预编译库同一格式），入口返回
   ;;;   (cleat-scheme-fasl 1 libraries (库描述 …))         库文件：加载时逐个安装
   ;;;   (cleat-scheme-fasl 1 program ((id 名字) …) thunk)   顶层程序：核对依赖库的编译实例后调用 thunk
   ;;; 依赖库按 id 核对（与 try-load-from-file 一致）：库若重新展开（例如从源码重新加载），其位置与 id 都会变，编译产物不能再用。
@@ -349,7 +349,7 @@
 
   (define (write-fasl out expr)
     (when (file-exists? out) (delete-file out))
-    (compile-library-dll out expr))
+    (compile-library-fasl out expr))
 
   ;; 编译期间从源码加载、且没有不旧于源文件的 .fasl 的库 → 各自源文件旁的 .fasl
   (define (compile-source-libraries! except)

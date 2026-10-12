@@ -39,7 +39,7 @@ public static class BootInterface
                 s_loaded.TryGetValue(new AssemblyName(e.Name).Name ?? "", out var a) ? a : null;
     }
 
-    // —— 用户库的接口文件（.fasl / 库 dll 旁的 名字.ifc，compile-library-dll 写出）——
+    // —— 用户库的接口文件（.fasl 旁的 名字.ifc，compile-library-fasl 写出）——
     private static readonly object s_ifcGate = new();
     private static object s_ifcFiles = EmptyList.Instance;   // Scheme 表，按加载顺序（追加在表尾，编译器记下读过几个）
 

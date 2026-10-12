@@ -9,14 +9,15 @@ See docs/license.txt. |#
 ;;;   (compile-forms->lcil forms 程序集名 模块类型名) → Lcil 的 S 表达式
 ;;;   (compile->lcil-text forms 程序集名 模块类型名)  → Lcil 文本
 ;;;   (compile-core e)            eval：发射到内存，返回执行它的无参过程
-;;;   (compile-library-dll 文件 e) e 求值得到 13 元素的库描述列表；生成库 dll，入口返回该列表
+;;;   (compile-library-fasl 文件 e) e 求值得到 13 元素的库描述列表；生成库 fasl（程序集），入口返回该列表
+;;;   (compile-library-fasl/asm 文件 e 确定性?) 同上；确定性? 为真时程序集名取文件名主干
 ;;;   (compile-bootfile forms [文件]) 核心形式列表 → boot 镜像 dll（入口 #Module::Initialize）
 ;;;
 ;;; 编译器只读 Lcore 与原语表，不读运行时状态（03 §1）。发射器（Cleat.Emit，程序集 cleat-emit）在同一进程中以库 API 调用。
 (library (cleat scheme compiler)
   (export
     compile-forms->lcil compile->lcil-text compile->lcil-text-from-sexpr
-    compile-core compile-library-dll compile-bootfile
+    compile-core compile-library-fasl compile-library-fasl/asm compile-bootfile
     front-end
     primitive-table-file
     canonical-gensyms
@@ -131,13 +132,18 @@ See docs/license.txt. |#
     (let* ((f (clr-static-call System.IO.Path GetFileNameWithoutExtension filename)))
       f))
 
-  ;; .fasl / 库 dll（iron-034e）：.fasl 的程序集名 = 文件名 + "$" + 进程内唯一的后缀，别的单元按名字直接引用其中的类时
-  ;; 不会与同名文件（另一目录的 util.fasl）的产物混淆；库 dll 的文件名由库名决定，程序集名就用文件名。
+  ;; .fasl（iron-034e；cleat-060 照 skeg 统一扩展名）：编译产物都是程序集。程序集名：确定性? 为真时（库路径上按库名命名的
+  ;; 预编译库，compile-fasl）或扩展名为 .dll 时用文件名主干——文件名已唯一，跨库引用与 ILVerify 按文件名解析；否则追加进程内
+  ;; 唯一的后缀，别的单元按名字直接引用其中的类时不会与同名文件（另一目录的 util.fasl）的产物混淆。
   ;; 旁边写出接口文件 名字.ifc（运行时加载产物时登记，codegen 的 library-known 读）
-  (define (compile-library-dll filename e)
+  (define (compile-library-fasl filename e)
+    (compile-library-fasl/asm filename e #f))
+
+  (define (compile-library-fasl/asm filename e deterministic?)
     ;; Lcil 的 S 表达式直接交给发射器，不经文本（iron-033）
-    (let* ((asm (if (string-ci=? (clr-static-call System.IO.Path GetExtension filename) ".dll")
-                    (assembly-name-of filename)    ; 库 dll：文件名由库名决定，已唯一（ILVerify 等按文件名解析引用）
+    (let* ((asm (if (or deterministic?
+                        (string-ci=? (clr-static-call System.IO.Path GetExtension filename) ".dll"))
+                    (assembly-name-of filename)
                     (string-append (assembly-name-of filename) "$" (assembly-safe (symbol->string (gensym))))))
            (lcil (compile-forms->lcil (list e) asm "#Module"))
            (entries (unit-interface)))

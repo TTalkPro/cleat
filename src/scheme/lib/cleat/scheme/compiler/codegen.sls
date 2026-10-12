@@ -545,7 +545,7 @@ See docs/license.txt. |#
              (not (boot-location? s))
              (library-known u s))))
 
-  ;; 用户库的接口文件（iron-034e）：compile-library-dll 在 .fasl / 库 dll 旁写出 名字.ifc，
+  ;; 用户库的接口文件（iron-034e）：compile-library-fasl 在 .fasl 旁写出 名字.ifc，
   ;;   (cleat-scheme-interface 1 "程序集名" ("位置符号名" "类名" 子句形状) …)
   ;; 运行时加载这些产物时登记旁边的接口文件（原语 $library-interface-files，按加载顺序）。
   ;; 只用真正加载过的产物的接口：装入的库实例就是那个产物，它的程序集已加载、模块字段由其入口初始化。
@@ -577,7 +577,7 @@ See docs/license.txt. |#
             (make-known class (caddr entry) class (if (pair? (cdddr entry)) (cadddr entry) "")))))
       entries))
 
-;; 上一个单元的接口条目：(("位置符号名" "类名" 子句形状) …)，供构建脚本写 boot 的 .ifc、compile-library-dll 写库的 .ifc。
+;; 上一个单元的接口条目：(("位置符号名" "类名" 子句形状) …)，供构建脚本写 boot 的 .ifc、compile-library-fasl 写库的 .ifc。
   ;; 规范 gensym 名时（boot）位置符号名取改名后的
   (define last-renamed #f)
   (define last-interface '())

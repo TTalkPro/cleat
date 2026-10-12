@@ -75,8 +75,8 @@ public static class ModuleLoader
     public static object LoadFasl(object filename) =>
       LoadModule(Errors.RequiresType<string>(filename is SchemeString or System.Text.StringBuilder ? filename.ToString() : filename, "load-fasl"), inMemory: true);
 
-    /// <summary>(load-library-dll 文件名) → 库 dll 入口返回的库描述列表（boot/expander/main.sls 的 load-library-from-dll）。</summary>
-    [Primitive("load-library-dll")]
+    /// <summary>(load-library-fasl 文件名) → 预编译库（.fasl 程序集）入口返回的库描述列表（boot/expander/main.sls 的 load-library-from-dll）。</summary>
+    [Primitive("load-library-fasl")]
     public static object LoadLibraryDll(object filename) =>
-      LoadModule(Errors.RequiresType<string>(filename is SchemeString or System.Text.StringBuilder ? filename.ToString() : filename, "load-library-dll"));
+      LoadModule(Errors.RequiresType<string>(filename is SchemeString or System.Text.StringBuilder ? filename.ToString() : filename, "load-library-fasl"));
 }

@@ -69,14 +69,15 @@
 (check "long list" '(length (filter even? (let loop ((i 0) (acc '())) (if (= i 100000) acc (loop (+ i 1) (cons i acc)))))) 50000)
 (check "errors" '(guard (e ((assertion-violation? e) 'caught)) (filter odd? 5)) 'caught)
 
-;; 驱动入口 compile-library-dll：表达式求值得到库描述列表，生成库 dll，入口返回该列表（load-library-dll 读回）
-(define lib-dll (string-append out-dir "/mini.lib.dll"))
-(compile-library-dll lib-dll '(list 'g$id (quote (mini lib)) '() '() '() '() '((f . g$f)) '()
-                                (case-lambda (() '#t)) (case-lambda (() '#t)) (case-lambda (() '#t)) '() '#t))
+;; 驱动入口 compile-library-fasl：表达式求值得到库描述列表，生成库 fasl（程序集），入口返回该列表（load-library-fasl 读回）
+(define lib-dll (string-append out-dir "/mini.lib.fasl"))
+(compile-library-fasl/asm lib-dll '(list 'g$id (quote (mini lib)) '() '() '() '() '((f . g$f)) '()
+                                (case-lambda (() '#t)) (case-lambda (() '#t)) (case-lambda (() '#t)) '() '#t)
+                          #t)
 (let ((content (clr-static-call Cleat.Scheme.ModuleLoader (LoadLibraryDll Object) lib-dll)))
   (unless (and (= (length content) 13) (equal? (cadr content) '(mini lib)) ((list-ref content 9)))
     (set! failures (+ failures 1))
-    (display "FAIL: compile-library-dll content ") (write content) (newline)))
+    (display "FAIL: compile-library-fasl content ") (write content) (newline)))
 
 ;; 驱动入口 compile-bootfile：核心形式列表 → dll，入口依次执行
 (define boot-dll (string-append out-dir "/mini.boot.dll"))
