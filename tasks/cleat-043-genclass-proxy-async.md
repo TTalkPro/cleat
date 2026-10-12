@@ -113,7 +113,20 @@
   Object 的代理类）记为 `:corpus/jolt-value`。
 - 测试：`tests/Cleat.Host.Tests/ClassGenerationTests.cs`（proxy、gen-class 源码与 AOT、类型先于命名空间加载、
   async 的两种实现与编译期错误）；ILVerify 通过（含 AOT 的 proxy / gen-class 类型）。
-- 基准：提交时机器负载约 20（其他项目的测试与构建），两次测量互相差到 30%，无法与第 5 项后的数字比较——待空闲时复测
-  （局部变量的类推断与重载选择改变了 clojure.core 的部分调用点）。
+- 基准：机器一直有其他项目的负载（load average 20 ~ 30），与 cleat-042 结束时的数字不可比，所以在同一负载下交替运行
+  043 之前（af8f975，worktree 构建）与之后的构建，各 3 轮取最小值（ms）：
+
+  | 基准 | 043 前 | 043 后 |
+  |---|---|---|
+  | sum_loop | 12 | 14 |
+  | protocol | 37 | 35 |
+  | keyword_invoke | 20 | 23 |
+  | lazy_chain | 114 | 99 |
+  | assoc_map | 48 | 75 |
+  | reduce_vec | 23 | 22 |
+  | fib | 11 | 10 |
+  | prim_fib | 4 | 4 |
+
+  assoc_map 的差别再单独交替 4 轮：之前 61 ~ 75、之后 60 ~ 79，分布相同——是负载噪声。不退化。
 - 未做：gen-class 的 CLR 特性（attribute）与 by-ref 参数（报错）；proxy / gen-class 覆写返回 Task 的方法时不自动成为 async
   方法（实现里用 `(t/async …)` 返回 Task 即可）；顶层的简单形式在 REPL 里求值时不经静态决议（与以前相同）。
