@@ -338,8 +338,10 @@ See docs/license.txt. |#
             ($bytevector-reverse! data))
           (bytevector-copy! data 0 bv k size))]
       [else
+        ;; $bignum->bytes 是补码：最高位为 1 的正数末尾多一个 0 符号字节，无符号写入时不计入长度（skeg d530d46，cleat-061）
         (let* ((data ($bignum->bytes (->bignum n)))
-               (dl (bytevector-length data)))
+               (l (bytevector-length data))
+               (dl (if (and ($fx>? l 1) ($fx=? ($bytevector-ref data ($fx- l 1)) 0)) ($fx- l 1) l)))
           (when (> dl size)
             (assertion-violation 'bytevector-uint-set! "cannot fit number into size" dl size))
           (let ((b (make-bytevector size)))

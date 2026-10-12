@@ -23,6 +23,8 @@ This repository also contains code derived from other projects, kept in separate
                                   vendored from IronScheme src/scheme/ (same commit and working tree as above). BSD 3-Clause (IronScheme);
                                   boot/expander/ and the build scripts carry the MIT-style notice of psyntax, Copyright (c) 2006, 2007
                                   Abdulaziz Ghuloum and Kent Dybvig. Origin and changes in src/scheme/README.md.
+- src/scheme/tests/r6rs/        — the R6RS test suite from Racket (https://github.com/racket/r6rs, r6rs-test/tests/r6rs), by way of
+                                  IronScheme and skeg. Apache License 2.0 or MIT License at your option (LICENSE.txt in that directory).
 - src/scheme/nanopass/          — the nanopass framework for Scheme (https://github.com/nanopass/nanopass-framework-scheme, commit
                                   c14d392487886df9275c1d4a3f0f61e1b6c4f2ef, the submodule IronScheme used), Copyright (c) 2000-2015
                                   Dipanwita Sarkar, Andrew W. Keep, R. Kent Dybvig, Oscar Waddell. MIT License (Copyright file in that directory).
