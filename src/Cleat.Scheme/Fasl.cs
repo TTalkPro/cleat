@@ -76,8 +76,11 @@ public static class Fasl
     }
 
     /// <summary>Clojure 的类型名 → Type：Cleat.Core 的 TypeResolver（ClojureCLR 的类型名语法）。</summary>
+    /// 找不到时，类型可能是别的命名空间的 AOT 程序集里的 deftype，而那个命名空间还没加载（cleat-063）：先载入它的程序集再找。
     private static Type ResolveClojureType(string name) =>
-      Cleat.Core.Runtime.TypeResolver.Resolve(name, Array.Empty<string>()) ?? throw new InvalidDataException("fasl: type not found: " + name);
+      Cleat.Core.Runtime.TypeResolver.Resolve(name, Array.Empty<string>())
+      ?? Cleat.Core.Runtime.Loader.LoadAssemblyDefining(name)
+      ?? throw new InvalidDataException("fasl: type not found: " + name);
 
     private sealed class Reader
     {

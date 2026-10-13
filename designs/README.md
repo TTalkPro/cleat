@@ -18,5 +18,6 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（n
 | [14-three-layer-architecture.md](14-three-layer-architecture.md) | **探讨**：VM / Scheme 元层 / Clojure 三层架构的四个结构性问题与修正、剩余风险 |
 | [13-syntax-objects-and-scheme-core.md](13-syntax-objects-and-scheme-core.md) | **探讨**：语法对象重塑展开流程、驱动 nanopass 的最小 Scheme 元语言、"Clojure on IronScheme"方案 C 与 A / B 的取舍、PoC 计划 |
 | [16-nanopass-host-survey.md](16-nanopass-host-survey.md) | **调研**：nanopass 宿主语言对比（SBCL/CLOS、Erlang、Clojure），pass 分发本质取证，ellipsis 难度定位，07 号文的可行性背书 |
+| [17-lazy-runtime-startup.md](17-lazy-runtime-startup.md) | **设计**：运行时惰性启动——AOT 模块常量表与 gen-class 的类型初始化器调 `RuntimeBootstrap.EnsureStarted`，.NET 程序不显式 Init 就能用 cleat 生成的类型（cleat-067） |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。

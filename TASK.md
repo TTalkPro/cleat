@@ -67,8 +67,11 @@
 | [cleat-060](tasks/cleat-060-library-fasl-extension.md) | 预编译库的扩展名统一为 .fasl（照 skeg 481f319） | 后续 | cleat-059 | 完成 |
 | [cleat-061](tasks/cleat-061-r6rs-test-suite.md) | 纳入 R6RS 测试套件（照 skeg）、`bytevector-uint-set!` 修复、R6RS 门禁 | 后续 | cleat-059 | 完成 |
 | [cleat-062](tasks/cleat-062-nrepl-package.md) | nREPL 包（packages/nrepl）：nREPL 1.8.0 移植到 CLR，上游测试全部移植 | 后续 | cleat-053、cleat-064 | 完成 |
+| [cleat-063](tasks/cleat-063-neorepl-package.md) | neorepl 包（packages/neorepl）：终端 REPL 与 CLI，System.Console 上的行编辑器，jack-in 只认 cleat 项目 | 后续 | cleat-062、cleat-064 | 完成 |
 | [cleat-064](tasks/cleat-064-port-found-runtime-fixes.md) | 移植 nREPL / neorepl 时发现的缺陷：宏展开出的 def 的源位置、以 - 开头的协议方法、带超时的 deref、ReaderException 的消息、spit 不截断 | 后续 | cleat-053 | 完成 |
 | [cleat-065](tasks/cleat-065-literal-metadata-evaluation.md) | 集合字面量上的非常量元数据求值 | 后续 | cleat-064 | 未开始 |
+| [cleat-066](tasks/cleat-066-tools-build-package.md) | tools.build 包（packages/tools.build）：照官方构建方案，按依赖逐命名空间预编译、basis、打包 | 后续 | cleat-062、cleat-063 | 未开始 |
+| [cleat-067](tasks/cleat-067-lazy-runtime-startup.md) | 运行时惰性启动：gen-class 等生成类型第一次被 .NET 使用时自动启动 CleatRuntime | 后续 | cleat-043、cleat-066 | 未开始 |
 
 ## 里程碑
 
@@ -85,7 +88,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、056、058 ~ 062、064、065（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、056、058 ~ 067（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径

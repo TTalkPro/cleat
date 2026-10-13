@@ -72,3 +72,6 @@ src/scheme/boot/*.pdb
 tests/scheme/compiler/snapshots/*.actual
 # cleat-052：宿主用的预编译 Scheme 库（Cleat.Host 的 GenerateClojureHostLibraries）
 src/boot/cleat.scheme.clojure/
+
+# nREPL port files (nrepl.cmdline writes one in its working directory; the package tests run there)
+.nrepl-port

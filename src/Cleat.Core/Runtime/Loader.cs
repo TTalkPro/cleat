@@ -149,6 +149,34 @@ public static class Loader
         return null;
     }
 
+    /// <summary>
+    /// AOT 程序集常量里的类型（cleat-063）：deftype 定义在别的命名空间的 .clj.dll 里，而常量表在本模块的命名空间
+    /// require 它之前就初始化，那时类型还没登记。按类型名的前缀（a.b.C → 命名空间 a.b）在加载路径上找 a.b.clj.dll，
+    /// 只载入程序集（不跑入口；之后 require 照常载入同一个程序集并跑入口），在其中找类型。JVM 上类按名从类路径加载，同理。
+    /// </summary>
+    public static Type LoadAssemblyDefining(string typeName)
+    {
+        if (string.IsNullOrEmpty(typeName) || RuntimeBootstrapFlag.DisableFileLoad) return null;
+        string ns = typeName;
+        int dot;
+        while ((dot = ns.LastIndexOf('.')) > 0)
+        {
+            ns = ns.Substring(0, dot);
+            foreach (string dir in LoadPath.ToArray())
+            {
+                FileInfo dll = FirstExisting(dir, ns, AssemblyExtensions);
+                if (dll is null) continue;
+                Assembly asm = Loaded.Values.FirstOrDefault(a => string.Equals(a.Location, dll.FullName, StringComparison.Ordinal))
+                    ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(dll.FullName);
+                Register(asm);
+                InterfaceFile.TryRegisterBeside(dll.FullName, asm);
+                Type t = asm.GetType(typeName, false);
+                if (t is not null) return t;
+            }
+        }
+        return null;
+    }
+
     // ---- 模块程序集 ----
 
     /// <summary>
@@ -171,7 +199,9 @@ public static class Loader
         }
         else
         {
-            asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(full);
+            // 已经载入过（如 LoadAssemblyDefining 为常量里的类型先载入了它）就用同一个程序集
+            asm = Loaded.Values.FirstOrDefault(a => string.Equals(a.Location, full, StringComparison.Ordinal))
+                ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(full);
         }
 
         Register(asm);

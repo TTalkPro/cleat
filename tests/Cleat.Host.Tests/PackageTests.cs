@@ -19,4 +19,13 @@ public class PackageTests
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
     }
+
+    [Test]
+    public void Neorepl()
+    {
+        var r = RunPackageTests("-I", "packages/nrepl/src", "-I", "packages/neorepl/src", "-I", "packages/neorepl/test",
+                                "packages/neorepl/test/run.clj");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+    }
 }
