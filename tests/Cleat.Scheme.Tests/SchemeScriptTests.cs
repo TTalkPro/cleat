@@ -16,12 +16,12 @@ namespace Cleat.Scheme.Tests;
 [Category("SchemeScript")]
 public class SchemeScriptTests
 {
-    /// <summary>脚本目录：compiler（元层与编译器）、clojure（Clojure 在元层上的库，cleat-049 起）。</summary>
-    private static readonly string[] s_dirs = { "compiler", "clojure" };
+    /// <summary>脚本目录：compiler（元层与编译器）、clojure（Clojure 在元层上的库，cleat-049 起）、base（boot 库的语义回归，照 skeg 的 tests/*.sps，cleat-075 起）。</summary>
+    private static readonly string[] s_dirs = { "compiler", "clojure", "base" };
 
     private static string ScriptsDir(string repo, string dir) => Path.Combine(repo, "tests", "scheme", dir);
 
-    /// <summary>tests/scheme/{compiler,clojure}/*.sps（测试名为 clojure/ 下的加目录前缀）；slow- 开头的归入 Slow 类别，可用 --filter "TestCategory!=Slow" 跳过。</summary>
+    /// <summary>tests/scheme/{compiler,clojure,base}/*.sps（测试名为 clojure/、base/ 下的加目录前缀）；slow- 开头的归入 Slow 类别，可用 --filter "TestCategory!=Slow" 跳过。</summary>
     public static IEnumerable<TestCaseData> Scripts()
     {
         string repo = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory ?? ".", "..", "..", "..", "..", ".."));

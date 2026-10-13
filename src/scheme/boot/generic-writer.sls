@@ -198,7 +198,8 @@ See docs/license.txt. |#
           [(#\delete)     (put-string port "#\\delete")]
           [else 
             (cond 
-              [(char<? #\x0 chr #\x20)
+              ;; NEL 与 LS 是行尾（R6RS 8.2.4），原样写出会被转码端口读成换行符（iron-074，与 Chez 相同）
+              [(or (char<? #\x0 chr #\x20) (char=? chr #\x85) (char=? chr #\x2028))
                 (put-string port "#\\x")
                 (put-string port (number->string (char->integer chr) 16))]
               [else
@@ -206,25 +207,36 @@ See docs/license.txt. |#
                 (put-char port chr)])])
         (put-char port chr)))
       
+  ;; 转义输出字符串中的一个字符
+  (define (write-string-char chr port)
+    (case chr
+      [(#\\)          (put-string port "\\\\")]
+      [(#\")          (put-string port "\\\"")]
+      [(#\newline)    (put-string port "\\n")]
+      [(#\return)     (put-string port "\\r")]
+      [(#\tab)        (put-string port "\\t")]
+      [(#\alarm)      (put-string port "\\a")]
+      [(#\backspace)  (put-string port "\\b")]
+      [(#\vtab)       (put-string port "\\v")]
+      [(#\page)       (put-string port "\\f")]
+      ;; 其余控制字符、DEL 与行尾字符 NEL / LS 写成 \x…;（iron-074，与 Chez 相同）
+      [else
+        (if (or (char<? chr #\x20) (char=? chr #\x7f) (char=? chr #\x85) (char=? chr #\x2028))
+            (begin
+              (put-string port "\\x")
+              (put-string port (number->string (char->integer chr) 16))
+              (put-char port #\;))
+            (put-char port chr))]))
+
+  ;; 输出字符串；readable? 时加引号并转义特殊字符
   (define (write-string str port readable?)
     (if readable?
         (let ((len (string-length str)))
           (put-char port #\")
           (let f ((i 0))
             (unless ($fx=? i len)
-              (let ((chr (string-ref str i)))
-                (case chr
-                  [(#\\)          (put-string port "\\\\")]
-                  [(#\")          (put-string port "\\\"")]
-                  [(#\newline)    (put-string port "\\n")]
-                  [(#\return)     (put-string port "\\r")]
-                  [(#\tab)        (put-string port "\\t")]
-                  [(#\alarm)      (put-string port "\\a")]
-                  [(#\backspace)  (put-string port "\\b")]
-                  [(#\vtab)       (put-string port "\\v")]
-                  [(#\page)       (put-string port "\\f")]
-                  [else (put-char port chr)])
-                (f ($fx+ i 1)))))
+              (write-string-char (string-ref str i) port)
+              (f ($fx+ i 1))))
           (put-char port #\"))
         (put-string port str)))
 

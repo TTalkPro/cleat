@@ -191,11 +191,14 @@ public static class TextPorts
         return Codepoints(cps);
     }
 
+    /// <summary>get-line：读到换行符为止，只认换行符（R6RS 8.2.9，iron-074；TextReader.ReadLine 把 CR 也当行尾）。
+    /// 行尾转换由转码端口在字符层做；字符串端口不转换，"a\r\nb" 的第一行是 "a\r"。</summary>
     public static object ReadLine(System.IO.TextReader r)
     {
         string head = TakePending(r, out int p) ? char.ConvertFromUtf32(p) : null;
         if (head == "\n") return "";
-        string line = r.ReadLine();
+        // 转码端口自己按块找行尾；其余（字符串端口等）逐字符读到换行符
+        string line = r is TranscodedReader tr ? tr.ReadLine() : IO.ReadLineLf(r);
         if (line == null) return head == null ? Builtins.EofObject() : SchemeString.Normalize(head);
         return SchemeString.Normalize(head + line);
     }

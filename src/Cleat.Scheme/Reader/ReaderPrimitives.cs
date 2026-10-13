@@ -9,7 +9,8 @@ public partial class Builtins
 {
     private static string PortFileName(TextReader r)
     {
-        if (r is StreamReader sr && sr.BaseStream is FileStream fs)
+        Stream baseStream = r switch { StreamReader sr => sr.BaseStream, TranscodedReader tr => tr.BaseStream, _ => null };
+        if (baseStream is FileStream fs)
         {
             string name = fs.Name;
             string cwd = Environment.CurrentDirectory + Path.DirectorySeparatorChar;

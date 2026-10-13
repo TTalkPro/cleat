@@ -580,10 +580,9 @@ See docs/license.txt. |#
   (define (flush-output-port port)
     ($port-flush port))
         
+  ;; 打开端口时给的缓冲模式（iron-074；原来按底层流是不是 BufferedStream 猜，文本端口总是 line）
   (define/contract (output-port-buffer-mode port:output-port)
-    (if ($buffered-port? port)
-        'block
-        'line)) 
+    ($port-buffer-mode port))
     
   (define/contract open-bytevector-output-port
     (case-lambda

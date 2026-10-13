@@ -119,6 +119,21 @@ public class DecCB : DecoderFallback
 public abstract class CustomStream : Stream
 {
     public abstract bool HasPosition { get; }
+
+    // 关闭后的读写报错（R6RS 8.2.6：关闭的端口不再传送数据，iron-074；原来照样调 read / write 过程）；重复关闭不再调 close 过程
+    private bool _closed;
+
+    protected void CheckOpen()
+    {
+        if (_closed) throw new ObjectDisposedException(ToString(), "port is closed");
+    }
+
+    protected bool MarkClosed()
+    {
+        if (_closed) return false;
+        _closed = true;
+        return true;
+    }
 }
 
 [CLSCompliant(false)]
@@ -192,6 +207,7 @@ public class CustomBinaryInputStream : CustomStream
 
     public override int Read(byte[] buffer, int offset, int count)
     {
+        CheckOpen();
         return (int)_read.Call(buffer, offset, count);
     }
 
@@ -222,7 +238,7 @@ public class CustomBinaryInputStream : CustomStream
 
     public override void Close()
     {
-        if (_close != null)
+        if (MarkClosed() && _close != null)
         {
             _close.Call();
         }
@@ -234,6 +250,21 @@ public class CustomTextReader : TextReader
 {
     private string _id;
     private Procedure _read, _getPos, _setPos, _close;
+
+    // 关闭后的读写报错（R6RS 8.2.6：关闭的端口不再传送数据，iron-074；原来照样调 read / write 过程）；重复关闭不再调 close 过程
+    private bool _closed;
+
+    private void CheckOpen()
+    {
+        if (_closed) throw new ObjectDisposedException(ToString(), "port is closed");
+    }
+
+    private bool MarkClosed()
+    {
+        if (_closed) return false;
+        _closed = true;
+        return true;
+    }
 
     public CustomTextReader(string id, Procedure read, object get_pos, object set_pos, object close)
     {
@@ -247,6 +278,7 @@ public class CustomTextReader : TextReader
 
     public override int Read(char[] buffer, int index, int count)
     {
+        CheckOpen();
         StringBuilder sb = new StringBuilder(new string(buffer));
 
         int res = (int)_read.Call(sb, index, count);
@@ -319,7 +351,7 @@ public class CustomTextReader : TextReader
 
     public override void Close()
     {
-        if (_close != null)
+        if (MarkClosed() && _close != null)
         {
             _close.Call();
         }
@@ -419,6 +451,7 @@ public class CustomBinaryOutputStream : CustomStream
 
     public override void Write(byte[] buffer, int offset, int count)
     {
+        CheckOpen();
         if (HasPosition)
         {
             long pos = Position;
@@ -446,7 +479,7 @@ public class CustomBinaryOutputStream : CustomStream
 
     public override void Close()
     {
-        if (_close != null)
+        if (MarkClosed() && _close != null)
         {
             _close.Call();
         }
@@ -458,6 +491,21 @@ public class CustomTextWriter : TextWriter
 {
     private string _id;
     private Procedure _write, _getPos, _setPos, _close;
+
+    // 关闭后的读写报错（R6RS 8.2.6：关闭的端口不再传送数据，iron-074；原来照样调 read / write 过程）；重复关闭不再调 close 过程
+    private bool _closed;
+
+    private void CheckOpen()
+    {
+        if (_closed) throw new ObjectDisposedException(ToString(), "port is closed");
+    }
+
+    private bool MarkClosed()
+    {
+        if (_closed) return false;
+        _closed = true;
+        return true;
+    }
 
     public CustomTextWriter(string id, Procedure write, object get_pos, object set_pos, object close)
     {
@@ -471,6 +519,7 @@ public class CustomTextWriter : TextWriter
 
     public override void Write(char[] buffer, int index, int count)
     {
+        CheckOpen();
         if (HasPosition)
         {
             long pos = Position;
@@ -549,7 +598,7 @@ public class CustomTextWriter : TextWriter
 
     public override void Close()
     {
-        if (_close != null)
+        if (MarkClosed() && _close != null)
         {
             _close.Call();
         }
@@ -603,53 +652,248 @@ public class TranscodedWriter : StreamWriter
     }
 }
 
+/// <summary>转码读取器（缓冲式，iron-074）：自己的字节缓冲与字符缓冲，Decoder 把字节直接解码进字符缓冲（结构照 StreamReader：
+/// 两层缓冲、只解码一次、字符缓冲按 GetMaxCharCount 定大小；字节序标记的识别照它的 IsPreamble / DetectEncoding）。
+/// eol-style 不是 none 时，输入的 CR、CRLF、NEL、CRNEL、LS 都转成换行符（R6RS 8.2.4）：每取一块就地把行尾编码改写成 LF
+/// （块里没有 CR / NEL / LS 时一次向量化查找就过去），跨块由两态的状态机接上——块尾是单独的 CR 时进入 AfterCr，下一块开头的
+/// LF / NEL 属于同一个行尾。之后 Read / Peek 只取数组元素，ReadLine 只找 LF、按段截取（同 StreamReader.ReadLine 的做法）。
+/// 继承 TextReader 而不是 StreamReader：StreamReader 的缓冲是私有的，子类重载 ReadLine 也用不上，只能经公开的 Read 多拷一遍。</summary>
 [CLSCompliant(false)]
-public class TranscodedReader : StreamReader
+public class TranscodedReader : TextReader
 {
-    private Stream _port;
-    private Transcoder _tc;
+    private const int ByteBufferSize = 4096;
+    private static readonly System.Buffers.SearchValues<char> s_eolStarts = System.Buffers.SearchValues.Create("\r\u0085\u2028");
+
+    private enum EolState { Normal, AfterCr }
+
+    private readonly Stream _port;
+    private readonly Transcoder _tc;
+    private readonly bool _eol;
+    private readonly byte[] _bytes = new byte[ByteBufferSize];
+    private int _byteLen;            // 第一次解码前攒下、留待识别字节序标记的字节数
+    private Decoder _decoder;        // 第一次取块时按字节序标记定下
+    private char[] _buf;
+    private int _pos, _len;
+    private bool _eof, _disposed;
+    private EolState _state;
 
     public Transcoder Transcoder
     {
         get { return _tc; }
     }
 
+    public Stream BaseStream
+    {
+        get { return _port; }
+    }
 
-    public TranscodedReader(Stream s, Transcoder tc) : base(s, tc.codec, true)
+    public TranscodedReader(Stream s, Transcoder tc)
     {
         _tc = tc;
         _port = s;
+        _eol = IO.ConvertsEol(tc);
     }
 
-    public override void Close()
+    // 关闭时清空缓冲：之后任何读取都走到 Fill，在那里报已关闭（热路径上不另加检查）
+    protected override void Dispose(bool disposing)
     {
-        _port.Close();
+        if (disposing && !_disposed) _port.Close();
+        _disposed = true;
+        _pos = _len = 0;
+        base.Dispose(disposing);
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw new ObjectDisposedException(null, "Cannot read from a closed TextReader.");
+    }
+
+    // —— 字节序标记（照 StreamReader）——
+    // 1. 转码器的编码自带前导标记（如带 BOM 的 UTF-16）且字节以它开头：跳过，编码不变（IsPreamble）。
+    // 2. 否则按标记换编码并跳过（DetectEncoding）：FE FF → UTF-16BE；FF FE → UTF-16LE，后面再跟 00 00 时是 UTF-32LE；
+    //    EF BB BF → UTF-8；00 00 FE FF → UTF-32BE。换成 UTF-8 而转码器本来就是 UTF-8 时保留它（连同出错处理方式），
+    //    其余换编码时也沿用转码器的解码出错处理（StreamReader 换成默认的 replace）。
+    // 至少攒够 4 个字节（或到流尾）再判断，免得把半个标记当正文。返回要跳过的字节数
+    private int StartDecoder()
+    {
+        Encoding enc = _tc.codec;
+        int skip = 0;
+        ReadOnlySpan<byte> b = _bytes.AsSpan(0, _byteLen);
+        ReadOnlySpan<byte> pre = enc.Preamble;
+        if (pre.Length > 0 && b.StartsWith(pre))
+        {
+            skip = pre.Length;
+        }
+        else if (b.Length >= 2)
+        {
+            Encoding found = null;
+            if (b[0] == 0xFE && b[1] == 0xFF) { found = new UnicodeEncoding(true, false); skip = 2; }
+            else if (b[0] == 0xFF && b[1] == 0xFE)
+            {
+                if (b.Length >= 4 && b[2] == 0 && b[3] == 0) { found = new UTF32Encoding(false, false); skip = 4; }
+                else { found = new UnicodeEncoding(false, false); skip = 2; }
+            }
+            else if (b.Length >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) { found = enc is UTF8Encoding ? enc : new UTF8Encoding(false); skip = 3; }
+            else if (b.Length >= 4 && b[0] == 0 && b[1] == 0 && b[2] == 0xFE && b[3] == 0xFF) { found = new UTF32Encoding(true, false); skip = 4; }
+            if (found != null && found != enc)
+            {
+                found = (Encoding)found.Clone();
+                found.DecoderFallback = _tc.codec.DecoderFallback;
+                enc = found;
+            }
+        }
+        _decoder = enc.GetDecoder();
+        _buf = new char[enc.GetMaxCharCount(ByteBufferSize)];
+        return skip;
+    }
+
+    // 解码下一块进 _buf；文件尾为 0
+    private int Decode()
+    {
+        for (;;)
+        {
+            if (_eof) return 0;
+            int n, skip = 0;
+            if (_decoder == null)
+            {
+                while (_byteLen < 4)
+                {
+                    int k = _port.Read(_bytes, _byteLen, _bytes.Length - _byteLen);
+                    if (k == 0) break;
+                    _byteLen += k;
+                }
+                skip = StartDecoder();
+                n = _byteLen;
+            }
+            else
+            {
+                n = _port.Read(_bytes, 0, _bytes.Length);
+            }
+            if (n == 0)
+            {
+                _eof = true;
+                return _decoder.GetChars(_bytes, 0, 0, _buf, 0, true);   // 末尾不完整的字节序列
+            }
+            int c = _decoder.GetChars(_bytes, skip, n - skip, _buf, 0, false);
+            if (c > 0) return c;
+        }
+    }
+
+    // 缓冲读完时取下一块并规范行尾；文件尾为 false
+    private bool Fill()
+    {
+        ThrowIfDisposed();
+        for (;;)
+        {
+            _pos = 0;
+            _len = Decode();
+            if (_len == 0) { _state = EolState.Normal; return false; }
+            if (!_eol) return true;
+            if (_state == EolState.AfterCr)
+            {
+                _state = EolState.Normal;
+                if (_buf[0] == '\n' || _buf[0] == '\u0085') _pos = 1;
+            }
+            int i = _buf.AsSpan(_pos, _len - _pos).IndexOfAny(s_eolStarts);
+            if (i >= 0) Normalize(_pos + i);
+            if (_pos < _len) return true;   // 整块只有一个被吞掉的 LF / NEL 时再取一块
+        }
+    }
+
+    // 从 i（第一个要改写的行尾字符）起就地改写 [i, _len)：CR / CRLF / CRNEL / NEL / LS → LF；块尾单独的 CR 进入 AfterCr
+    private void Normalize(int i)
+    {
+        int w = i;
+        while (i < _len)
+        {
+            char c = _buf[i++];
+            switch (c)
+            {
+                case '\r':
+                    if (i == _len) _state = EolState.AfterCr;
+                    else if (_buf[i] == '\n' || _buf[i] == '\u0085') i++;
+                    _buf[w++] = '\n';
+                    break;
+                case '\u0085':
+                case '\u2028':
+                    _buf[w++] = '\n';
+                    break;
+                default:
+                    _buf[w++] = c;
+                    break;
+            }
+        }
+        _len = w;
+    }
+
+    public override int Read()
+    {
+        if (_pos == _len && !Fill()) return -1;
+        return _buf[_pos++];
+    }
+
+    public override int Peek()
+    {
+        if (_pos == _len && !Fill()) return -1;
+        return _buf[_pos];
+    }
+
+    public override int Read(char[] buffer, int index, int count) => Read(buffer.AsSpan(index, count));
+
+    public override int Read(Span<char> buffer)
+    {
+        if (buffer.Length == 0) return 0;
+        if (_pos == _len && !Fill()) return 0;
+        int n = Math.Min(buffer.Length, _len - _pos);
+        _buf.AsSpan(_pos, n).CopyTo(buffer);
+        _pos += n;
+        return n;
+    }
+
+    public override int ReadBlock(char[] buffer, int index, int count) => ReadBlock(buffer.AsSpan(index, count));
+
+    public override int ReadBlock(Span<char> buffer)
+    {
+        int n = 0;
+        while (n < buffer.Length)
+        {
+            int k = Read(buffer.Slice(n));
+            if (k == 0) break;
+            n += k;
+        }
+        return n;
     }
 
     public override string ReadToEnd()
     {
-        string value = base.ReadToEnd();
-        if (value != null)
-        {
-            value = IO.s_eoltx.Replace(value, delegate (Match m)
-            {
-                return IO.GetNewline(_tc.eolstyle, m.Value);
-            });
-        }
-        return value;
+        ThrowIfDisposed();
+        var sb = new StringBuilder(_len - _pos);
+        sb.Append(_buf, _pos, _len - _pos);
+        while (Fill()) sb.Append(_buf, _pos, _len - _pos);
+        _pos = _len;
+        return sb.ToString();
     }
 
+    /// <summary>读到换行符为止（不含）；行尾已在缓冲里规范成 LF。文件尾且一个字符也没读到时为 null。
+    /// 行在一块之内时直接截取，跨块时才拼接（同 StreamReader.ReadLine）。</summary>
     public override string ReadLine()
     {
-        string value = base.ReadLine();
-        if (value != null)
+        if (_pos == _len && !Fill()) return null;
+        StringBuilder sb = null;
+        for (;;)
         {
-            value = IO.s_eoltx.Replace(value, delegate (Match m)
+            var span = _buf.AsSpan(_pos, _len - _pos);
+            int i = span.IndexOf('\n');
+            if (i >= 0)
             {
-                return IO.GetNewline(_tc.eolstyle, m.Value);
-            });
+                string line = sb == null ? new string(span.Slice(0, i)) : sb.Append(span.Slice(0, i)).ToString();
+                _pos += i + 1;
+                return line;
+            }
+            (sb ??= new StringBuilder(span.Length + 80)).Append(span);
+            _pos = _len;
+            if (!Fill()) return sb.ToString();
         }
-        return value;
     }
 
     public Stream BinaryPort
@@ -667,6 +911,7 @@ public class NonBufferedTranscodedReader : TextReader
 
     private Stream _port;
     private Transcoder _tc;
+    private readonly bool _eol;
 
     public Transcoder Transcoder
     {
@@ -677,6 +922,7 @@ public class NonBufferedTranscodedReader : TextReader
     {
         _tc = tc;
         _port = s;
+        _eol = IO.ConvertsEol(tc);
     }
 
     public override void Close()
@@ -693,6 +939,19 @@ public class NonBufferedTranscodedReader : TextReader
     }
 
     public override int Read()
+    {
+        int c = ReadRaw();
+        if (!_eol) return c;
+        if (c == '\u0085' || c == '\u2028') return '\n';
+        if (c != '\r') return c;
+        // CR 后面跟 LF / NEL 时一起算一个行尾，否则退回位置
+        long p = _port.Position;
+        int d = ReadRaw();
+        if (d != '\n' && d != '\u0085') _port.Position = p;
+        return '\n';
+    }
+
+    private int ReadRaw()
     {
         if (_port.Position == 0)
         {
@@ -719,7 +978,7 @@ public class NonBufferedTranscodedReader : TextReader
             if (_tc.handlingmode == s_hmIgnore)
             {
                 _port.Position = p + 1;
-                return Read();
+                return ReadRaw();
             }
         }
         int len = _tc.codec.GetByteCount(chars, 0, 1);
@@ -759,32 +1018,10 @@ public class NonBufferedTranscodedReader : TextReader
         }
     }
 
-    public override string ReadToEnd()
-    {
-        string value = base.ReadToEnd();
-        if (value != null)
-        {
-            value = IO.s_eoltx.Replace(value, delegate (Match m)
-            {
-                return IO.GetNewline(_tc.eolstyle, m.Value);
-            });
-        }
-        return value;
-    }
+    // ReadToEnd 用 TextReader 的默认实现（逐个 Read），行尾已在 Read 里转换
 
-
-    public override string ReadLine()
-    {
-        string value = base.ReadLine();
-        if (value != null)
-        {
-            value = IO.s_eoltx.Replace(value, delegate (Match m)
-            {
-                return IO.GetNewline(_tc.eolstyle, m.Value);
-            });
-        }
-        return value;
-    }
+    /// <summary>读到换行符为止（不含）；只认换行符（R6RS get-line）。</summary>
+    public override string ReadLine() => IO.ReadLineLf(this);
 
     public Stream BinaryPort
     {
@@ -865,6 +1102,7 @@ public class CustomBinaryInputOutputStream : CustomStream
 
     public override int Read(byte[] buffer, int offset, int count)
     {
+        CheckOpen();
         return (int)_read.Call(buffer, offset, count);
     }
 
@@ -885,6 +1123,7 @@ public class CustomBinaryInputOutputStream : CustomStream
 
     public override void Write(byte[] buffer, int offset, int count)
     {
+        CheckOpen();
         if (HasPosition)
         {
             long pos = Position;
@@ -911,7 +1150,7 @@ public class CustomBinaryInputOutputStream : CustomStream
 
     public override void Close()
     {
-        if (_close != null)
+        if (MarkClosed() && _close != null)
         {
             _close.Call();
         }
@@ -952,7 +1191,7 @@ public class WriteOnlyMemoryStream : MemoryStream
 
 public class IO : Builtins
 {
-    private static readonly object s_bmLine = Symbol.Intern("line");
+    private static readonly object s_bmBlock = Symbol.Intern("block");
 
     private static readonly object s_eolLf = Symbol.Intern("lf"); //10
     private static readonly object s_eolCr = Symbol.Intern("cr"); //13
@@ -969,6 +1208,46 @@ public class IO : Builtins
       Array.ConvertAll<string, string>(
       new string[] { "\r\n", Nel, "\r" + Nel, Ls, "\r", "\n", }, Regex.Escape)), RegexOptions.Compiled);
     internal static Regex s_lftx = new Regex("\\n", RegexOptions.Compiled);
+
+    /// <summary>转码器的 eol-style 不是 none 时，输入要转换行尾（R6RS 8.2.4）。</summary>
+    internal static bool ConvertsEol(Transcoder tc) => tc.eolstyle != s_eolNone;
+
+    /// <summary>c 是否开始一个行尾编码（CR、LF、NEL、LS；CRLF / CRNEL 以 CR 开始）。</summary>
+    internal static bool IsEolStart(int c) => c == '\r' || c == '\u0085' || c == '\u2028';
+
+    /// <summary>输入方向的行尾转换：CR、CRLF、NEL、CRNEL、LS 都成换行符。</summary>
+    internal static string ConvertInputEol(string s)
+    {
+        int i = s.AsSpan().IndexOfAny('\r', '\u0085', '\u2028');
+        if (i < 0) return s;
+        var sb = new StringBuilder(s.Length);
+        sb.Append(s, 0, i);
+        for (; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\r')
+            {
+                if (i + 1 < s.Length && (s[i + 1] == '\n' || s[i + 1] == '\u0085')) i++;
+                sb.Append('\n');
+            }
+            else if (c == '\u0085' || c == '\u2028') sb.Append('\n');
+            else sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>逐字符读到换行符为止（不含换行符）；文件尾且一个字符也没读到时为 null。</summary>
+    internal static string ReadLineLf(TextReader r)
+    {
+        var sb = new StringBuilder();
+        for (;;)
+        {
+            int c = r.Read();
+            if (c < 0) return sb.Length == 0 ? null : sb.ToString();
+            if (c == '\n') return sb.ToString();
+            sb.Append((char)c);
+        }
+    }
 
     internal static string GetNewline(object symbolId, string current)
     {
@@ -1089,7 +1368,7 @@ public class IO : Builtins
     [Primitive("open-file-output-port")]
     public static object OpenFileOutputPort(object filename, object fileoptions)
     {
-        return OpenFileOutputPort(filename, fileoptions, s_bmLine);
+        return OpenFileOutputPort(filename, fileoptions, null);   // 缓冲模式省略时为 block（R6RS 8.2.7）
     }
 
     [Primitive("open-file-output-port")]
@@ -1185,6 +1464,9 @@ public class IO : Builtins
     public static object OpenFileOutputPort(object filename, object fileoptions, object buffermode, object maybetranscoder)
     {
         string fn = RequiresNotNull<string>(filename);
+        if (!IsBufferMode(buffermode)) return AssertionViolation("open-file-output-port", "not a buffer mode", buffermode);
+        if (maybetranscoder != FALSE && maybetranscoder is not Transcoder)
+            return AssertionViolation("open-file-output-port", "not a transcoder", maybetranscoder);
         FileOptions fo = ToFileOptions(fileoptions);
         FileMode fm = GetMode(fo, fn);
         bool blockbuffer = buffermode == Symbol.Intern("block");
@@ -1193,21 +1475,14 @@ public class IO : Builtins
         Transcoder tc = maybetranscoder as Transcoder;
         try
         {
-            Stream s = File.Open(fn, fm, FileAccess.Write);
+            Stream s = OpenFileStream(fn, fm, FileAccess.Write, nobuffer);
 
             if (blockbuffer)
             {
                 s = new BufferedStream(s);
             }
 
-            if (tc == null)
-            {
-                return s;
-            }
-            else
-            {
-                return TranscodedOutputPort(s, tc);
-            }
+            return WithBufferMode(tc == null ? s : TranscodedOutputPort(s, tc), buffermode);
         }
         catch (ContinuationException)
         {
@@ -1239,6 +1514,21 @@ public class IO : Builtins
     }
 
 
+    // none：FileStream 不带缓冲，每次写直接落到文件；line / block / 省略：FileStream 自带的缓冲（block 外面另加 BufferedStream）
+    private static Stream OpenFileStream(string fn, FileMode fm, FileAccess access, bool nobuffer) =>
+      nobuffer ? new FileStream(fn, fm, access, FileShare.None, 0) : File.Open(fn, fm, access);
+
+    // null 为省略
+    private static bool IsBufferMode(object m) =>
+      m == null || m == Symbol.Intern("none") || m == Symbol.Intern("line") || m == Symbol.Intern("block");
+
+    /// <summary>记下打开时的缓冲模式（省略时为 block），output-port-buffer-mode 返回它（iron-074）。</summary>
+    private static object WithBufferMode(object port, object buffermode)
+    {
+        PortPrimitives.SetBufferMode(port, buffermode ?? s_bmBlock);
+        return port;
+    }
+
     [Primitive("open-file-input/output-port")]
     public static object OpenFileInputOutputPort(object filename)
     {
@@ -1248,7 +1538,7 @@ public class IO : Builtins
     [Primitive("open-file-input/output-port")]
     public static object OpenFileInputOutputPort(object filename, object fileoptions)
     {
-        return OpenFileInputOutputPort(filename, fileoptions, s_bmLine);
+        return OpenFileInputOutputPort(filename, fileoptions, null);
     }
 
     [Primitive("open-file-input/output-port")]
@@ -1261,27 +1551,23 @@ public class IO : Builtins
     public static object OpenFileInputOutputPort(object filename, object fileoptions, object buffermode, object maybetranscoder)
     {
         string fn = RequiresNotNull<string>(filename);
+        if (!IsBufferMode(buffermode)) return AssertionViolation("open-file-input/output-port", "not a buffer mode", buffermode);
+        if (maybetranscoder != FALSE && maybetranscoder is not Transcoder)
+            return AssertionViolation("open-file-input/output-port", "not a transcoder", maybetranscoder);
         FileOptions fo = ToFileOptions(fileoptions);
         FileMode fm = GetMode(fo, fn);
         Transcoder tc = maybetranscoder as Transcoder;
         bool blockbuffer = buffermode == Symbol.Intern("block");
         try
         {
-            Stream s = File.Open(fn, fm, FileAccess.ReadWrite);
+            Stream s = OpenFileStream(fn, fm, FileAccess.ReadWrite, buffermode == Symbol.Intern("none"));
 
             if (blockbuffer)
             {
                 s = new BufferedStream(s);
             }
 
-            if (tc == null)
-            {
-                return s;
-            }
-            else
-            {
-                return TranscodedInputOutputPort(s, tc);
-            }
+            return WithBufferMode(tc == null ? s : TranscodedInputOutputPort(s, tc), buffermode);
         }
         catch (ContinuationException)
         {

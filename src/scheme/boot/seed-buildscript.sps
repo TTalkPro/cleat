@@ -760,6 +760,7 @@
     ($open-output-string                         iu)
     ($open-string-input-port                     iu)
     ($output-port?                               iu)
+    ($port-buffer-mode                           iu)
     ($port-close-input                           iu)
     ($port-close-output                          iu)
     ($port-flush                                 iu)

@@ -514,6 +514,8 @@
     (overload "Cleat.Scheme.HostPrimitives" "PathTrimSeparator" 1 #f (pure unsafe) #f))
   (primitive $plain-string?
     (overload "Cleat.Scheme.HostPrimitives" "IsPlainString" 1 #f (pure unsafe) #f))
+  (primitive $port-buffer-mode
+    (overload "Cleat.Scheme.PortPrimitives" "PortBufferMode" 1 #f (unsafe) #f))
   (primitive $port-close-input
     (overload "Cleat.Scheme.PortPrimitives" "CloseInput" 1 #f (unsafe) #f))
   (primitive $port-close-output

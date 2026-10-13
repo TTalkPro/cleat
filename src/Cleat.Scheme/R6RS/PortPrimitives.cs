@@ -96,6 +96,25 @@ public static class PortPrimitives
     [Primitive("$buffered-port?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object IsBufferedPort(object o) => RT.Bool(o is BufferedStream);
 
+    // 端口打开时给的缓冲模式（iron-074）：output-port-buffer-mode 返回它。记在端口对象旁，不改端口的类型
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> s_bufferModes = new();
+    private static readonly object s_bmLine = Symbol.Intern("line");
+    private static readonly object s_bmBlock = Symbol.Intern("block");
+
+    internal static void SetBufferMode(object port, object mode)
+    {
+        if (port != null && mode is Symbol) s_bufferModes.AddOrUpdate(port, mode);
+    }
+
+    /// <summary>记下的缓冲模式；没记的：控制台端口为 line，其余（字符串、字节向量、自定义端口）为 block（与 Chez 相同）。</summary>
+    [Primitive("$port-buffer-mode", Flags = PrimitiveFlags.Unsafe)]
+    public static object PortBufferMode(object port)
+    {
+        if (s_bufferModes.TryGetValue(port, out var m)) return m;
+        if (ReferenceEquals(port, Console.Out) || ReferenceEquals(port, Console.Error)) return s_bmLine;
+        return s_bmBlock;
+    }
+
     #endregion
 
     #region 打开与关闭
@@ -113,14 +132,20 @@ public static class PortPrimitives
     public static object StandardInput() => Console.OpenStandardInput();
 
     [Primitive("$standard-output-port", Flags = PrimitiveFlags.Unsafe)]
-    public static object StandardOutput() => Console.OpenStandardOutput();
+    public static object StandardOutput() => WithBufferMode(Console.OpenStandardOutput(), s_bmLine);
 
     [Primitive("$standard-error-port", Flags = PrimitiveFlags.Unsafe)]
-    public static object StandardError() => Console.OpenStandardError();
+    public static object StandardError() => WithBufferMode(Console.OpenStandardError(), s_bmLine);
+
+    private static object WithBufferMode(object port, object mode)
+    {
+        SetBufferMode(port, mode);
+        return port;
+    }
 
     /// <summary>文本输入文件（原生转码）。</summary>
     [Primitive("$open-input-file", Flags = PrimitiveFlags.Unsafe)]
-    public static object OpenInputFile(object filename) => File.OpenText(filename.ToString());
+    public static object OpenInputFile(object filename) => new TranscodedReader(File.OpenRead(filename.ToString()), Transcoder.native);
 
     /// <summary>文本输出文件（原生转码）；append? 为真时追加。</summary>
     [Primitive("$open-output-file", Flags = PrimitiveFlags.Unsafe)]
@@ -193,11 +218,14 @@ public static class PortPrimitives
     {
         var s = (Stream)port;
         var tc = (Transcoder)transcoder;
-        if (s.CanRead)
-            return s.CanWrite
-              ? new CustomTextReaderWriter("textual/input-output-port", new NonBufferedTranscodedReader(s, tc), new TranscodedWriter(s, tc))
-              : new TranscodedReader(s, tc);
-        return new TranscodedWriter(s, tc);
+        object r = s.CanRead
+          ? s.CanWrite
+            ? new CustomTextReaderWriter("textual/input-output-port", new NonBufferedTranscodedReader(s, tc), new TranscodedWriter(s, tc))
+            : new TranscodedReader(s, tc)
+          : new TranscodedWriter(s, tc);
+        // 继承原端口的缓冲模式
+        if (s_bufferModes.TryGetValue(s, out var m)) SetBufferMode(r, m);
+        return r;
     }
 
     /// <summary>关闭端口的输入端（Stream、TextReader，或文本双向端口的输入端）。</summary>
