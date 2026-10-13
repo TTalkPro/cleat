@@ -225,6 +225,10 @@
     (overload "Cleat.Scheme.HostPrimitives" "DoubleToBytes" 1 #f (pure unsafe) #f #f))
   (primitive $eq-hashtable?
     (overload "Cleat.Scheme.HostPrimitives" "IsEqHashtable" 1 #f (pure unsafe mifoldable discard unrestricted) #f ((ptr) (boolean))))
+  (primitive $eq-table-ref
+    (overload "Cleat.Scheme.HostPrimitives" "EqTableRef" 3 #f (unsafe) #f #f))
+  (primitive $eq-table-set!
+    (overload "Cleat.Scheme.HostPrimitives" "EqTableSet" 3 #f (unsafe) #f #f))
   (primitive $exact-compare
     (overload "Cleat.Scheme.HostPrimitives" "ExactCompare" 2 #f (pure unsafe) #f #f))
   (primitive $exception->string
@@ -447,6 +451,8 @@
     (overload "Cleat.Scheme.PortPrimitives" "MakeCustomTextualOutputPort" 5 #f (unsafe) #f #f))
   (primitive $make-eq-hashtable
     (overload "Cleat.Scheme.HostPrimitives" "MakeEqHashtable" 1 #f (unsafe) #f #f))
+  (primitive $make-eq-table
+    (overload "Cleat.Scheme.HostPrimitives" "MakeEqTable" 0 #f (unsafe) #f #f))
   (primitive $make-guid
     (overload "Cleat.Scheme.HostPrimitives" "MakeGuid" 0 #f (unsafe) #f #f))
   (primitive $make-hashtable

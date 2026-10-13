@@ -58,6 +58,12 @@
 ("5_2.ms" iota 2 "cleat-lax: iota / list-head 是 Chez 扩展（SRFI-1 风格），cleat 的版本不检查参数类型与范围")
 ("5_2.ms" iota 4 "cleat-lax: iota / list-head 是 Chez 扩展（SRFI-1 风格），cleat 的版本不检查参数类型与范围")
 
+("5_2.ms" partition 3 "hang: 循环表上的遍历不终止（R6RS 不要求终止，Chez 检测环）；靠 2GB 堆上限在 10 秒内 OOM 报错而通过，机器负载高时来不及（skeg iron-070 起登记）")
+("5_2.ms" partition 4 "hang: 循环表上的遍历不终止（R6RS 不要求终止，Chez 检测环）；靠 2GB 堆上限在 10 秒内 OOM 报错而通过，机器负载高时来不及（skeg iron-070 起登记）")
+("5_2.ms" filter 5 "hang: 循环表上的遍历不终止（R6RS 不要求终止，Chez 检测环）；靠 2GB 堆上限在 10 秒内 OOM 报错而通过，机器负载高时来不及（skeg iron-070 起登记）")
+("5_2.ms" filter 6 "hang: 循环表上的遍历不终止（R6RS 不要求终止，Chez 检测环）；靠 2GB 堆上限在 10 秒内 OOM 报错而通过，机器负载高时来不及（skeg iron-070 起登记）")
+("5_2.ms" remq 6 "hang: 循环表上的遍历不终止（R6RS 不要求终止，Chez 检测环）；靠 2GB 堆上限在 10 秒内 OOM 报错而通过，机器负载高时来不及（skeg iron-070 起登记）")
+
 ;; —— 5_3.ms ——
 ("5_3.ms" string->number 17 "chez-ext: #12r 等非 2/8/10/16 进制前缀")
 ("5_3.ms" string->number 18 "chez-ext: #12r 等非 2/8/10/16 进制前缀")

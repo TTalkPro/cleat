@@ -12,7 +12,7 @@ See docs/license.txt. |#
 ;;;   let 绑定、只在尾位置调用的 lambda 也变成 label；消费者是字面 lambda 的 call-with-values 内联（D6）
 ;;;   局部逃逸的 call-with-return ⇒ escape-frame、字面 lambda 的 with-clr-exception-handler ⇒ try-handle（cleat-076，照 skeg iron-067 / 068）
 (library (cleat scheme compiler loops)
-  (export lower-loops reset-fresh-names! loops-made)
+  (export lower-loops reset-fresh-names! loops-made fresh-name)
   (import (rnrs) (only (cleat scheme unsafe) $get-environment-variable) (nanopass) (cleat scheme compiler languages))
 
   ;; —— 通用工具 ——
@@ -90,6 +90,8 @@ See docs/license.txt. |#
   (define (fresh name)
     (set! counter (+ counter 1))
     (string->symbol (string-append name "%" (number->string counter))))
+  ;; 供 cp0-inline（cleat-078，照 skeg iron-070）给内联副本的绑定改名，与本库的临时变量共用编号
+  (define (fresh-name name) (fresh name))
 
   ;; v 在 e 中的引用是否都是参数个数为 n 的尾调用。返回 #f（合格）或原因符号：
   ;; value（当值使用）、arity（参数个数不符）、non-tail（非尾位置调用）、closure（在嵌套 lambda 里引用）、assigned

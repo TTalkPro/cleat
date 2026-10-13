@@ -1,0 +1,11 @@
+(lambda #f
+  ()
+  (clause
+    (v i x)
+    #f
+    (begin
+      (call (gref g$vector-set!$1$%b) v '0 x)
+      (primcall
+        cons
+        (call (gref g$vector-ref$2$%b) v i)
+        (primcall car x)))))

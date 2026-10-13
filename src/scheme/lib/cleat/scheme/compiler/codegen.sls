@@ -148,7 +148,8 @@ See docs/license.txt. |#
             (mutable boot-ref)    ; 见下行
             (mutable shared-count) ; 034d：共享持有类中已分配的过程个数
             shared                ; 034d：eqv 哈希表 持有类下标 → #(字段 方法 初始化代码)（各逆序）
-            type-names))          ; cleat-051：按名字生成的类型（Clojure 的函数类、deftype）已用的名字（字符串哈希表）
+            type-names                      ; cleat-051：按名字生成的类型（Clojure 的函数类、deftype）已用的名字（字符串哈希表）
+            local-known))         ; iron-070：eq 哈希表 letrec 绑定的词法变量 → (static | instance . known 记录)
   ;; 跨单元引用 boot 的已知过程：off（不可用）| #f（可用、还没用）| #t（用过，入口要核对镜像）
 
   ;; 已知过程：class 是过程的名字（共享过程的方法前缀 / 单独的类名），子句方法在 owner 类里，名为 prefix + "C<i>"
@@ -375,13 +376,34 @@ See docs/license.txt. |#
             (else '())))))
 
   ;; 依次生成多个操作数（每个 gen 产生一个值）。排在后面的操作数含 try 时，先全部存入临时变量（lift-try）。
+  ;; 暂存的局部变量按值的类型声明：被调者已转成 Procedure（Calls.Proc）、原始 int32 / double 存进 object 变量
+  ;; 过不了 IL 校验（iron-070 内联后出现了参数里带 try 的未知过程调用）。按代码最后一条指令推断，推断不出的是 object。
+  (define (code-result-type code)
+    (if (null? code)
+        obj
+        (let ((i (list-ref code (- (length code) 1))))
+          (case (car i)
+            ((call callvirt)
+             (let ((r (list-ref i (- (length i) 1))))
+               (if (and (string? r) (member r (list proc-type int32-type double-type))) r obj)))
+            ((unbox.any) (let ((t (cadr i))) (if (member t (list int32-type double-type)) t obj)))
+            ((ldc.i4) int32-type)
+            ((ldc.r8) double-type)
+            (else obj)))))
+
   (define (operands! mc gens)
     (let ((codes (map (lambda (g) (with-buffer mc g)) gens)))
       (if (and (pair? codes) (exists contains-try? (cdr codes)))
-          (let ((temps (map (lambda (c) (let ((t (new-local! mc obj))) (emit-code! mc c) (emit! mc `(stloc ,t)) t)) codes)))
-            ;; 临时变量是 object：操作数原来以 castclass（IFn、Var …）或返回 Procedure 的调用结尾时，取回后再转换一次，
+          (let ((temps (map (lambda (c)
+                              (let ((t (new-local! mc (code-result-type c)))) (emit-code! mc c) (emit! mc `(stloc ,t)) (cons t c)))
+                            codes)))
+            ;; 临时变量按值的类型声明（iron-070）；推断不出是 object 时，操作数原来以 castclass（IFn、Var …）结尾的取回后再转换一次，
             ;; 否则栈上的类型与随后的 callvirt 不符（ILVerify StackUnexpected；cleat-053 在 Clojure 镜像里发现）
-            (for-each (lambda (t c) (emit! mc `(ldloc ,t)) (for-each (lambda (i) (emit! mc i)) (reload-cast c))) temps codes))
+            (for-each (lambda (tc)
+                        (emit! mc `(ldloc ,(car tc)))
+                        (when (equal? (code-result-type (cdr tc)) obj)
+                          (for-each (lambda (i) (emit! mc i)) (reload-cast (cdr tc)))))
+                      temps))
           (for-each (lambda (c) (emit-code! mc c)) codes))))
 
   ;; 把栈上 n 个值（已按顺序压栈）收进 object[]：先存临时变量再建数组
@@ -490,6 +512,14 @@ See docs/license.txt. |#
   (define opt-inline? (not (opt-off? "inline")))
   (define opt-infer? (not (opt-off? "infer")))
   (define opt-shared? (not (opt-off? "shared")))
+  ;; 测量开关的值里是否含 sub（如 CLEAT_NO_070=letrec,call）
+  (define (string-contains? s sub)
+    (let ((n (string-length s)) (m (string-length sub)))
+      (let loop ((i 0)) (and (<= (+ i m) n) (or (string=? (substring s i (+ i m)) sub) (loop (+ i 1)))))))
+  ;; iron-070：letrec 绑定的 lambda 在组内（含自身递归）直接调用子句方法；CLEAT_NO_070 为 1 或 call 时关
+  (define opt-local-call?
+    (let ((v ($get-environment-variable "CLEAT_NO_070")))
+      (not (and (string? v) (or (string=? v "1") (string-contains? v "call"))))))
 
   ;; ———————————————— boot 镜像的接口（iron-034e，D5）————————————————
   ;; nano 构建脚本在镜像旁写出 cleat.scheme.boot.ifc：
@@ -1566,7 +1596,12 @@ See docs/license.txt. |#
            (finish-value! mc ctx)))]
       [(letrec ([,x* ,le*] ...) ,body)
        ;; 先创建全部过程对象，再填自由变量字段：组内互相引用
-       (let ((classes (map (lambda (x le) (lambda-class! le mc x #f)) x* le*)))
+       ;; iron-070：生成各类之前先给组内每个同步 lambda 定下类名 / 共享槽并登记，组内的调用（含自身递归）
+       ;; 生成时就能直接调子句方法，不经 Calls.Proc 与虚方法 Invoke（letrec 绑定的变量不会被赋值）
+       ;; 两趟：先全组登记，前面的过程体里调后面的过程时也已登记
+       (let* ((presets (map (lambda (x le) (local-known-preset! (mctx-unit mc) x le)) x* le*))
+              (classes (map (lambda (x le k) (if k (lambda-class! le mc x #f k) (lambda-class! le mc x #f)))
+                            x* le* presets)))
          (for-each (lambda (x) (bind-local! mc x)) x*)
          (for-each
            (lambda (x c)
@@ -1916,13 +1951,39 @@ See docs/license.txt. |#
 
   (define (known-target e0 mc argc)
     (let ((k (known-of e0 mc)))
-      (and k
-           (let loop ((cls (known-clauses k)) (i 0))
-             (cond
-               ((null? cls) #f)
-               ((cdar cls) #f)   ; 先匹配到剩余参数子句：走一般调用
-               ((= (caar cls) argc) (cons k i))
-               (else (loop (cdr cls) (+ i 1))))))))
+      (and k (known-clause k argc))))
+
+  (define (known-clause k argc)
+    (let loop ((cls (known-clauses k)) (i 0))
+      (cond
+        ((null? cls) #f)
+        ((cdar cls) #f)   ; 先匹配到剩余参数子句：走一般调用
+        ((= (caar cls) argc) (cons k i))
+        (else (loop (cdr cls) (+ i 1))))))
+
+  ;; iron-070：letrec 绑定的同步 lambda 预先定下类名（有自由变量：实例方法）或共享槽 / 静态类（无自由变量：静态方法），
+  ;; 登记到单元的 local-known 表。返回作为 lambda-class! 预设的 known 记录，或 #f（不登记，照旧生成）
+  (define (local-known-preset! u x le)
+    (and opt-local-call?
+         (nanopass-case (L3 LambdaExpr) le
+           ;; Clojure 的 fn* 生成 AFunction 的子类（invoke 方法，clj-fn-class!），没有 "C<i>" 子句方法：不直接调用（cleat-078）
+           [(lambda ,nm (,x1* ...) ,cl* ...)
+            (guard (not (clj-fn-name? nm)))
+            (let* ((static? (null? (remq x x1*)))
+                   (k (if (and static? opt-shared?)
+                          (known-for-export u nm cl*)
+                          (let ((name (class-name u nm)))
+                            (make-known name (map clause-shape cl*) name "")))))
+              (hashtable-set! (unit-local-known u) x (cons (if static? 'static 'instance) k))
+              k)]
+           [else #f])))
+
+  ;; (static | instance known . 子句下标) 或 #f
+  (define (local-known-target e0 mc argc)
+    (nanopass-case (L3 Expr) e0
+      [,x (let ((e (hashtable-ref (unit-local-known (mctx-unit mc)) x #f)))
+            (and e (let ((t (known-clause (cdr e) argc))) (and t (cons (car e) t)))))]
+      [else #f]))
 
   ;; ———————————————— 通用算术与比较在调用处内联（iron-034f，D8）————————————————
   ;;
@@ -2124,6 +2185,58 @@ See docs/license.txt. |#
          (finish-value! mc ctx)
          (unless (eq? ctx 'tail) (emit! mc `(label ,end)))))))
 
+  ;; vector-ref / vector-set! 在调用处内联（iron-070 的"检查 + 退回"）：向量是 object[]（与 vector? 相同）、下标是
+  ;; fixnum 且在界内（无符号比较同时排除负数）时直接 ldelem.ref / stelem.ref；否则调原过程（boot 的 vector-ref），
+  ;; 错误信息与 who 由它给出。下标已推断为 fixnum（iron-034c / 069 签名）或是常量时不检查下标类型。
+  (define vector-op-cache (make-eq-hashtable))
+  (define (vector-op e0 argc)
+    (nanopass-case (L3 Expr) e0
+      [(gref ,s)
+       (let ((r (let ((r (hashtable-ref vector-op-cache s 'unknown)))
+                  (if (eq? r 'unknown)
+                      (let ((r (case (boot-location-name s) ((vector-ref) 'ref) ((vector-set!) 'set) (else #f))))
+                        (hashtable-set! vector-op-cache s r)
+                        r)
+                      r))))
+         (and r (= argc (if (eq? r 'ref) 2 3)) r))]
+      [else #f]))
+
+  (define (cg-vector-op op e0 e* mc ctx)
+    (let* ((v (car e*)) (i (cadr e*))
+           (k (fixnum-constant i))
+           (raw-i? (or k (eq? (static-type i) 'fx)))
+           (slow (new-label! mc)) (end (new-label! mc))
+           (lv (new-local! mc obj))
+           (arr (new-local! mc obj-array))
+           (ii (new-local! mc int32-type))
+           (li (and (not raw-i?) (new-local! mc obj)))
+           (lx (and (eq? op 'set) (new-local! mc obj))))
+      ;; 操作数从左到右求值，各自存入局部变量（栈上不留值，操作数里可以有 try）
+      (cg v mc 'value) (emit! mc `(stloc ,lv))
+      (cond (k (emit! mc `(ldc.i4 ,k) `(stloc ,ii)))
+            (raw-i? (cg-raw i mc 'fx) (emit! mc `(stloc ,ii)))
+            (else (cg i mc 'value) (emit! mc `(stloc ,li))))
+      (when lx (cg (caddr e*) mc 'value) (emit! mc `(stloc ,lx)))
+      ;; 快路径
+      (emit! mc `(ldloc ,lv) `(isinst ,obj-array) `(stloc ,arr) `(ldloc ,arr) `(brfalse ,slow))
+      (when li
+        (emit! mc `(ldloc ,li) `(isinst ,int32-type) `(brfalse ,slow) `(ldloc ,li) `(unbox.any ,int32-type) `(stloc ,ii)))
+      (emit! mc `(ldloc ,ii) `(ldloc ,arr) '(ldlen) '(conv.i4) `(bge.un ,slow))
+      (if (eq? op 'ref)
+          (begin (emit! mc `(ldloc ,arr) `(ldloc ,ii) '(ldelem.ref)) (finish-value! mc ctx))
+          (begin (emit! mc `(ldloc ,arr) `(ldloc ,ii) `(ldloc ,lx) '(stelem.ref)) (finish-none! mc ctx)))
+      (unless (eq? ctx 'tail) (emit! mc `(br ,end)))
+      ;; 慢路径：与一般调用相同
+      (emit! mc `(label ,slow))
+      (cg e0 mc 'value)
+      (emit! mc `(call ,calls-type "Proc" (,obj) ,proc-type) `(ldloc ,lv))
+      (if li (emit! mc `(ldloc ,li)) (begin (emit! mc `(ldloc ,ii)) (box-raw! mc 'fx)))
+      (when lx (emit! mc `(ldloc ,lx)))
+      (when (tail-ok? mc ctx) (emit! mc '(tail)))
+      (emit! mc (invoke-method (length e*)))
+      (finish-value! mc ctx)
+      (unless (eq? ctx 'tail) (emit! mc `(label ,end)))))
+
   (define (cg-call e0 e* mc ctx)
     (let ((argc (length e*)))
       (cond
@@ -2136,6 +2249,8 @@ See docs/license.txt. |#
               (case ctx ((value) (emit! mc '(ldnull))) ((test) (emit! mc '(ldc.i4 0))) (else (void)))))
         ((and opt-inline? (not (top-level-mc? mc)) (unary-inline-op e0 argc))
          => (lambda (op) (cg-unary-op op e0 (car e*) mc ctx)))
+        ((and opt-inline? (not (top-level-mc? mc)) (vector-op e0 argc))
+         => (lambda (op) (cg-vector-op op e0 e* mc ctx)))
         ;; 顶层初始化代码（Init 方法）只执行一次，内联的代码量换不回时间（发射与 JIT 更贵），只在过程体里内联
         ((and opt-inline? (not (top-level-mc? mc)) (inline-op e0 argc))
          => (lambda (op.kind) (cg-inline-op (car op.kind) (cdr op.kind) e0 e* mc ctx)))
@@ -2154,6 +2269,18 @@ See docs/license.txt. |#
               (when (tail-ok? mc ctx) (emit! mc '(tail)))
               (emit! mc `(call ,(known-owner (car t)) ,(string-append (known-prefix (car t)) "C" (number->string (cdr t))) ,(objs argc) ,obj))
               (finish-value! mc ctx)))
+        ;; letrec 绑定的过程（iron-070）：无自由变量的直接调静态子句方法；闭包按其类 castclass 后调实例子句方法
+        ((local-known-target e0 mc argc)
+         => (lambda (t)
+              (let* ((instance? (eq? (car t) 'instance)) (k (cadr t)) (i (cddr t)))
+                (operands! mc (append
+                                (if instance?
+                                    (list (lambda () (cg e0 mc 'value) (emit! mc `(castclass ,(known-owner k)))))
+                                    '())
+                                (map (lambda (x) (lambda () (cg x mc 'value))) e*)))
+                (when (tail-ok? mc ctx) (emit! mc '(tail)))
+                (emit! mc `(call ,(known-owner k) ,(string-append (known-prefix k) "C" (number->string i)) ,(objs argc) ,obj))
+                (finish-value! mc ctx))))
         (else
          (operands! mc (cons (lambda () (cg e0 mc 'value) (emit! mc `(call ,calls-type "Proc" (,obj) ,proc-type)))
                              (map (lambda (x) (lambda () (cg x mc 'value))) e*)))
@@ -2192,6 +2319,19 @@ See docs/license.txt. |#
             (args!)
             (emit! mc `(castclass ,cons-type) `(ldfld ,cons-type ,(if (eq? pr '$car) "car" "cdr")))
             (finish-value! mc ctx))
+           ;; car / cdr：boot 里不展开（预编译的 dll，JIT 会把 Builtins.Car 内联进来，展开只增大镜像）。
+           ;; 用户代码编译进内存程序集，JIT 不把 Skeg.Core 的 Car 内联进去（JitDisasm 里是 call [Builtins:Car]），
+           ;; 在调用处展开成"isinst Cons 后取字段，否则调 Builtins.Car 报错"（iron-070，错误与 who 不变）
+           ((car cdr)
+            (if (or (top-level-mc? mc) (string=? (unit-name (mctx-unit mc)) boot-assembly-name))
+                (cg-static-call! o e* mc ctx)
+                (let ((t (new-local! mc obj)) (ok (new-label! mc)) (end (new-label! mc)))
+                  (args!)
+                  (emit! mc `(stloc ,t) `(ldloc ,t) `(isinst ,cons-type) '(dup) `(brtrue ,ok)
+                         '(pop) `(ldloc ,t) `(call ,(overload-type o) ,(overload-method o) (,obj) ,obj) `(br ,end)
+                         `(label ,ok) `(ldfld ,cons-type ,(if (eq? pr 'car) "car" "cdr"))
+                         `(label ,end))
+                  (finish-value! mc ctx))))
            ((cons)
             (args!)
             (emit! mc `(newobj ,cons-type (,obj ,obj)))
@@ -3208,7 +3348,7 @@ See docs/license.txt. |#
     (let ((u (make-unit assembly-name module-name '() '() 0 (make-eq-hashtable) '() '() '() (make-eq-hashtable)
                         (make-eq-hashtable) '() 0 massigned (make-eq-hashtable)
                         (if (and opt-034? (not (string=? assembly-name boot-assembly-name)) (boot-interface)) #f 'off)
-                        0 (make-eqv-hashtable) (make-hashtable string-hash string=?))))
+                        0 (make-eqv-hashtable) (make-hashtable string-hash string=?) (make-eq-hashtable))))
       ;; 1. 已知过程：库变量绑定的、无自由变量且不被再赋值的 lambda
       (for-each (lambda (f) (collect-known! u f)) forms)
       (hashtable-clear! var-types)
@@ -3284,6 +3424,14 @@ See docs/license.txt. |#
                item))
          t))
 
+  ;; 已知过程的 known 记录：共享持有类中的一个槽（034d），或单独的类（collect-known! 与 iron-070 的局部直接调用共用）
+  (define (known-for-export u nm cl*)
+    (if opt-shared?
+        (let ((slot (shared-slot! u)))
+          (make-known (car slot) (map clause-shape cl*) (car slot) (cdr slot)))
+        (let ((name (class-name u nm)))
+          (make-known name (map clause-shape cl*) name ""))))
+
   (define (collect-known! u form)
     (nanopass-case (L3 Expr) form
       [(library ,d ([,x* ,s* ,e*] ...) ,body)
@@ -3292,11 +3440,7 @@ See docs/license.txt. |#
            (nanopass-case (L3 Expr) e
              [(lambda ,nm (,x1* ...) ,cl* ...)
               (when (and (null? x1*) (not (hashtable-ref (unit-massigned u) x #f)))
-                (let ((k (if opt-shared?
-                             (let ((slot (shared-slot! u)))
-                               (make-known (car slot) (map clause-shape cl*) (car slot) (cdr slot)))
-                             (let ((name (class-name u nm)))
-                               (make-known name (map clause-shape cl*) name "")))))
+                (let ((k (known-for-export u nm cl*)))
                   (hashtable-set! (unit-known u) x k)
                   (unless (or (null? d) (not opt-034?)) (hashtable-set! (unit-known-loc u) s k))))]
              [else (void)]))

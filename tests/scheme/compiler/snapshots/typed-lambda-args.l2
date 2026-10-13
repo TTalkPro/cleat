@@ -2,7 +2,5 @@
   (clause
     (a b)
     #f
-    (let ((x$typed a) (y$typed b))
-      (let ((x (primcall $as-fixnum x$typed))
-            (y (primcall $as-flonum y$typed)))
-        (primcall cons (primcall $fx* x x) (primcall $fl* y y))))))
+    (let ((x (primcall $as-fixnum a)) (y (primcall $as-flonum b)))
+      (primcall cons (primcall $fx* x x) (primcall $fl* y y)))))

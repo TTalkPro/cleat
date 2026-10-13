@@ -5,17 +5,16 @@
     (begin
       (set! n (box n))
       (let ((total (box (primcall $uninitialized))))
-        (letrec ((f (lambda "f" (clause (x) #f (call g x))))
-                 (g (lambda "g"
+        (letrec ((f (lambda "f"
                       (clause
-                        (y)
+                        (x)
                         #f
-                        (if (primcall null? y)
+                        (if (primcall null? x)
                           (primcall
                             $check-initialized
                             (unbox total)
                             'total)
-                          (call f (primcall cdr y)))))))
+                          (call f (primcall cdr x)))))))
           (begin
             (set-box! total (primcall $fx+ (unbox n) '1))
             (letrec ((bump

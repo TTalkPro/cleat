@@ -25,6 +25,11 @@ See docs/license.txt. |#
     (cleat scheme compiler primitives)
     (cleat scheme compiler primdata))
 
+  ;; 测量开关的值里是否含 sub（如 CLEAT_NO_070=letrec,call）
+  (define (string-contains? s sub)
+    (let ((n (string-length s)) (m (string-length sub)))
+      (let loop ((i 0)) (and (<= (+ i m) n) (or (string=? (substring s i (+ i m)) sub) (loop (+ i 1)))))))
+
   ;; —— 小集合（无重复的列表）——
   (define (set-add x s) (if (memq x s) s (cons x s)))
   (define (set-union a b)
@@ -132,13 +137,25 @@ See docs/license.txt. |#
       (define (assigned? x) (hashtable-ref assigned x #f))
       (define refs (analysis-letrec-refs an))
       (define (groupable? x e) (and (lambda-form? e) (not (assigned? x))))
+      ;; 常量绑定（右边是 quote）也并入 lambda 组，生成时提到该组的 letrec 之前用 let 绑定（iron-070，仿 Chez cpletrec）：
+      ;; 组内全是 lambda，绑定时不执行代码，常量提前初始化观察不到。变量被 set! 也可以（仍是普通可变变量），
+      ;; 只要它本身不是前向变量。否则 (define n 0) 这类夹在过程定义之间的常量会把过程切成几段，
+      ;; 跨段调用的过程都成了前向变量：装箱、每次调用检查是否已初始化、按未知过程调用（sboyer 的 rewrite 等）
+      (define const-in-run?
+        (let ((v ($get-environment-variable "CLEAT_NO_070")))
+          (not (and (string? v) (or (string=? v "1") (string-contains? v "letrec"))))))
+      (define fwd (make-eq-hashtable))
+      (define (const-binding? x e)
+        (and const-in-run? (not (hashtable-ref fwd x #f))
+             (nanopass-case (L0 Expr) e [(quote ,d) #t] [else #f])))
+      (define (run-member? x e) (or (groupable? x e) (const-binding? x e)))
       ;; 从 x 到 v（含两端）的绑定都可并入同一组
       (define (same-run? x v x* e*)
         (let loop ((xs x*) (es e*) (started #f))
           (cond
             ((null? xs) #f)
             ((and (not started) (not (eq? (car xs) x))) (loop (cdr xs) (cdr es) #f))
-            ((not (groupable? (car xs) (car es))) #f)
+            ((not (run-member? (car xs) (car es))) #f)
             ((eq? (car xs) v) #t)
             (else (loop (cdr xs) (cdr es) #t)))))
       (define (forward-vars x* e*)
@@ -167,18 +184,26 @@ See docs/license.txt. |#
                   (if (null? new)
                       acc
                       (begin
-                        (for-each (lambda (v) (hashtable-set! assigned v #t)) new)
+                        (for-each (lambda (v) (hashtable-set! assigned v #t) (hashtable-set! fwd v #t)) new)
                         (loop (append acc new))))))))
          (for-each (lambda (v) (hashtable-set! assigned v #t) (hashtable-set! (analysis-forward an) v #t)) forward)
          (let ((inner
                 (let loop ((xs x*) (es e*))
                   (cond
                     ((null? xs) body)
-                    ((groupable? (car xs) (car es))
-                     (let group ((xs xs) (es es) (gx '()) (ge '()))
-                       (if (and (pair? xs) (groupable? (car xs) (car es)))
-                           (group (cdr xs) (cdr es) (cons (car xs) gx) (cons (LambdaOf (car es)) ge))
-                           `(letrec ([,(reverse gx) ,(reverse ge)] ...) ,(loop xs es)))))
+                    ((run-member? (car xs) (car es))
+                     ;; 一组：常量 cx / ce 提到前面用 let 绑定，lambda gx / ge 进 letrec
+                     (let group ((xs xs) (es es) (gx '()) (ge '()) (cx '()) (ce '()))
+                       (cond
+                         ((and (pair? xs) (groupable? (car xs) (car es)))
+                          (group (cdr xs) (cdr es) (cons (car xs) gx) (cons (LambdaOf (car es)) ge) cx ce))
+                         ((and (pair? xs) (const-binding? (car xs) (car es)))
+                          (group (cdr xs) (cdr es) gx ge (cons (car xs) cx) (cons (Expr (car es)) ce)))
+                         (else
+                          (let ((rest (if (null? gx)
+                                          (loop xs es)
+                                          `(letrec ([,(reverse gx) ,(reverse ge)] ...) ,(loop xs es)))))
+                            (if (null? cx) rest `(let ([,(reverse cx) ,(reverse ce)] ...) ,rest)))))))
                     ((memq (car xs) forward)
                      `(begin (set! ,(car xs) ,(Expr (car es))) ,(loop (cdr xs) (cdr es))))
                     (else
@@ -209,6 +234,11 @@ See docs/license.txt. |#
           (let loop ((i 0)) (and (<= (+ i n) m) (or (string=? (substring no-069 i (+ i n)) name) (loop (+ i 1))))))))
   (define fold-on? (not (opt-069-off? "fold")))
   (define discard-on? (not (opt-069-off? "discard")))
+  ;; (list e ...) 改嵌套 cons（iron-070）：CLEAT_NO_069 含 fold，或 CLEAT_NO_070 为 1 / 含 list 时关
+  (define list-cons?
+    (and fold-on?
+         (let ((v ($get-environment-variable "CLEAT_NO_070")))
+           (not (and (string? v) (or (string=? v "1") (string-contains? v "list")))))))
 
   (define-pass cp0-lite : L1 (ir) -> L1 ()
     (definitions
@@ -239,6 +269,31 @@ See docs/license.txt. |#
                       (and r
                            (with-output-language (L1 Expr)
                              (cons `(quote ,(car r)) (filter (lambda (e) (not (exact-real-const? e))) args)))))))))
+      (define (boot-call-name? e0 name)
+        (nanopass-case (L1 Expr) e0 [(gref ,s) (eq? (boot-location-name s) name)] [else #f]))
+      ;; eqv? 改 eq?：一边是常量、且常量是"相等即同一对象"的类型——符号（按名字驻留）、布尔、空表。
+      ;; 数（flonum、bignum，连 fixnum 也只有小的有缓存）与字符都装箱，相等的值可能是不同对象，不改
+      (define (eq-safe-const? e)
+        (and (const? e) (let ((d (const-value e))) (or (symbol? d) (boolean? d) (null? d)))))
+      (define (eqv-test a b)
+        (with-output-language (L1 Expr)
+          (if (or (eq-safe-const? a) (eq-safe-const? b)) `(primcall eq? ,a ,b) `(primcall eqv? ,a ,b))))
+      ;; 测试位置的 (memv x '(d ...))（case 的多数据子句）：x 简单、表不长时展开成逐个比较的 if 链，
+      ;; 每项按上面的规则选 eq? / eqv?。只看真假，所以不必返回表尾
+      (define memv-chain-limit 8)
+      (define (memv-test e)
+        (and fold-on?
+             (nanopass-case (L1 Expr) e
+               [(call ,e0 ,e1 ,e2)
+                (and (nanopass-case (L1 Expr) e0 [(gref ,s) (eq? (boot-location-name s) 'memv)] [else #f])
+                     (simple? e1) (const? e2)
+                     (let ((ds (const-value e2)))
+                       (and (list? ds) (pair? ds) (<= (length ds) memv-chain-limit)
+                            (with-output-language (L1 Expr)
+                              (let loop ((ds ds))
+                                (let ((t (eqv-test e1 `(quote ,(car ds)))))
+                                  (if (null? (cdr ds)) t `(if ,t (quote #t) ,(loop (cdr ds))))))))))]
+               [else #f])))
       ;; effect 上下文可删的调用
       ;; 常量总是删（iron-069 之前就如此）；开关只管按标志删调用
       (define (discardable? e)
@@ -258,13 +313,23 @@ See docs/license.txt. |#
                [else #f])))))
     (Expr : Expr (ir) -> Expr ()
       [(if ,[e0] ,[e1] ,[e2])
-       (if (const? e0) (if (const-value e0) e1 e2) `(if ,e0 ,e1 ,e2))]
+       (cond
+         ((const? e0) (if (const-value e0) e1 e2))
+         ((memv-test e0) => (lambda (t) `(if ,t ,e1 ,e2)))
+         (else `(if ,e0 ,e1 ,e2)))]
       [(primcall ,pr ,[e*] ...)
        (let ((r (fold-primcall pr e*)))
-         (if r `(quote ,(car r)) `(primcall ,pr ,e* ...)))]
+         (cond
+           (r `(quote ,(car r)))
+           ((and fold-on? (eq? pr 'eqv?) (= (length e*) 2)) (eqv-test (car e*) (cadr e*)))
+           (else `(primcall ,pr ,e* ...))))]
       [(call ,[e0] ,[e*] ...)
        (let ((p (boot-primdata e0)))
          (cond
+           ;; boot 的 list 是 (lambda x x)：调用要先建参数数组再转成表。改成嵌套的 cons（iron-070，同 Chez cp0），
+           ;; 参数仍从左到右求值（operands! 先算 car 再算 cdr）
+           ((and list-cons? (boot-call-name? e0 'list))
+            (fold-right (lambda (e acc) `(primcall cons ,e ,acc)) `(quote ()) e*))
            ((not p) `(call ,e0 ,e* ...))
            ((fold-call p e*) => (lambda (r) `(quote ,(car r))))
            ((partial-fold p e*) => (lambda (args) `(call ,e0 ,args ...)))

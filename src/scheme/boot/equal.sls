@@ -9,7 +9,7 @@
   (export equal?)
   (import 
     (except (cleat scheme) equal?)
-    (only (cleat scheme unsafe) $make-random $random-next $fixnum? $fx=?))
+    (only (cleat scheme unsafe) $make-random $random-next $fixnum? $fx=? $make-eq-table $eq-table-ref $eq-table-set!))
     
   (define k0 400)
   (define kb -40)    
@@ -45,17 +45,17 @@
               (let ([nn (box-content n)])
                 (if (box? nn) (begin (set-box-content! b nn) (loop n nn)) n)))
             b)))
-    (let ([bx (hashtable-ref ht x #f)]
-          [by (hashtable-ref ht y #f)])
+    (let ([bx ($eq-table-ref ht x #f)]
+          [by ($eq-table-ref ht y #f)])
       (if (not bx)
           (if (not by)
               (let ([b (make-box 1)])
-                (hashtable-set! ht x b)
-                (hashtable-set! ht y b)
+                ($eq-table-set! ht x b)
+                ($eq-table-set! ht y b)
                 #f)
-              (let ([ry (find by)]) (hashtable-set! ht x ry) #f))
+              (let ([ry (find by)]) ($eq-table-set! ht x ry) #f))
           (if (not by)
-              (let ([rx (find bx)]) (hashtable-set! ht y rx) #f)
+              (let ([rx (find bx)]) ($eq-table-set! ht y rx) #f)
               (let ([rx (find bx)] [ry (find by)])
                 (or (eq? rx ry)
                     (let ([nx (box-content rx)] [ny (box-content ry)])
@@ -99,7 +99,7 @@
     (import UNSAFE)
     (let ([ht #f])
       (define (call-union-find x y)
-        (unless ht (set! ht (make-eq-hashtable)))
+        (unless ht (set! ht ($make-eq-table)))   ; 按引用比较的 Dictionary，比通用 eq 哈希表快（iron-070）
         (union-find ht x y))
       (define (e? x y k)
         (if (<= k 0)

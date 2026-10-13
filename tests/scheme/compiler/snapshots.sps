@@ -2,7 +2,7 @@
 ;;; 文件不存在时生成；不一致时写出 .actual 文件并失败。更新快照：删除对应文件后重跑。
 (import (rnrs) (cleat scheme) (nanopass)
         (cleat scheme compiler languages) (cleat scheme compiler parse) (cleat scheme compiler front)
-        (cleat scheme compiler closures) (cleat scheme compiler) (cleat scheme compiler loops)
+        (cleat scheme compiler closures) (cleat scheme compiler) (cleat scheme compiler loops) (cleat scheme compiler inline)
         (only (cleat scheme compiler lcil) lcil->string))
 
 (define cases
@@ -20,6 +20,15 @@
                   (total ($fx+ n '1))
                   (bump (case-lambda (() (set! n ($fx+ n '1)) n))))
           (begin (bump) (f '(1 2)))))))
+    ;; iron-070：夹在过程定义之间的常量绑定（n 还被 set!）并入同一组、提到 letrec 之前，f / g 不再是前向变量
+    ;; （不装箱、不检查是否已初始化）；组内的调用直接调子句方法（f 是闭包：castclass 后调实例方法）
+    (letrec-const-run
+     (case-lambda
+       ((xs)
+        (letrec* ((f (case-lambda ((y) (if (null? y) n (g (cdr y))))))
+                  (n '0)
+                  (g (case-lambda ((z) (begin (set! n ($fx+ n '1)) (f z))))))
+          (f xs)))))
     (case-lambda-rest
      (case-lambda ((a) a) ((a b) (cons a b)) ((a b c d e) (vector a b c d e)) ((a . r) r)))
     ;; iron-034f：boot 的通用算术在调用处内联（常量操作数、测试上下文、尾位置的慢路径、
@@ -61,6 +70,51 @@
             (null? '())
             (g$expt$15$%b '2 '10)
             (g$string-ref$16$%b '"abc" '1))))))
+    ;; eqv? 改 eq?：一边是符号 / 布尔 / 空表常量时改 eq?，flonum、fixnum、字符常量保持 eqv?（装箱，相等不一定同一对象）；
+    ;; 测试位置的 memv 常量表展开成比较链（符号用 eq?，混入的 flonum、字符用 eqv?），非测试位置的 memv 不动
+    (eqv-to-eq
+     (case-lambda
+       ((x)
+        (vector
+          (eqv? x 'a) (eqv? '#t x) (eqv? x '())
+          (eqv? x '1.5) (eqv? x '7) (eqv? x '#\a)
+          (if (g$memv$1$%b x '(less more)) '1 '2)
+          (if (g$memv$2$%b x '(a 1.5 #\c)) '3 '4)
+          (g$memv$3$%b x '(a b))))))
+    ;; iron-070：过程内联——sq 内联后参数 3 传播进体，(* 3 3) 折叠成 9；sq 不再被引用，绑定删掉
+    (inline-fold
+     (case-lambda
+       ((a)
+        (letrec ((sq (case-lambda ((x) (g$*$1$%b x x)))))
+          (g$+$2$%b (sq '3) (sq a))))))
+    ;; iron-070：超出节点预算的过程不内联（big 的体远大于 24 个节点），小的 small 照常内联
+    (inline-budget
+     (case-lambda
+       ((a)
+        (letrec ((big (case-lambda
+                        ((x) (vector (g$+$1$%b x '1) (g$+$2$%b x '2) (g$+$3$%b x '3) (g$+$4$%b x '4)
+                                     (g$+$5$%b x '5) (g$+$6$%b x '6) (g$+$7$%b x '7) (g$+$8$%b x '8)))))
+                 (small (case-lambda ((x) (cons x x)))))
+          (cons (big a) (small a))))))
+    ;; iron-070：递归过程不展开（fact 的体引用自己），参数被 set! 的变量绑定的过程不内联（h 被赋值）
+    (inline-recursive-assigned
+     (case-lambda
+       ((n)
+        (letrec ((fact (case-lambda ((k) (if (g$=$1$%b k '0) '1 (g$*$2$%b k (fact (g$-$3$%b k '1))))))))
+          ((case-lambda
+             ((h)
+              (begin
+                (set! h (case-lambda ((y) y)))
+                (cons (fact n) (h n)))))
+           (case-lambda ((z) (cons z z))))))))
+    ;; iron-070：检查 + 退回——vector-set! 常量下标不检查下标类型，vector-ref 未知下标检查 isinst int32，都有界检查与慢路径；
+    ;; car 是 isinst Cons 后直接取字段，否则调 Builtins.Car
+    (vector-ops
+     (case-lambda
+       ((v i x)
+        (begin
+          (g$vector-set!$1$%b v '0 x)
+          (cons (g$vector-ref$2$%b v i) (car x))))))
     ;; iron-069：签名给类型推断——n 由 vector-length 定为 int32，循环里 (fx<? i n) 不再检查 n
     (sig-typed-loop
      (case-lambda
@@ -174,7 +228,9 @@
     (let* ((name (car c)) (lcore (cadr c))
            (l0 (begin (reset-fresh-names!) (lower-loops (parse-core lcore))))
            (an (analyze l0))
-           (l2 (convert-assignments (cp0-lite (check-forward (simplify-letrec l0 an) an)) an))
+           (l1 (cp0-lite (check-forward (simplify-letrec l0 an) an)))
+           (l1 (if inline-enabled? (cp0-lite (simplify-lets (cp0-inline l1 an) an)) l1))   ; 与驱动相同（iron-070）
+           (l2 (convert-assignments l1 an))
            (l3 (uncover-free l2)))
       (check! name "l0" (pp->string (unparse-L0 l0)))
       (check! name "l2" (pp->string (unparse-L2 l2)))

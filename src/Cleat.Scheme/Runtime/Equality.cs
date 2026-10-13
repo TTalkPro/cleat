@@ -24,9 +24,16 @@ public partial class Builtins
     [Primitive("eqv?", Flags = PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Inline = "eqv?", Sig = "(ptr ptr) -> (boolean)")]
     public static object IsEqualValue(object first, object second)
     {
-        if (first is Encoding && second is Encoding)
+        // eq? 蕴含 eqv?；符号按名字驻留、只按引用相等。case 分派大多是这两种情况，先判掉，
+        // 不走下面的类型检查（lattice 的 case 上 eqv? 占 16%）
+        if (ReferenceEquals(first, second))
         {
-            return GetBool(((Encoding)first).WebName == ((Encoding)second).WebName);
+            return GetBool(true);
+        }
+
+        if (first is Symbol)
+        {
+            return GetBool(false);
         }
 
         // double.Equals 认为 0.0 与 -0.0 相等；R6RS eqv? 要求区分（NaN 与自身相等则与 Equals 一致）
@@ -45,6 +52,12 @@ public partial class Builtins
         if (first is Complex64 ca && second is Complex64 cb)
         {
             return GetBool(EqvDouble(ca.Real, cb.Real) && EqvDouble(ca.Imag, cb.Imag));
+        }
+
+        // Encoding 是抽象类，is 检查走较慢的 IsInstanceOfClass，放在最后
+        if (first is Encoding && second is Encoding)
+        {
+            return GetBool(((Encoding)first).WebName == ((Encoding)second).WebName);
         }
 
         return GetBool(Equals(first, second));

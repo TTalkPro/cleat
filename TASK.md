@@ -82,6 +82,7 @@
 | [cleat-075](tasks/cleat-075-textual-port-eol-from-skeg.md) | 文本端口的行尾与缓冲模式（移植 skeg iron-074）：get-line 只认换行符、转码端口在字符层转换行尾、output-port-buffer-mode 返回打开时的模式；R6RS 套件 8971 项全过；tests/scheme/base/r6rs-edges.sps | 后续 | cleat-061 | 完成 |
 | [cleat-076](tasks/cleat-076-skeg-m10-runtime-and-control.md) | Scheme 元层的 M10 性能项（移植 skeg iron-061 ~ 068）：数值快路径、Karatsuba 平方根、guard / try 正常返回不逃逸、局部逃逸编成跳转、内联 with-clr-exception-handler、equal? / assoc / append / values 等热点；base-library.sps；顺带修 neorepl 会话缓存的并发读 | 后续 | cleat-075 | 完成 |
 | [cleat-077](tasks/cleat-077-primdata-folding-chez-mats.md) | 原语元数据与查表折叠、Chez mats 对拍（移植 skeg iron-069 / 072）：原语表版本 2（签名、mifoldable / discard 等标志）、primdata.sls、cp0-lite 查表折叠；Chez 10.5 的 18 个 mats 文件（ChezMatsTests，known.ss 按 cleat 的结果生成）；对拍修的 R6RS 边界语义、Unicode 派生属性；div / mod 的 fixnum 快路径（cleat 补） | 后续 | cleat-076 | 完成 |
+| [cleat-078](tasks/cleat-078-cp0-inlining.md) | 过程内联与 let 传播（移植 skeg iron-070）：cp0-inline / simplify-lets（只用于 Scheme 代码，Clojure 的 fn* 不参与）、vector-ref / vector-set! 内联、letrec 局部过程直接调用、eqv? → eq?、list → cons；NuGetColdLoadTests 隔离 DOTNET_CLI_HOME | 后续 | cleat-077 | 完成 |
 
 ## 里程碑
 
@@ -98,7 +99,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、056、058 ~ 077（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、056、058 ~ 078（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径

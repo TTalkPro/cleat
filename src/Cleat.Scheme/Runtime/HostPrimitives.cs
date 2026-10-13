@@ -1137,4 +1137,25 @@ public static class HostPrimitives
     }
 
     #endregion
+
+    #region equal? 的 union-find 表
+
+    // equal? 在有共享 / 循环的结构上用 union-find 记录已判等的结点对（boot/equal.sls）。通用 eq 哈希表是
+    // System.Collections.Hashtable（经接口比较与取哈希、从小容量反复扩容），这里换成按引用比较的 Dictionary（iron-070）。
+    // 键总是 pair 或向量，不会是 null。
+    [Primitive("$make-eq-table", Flags = PrimitiveFlags.Unsafe)]
+    public static object MakeEqTable() => new System.Collections.Generic.Dictionary<object, object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+
+    [Primitive("$eq-table-ref", Flags = PrimitiveFlags.Unsafe)]
+    public static object EqTableRef(object table, object key, object dflt) =>
+        ((System.Collections.Generic.Dictionary<object, object>)table).TryGetValue(key, out var v) ? v : dflt;
+
+    [Primitive("$eq-table-set!", Flags = PrimitiveFlags.Unsafe)]
+    public static object EqTableSet(object table, object key, object value)
+    {
+        ((System.Collections.Generic.Dictionary<object, object>)table)[key] = value;
+        return Unspecified;
+    }
+
+    #endregion
 }

@@ -1,11 +1,12 @@
 ;;; iron-023 验收：boot 源文件（文本种子的全部形式）通过前中端 pass；打印一个小样本的 L2。
 (import (rnrs) (cleat scheme) (nanopass)
-        (cleat scheme compiler languages) (cleat scheme compiler parse) (cleat scheme compiler front))
+        (cleat scheme compiler languages) (cleat scheme compiler parse) (cleat scheme compiler front) (cleat scheme compiler inline))
 
 (define (front x)
   (let* ((l0 (parse-core x))
          (an (analyze l0))
-         (l1 (cp0-lite (check-forward (simplify-letrec l0 an) an))))
+         (l1 (cp0-lite (check-forward (simplify-letrec l0 an) an)))
+         (l1 (cp0-lite (simplify-lets (cp0-inline l1 an) an))))   ; iron-070
     (convert-assignments l1 an)))
 
 (define forms
