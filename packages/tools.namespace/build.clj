@@ -6,7 +6,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.ToolsNamespace)
-(def default-version "1.5.2")
+(def default-version "1.5.3")   ; package revision 3 (cleat-080: rebuilt for the cleat-075 ~ 079 images)
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

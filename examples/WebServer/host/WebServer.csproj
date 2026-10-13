@@ -17,8 +17,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Cleat.Runtime" Version="1.0.4" />
-    <PackageReference Include="Cleat.Nrepl" Version="1.8.1" />
+    <PackageReference Include="Cleat.Runtime" Version="1.0.5" />
+    <PackageReference Include="Cleat.Nrepl" Version="1.8.2" />
     <ProjectReference Include="../csharp/WebCore/WebCore.csproj" />
     <Reference Include="Web.Handlers">
       <HintPath>$(ClojureAssembly)</HintPath>

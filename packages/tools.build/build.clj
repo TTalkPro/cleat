@@ -6,7 +6,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.ToolsBuild)
-(def default-version "0.10.18")
+(def default-version "0.10.19")   ; cleat-080: rebuilt for the cleat-075 ~ 079 images
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

@@ -10,7 +10,7 @@
 
 ```clojure
 {:paths ["src"]
- :deps {Cleat.Nrepl {:nuget/version "1.8.1"}    ; NuGet 包，源与凭据按 nuget.config（BaGetter 等）
+ :deps {Cleat.Nrepl {:nuget/version "1.8.2"}    ; NuGet 包，源与凭据按 nuget.config（BaGetter 等）
         my/util {:local/root "../util"}}         ; 本地的另一个 cleat 项目
  :aliases {:test {:extra-paths ["test"]}}}
 ```

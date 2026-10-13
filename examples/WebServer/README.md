@@ -39,7 +39,7 @@ WebServer/
   ```sh
   dotnet run tools/build.cs -- pack -o artifacts/nuget                  # Cleat.Runtime 与 Cleat.Cli
   for n in Cleat.Runtime Cleat.Cli; do
-    dotnet nuget push artifacts/nuget/$n.1.0.4.nupkg --source bagetter \
+    dotnet nuget push artifacts/nuget/$n.1.0.5.nupkg --source bagetter \
         --configfile examples/WebServer/nuget.config --api-key "$NUGET_API_KEY"
   done
   cleat=$PWD/src/Cleat.Host/bin/Release/net10.0/cleat                   # 仓库里构建出的 cleat
@@ -57,7 +57,7 @@ WebServer/
 `cleat.edn` 的 `:deps` 写 NuGet 包，和 C# 项目的 `PackageReference` 一样：
 
 ```clojure
-:deps {Cleat.Nrepl {:nuget/version "1.8.1"}}
+:deps {Cleat.Nrepl {:nuget/version "1.8.2"}}
 ```
 
 tools.build 的 `create-basis` 把它们交给 `dotnet restore`：源、凭据、包源映射都按 `nuget.config`，所以私有的 BaGetter 和 nuget.org

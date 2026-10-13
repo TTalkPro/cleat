@@ -16,7 +16,7 @@
   ;; on the REPL server's load path too (:neorepl/aliases)
   :dev {:extra-paths ["test"]}
   ;; dotnet cleat -M:neorepl -- a REPL for the project
-  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.2"}}
+  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.3"}}
             :main-opts ["-m" "neorepl.main"]}}
 
  :neorepl/aliases [:dev]}

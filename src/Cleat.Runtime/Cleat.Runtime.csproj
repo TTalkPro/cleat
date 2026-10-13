@@ -6,7 +6,7 @@
        先 dotnet build（生成镜像）与 tools/build.cs compile-libs；tools/build.cs pack 按这个顺序做。 -->
   <PropertyGroup>
     <PackageId>Cleat.Runtime</PackageId>
-    <Version Condition="'$(Version)' == ''">1.0.4</Version>
+    <Version Condition="'$(Version)' == ''">1.0.5</Version>
     <Authors>cleat</Authors>
     <Description>The cleat runtime: Clojure on .NET. Reference it (with cleat package assemblies) to use Clojure code from C# and F#; the runtime starts on first use.</Description>
     <PackageLicenseExpression>EPL-1.0</PackageLicenseExpression>

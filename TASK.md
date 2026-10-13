@@ -84,6 +84,7 @@
 | [cleat-077](tasks/cleat-077-primdata-folding-chez-mats.md) | 原语元数据与查表折叠、Chez mats 对拍（移植 skeg iron-069 / 072）：原语表版本 2（签名、mifoldable / discard 等标志）、primdata.sls、cp0-lite 查表折叠；Chez 10.5 的 18 个 mats 文件（ChezMatsTests，known.ss 按 cleat 的结果生成）；对拍修的 R6RS 边界语义、Unicode 派生属性；div / mod 的 fixnum 快路径（cleat 补） | 后续 | cleat-076 | 完成 |
 | [cleat-078](tasks/cleat-078-cp0-inlining.md) | 过程内联与 let 传播（移植 skeg iron-070）：cp0-inline / simplify-lets（只用于 Scheme 代码，Clojure 的 fn* 不参与）、vector-ref / vector-set! 内联、letrec 局部过程直接调用、eqv? → eq?、list → cons；NuGetColdLoadTests 隔离 DOTNET_CLI_HOME | 后续 | cleat-077 | 完成 |
 | [cleat-079](tasks/cleat-079-type-lattice-narrowing.md) | 类型格与收窄、推测 fixnum 的拆箱循环、fixnum 装箱缓存扩大、simplify-if 与 commonize（移植 skeg iron-071 / 073）；与 cleat-042 的 l64 / 宿主调用类型推断合在一起 | 后续 | cleat-078 | 完成 |
+| [cleat-080](tasks/cleat-080-republish-after-skeg-port.md) | 移植 skeg 之后的新版本：Cleat.Runtime / Cleat.Cli 1.0.5、ToolsNamespace 1.5.3、ToolsBuild 0.10.19、Nrepl 1.8.2、Neorepl 0.1.3，验证后重推 BaGetter | 后续 | cleat-079 | 完成 |
 
 ## 里程碑
 
@@ -100,7 +101,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、056、058 ~ 079（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、056、058 ~ 080（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
