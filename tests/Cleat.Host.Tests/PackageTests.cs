@@ -6,7 +6,7 @@ using NUnit.Framework;
 namespace Cleat.Host.Tests;
 
 /// <summary>
-/// packages/ 下各个包自带的 clojure.test 测试套件（cleat-062 nREPL、cleat-063 neorepl）：在宿主上运行包的 test/run.clj，
+/// packages/ 下各个包自带的 clojure.test 测试套件（cleat-062 nREPL、cleat-063 neorepl、cleat-066 tools.build 与 tools.namespace）：在宿主上运行包的 test/run.clj，
 /// 全部通过时退出码为 0。从源码与从包程序集（cleat-067：两个包各编成一个程序集，加载路径上没有源码）各跑一遍。
 /// </summary>
 [Category("Packages")]
@@ -56,6 +56,24 @@ public class PackageTests
         {
             try { Directory.Delete(dir, true); } catch (Exception) { }
         }
+    }
+
+    [Test]
+    public void ToolsNamespace()
+    {
+        var r = RunPackageTests("-I", "packages/tools.namespace/src", "-I", "packages/tools.namespace/test",
+                                "packages/tools.namespace/test/run.clj");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+    }
+
+    [Test]
+    public void ToolsBuild()
+    {
+        var r = RunPackageTests("-I", "packages/tools.build/src", "-I", "packages/tools.namespace/src", "-I", "packages/tools.build/test",
+                                "packages/tools.build/test/run.clj");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
     }
 
     [Test]

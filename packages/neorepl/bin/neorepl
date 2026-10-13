@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs neorepl on cleat: the cleat command on PATH, or the one $CLEAT names.
+here=$(cd "$(dirname "$0")/.." && pwd)
+packages=$(dirname "$here")
+exec "${CLEAT:-cleat}" -I "$packages/nrepl/src" -I "$here/src" -m neorepl.main "$@"

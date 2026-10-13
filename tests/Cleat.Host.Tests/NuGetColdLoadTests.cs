@@ -9,14 +9,15 @@ namespace Cleat.Host.Tests;
 
 /// <summary>
 /// cleat-067 的验收（designs/17 §6）：tools/build.cs pack 打出运行时包 Cleat.Runtime，一个 Clojure 包（gen-class、defrecord、函数）
-/// 编成包程序集再打成 nupkg，两者放进本地目录源（与 BaGetter 同一机制）；一个 C# 与一个 F# 控制台项目只引用那个 Clojure 包，
+/// 用 tools.build（cleat-066）编成包程序集再打成 nupkg，两者放进本地目录源（与 BaGetter 同一机制）；一个 C# 与一个 F# 控制台项目只引用那个 Clojure 包，
 /// **不调用任何初始化 API**：gen-class 的构造函数、实例方法、静态方法、Main，defrecord 的实例，CleatRuntime.Var 都能用，
 /// 并发的首次使用只启动一次运行时（命名空间只加载一次）。
 /// </summary>
 [Category("Bootstrap"), NonParallelizable]
 public class NuGetColdLoadTests
 {
-    private const string Version = "0.1.0-coldload";
+    // at least the running version (0.1.0-dev): packages built with the default :runtime-version depend on Cleat.Runtime >= it
+    private const string Version = "0.1.0-test";
 
     private const string GreeterSource = @"(ns demo.greeter
   (:require [clojure.string :as str])
@@ -69,69 +70,72 @@ printfn ""%s"" (demo.Greeter.shout ""fsharp"")
 printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
 ";
 
+    private string _root, _feed;
+    private (string, string)[] _env;
     private string _dir;
+
+    /// <summary>运行时包只打一次（tools/build.cs pack，约 2 分钟），放进本 fixture 的本地源；全局包目录隔离（同一版本号的旧包不会被复用）。</summary>
+    [OneTimeSetUp]
+    public void PackRuntime()
+    {
+        _root = Path.Combine(Path.GetTempPath(), "cleat-nuget-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        _feed = Path.Combine(_root, "feed");
+        Directory.CreateDirectory(_feed);
+        // 其余依赖从用户的全局包目录取（回退目录），不需要网络
+        string userPackages = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+        File.WriteAllText(Path.Combine(_root, "NuGet.config"), $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<configuration>
+  <packageSources><clear /><add key=""local"" value=""{_feed}"" /></packageSources>
+  <fallbackPackageFolders><add key=""user"" value=""{userPackages}"" /></fallbackPackageFolders>
+</configuration>
+");
+        _env = new[] { ("NUGET_PACKAGES", Path.Combine(_root, "packages")) };
+        Run(HostProcessTests.RepoDir, null, "dotnet", "run", "tools/build.cs", "--", "pack", "-o", _feed, "--version", Version);
+        Assert.That(File.Exists(Path.Combine(_feed, $"Cleat.Runtime.{Version}.nupkg")), Is.True);
+    }
+
+    [OneTimeTearDown]
+    public void RemoveRoot()
+    {
+        try { Directory.Delete(_root, true); } catch (Exception) { }
+    }
 
     [SetUp]
     public void SetUp()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "cleat-nuget-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        _dir = Path.Combine(_root, TestContext.CurrentContext.Test.Name);
         Directory.CreateDirectory(_dir);
     }
 
-    [TearDown]
-    public void TearDown()
-    {
-        try { Directory.Delete(_dir, true); } catch (Exception) { }
-    }
+    private static string ToolsBuildPath(string package) => Path.Combine(HostProcessTests.RepoDir, "packages", package, "src");
+
+    /// <summary>tools.build 的加载路径（cleat-066）。</summary>
+    private static readonly string[] ToolsBuild =
+        { "-I", ToolsBuildPath("tools.build"), "-I", ToolsBuildPath("tools.namespace") };
+
+    private static string Edn(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
     [Test]
     public void CSharpAndFSharpProjectsColdLoadAPackageFromALocalFeed()
     {
-        string feed = Path.Combine(_dir, "feed");
-        Directory.CreateDirectory(feed);
-        // 隔离的全局包目录（同一版本号的旧包不会被复用）；其余依赖从用户的全局包目录取（回退目录），不需要网络
-        string userPackages = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
-        File.WriteAllText(Path.Combine(_dir, "NuGet.config"), $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<configuration>
-  <packageSources><clear /><add key=""local"" value=""{feed}"" /></packageSources>
-  <fallbackPackageFolders><add key=""user"" value=""{userPackages}"" /></fallbackPackageFolders>
-</configuration>
-");
-        var env = new[] { ("NUGET_PACKAGES", Path.Combine(_dir, "packages")) };
-
-        // 1. 运行时包
-        Run(HostProcessTests.RepoDir, null, "dotnet", "run", "tools/build.cs", "--", "pack", "-o", feed, "--version", Version);
-        Assert.That(File.Exists(Path.Combine(feed, $"Cleat.Runtime.{Version}.nupkg")), Is.True);
-
-        // 2. Clojure 包：编成包程序集，打成 nupkg（依赖 Cleat.Runtime）
-        string src = Path.Combine(_dir, "demo", "src");
-        Directory.CreateDirectory(Path.Combine(src, "demo"));
-        File.WriteAllText(Path.Combine(src, "demo", "greeter.clj"), GreeterSource);
-        string pkgDir = Path.Combine(_dir, "demo", "pack");
-        Directory.CreateDirectory(pkgDir);
-        var c = HostProcessTests.CleatIn(_dir, null, null, "-I", src, "--compile-package", Path.Combine(pkgDir, "Demo.dll"), "--package", "demo", "demo.greeter");
+        // Clojure 包：tools.build 的 compile-clj 编成包程序集、pack 打成 nupkg（依赖 Cleat.Runtime），放进本地源
+        string project = Path.Combine(_dir, "demo");
+        Directory.CreateDirectory(Path.Combine(project, "src", "demo"));
+        File.WriteAllText(Path.Combine(project, "src", "demo", "greeter.clj"), GreeterSource);
+        File.WriteAllText(Path.Combine(project, "cleat.edn"), "{:paths [\"src\"]}");
+        string build = "(require '[clojure.tools.build.api :as b])" +
+            "(let [basis (b/create-basis)]" +
+            "  (b/compile-clj {:basis basis :class-dir \"target/classes\" :lib 'Demo :package \"demo\"})" +
+            $"  (b/pack {{:basis basis :lib 'Demo :version \"1.0.0\" :class-dir \"target/classes\" :nupkg-file \"target/Demo.1.0.0.nupkg\" :runtime-version {Edn(Version)}}})" +
+            $"  (b/install {{:nupkg-file \"target/Demo.1.0.0.nupkg\" :local-feed {Edn(_feed)}}}))";
+        var c = HostProcessTests.CleatIn(project, null, _env, ToolsBuild.Concat(new[] { "-e", build }).ToArray());
         Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
-        File.WriteAllText(Path.Combine(pkgDir, "Demo.csproj"), $@"<Project Sdk=""Microsoft.NET.Sdk"">
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <PackageId>Demo</PackageId>
-    <Version>1.0.0</Version>
-    <IncludeBuildOutput>false</IncludeBuildOutput>
-    <NoWarn>NU5128</NoWarn>
-  </PropertyGroup>
-  <ItemGroup>
-    <None Include=""Demo.dll"" Pack=""true"" PackagePath=""lib/net10.0/"" />
-    <PackageReference Include=""Cleat.Runtime"" Version=""{Version}"" />
-  </ItemGroup>
-</Project>
-");
-        Run(pkgDir, env, "dotnet", "pack", "-o", feed, "-nologo", "-v", "quiet");
-        Assert.That(File.Exists(Path.Combine(feed, "Demo.1.0.0.nupkg")), Is.True);
+        Assert.That(File.Exists(Path.Combine(_feed, "demo.1.0.0.nupkg")), Is.True);
 
-        // 3. C# 项目：只引用 Demo
+        // C# 项目：只引用 Demo
         string cs = App("cs", "csproj", "Program.cs", CSharpProgram);
-        var r = Run(cs, env, "dotnet", "run", "-nologo", "-v", "quiet");
+        var r = Run(cs, _env, "dotnet", "run", "-nologo", "-v", "quiet");
         Assert.That(Lines(r), Is.EqualTo(new[]
         {
             "hello ann",
@@ -142,9 +146,9 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             "1",
         }), r);
 
-        // 4. F# 项目
+        // F# 项目
         string fs = App("fs", "fsproj", "Program.fs", FSharpProgram);
-        r = Run(fs, env, "dotnet", "run", "-nologo", "-v", "quiet");
+        r = Run(fs, _env, "dotnet", "run", "-nologo", "-v", "quiet");
         Assert.That(Lines(r), Is.EqualTo(new[]
         {
             "hello fred",
@@ -153,6 +157,50 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             "FSHARP!",
             "1",
         }), r);
+    }
+
+    /// <summary>
+    /// cleat-066 的验收：packages/nrepl、packages/neorepl 用各自的 build.clj（tools.build）编包程序集、打包、装进本地源；
+    /// 只依赖 Neorepl 的项目经 create-basis 从源 restore 到 Neorepl 与（传递的）Nrepl，运行 neorepl。
+    /// </summary>
+    [Test]
+    public void NreplAndNeoreplBuiltWithToolsBuildRestoreFromTheFeed()
+    {
+        foreach (var (package, id) in new[] { ("nrepl", "nrepl.1.8.0"), ("neorepl", "neorepl.0.1.0") })
+        {
+            // 包目录复制出来再构建（target/ 不写进仓库）
+            string dir = Path.Combine(_dir, package);
+            string from = Path.Combine(HostProcessTests.RepoDir, "packages", package);
+            foreach (var f in Directory.GetFiles(Path.Combine(from, "src"), "*", SearchOption.AllDirectories))
+            {
+                string to = Path.Combine(dir, "src", Path.GetRelativePath(Path.Combine(from, "src"), f));
+                Directory.CreateDirectory(Path.GetDirectoryName(to)!);
+                File.Copy(f, to);
+            }
+            File.Copy(Path.Combine(from, "cleat.edn"), Path.Combine(dir, "cleat.edn"));
+            File.Copy(Path.Combine(from, "build.clj"), Path.Combine(dir, "build.clj"));
+            // neorepl 的 Nrepl 依赖从本地源 restore：nuget.config 只留本地源（不连网）
+            File.WriteAllText(Path.Combine(dir, "nuget.config"),
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /></packageSources></configuration>\n");
+            var b = HostProcessTests.CleatInWithTimeout(dir, null, _env, 600_000,
+                ToolsBuild.Concat(new[] { "-I", ".", "-m", "clojure.tools.build.main", "install", ":local-feed", Edn(_feed) }).ToArray());
+            Assert.That(b.ExitCode, Is.EqualTo(0), b.ToString());
+            Assert.That(File.Exists(Path.Combine(_feed, id + ".nupkg")), Is.True, id);
+        }
+
+        string app = Path.Combine(_dir, "app");
+        Directory.CreateDirectory(app);
+        File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Neorepl {:nuget/version \"0.1.0\"}}}");
+        File.WriteAllText(Path.Combine(app, "nuget.config"),
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /></packageSources></configuration>\n");
+        string run = "(require '[clojure.tools.build.api :as b])" +
+            $"(let [basis (b/create-basis {{:local-feed {Edn(_feed)}}})]" +
+            "  (prn (sort (map str (keys (:libs basis)))))" +
+            "  (b/process (b/cleat-command {:basis basis :main 'neorepl.main :main-args [\"--help\"]})))";
+        var r = HostProcessTests.CleatIn(app, null, _env, ToolsBuild.Concat(new[] { "-e", run }).ToArray());
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.StartWith("(\"Neorepl\" \"Nrepl\")\n"), "Cleat.Runtime stays off the load path");
+        Assert.That(r.Out, Does.Contain("Usage: neorepl [COMMAND] [options]"));
     }
 
     private string App(string name, string ext, string file, string program)

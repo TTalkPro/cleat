@@ -1,0 +1,5 @@
+{:paths [:clj-paths :resource-paths]
+
+ :aliases
+ {:clj-paths ["src"]
+  :resource-paths ["resources"]}}

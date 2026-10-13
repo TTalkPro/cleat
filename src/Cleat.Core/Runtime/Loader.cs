@@ -158,6 +158,98 @@ public static class Loader
     public static Type LoadAssemblyDefining(string typeName) =>
         PackageIndex.FindType(typeName);
 
+    // ---- 加载路径上的普通程序集（cleat-066）----
+
+    private static readonly ConcurrentDictionary<string, (DateTime Stamp, Dictionary<string, string> Types)> TypeIndexes = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 按全名在加载路径目录里的 <c>*.dll</c>（不递归）中找公有类型并载入其程序集（cleat-066）：<c>dotnet build</c> 的产物、NuGet 包里的
+    /// C# 库放进 <c>-I</c> 目录后 Clojure 代码直接用类型名，与 JVM 上类路径里的类按名加载相同。每个目录的类型表按元数据建一次
+    /// （目录有变化时重建），不载入程序集。找不到返回 null。
+    /// </summary>
+    public static Type FindTypeOnLoadPath(string fullName)
+    {
+        if (string.IsNullOrEmpty(fullName) || RuntimeBootstrapFlag.DisableFileLoad) return null;
+        foreach (string dir in LoadPath.ToArray())
+        {
+            var types = TypeIndex(dir);
+            if (types == null || !types.TryGetValue(fullName, out string file)) continue;
+            try
+            {
+                Assembly asm = Loaded.Values.FirstOrDefault(a => string.Equals(a.Location, file, StringComparison.Ordinal))
+                    ?? AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => !a.IsDynamic && string.Equals(a.Location, file, StringComparison.Ordinal))
+                    ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(file);
+                Register(asm);
+                Type t = asm.GetType(fullName, false);
+                if (t != null) return t;
+            }
+            catch (Exception)
+            {
+                // 载入不了（版本冲突、同名程序集已载入）：继续找
+            }
+        }
+        return null;
+    }
+
+    private static Dictionary<string, string> TypeIndex(string dir)
+    {
+        DateTime stamp;
+        try
+        {
+            if (!Directory.Exists(dir)) return null;
+            stamp = Directory.GetLastWriteTimeUtc(dir);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+        if (TypeIndexes.TryGetValue(dir, out var cached) && cached.Stamp == stamp) return cached.Types;
+        var types = new Dictionary<string, string>(StringComparer.Ordinal);
+        string[] files;
+        try { files = Directory.GetFiles(dir, "*.dll"); }
+        catch (Exception) { files = Array.Empty<string>(); }
+        foreach (string file in files.OrderBy(f => f, StringComparer.Ordinal))
+        {
+            try
+            {
+                using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var pe = new System.Reflection.PortableExecutable.PEReader(fs);
+                if (!pe.HasMetadata) continue;
+                var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+                if (!md.IsAssembly) continue;
+                foreach (var h in md.TypeDefinitions)
+                {
+                    string name = PublicTypeName(md, md.GetTypeDefinition(h));
+                    if (name != null) types.TryAdd(name, Path.GetFullPath(file));
+                }
+            }
+            catch (Exception)
+            {
+                // 不是托管程序集（本机库等）
+            }
+        }
+        TypeIndexes[dir] = (stamp, types);
+        return types;
+    }
+
+    /// <summary>公有类型的全名（嵌套类型 Outer+Inner）；不是公有的返回 null。</summary>
+    private static string PublicTypeName(System.Reflection.Metadata.MetadataReader md, System.Reflection.Metadata.TypeDefinition td)
+    {
+        var vis = td.Attributes & TypeAttributes.VisibilityMask;
+        string name = md.GetString(td.Name);
+        if (vis == TypeAttributes.Public)
+        {
+            string ns = md.GetString(td.Namespace);
+            return ns.Length == 0 ? name : ns + "." + name;
+        }
+        if (vis == TypeAttributes.NestedPublic)
+        {
+            string outer = PublicTypeName(md, md.GetTypeDefinition(td.GetDeclaringType()));
+            return outer == null ? null : outer + "+" + name;
+        }
+        return null;
+    }
+
     // ---- 模块程序集 ----
 
     /// <summary>

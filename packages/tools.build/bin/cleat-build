@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs a build function of the project in the current directory (build.clj), as
+# `clj -T:build FUNCTION :key value` does: cleat-build FUNCTION [:key value]...
+# Uses the cleat on PATH, or the one $CLEAT names.
+here=$(cd "$(dirname "$0")/.." && pwd)
+packages=$(dirname "$here")
+exec "${CLEAT:-cleat}" -I "$here/src" -I "$packages/tools.namespace/src" -I . -m clojure.tools.build.main "$@"

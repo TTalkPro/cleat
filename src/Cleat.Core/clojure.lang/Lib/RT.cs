@@ -2921,6 +2921,12 @@ namespace clojure.lang
                 }
             }
 
+            // CLEAT-066: public types of the plain assemblies in load path directories (dotnet build output, C# libraries
+            // from NuGet packages on -I), like classes on the JVM classpath.
+            t = Cleat.Core.Runtime.Loader.FindTypeOnLoadPath(p);
+            if (t != null)
+                return t;
+
             // Search by simple type name (slow path).
             // At some point this became a no-op unless running on Mono, so I restricted it to that.
             if (IsRunningOnMono)

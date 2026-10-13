@@ -75,3 +75,9 @@ src/boot/cleat.scheme.clojure/
 
 # nREPL port files (nrepl.cmdline writes one in its working directory; the package tests run there)
 .nrepl-port
+
+# tools.build (cleat-066): package build output and create-basis restore projects
+packages/*/target/
+.cleat/
+# package launchers (packages/*/bin/ are scripts, not build output)
+!packages/*/bin/

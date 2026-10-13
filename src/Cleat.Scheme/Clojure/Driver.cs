@@ -655,10 +655,11 @@ public static class Driver
 
     public static string PackageFullPath(object path) => Path.GetFullPath(path?.ToString() ?? "");
 
-    /// <summary>(under-directory? 全路径 目录)：文件在目录（递归）下。</summary>
+    /// <summary>(under-directory? 全路径 根)：文件在目录根（递归）下，或就是文件根（tools.build 的 :filter-nses 给出单个文件）。</summary>
     public static bool UnderDirectory(object full, object dir)
     {
         string d = Path.GetFullPath(dir?.ToString() ?? "");
+        if (File.Exists(d)) return string.Equals(full?.ToString(), d, StringComparison.Ordinal);
         if (!d.EndsWith(Path.DirectorySeparatorChar)) d += Path.DirectorySeparatorChar;
         return (full?.ToString() ?? "").StartsWith(d, StringComparison.Ordinal);
     }

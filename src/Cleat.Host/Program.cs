@@ -127,6 +127,9 @@ public static class Program
         return 2;
     }
 
+    /// <summary>运行着的镜像与驱动库目录（Start 之后；没有 Clojure 镜像时 ClojureBootPath 为 null）。tools.build 的 uber 据此复制运行时（cleat-066）。</summary>
+    public static string SchemeBootPath, ClojureBootPath, DriverLibraryDir;
+
     /// <summary>启动耗时（毫秒）：Scheme 镜像、驱动库（含登记钩子）、Clojure 镜像；CLEAT_TIME 设置时写到标准错误。</summary>
     public static long SchemeImageMs, DriverMs, ClojureImageMs;
 
@@ -149,12 +152,15 @@ public static class Program
         foreach (var d in o.IncludeDirs) Loader.AddPath(Path.GetFullPath(d));
         Cleat.Scheme.ModuleLoader.LoadModule(schemeBoot);
         SchemeImageMs = sw.ElapsedMilliseconds;
-        Cleat.Scheme.Clojure.ClojureHost.Start(Cleat.Scheme.Clojure.ClojureHost.LibraryDirFor(schemeBoot));
+        SchemeBootPath = schemeBoot;
+        DriverLibraryDir = Cleat.Scheme.Clojure.ClojureHost.LibraryDirFor(schemeBoot);
+        Cleat.Scheme.Clojure.ClojureHost.Start(DriverLibraryDir);
         DriverMs = sw.ElapsedMilliseconds - SchemeImageMs;
         string boot = o.NoBoot ? null : o.Boot ?? Environment.GetEnvironmentVariable("CLEAT_BOOT") ?? FindBoot("cleat.boot.dll");
         if (boot != null)
         {
             boot = Path.GetFullPath(boot);
+            ClojureBootPath = boot;
             Loader.LoadBootImage(boot);
             // 随附库的包程序集（tools/build.cs compile-libs，cleat-067）在镜像旁；比镜像旧时（镜像重建后没有重编）不用，
             // 这些命名空间从源码加载

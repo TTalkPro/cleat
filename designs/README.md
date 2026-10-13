@@ -18,6 +18,7 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（n
 | [14-three-layer-architecture.md](14-three-layer-architecture.md) | **探讨**：VM / Scheme 元层 / Clojure 三层架构的四个结构性问题与修正、剩余风险 |
 | [13-syntax-objects-and-scheme-core.md](13-syntax-objects-and-scheme-core.md) | **探讨**：语法对象重塑展开流程、驱动 nanopass 的最小 Scheme 元语言、"Clojure on IronScheme"方案 C 与 A / B 的取舍、PoC 计划 |
 | [16-nanopass-host-survey.md](16-nanopass-host-survey.md) | **调研**：nanopass 宿主语言对比（SBCL/CLOS、Erlang、Clojure），pass 分发本质取证，ellipsis 难度定位，07 号文的可行性背书 |
-| [17-lazy-runtime-startup.md](17-lazy-runtime-startup.md) | **设计**：包程序集（每包一个、命名空间索引、去掉源码旁 `.clj.dll`）、运行时 NuGet 包 `Cleat.Runtime`、生成类型惰性启动 CleatRuntime，让 C# / F# 直接引用 cleat 的 NuGet 包（cleat-067） |
+| [17-lazy-runtime-startup.md](17-lazy-runtime-startup.md) | **实现**：包程序集（每包一个、命名空间索引、去掉源码旁 `.clj.dll`）、运行时 NuGet 包 `Cleat.Runtime`、生成类型惰性启动 CleatRuntime，让 C# / F# 直接引用 cleat 的 NuGet 包（cleat-067） |
+| [18-tools-build.md](18-tools-build.md) | **实现**：tools.build 包（`cleat.edn` 的 NuGet / 本地依赖、`dotnet restore` 解析的 basis、编包程序集、`dotnet-build`、`pack` / `install` / `push`、可部署目录）与 tools.namespace 的部分移植（cleat-066） |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。
