@@ -60,7 +60,8 @@ cleat -Spath -M:dev                      # 打印加载路径；-P 只下载依�
 ```
 
 宿主按别名建 basis，把它的加载路径加进**本进程**，再按别名的 `:cleat-opts` + `:main-opts`（如 `["-m" "neorepl.main"]`）+ 命令行其余参数
-运行，与 `clj -M` 一样不另起进程。一个完整的项目（BaGetter、neorepl、`dotnet build` 混合 C#、gen-class）见 `examples/WebServer`。
+运行，与 `clj -M` 一样不另起进程。一个完整的项目（BaGetter、neorepl、`dotnet build` 混合 C#、gen-class）见 `examples/WebServer`；只有 Clojure、依赖带原生库的
+NuGet 包（SQLite）的控制台应用见 `examples/SqlTable`。
 
 tools.build 自己也是包：`Cleat.ToolsBuild`（依赖 `Cleat.ToolsNamespace`），各自的 `build.clj` 构建与发布。
 
@@ -69,7 +70,7 @@ tools.build 自己也是包：`Cleat.ToolsBuild`（依赖 `Cleat.ToolsNamespace`
 | 上游 | cleat |
 |---|---|
 | `delete` `copy-file` `write-file` `copy-dir` `zip` `unzip` `process` `git-process` `git-count-revs` `resolve-path` `set-project-root!` `with-project-root` | 同名同参数；路径是字符串（`resolve-path` 返回字符串，不是 `java.io.File`） |
-| `create-basis` | 读 `cleat.edn`：`:nuget/version` 依赖由 `dotnet restore` 解析（在项目目录下的 `.cleat/basis/` 生成临时项目，`nuget.config` 照常生效；本地源作附加源），`:local/root` 是本地 cleat 项目；`:paths` 可以写别名；`:argmap` 是别名合并的参数（如 `:cleat-opts`）。`Cleat.Runtime` 与只被它依赖的包不进加载路径 |
+| `create-basis` | 读 `cleat.edn`：`:nuget/version` 依赖由 `dotnet restore` 解析（在项目目录下的 `.cleat/basis/` 生成临时项目，`nuget.config` 照常生效；本地源作附加源），`:local/root` 是本地 cleat 项目；`:paths` 可以写别名；`:argmap` 是别名合并的参数（如 `:cleat-opts`）。`Cleat.Runtime` 与只被它依赖的包不进加载路径；包的原生库（`runtimes/<rid>/native/`，按当前平台）也进加载路径 |
 | `java-command` | `cleat-command`（`:cleat-cmd` `:cp` `:basis` `:cleat-opts` `:main` `:main-args`），加载路径每项一个 `-I` |
 | `compile-clj` | 编出**包程序集** `<class-dir>/<程序集名>.dll`（designs/17）：`:assembly`，缺省 `:package-id` 或 `:lib`（`my.org/lib` → `my.org.lib`）；`:ns-compile` / `:sort` / `:bindings` / `:filter-nses` 照旧；`:cleat-cmd` / `:cleat-opts` 代替 `:java-*` |
 | `javac` | `dotnet-build`：`dotnet build` 一个 `.csproj` / `.fsproj` / `.sln`，`:output-dir`、`:configuration`、`:properties`；输出目录放进加载路径后 Clojure 按类型名直接用 |

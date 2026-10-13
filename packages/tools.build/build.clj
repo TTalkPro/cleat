@@ -6,7 +6,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.ToolsBuild)
-(def default-version "0.10.16")
+(def default-version "0.10.17")
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

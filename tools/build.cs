@@ -190,7 +190,8 @@ void Pack(string[] a)
                                   "-v", "quiet", "-nologo", "-p:BuildBootImage=false" };
     // PackageVersion, not Version: a global -p:Version reaches every referenced project and changes the assembly versions
     // (Cleat.Core 1.0.1.0 …), and package assemblies compiled against those then require them (cleat-071)
-    if (version != null) args.Add("-p:PackageVersion=" + version);
+    // (cleat-073) the same default as Cleat.Cli: CoreInfo.Version, not the csproj's <Version>
+    args.Add("-p:PackageVersion=" + (version ?? CoreVersion()));
     Run("dotnet", args.ToArray());
     // dotnet tool 包 Cleat.Cli（cleat-071）：宿主，带镜像、驱动库、随附库与 tools.build
     var tool = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-o", outDir,

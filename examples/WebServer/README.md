@@ -39,7 +39,7 @@ WebServer/
   ```sh
   dotnet run tools/build.cs -- pack -o artifacts/nuget                  # Cleat.Runtime 与 Cleat.Cli
   for n in Cleat.Runtime Cleat.Cli; do
-    dotnet nuget push artifacts/nuget/$n.1.0.2.nupkg --source bagetter \
+    dotnet nuget push artifacts/nuget/$n.1.0.3.nupkg --source bagetter \
         --configfile examples/WebServer/nuget.config --api-key "$NUGET_API_KEY"
   done
   cleat=$PWD/src/Cleat.Host/bin/Release/net10.0/cleat                   # 仓库里构建出的 cleat

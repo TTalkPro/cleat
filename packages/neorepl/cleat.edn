@@ -6,4 +6,4 @@
 {:paths ["src"]
  :deps {Cleat.Nrepl {:nuget/version "1.8.1"}
         ;; jack-in computes the server's load path with tools.build's create-basis
-        Cleat.ToolsBuild {:nuget/version "0.10.16"}}}
+        Cleat.ToolsBuild {:nuget/version "0.10.17"}}}

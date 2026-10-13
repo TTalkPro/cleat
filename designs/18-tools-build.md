@@ -34,6 +34,9 @@
 - `Cleat.Runtime` 与只被它依赖的包不进加载路径：运行构建与程序的 cleat 自己就是运行时。
 - `:local/root`：读那个目录的 `cleat.edn`，它的 `:paths`（按那个目录解析）进加载路径，它的 `:deps` 递归并入。
 - 运行时怎么用加载路径：宿主的 `-I`。目录里的包程序集由加载器登记（designs/17 §2.3），C# 库的 dll 由加载器的程序集解析按目录找到。
+- 原生库（cleat-073）：包的 `runtimeTargets` 里 `assetType` 为 `native` 的条目，按当前平台最合适的 RID（运行时的 RID、`<os>-<arch>`、`<os>`、
+  非 Windows 的 `unix`、`any`）取一组，所在目录也进这个包的加载路径；加载器的 `ResolvingUnmanagedDll` 在加载路径的目录里按平台命名
+  （`X`、`libX.so`、`X.so`、`X.dll`、`libX.dylib`）找。`uber` 把它们和托管程序集一起复制进 `lib/`。
 
 ## 4. 任务一览（`clojure.tools.build.api`）
 

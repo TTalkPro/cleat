@@ -171,9 +171,31 @@
   [^JsonElement e ^String name]
   (some (fn [[k v]] (when (= k name) v)) (props e)))
 
+(defn- compatible-rids
+  "The RIDs whose native assets fit this process, best first (cleat-073):
+  the runtime's own RID, the portable <os>-<arch>, <os>, unix, any."
+  []
+  (let [arch (str/lower-case (str (System.Runtime.InteropServices.RuntimeInformation/OSArchitecture)))
+        os (cond (System.OperatingSystem/IsWindows) "win"
+                 (System.OperatingSystem/IsMacOS) "osx"
+                 :else "linux")]
+    (distinct (concat [System.Runtime.InteropServices.RuntimeInformation/RuntimeIdentifier
+                       (str os "-" arch) os]
+                      (when-not (= os "win") ["unix"])
+                      ["any"]))))
+
+(defn- native-assets
+  "Relative paths of the package's native assets for the best RID that has any."
+  [lib]
+  (let [by-rid (group-by second
+                         (for [[path ^JsonElement info] (props (prop lib "runtimeTargets"))
+                               :when (= "native" (some-> (prop info "assetType") .GetString))]
+                           [path (some-> (prop info "rid") .GetString)]))]
+    (some (fn [rid] (seq (map first (get by-rid rid)))) (compatible-rids))))
+
 (defn- read-assets
   "Read project.assets.json: {id {:version v, :dir package-dir,
-  :runtime [relative paths], :dependencies #{id}}}"
+  :runtime [relative paths], :native [relative paths], :dependencies #{id}}}"
   [^String assets]
   (with-open [doc (JsonDocument/Parse ^String (slurp assets) (System.Text.Json.JsonDocumentOptions.))]
     (let [root (.RootElement doc)
@@ -196,6 +218,9 @@
                              (map first)
                              (remove #(str/ends-with? % "_._"))
                              vec)
+               ;; native libraries (e_sqlite3 …): their directory goes on the load path too, where the
+               ;; cleat loader resolves unmanaged libraries (cleat-073)
+               :native (vec (native-assets lib))
                :dependencies (set (map first (props (prop lib "dependencies"))))}])))))
 
 (defn- reachable
@@ -235,11 +260,11 @@
       (->> pkgs
            (remove (fn [[id _]] (contains? skip id)))
            (sort-by (comp str/lower-case key))
-           (mapv (fn [[id {:keys [version dir runtime]}]]
+           (mapv (fn [[id {:keys [version dir runtime native]}]]
                    [(lib-sym id)
                     (cond-> {:nuget/version version
                              :nuget/id id
-                             :paths (->> runtime
+                             :paths (->> (concat runtime native)
                                          (map #(Path/GetDirectoryName (Path/GetFullPath (Path/Combine dir %))))
                                          distinct vec)}
                       (seq (dependents id)) (assoc :dependents (vec (dependents id))))]))))))

@@ -40,7 +40,7 @@ cleat -I packages/nrepl/src -I packages/neorepl/src -m neorepl.main [命令] [�
 
 **安装**：`bin/neorepl` 从源码运行（带上 nrepl、tools.build、tools.namespace 的源码）。也可以经 NuGet：包 `Cleat.Neorepl`
 （依赖 `Cleat.Nrepl`、`Cleat.ToolsBuild`），在项目的 `cleat.edn` 里写别名
-`:neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.1"}} :main-opts ["-m" "neorepl.main"]}`，用 `cleat -M:neorepl` 启动
+`:neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.2"}} :main-opts ["-m" "neorepl.main"]}`，用 `cleat -M:neorepl` 启动
 （完整的例子见 `examples/WebServer`）。
 
 **启动时间**：从源码加载 neorepl 与 nREPL 每次约 7 秒；从包程序集（`Cleat.Neorepl` / `Cleat.Nrepl`，cleat-067）约 1.1 秒。

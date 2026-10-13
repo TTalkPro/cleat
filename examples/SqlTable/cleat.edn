@@ -1,0 +1,22 @@
+;; SqlTable: a console app written in Clojure, on cleat. Run it with the
+;; local dotnet tool Cleat.Cli (.config/dotnet-tools.json):
+;;   dotnet tool restore
+;;   dotnet cleat -M:run data/people.csv "select * from people"
+{:paths ["src"]
+
+ ;; NuGet packages (nuget.config: nuget.org, Cleat.* from BaGetter). SQLite
+ ;; brings its native library (e_sqlite3) for this platform along.
+ :deps {Microsoft.Data.Sqlite {:nuget/version "10.0.12"}}
+
+ :aliases
+ {;; dotnet cleat -M:run FILE SQL
+  :run {:main-opts ["-m" "sqltable.main"]}
+  ;; dotnet cleat -M:test
+  :test {:extra-paths ["test"] :main-opts ["-m" "sqltable.test-runner"]}
+  ;; on the REPL server's load path too (:neorepl/aliases)
+  :dev {:extra-paths ["test"]}
+  ;; dotnet cleat -M:neorepl -- a REPL for the project
+  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.2"}}
+            :main-opts ["-m" "neorepl.main"]}}
+
+ :neorepl/aliases [:dev]}

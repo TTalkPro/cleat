@@ -38,6 +38,7 @@ public static class Loader
     {
         LoadPath = InitialLoadPath();
         AssemblyLoadContext.Default.Resolving += OnResolving;
+        AssemblyLoadContext.Default.ResolvingUnmanagedDll += OnResolvingUnmanagedDll;
         PackageIndex.EnsureInitialized();
     }
 
@@ -534,6 +535,28 @@ public static class Loader
         {
             Var.popThreadBindings();
         }
+    }
+
+    /// <summary>
+    /// 原生库（NuGet 包 runtimes/&lt;rid&gt;/native 下的，如 SQLite 的 e_sqlite3，cleat-073）：.NET 按常规找不到时，在加载路径的目录里
+    /// 按平台的命名规则找（libX.so / X.so、X.dll、libX.dylib）。tools.build 的 basis 把包的原生资产目录放在加载路径上。
+    /// </summary>
+    private static IntPtr OnResolvingUnmanagedDll(Assembly requester, string name)
+    {
+        if (string.IsNullOrEmpty(name)) return IntPtr.Zero;
+        string file = Path.GetFileName(name);
+        string[] candidates = OperatingSystem.IsWindows()
+            ? [file, file + ".dll"]
+            : OperatingSystem.IsMacOS()
+                ? [file, "lib" + file + ".dylib", file + ".dylib"]
+                : [file, "lib" + file + ".so", file + ".so"];
+        foreach (string dir in LoadPath.ToArray())
+            foreach (string c in candidates)
+            {
+                string probe = Path.Combine(dir, c);
+                if (File.Exists(probe) && System.Runtime.InteropServices.NativeLibrary.TryLoad(probe, out IntPtr handle)) return handle;
+            }
+        return IntPtr.Zero;
     }
 
     private static Assembly OnResolving(AssemblyLoadContext ctx, AssemblyName name)

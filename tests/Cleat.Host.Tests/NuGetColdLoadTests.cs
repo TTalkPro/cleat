@@ -17,9 +17,9 @@ namespace Cleat.Host.Tests;
 [Category("Bootstrap"), NonParallelizable]
 public class NuGetColdLoadTests
 {
-    // at least the running version (CoreInfo.Version, 1.0.2): packages built with the default :runtime-version depend on
+    // at least the running version (CoreInfo.Version, 1.0.3): packages built with the default :runtime-version depend on
     // Cleat.Runtime >= it (and in SemVer 1.0.2-anything sorts below 1.0.2); the fixture's NuGet caches are isolated
-    private const string Version = "1.0.2";
+    private const string Version = "1.0.3";
 
     private const string GreeterSource = @"(ns demo.greeter
   (:require [clojure.string :as str])
@@ -184,8 +184,8 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
     private void BuildClojurePackages()
     {
         if (_clojurePackagesBuilt) return;
-        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.2"), ("tools.build", "cleat.toolsbuild.0.10.16"),
-                                             ("nrepl", "cleat.nrepl.1.8.1"), ("neorepl", "cleat.neorepl.0.1.1") })
+        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.2"), ("tools.build", "cleat.toolsbuild.0.10.17"),
+                                             ("nrepl", "cleat.nrepl.1.8.1"), ("neorepl", "cleat.neorepl.0.1.2") })
         {
             string dir = Path.Combine(_root, "sources", package);
             if (Directory.Exists(dir)) Directory.Delete(dir, true);
@@ -224,7 +224,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         BuildClojurePackages();
         string app = Path.Combine(_dir, "app");
         Directory.CreateDirectory(app);
-        File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Cleat.Neorepl {:nuget/version \"0.1.1\"}}}");
+        File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Cleat.Neorepl {:nuget/version \"0.1.2\"}}}");
         File.WriteAllText(Path.Combine(app, "nuget.config"), NoSources);
         string run = "(require '[clojure.tools.build.api :as b])" +
             $"(let [basis (b/create-basis {{:local-feed {Edn(_feed)}}})]" +
@@ -330,6 +330,41 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             try { Process.Start("kill", jack.Id.ToString())?.WaitForExit(5000); } catch (Exception) { }
             if (!jack.WaitForExit(15_000)) try { jack.Kill(true); } catch (Exception) { }
         }
+    }
+
+    /// <summary>
+    /// cleat-073 的验收：examples/SqlTable（只有 Clojure，依赖 nuget.org 的 Microsoft.Data.Sqlite，这里从回退目录取）——basis 带上
+    /// SQLite 的原生库目录，dotnet cleat -M:run 把 CSV 导入后查询并画表；测试通过；uber 出的目录脱离 cleat 运行（原生库在 lib/）。
+    /// </summary>
+    [Test]
+    public void ConsoleExampleQueriesCsvWithSqlite()
+    {
+        string app = Path.Combine(_dir, "SqlTable");
+        CopyTree(Path.Combine(HostProcessTests.RepoDir, "examples", "SqlTable"), app,
+                 rel => rel.StartsWith("target/") || rel.StartsWith(".cleat/") || rel == "nuget.config");
+        File.WriteAllText(Path.Combine(app, "nuget.config"),
+            $"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /><add key=\"local\" value=\"{_feed}\" /></packageSources></configuration>\n");
+        var env = _env;
+        string Cleat(params string[] args) => Run(app, env, "dotnet", new[] { "cleat" }.Concat(args).ToArray());
+
+        Run(app, env, "dotnet", "tool", "restore");
+        Assert.That(Cleat("-M:run", "data/people.csv", "select city, count(*) as n from people group by city order by city"), Is.EqualTo(
+            "+----------+---+\n" +
+            "| city     | n |\n" +
+            "+----------+---+\n" +
+            "| Beijing  | 2 |\n" +
+            "| Shanghai | 2 |\n" +
+            "| 深圳     | 1 |\n" +
+            "+----------+---+\n" +
+            "3 rows\n"));
+        Assert.That(Cleat("-T:build", "test"), Does.Contain("0 failures, 0 errors."));
+
+        Cleat("-T:build", "uber");
+        string dist = Path.Combine(app, "target", "sqltable");
+        Assert.That(Directory.GetFiles(Path.Combine(dist, "lib"), "*e_sqlite3*").Any(f => !f.EndsWith(".dll") || OperatingSystem.IsWindows()), Is.True);
+        Assert.That(Run(_dir, env, Path.Combine(dist, OperatingSystem.IsWindows() ? "run.cmd" : "run"), Path.Combine(app, "data", "people.csv"),
+                "select name from people where score is null"),
+            Is.EqualTo("+------+\n| name |\n+------+\n| 王芳 |\n+------+\n1 row\n"));
     }
 
     private static int FreePort()
