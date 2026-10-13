@@ -36,14 +36,14 @@ public class PackageTests
         Directory.CreateDirectory(dir);
         try
         {
-            var c = RunPackageTests(new[] { "-I", "packages/nrepl/src", "--compile-package", Path.Combine(dir, "Nrepl.dll"), "--package", "nrepl" }
+            var c = RunPackageTests(new[] { "-I", "packages/nrepl/src", "--compile-package", Path.Combine(dir, "Cleat.Nrepl.dll"), "--package", "nrepl" }
                                     .Concat(Namespaces("nrepl")).ToArray());
             Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
             c = RunPackageTests(new[] { "-I", dir, "-I", "packages/neorepl/src", "--root", "packages/neorepl/src",
-                                        "--compile-package", Path.Combine(dir, "Neorepl.dll"), "--package", "neorepl" }
+                                        "--compile-package", Path.Combine(dir, "Cleat.Neorepl.dll"), "--package", "neorepl" }
                                 .Concat(Namespaces("neorepl")).ToArray());
             Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
-            Assert.That(Directory.GetFiles(dir).Select(Path.GetFileName).Order(), Is.EqualTo(new[] { "Neorepl.dll", "Nrepl.dll" }), "one assembly per package");
+            Assert.That(Directory.GetFiles(dir).Select(Path.GetFileName).Order(), Is.EqualTo(new[] { "Cleat.Neorepl.dll", "Cleat.Nrepl.dll" }), "one assembly per package");
 
             var r = RunPackageTests("-I", dir, "-I", "packages/nrepl/test", "packages/nrepl/test/run.clj");
             Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());

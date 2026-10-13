@@ -59,7 +59,7 @@
        (testing "cleat, with the nrepl package and the project's paths on the load path"
          ;; nREPL's sources, or the directory with its package assembly
          (is (some #(or (str/ends-with? % (str "nrepl" Path/DirectorySeparatorChar "src"))
-                        (File/Exists (Path/Combine ^String % "Nrepl.dll")))
+                        (File/Exists (Path/Combine ^String % "Cleat.Nrepl.dll")))
                    command))
          (is (= ["-I" "src" "-I" "dev" "-m" "nrepl.cmdline"]
                 (->> command (drop-while #(not= "src" %)) (cons "-I") (take 6)))))

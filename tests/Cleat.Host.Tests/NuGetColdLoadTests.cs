@@ -161,12 +161,12 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
 
     /// <summary>
     /// cleat-066 的验收：packages/nrepl、packages/neorepl 用各自的 build.clj（tools.build）编包程序集、打包、装进本地源；
-    /// 只依赖 Neorepl 的项目经 create-basis 从源 restore 到 Neorepl 与（传递的）Nrepl，运行 neorepl。
+    /// 只依赖 Cleat.Neorepl 的项目经 create-basis 从源 restore 到 Cleat.Neorepl 与（传递的）Cleat.Nrepl，运行 neorepl。
     /// </summary>
     [Test]
     public void NreplAndNeoreplBuiltWithToolsBuildRestoreFromTheFeed()
     {
-        foreach (var (package, id) in new[] { ("nrepl", "nrepl.1.8.0"), ("neorepl", "neorepl.0.1.0") })
+        foreach (var (package, id) in new[] { ("nrepl", "cleat.nrepl.1.8.0"), ("neorepl", "cleat.neorepl.0.1.0") })
         {
             // 包目录复制出来再构建（target/ 不写进仓库）
             string dir = Path.Combine(_dir, package);
@@ -179,7 +179,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             }
             File.Copy(Path.Combine(from, "cleat.edn"), Path.Combine(dir, "cleat.edn"));
             File.Copy(Path.Combine(from, "build.clj"), Path.Combine(dir, "build.clj"));
-            // neorepl 的 Nrepl 依赖从本地源 restore：nuget.config 只留本地源（不连网）
+            // neorepl 的 Cleat.Nrepl 依赖从本地源 restore：nuget.config 只留本地源（不连网）
             File.WriteAllText(Path.Combine(dir, "nuget.config"),
                 "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /></packageSources></configuration>\n");
             var b = HostProcessTests.CleatInWithTimeout(dir, null, _env, 600_000,
@@ -190,7 +190,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
 
         string app = Path.Combine(_dir, "app");
         Directory.CreateDirectory(app);
-        File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Neorepl {:nuget/version \"0.1.0\"}}}");
+        File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Cleat.Neorepl {:nuget/version \"0.1.0\"}}}");
         File.WriteAllText(Path.Combine(app, "nuget.config"),
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /></packageSources></configuration>\n");
         string run = "(require '[clojure.tools.build.api :as b])" +
@@ -199,7 +199,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             "  (b/process (b/cleat-command {:basis basis :main 'neorepl.main :main-args [\"--help\"]})))";
         var r = HostProcessTests.CleatIn(app, null, _env, ToolsBuild.Concat(new[] { "-e", run }).ToArray());
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        Assert.That(r.Out, Does.StartWith("(\"Neorepl\" \"Nrepl\")\n"), "Cleat.Runtime stays off the load path");
+        Assert.That(r.Out, Does.StartWith("(\"Cleat.Neorepl\" \"Cleat.Nrepl\")\n"), "Cleat.Runtime stays off the load path");
         Assert.That(r.Out, Does.Contain("Usage: neorepl [COMMAND] [options]"));
     }
 

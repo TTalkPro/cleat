@@ -10,7 +10,7 @@
 
 ```clojure
 {:paths ["src"]
- :deps {Nrepl {:nuget/version "1.8.0"}          ; NuGet 包，源与凭据按 nuget.config（BaGetter 等）
+ :deps {Cleat.Nrepl {:nuget/version "1.8.0"}    ; NuGet 包，源与凭据按 nuget.config（BaGetter 等）
         my/util {:local/root "../util"}}         ; 本地的另一个 cleat 项目
  :aliases {:test {:extra-paths ["test"]}}}
 ```
@@ -43,7 +43,7 @@ packages/tools.build/bin/cleat-build pack
 packages/tools.build/bin/cleat-build install :version '"1.0.1"'      # 键值对按 EDN 读，并入参数 map
 ```
 
-`packages/nrepl/build.clj`、`packages/neorepl/build.clj` 是完整的例子（neorepl 经 NuGet 依赖 Nrepl）。
+`packages/nrepl/build.clj`、`packages/neorepl/build.clj` 是完整的例子（neorepl 经 NuGet 依赖 Cleat.Nrepl）。
 
 ## 与上游的对应
 

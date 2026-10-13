@@ -18,7 +18,7 @@ AOT 产物现在是每个命名空间一个 `.clj.dll`（ClojureCLR 的命名：
 
 目标：
 
-- C# / F# 项目 `dotnet add package Nrepl`（以及 cleat 运行时包），不调用任何初始化 API，直接使用 gen-class 生成的类型；
+- C# / F# 项目 `dotnet add package Cleat.Nrepl`（以及 cleat 运行时包），不调用任何初始化 API，直接使用 gen-class 生成的类型；
   也能经 `CleatRuntime.Var("ns", "f")` 调普通 Clojure 函数（相当于 `clojure.java.api.Clojure`）。
 - cleat 宿主与 Clojure 代码 `require` 已引用（NuGet 解析到）的包程序集里的命名空间。
 
@@ -26,7 +26,7 @@ AOT 产物现在是每个命名空间一个 `.clj.dll`（ClojureCLR 的命名：
 
 ### 2.1 形状
 
-一个包（如 nrepl）的全部命名空间在**一个进程、一个编译单元**里编成**一个程序集**，名字是包的程序集名（如 `Nrepl.dll`，由构建配置给出）。
+一个包（如 nrepl）的全部命名空间在**一个进程、一个编译单元**里编成**一个程序集**，名字是包的程序集名（如 `Cleat.Nrepl.dll`，由构建配置给出）。
 同包里的跨命名空间类型引用都在本程序集内解析，第 1 节问题 3 不复存在。
 
 程序集里每个命名空间一个初始化入口（静态方法，体是该文件的顶层形式，与现在单个 `.clj.dll` 的入口相同），外加程序集级的索引特性：
@@ -69,7 +69,7 @@ AOT 产物现在是每个命名空间一个 `.clj.dll`（ClojureCLR 的命名：
 `Cleat.Scheme` 或单独程序集的嵌入资源。镜像本身就是程序集，按程序集名经依赖清单找到，不再按文件路径找（宿主的开发布局——
 `src/boot/` 与环境变量——仍然支持）。
 
-Clojure 的包（如 `Nrepl`）的 nupkg 依赖 `Cleat.Runtime`（版本区间）与它自己的 Clojure 包依赖；`lib/net10.0/` 里只有它的包程序集。
+Clojure 的包（如 `Cleat.Nrepl`）的 nupkg 依赖 `Cleat.Runtime`（版本区间）与它自己的 Clojure 包依赖；`lib/net10.0/` 里只有它的包程序集。
 打包与推送（nuget.org、BaGetter）由 tools.build 的 `pack` / `push` 做（cleat-066）。
 
 ## 4. 惰性启动

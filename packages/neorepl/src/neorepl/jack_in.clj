@@ -69,7 +69,7 @@
 
 (defn- nrepl-source-dir
   "The load path directory nREPL is in, for the server's load path: the one
-  with its package assembly (Nrepl.dll), or with its sources."
+  with its package assembly (Cleat.Nrepl.dll), or with its sources."
   []
   (or (some-> (Cleat.Core.Runtime.PackageIndex/Locate "nrepl/cmdline") Path/GetDirectoryName)
       (some (fn [^String dir]

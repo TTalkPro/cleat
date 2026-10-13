@@ -1,6 +1,6 @@
 ;; Builds the neorepl package with tools.build (packages/tools.build): one
-;; package assembly Neorepl.dll, packed as the NuGet package Neorepl, which
-;; depends on Nrepl (resolved from the local feed or nuget.config's sources).
+;; package assembly Cleat.Neorepl.dll, packed as the NuGet package Cleat.Neorepl,
+;; which depends on Cleat.Nrepl (resolved from the local feed or nuget.config's sources).
 ;;
 ;;   packages/tools.build/bin/cleat-build pack [:version '"0.1.0"']
 ;;   packages/tools.build/bin/cleat-build install [:local-feed '"dir"']
@@ -8,7 +8,7 @@
 (ns build
   (:require [clojure.tools.build.api :as b]))
 
-(def lib 'Neorepl)
+(def lib 'Cleat.Neorepl)
 (def default-version "0.1.0")
 (def class-dir "target/classes")
 
