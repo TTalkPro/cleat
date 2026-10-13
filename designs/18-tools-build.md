@@ -86,5 +86,5 @@ cleat -I packages/tools.build/src -I packages/tools.namespace/src -m clojure.too
   `Cleat.Scheme.Clojure.Driver/CompilePackage`；`:filter-nses` 把包的根换成对应的子目录与文件（驱动的根检查因此也接受文件）。
 - **`process`**：`:inherit` 而 `*out*` / `*err*` 不是控制台时（REPL、测试捕获输出）转写到 `*out*` / `*err*`；`:write` / `:append` 建父目录。
 - **反射**：cleat 不报告反射（`*warn-on-reflection*` 无输出），上游的 `test-capture-reflection` 不移植。
-- **版本序**：`pack` 缺省依赖 `Cleat.Runtime >= 运行着的版本`（现在是 `0.1.0-dev`）；SemVer 里预发布标签按字典序比较，测试打的运行时包要不低于它（`0.1.0-test`）。
+- **版本序**：`pack` 缺省依赖 `Cleat.Runtime >= 运行着的版本`（现在是 `1.0.0`）；SemVer 里带预发布标签的版本低于同号正式版、标签之间按字典序比较，测试打的运行时包要不低于它（就用 `1.0.0`）。
 - **neorepl 的 jack-in** 仍只读用户项目 `cleat.edn` 的 `:paths` / `:middleware`，没有按 basis 解析 `:deps`（可以建在 `create-basis` 上，另行决定）。

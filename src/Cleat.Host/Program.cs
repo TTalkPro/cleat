@@ -101,7 +101,7 @@ public static class Program
             return Usage();
         }
         if (o.Help) return Usage();
-        if (o.Version) { Console.WriteLine("cleat " + CoreInfo.Version); return 0; }
+        if (o.Version) { Console.WriteLine(CoreInfo.Banner); return 0; }
         try
         {
             Start(o);
@@ -432,6 +432,7 @@ public static class Program
         {
             var editor = new LineEditor(new ReplServices(),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cleat_history"));
+            output.WriteLine(CoreInfo.Banner);   // clojure.main 的 REPL 先打 "Clojure 1.x"；输入被重定向时（Repl）不打，脚本化的输出不变
             while (true)
             {
                 string text = editor.Read(((Namespace)RT.CurrentNSVar.deref()).Name + "=> ", "  ");

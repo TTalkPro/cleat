@@ -333,10 +333,12 @@
         (editor/print-code editor (str value "\n"))))))
 
 (defn- banner [{:keys [address versions]}]
-  (let [{:keys [babashka clojure]} versions]
+  (let [{:keys [babashka cleat clojure]} versions]
     (str "neorepl connected to " address
          (cond
            babashka (str " (babashka " babashka ")")
+           ;; cleat: a cleat server says which cleat, then which Clojure
+           cleat (str " (Cleat " cleat (when clojure (str ", Clojure " clojure)) ")")
            clojure (str " (Clojure " clojure ")"))
          ". Ctrl-D or :repl/quit exits.\n")))
 

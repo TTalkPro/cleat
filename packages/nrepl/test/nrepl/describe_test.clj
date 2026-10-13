@@ -24,7 +24,9 @@
                    :clojure (assoc (#'middleware/safe-version *clojure-version*)
                                    :version-string (clojure-version))
                    ;; cleat: the CLR's version stands in for the JVM's.
-                   :clr {:version-string (str System.Environment/Version)}}
+                   :clr {:version-string (str System.Environment/Version)}
+                   :cleat (assoc (#'middleware/safe-version *cleat-version*)
+                                 :version-string (cleat-version))}
         :ops (mc/all-of (mc/via #(set (map name (keys %))) built-in-ops)
                         (fn [ops]
                           (every? empty? (vals ops))))

@@ -33,16 +33,21 @@
    (fn [dir]
      (let [{in :reader add-input :add-input add-eof :add-eof} (streams/queue-polling-reader (fn []))]
        (let [out (StringWriter.)
+             ;; the REPL writes through the synchronized wrapper (its lock is the wrapper
+             ;; itself); reading the screen takes the same lock, or StringBuilder.ToString
+             ;; races the appends
+             sync-out (TextWriter/Synchronized out)
+             text #(locking sync-out (str out))
              repl (future (main/run ["repl" "-p" (str *port*)]
                                     {:dir dir
                                      :sessions-file (test-server/file dir "sessions.edn")
                                      :history-dir (test-server/file dir "history")
-                                     :terminal (merge {:input in :output (TextWriter/Synchronized out) :width 80 :eldoc? false}
+                                     :terminal (merge {:input in :output sync-out :width 80 :eldoc? false}
                                                       opts)}))
              type (fn [s] (add-input s))
              screen (fn [re]
                       (loop [tries 1000]
-                        (let [s (strip-ansi (str out))]
+                        (let [s (strip-ansi (text))]
                           (cond
                             (re-find re s) s
                             (zero? tries) (throw (ex-info (str "Never saw " re) {:screen s}))
@@ -52,7 +57,7 @@
            (f type screen)
            (type "\u0004")
            (is (= 0 (deref repl 10000 :timeout)))
-           {:out (str out)
+           {:out (text)
             :history (some-> (first (try (System.IO.Directory/GetFiles (test-server/file dir "history"))
                                          (catch Exception _ nil)))
                              slurp)}
@@ -68,7 +73,9 @@
               (type "(+ 40 2)\r")
               (is (screen #"(?m)^42\nuser=> $"))))]
       (testing "with a banner"
-        (is (str/includes? (strip-ansi out) (str "neorepl connected to 127.0.0.1:" *port*))))
+        (is (str/includes? (strip-ansi out) (str "neorepl connected to 127.0.0.1:" *port*)))
+        ;; cleat: a cleat server's versions (cleat-068)
+        (is (str/includes? (strip-ansi out) (str "(Cleat " (cleat-version) ", Clojure " (clojure-version) ")"))))
       (testing "with values highlighted"
         (is (str/includes? out "\u001b[35m42")))
       (testing "and kept in the history"

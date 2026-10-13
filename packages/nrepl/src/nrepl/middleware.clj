@@ -63,8 +63,10 @@
       :versions {:nrepl (safe-version version/version)
                  :clojure (safe-version
                            (assoc *clojure-version* :version-string (clojure-version)))
-                 ;; cleat: the CLR's version takes the place of the JVM's.
-                 :clr (safe-version (clr-version))}
+                 ;; cleat: the CLR's version takes the place of the JVM's, and
+                 ;; cleat reports its own version
+                 :clr (safe-version (clr-version))
+                 :cleat (safe-version (assoc *cleat-version* :version-string (cleat-version)))}
       :status :done}
      (when aux {:aux aux}))))
 

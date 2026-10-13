@@ -134,7 +134,8 @@
             ids (set (map (fn [r] [(:suite r) (:label r)]) rows))
             failing (set (map (fn [r] [(:suite (:row r)) (:label (:row r))]) bad))
             fresh (sort (remove listed failing))
-            stale (sort (remove failing (keys listed)))]
+            ;; :flaky 的条目可过可不过（结果取决于对象哈希等进程内的偶然顺序），不算过期
+            stale (sort (remove #(or (failing %) (and (ids %) (:flaky (listed %)))) (keys listed)))]
         (println "\ngate:" (count listed) "classified divergences," (count failing) "failing rows")
         (doseq [[s l] fresh] (println "  NEW failure (not in" dpath "):" (pr-str s) (pr-str l)))
         (doseq [[s l] stale] (println (if (ids [s l]) "  STALE entry (row passes now):" "  STALE entry (no such row):") (pr-str s) (pr-str l)))

@@ -7493,6 +7493,33 @@ clojure.lang.IKVReduce
        (when (:interim *clojure-version*)
          "-SNAPSHOT")))
 
+;; CLEAT: cleat's own version (Cleat.Core.Runtime.CoreInfo/Version), as
+;; ClojureScript has *clojurescript-version*; *clojure-version* is the
+;; Clojure language level cleat implements.
+(let [version-string (. Cleat.Core.Runtime.CoreInfo Version)
+      [_ major minor incremental qualifier]
+      (re-matches #"(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9_.]+))?" version-string)]
+  (def ^:dynamic *cleat-version*
+    {:major (Int32/Parse ^String major)
+     :minor (Int32/Parse ^String minor)
+     :incremental (Int32/Parse ^String incremental)
+     :qualifier qualifier}))
+
+(add-doc-and-meta *cleat-version*
+  "The version info for cleat (Clojure on .NET), as a map containing :major
+  :minor :incremental and :qualifier keys, like *clojure-version*, which is
+  the Clojure language level cleat implements."
+  {:added "cleat"})
+
+(defn
+  cleat-version
+  "Returns cleat's version as a printable string."
+  {:added "cleat"}
+  []
+  (str (:major *cleat-version*) "." (:minor *cleat-version*) "." (:incremental *cleat-version*)
+       (when-let [q (:qualifier *cleat-version*)]
+         (when (pos? (count q)) (str "-" q)))))
+
 (defn promise
   "Returns a promise object that can be read with deref/@, and set,
   once only, with deliver. Calls to deref/@ prior to delivery will

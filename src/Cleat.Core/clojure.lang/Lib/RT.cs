@@ -428,7 +428,9 @@ namespace clojure.lang
             // CLEAT-005: removed DLR ScriptRuntimeSetup/LanguageSetup/ScriptRuntime/ClojureContext bootstrap (Microsoft.Scripting.Hosting)
 
             // CLEAT-005: was _versionProperties.LoadFromString(clojure.lang.Properties.Resources.version) (resx -> Bootstrap/version.properties)
-            _versionProperties.LoadFromString("version=1.13.0-SNAPSHOT");
+            // CLEAT: the Clojure language level cleat implements (Cleat.Core.Runtime.CoreInfo.ClojureVersion); cleat's own version
+            // is CoreInfo.Version (*cleat-version*)
+            _versionProperties.LoadFromString("version=" + Cleat.Core.Runtime.CoreInfo.ClojureVersion);
 
             Keyword arglistskw = Keyword.intern(null, "arglists");
             Symbol namesym = Symbol.intern("name");

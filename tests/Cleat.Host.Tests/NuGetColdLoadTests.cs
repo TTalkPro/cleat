@@ -16,8 +16,9 @@ namespace Cleat.Host.Tests;
 [Category("Bootstrap"), NonParallelizable]
 public class NuGetColdLoadTests
 {
-    // at least the running version (0.1.0-dev): packages built with the default :runtime-version depend on Cleat.Runtime >= it
-    private const string Version = "0.1.0-test";
+    // at least the running version (CoreInfo.Version, 1.0.0): packages built with the default :runtime-version depend on
+    // Cleat.Runtime >= it (and in SemVer 1.0.0-anything sorts below 1.0.0); the fixture's NuGet caches are isolated
+    private const string Version = "1.0.0";
 
     private const string GreeterSource = @"(ns demo.greeter
   (:require [clojure.string :as str])

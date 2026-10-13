@@ -1,8 +1,8 @@
 ;; cleat 在语料 :common 行上的已知偏离（cleat-032）。键为 [suite label]；格式同 jolt 的 known-divergences.edn。
 ;; 门禁：cleat tools/conformance.clj --gate（Conformance 测试）——失败行不在表中（新失败）或表中的行已通过 / 不在语料中（过期）都失败。
-;; 改动后按实际结果有意地更新本表（每条要有 :category 与具体的 :reason）。
+;; 改动后按实际结果有意地更新本表（每条要有 :category 与具体的 :reason）。 `:flaky true` 的条目可过可不过（结果取决于进程内的偶然顺序），门禁不算它过期。
 {:doc "Rows of tests/conformance/corpus.edn (:common) that fail on cleat, each classified. tools/conformance.clj --gate fails on a NEW failing row and on a STALE entry."
- :counts {:corpus/jolt-value 98, :error-model 6, :host/boxing 3, :host/class-name 17, :host/defaults 1, :host/exception-type 28, :host/hash 2, :host/jvm-api 310, :host/message 2, :host/numeric-types 10, :host/reader-features 4, :host/regex 39, :host/strings 1, :not-yet 27, :numeric 2, :printf 2, :strictness 2, :upstream/clojureclr 7}
+ :counts {:corpus/jolt-value 98, :error-model 6, :host/boxing 3, :host/class-name 17, :host/defaults 1, :host/exception-type 28, :host/hash 3, :host/jvm-api 310, :host/message 2, :host/numeric-types 10, :host/reader-features 4, :host/regex 39, :host/strings 1, :not-yet 27, :numeric 2, :printf 2, :strictness 2, :upstream/clojureclr 7}
  :legend
  {:host/jvm-api
   "the row calls a Java API: java.* / javax.* classes, java.lang statics (Long/MAX_VALUE, Integer/parseInt, Double/isNaN, System/getProperty), Java method names (.getMessage, .length, .getName, .substring), java.io / clojure.java.io, or clojure.lang members by their JVM names. cleat runs on the CLR and does not emulate the Java class library (designs/03 §4); the CLR spelling (.Message, Int64/MaxValue, clojure.clr.io …) works"
@@ -571,6 +571,7 @@
   {:suite "io / reader mark and reset" :label "a fresh mark after an invalidated one works again" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
   {:suite "io / reader mark and reset" :label "the same over a StringReader" :category :host/jvm-api :reason "clojure.java.io (java.io.File / URL / streams); the CLR counterpart is clojure.clr.io"}
   {:suite "take / non-integer count" :label "dropping a count past the long range from a vector is out of range, as IDrop casts it" :category :host/message :reason "the message prints the double with .NET formatting inside a ClojureCLR message (1E+30, ∞)"}
-  {:suite "clojure 1.12 / version" :label "*clojure-version* is 1.12" :category :upstream/clojureclr :reason "ClojureCLR's core.clj is Clojure 1.13 (alpha)"}
+  {:suite "clojure 1.12 / version" :label "*clojure-version* is 1.12" :category :upstream/clojureclr :reason "cleat implements Clojure 1.13.0: core.clj tracks ClojureCLR master, which has the 1.13 additions (cleat-068)"}
+  {:suite "seq / lazy over infinite" :label "eduction reduces" :category :host/hash :flaky true :reason "find-protocol-impl picks among Eduction's unrelated interfaces with impls (IEnumerable, IReduceInit) in the iteration order of (supers c), a hash set of Types keyed by identity hash, as on the JVM (which raises): the IReduceInit impl casts to IReduce and throws, the IEnumerable one returns 9; which one comes first changes when the Clojure image is rebuilt"}
   {:suite "clojure 1.12 / reader" :label "a bad arg literal" :category :host/exception-type :reason "a bad %-arg literal throws ArgumentException, not IllegalStateException"}
  ]}
