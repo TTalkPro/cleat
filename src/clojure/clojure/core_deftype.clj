@@ -353,7 +353,7 @@
     (when (seq non-syms)
       ;; CLEAT-017: Compiler+CompilerException / LineVar / ColumnVar → ExpanderException（行列未知，记 0；原 Exception 作为 cause）
       (throw (Cleat.Core.Expand.ExpanderException.
-              *file* 0 0 :clojure.error/macro-syntax-check "defrecord and deftype fields must be symbols"
+              *file* 0 0 :compile-syntax-check "defrecord and deftype fields must be symbols"
               (Exception.                                                                                                       ;;; AssertionError.
                (str "defrecord and deftype fields must be symbols, "
                     *ns* "." name " had: "

@@ -96,7 +96,7 @@ cleat -I packages/tools.build/src -I packages/tools.namespace/src -m clojure.too
   运行 `cleat -I … <:cleat-opts> <:main-opts> 参数…`，终端交给子进程。与 §5 的 `cleat-build 函数`（`clj -T`）并列。
 - **neorepl 的 jack-in 用 basis**：tools.build 在加载路径上时，服务的加载路径是项目的 basis（`:neorepl/aliases` 选别名）；
   `Cleat.Neorepl` 因此依赖 `Cleat.ToolsBuild`。
-- **tools.build、tools.namespace 也是 NuGet 包**：`Cleat.ToolsBuild 0.10.14`、`Cleat.ToolsNamespace 1.5.1`（版本沿用上游）。
+- **tools.build、tools.namespace 也是 NuGet 包**：`Cleat.ToolsBuild 0.10.15`、`Cleat.ToolsNamespace 1.5.1`（版本沿用上游；tools.build 移植自上游 0.10.14，推到 BaGetter 之后补了 `push :configfile` 与回退包目录两处修正，用户定升为 0.10.15）。
 - **`push` 到 http:// 源**：NuGet 只按 nuget.config 里标了 `allowInsecureConnections` 的**源名字**推送（BaGetter 常见）；`push` 加 `:configfile`，
   在项目根目录运行（源名字按项目的 nuget.config 查）。
 - **basis 读回退包目录**：`project.assets.json` 的 `packageFolders` 里第一个是全局包目录，其后是回退目录；从回退目录解析到的包只在那里，

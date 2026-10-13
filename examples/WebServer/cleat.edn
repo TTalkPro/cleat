@@ -12,7 +12,10 @@
   ;; cleat-run -M:test
   :test {:extra-paths ["test"] :main-opts ["-m" "web.test-runner"]}
   ;; cleat-run -M:neorepl -- neorepl, from BaGetter as well
-  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.0"}}
+  ;; (Cleat.ToolsBuild pinned: neorepl 0.1.0 asks for >= 0.10.14, and NuGet takes
+  ;; that lowest version when it's in the local cache even though it's unlisted)
+  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.0"}
+                         Cleat.ToolsBuild {:nuget/version "0.10.15"}}
             :main-opts ["-m" "neorepl.main"]}}
 
  ;; the aliases neorepl's jack-in gives the nREPL server's basis

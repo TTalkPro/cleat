@@ -6143,7 +6143,7 @@ Note that read can execute code (controlled by *read-eval*),
            (.Add (.Data exception) "StackTrace" trace)                                                                   ;;; (.setStackTrace exception trace)  - can't set stack trace, so store the filtered trace on the Data element'
       ;; CLEAT-017: Compiler+CompilerException / LineVar / ColumnVar → Cleat.Core.Expand.ExpanderException（行列未知，记 0）
       (throw (Cleat.Core.Expand.ExpanderException.
-              *file* 0 0 :clojure.error/compile-syntax-check message
+              *file* 0 0 :compile-syntax-check message
               exception)))))
 
 (defn- libspec?

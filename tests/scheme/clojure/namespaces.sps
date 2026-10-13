@@ -208,7 +208,7 @@
       (with-clr-exception-handler
         (lambda (e) (str (clr-call clojure.lang.IExceptionInfo getData e)))
         (lambda () (load-string "\n (nope)")))
-      "{:clojure.error/source \"NO_SOURCE_PATH\", :clojure.error/line 2, :clojure.error/column 2, :clojure.error/phase :clojure.error/compile-syntax-check}")
+      "{:clojure.error/source \"NO_SOURCE_PATH\", :clojure.error/line 2, :clojure.error/column 2, :clojure.error/phase :compile-syntax-check}")
     (test "def errors"
       (load-string "(def)")
       '(exception "Syntax error (NO_SOURCE_PATH:1:1) Too few arguments to def"))

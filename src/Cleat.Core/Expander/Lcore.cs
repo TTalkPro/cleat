@@ -86,8 +86,10 @@ public sealed class ExpanderException : Exception, IExceptionInfo
     public int Column { get; }
     public Keyword Phase { get; }
 
-    public static readonly Keyword PhaseSyntax = Keyword.intern("clojure.error", "macro-syntax-check"),
-      PhaseMacroexpand = Keyword.intern("clojure.error", "macroexpand"), PhaseCompile = Keyword.intern("clojure.error", "compile-syntax-check");
+    // the :clojure.error/phase values are plain keywords, as Compiler.PHASE_* on the JVM (clojure.main/ex-triage
+    // dispatches on :compile-syntax-check …); cleat-069 found them namespaced, which made ex-str throw "No matching clause"
+    public static readonly Keyword PhaseSyntax = Keyword.intern(null, "macro-syntax-check"),
+      PhaseMacroexpand = Keyword.intern(null, "macroexpansion"), PhaseCompile = Keyword.intern(null, "compile-syntax-check");
 
     /// <summary>原因文本（不含位置前缀）：Clojure 的 ex-str 把它放在第二行（cleat-055）。</summary>
     public string Reason { get; }

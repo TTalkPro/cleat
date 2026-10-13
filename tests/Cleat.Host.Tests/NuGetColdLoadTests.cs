@@ -184,7 +184,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
     private void BuildClojurePackages()
     {
         if (_clojurePackagesBuilt) return;
-        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.1"), ("tools.build", "cleat.toolsbuild.0.10.14"),
+        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.1"), ("tools.build", "cleat.toolsbuild.0.10.15"),
                                              ("nrepl", "cleat.nrepl.1.8.0"), ("neorepl", "cleat.neorepl.0.1.0") })
         {
             string dir = Path.Combine(_root, "sources", package);

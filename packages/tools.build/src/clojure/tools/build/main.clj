@@ -39,11 +39,30 @@
 
 (defn- run-aliases
   "-M:aliases: run the project's cleat with the basis's load path and the
-  aliases' :main-opts; returns the exit status."
+  aliases' :main-opts, standard streams inherited; returns the exit status.
+  SIGTERM is passed on to the program (and this process waits for it), so
+  killing cleat-run stops what it runs instead of orphaning it; Ctrl-C reaches
+  both through the terminal anyway."
   [alias-arg args]
-  (let [process (requiring-resolve 'clojure.tools.build.api/process)
-        command (run-command alias-arg args)]
-    (:exit (process {:command-args command}))))
+  (let [[cmd & cmd-args] (run-command alias-arg args)
+        psi (System.Diagnostics.ProcessStartInfo. ^String cmd)
+        _ (doseq [a cmd-args] (.Add (.ArgumentList psi) (str a)))
+        _ (set! (.UseShellExecute psi) false)
+        proc (System.Diagnostics.Process/Start psi)
+        forward (fn [^System.Runtime.InteropServices.PosixSignalContext ctx]
+                  (set! (.Cancel ctx) true)
+                  (try
+                    (.WaitForExit (System.Diagnostics.Process/Start "kill" (str "-TERM " (.Id proc))))
+                    (catch Exception _ (.Kill proc true))))
+        registration (when-not (System.OperatingSystem/IsWindows)
+                       (System.Runtime.InteropServices.PosixSignalRegistration/Create
+                         System.Runtime.InteropServices.PosixSignal/SIGTERM
+                         (gen-delegate |System.Action`1[System.Runtime.InteropServices.PosixSignalContext]| [ctx] (forward ctx))))]
+    (try
+      (.WaitForExit proc)
+      (.ExitCode proc)
+      (finally
+        (some-> registration .Dispose)))))
 
 (defn -main
   [& args]
