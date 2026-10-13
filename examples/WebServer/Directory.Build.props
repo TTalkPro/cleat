@@ -1,15 +1,12 @@
 <Project>
   <!-- The example is a standalone project: this file stops MSBuild from picking up the cleat
-       repository's Directory.Build.props. CleatBuild is the tools.build launcher the host's build
-       runs to compile the Clojure code (cleat-build on PATH, or the repository's when the example
-       sits inside it); Cleat is the cleat command it runs with ($CLEAT). Override either with
-       -p:CleatBuild=... / -p:Cleat=... -->
+       repository's Directory.Build.props. CleatCommand is how the host's build runs cleat to compile
+       the Clojure code: the local dotnet tool Cleat.Cli (.config/dotnet-tools.json, `dotnet tool
+       restore`), or, when the example sits inside the cleat repository, the cleat built there.
+       Override with -p:CleatCommand=... (e.g. cleat, for a global install). -->
   <PropertyGroup>
     <CleatRepo>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..'))</CleatRepo>
-    <CleatBuild Condition="'$(CleatBuild)' == '' and Exists('$(CleatRepo)packages/tools.build/bin/cleat-build')">$(CleatRepo)packages/tools.build/bin/cleat-build</CleatBuild>
-    <CleatBuild Condition="'$(CleatBuild)' == ''">cleat-build</CleatBuild>
-    <Cleat Condition="'$(Cleat)' == '' and '$(CLEAT)' != ''">$(CLEAT)</Cleat>
-    <Cleat Condition="'$(Cleat)' == '' and Exists('$(CleatRepo)src/Cleat.Host/bin/Release/net10.0/cleat')">$(CleatRepo)src/Cleat.Host/bin/Release/net10.0/cleat</Cleat>
-    <Cleat Condition="'$(Cleat)' == ''">cleat</Cleat>
+    <CleatCommand Condition="'$(CleatCommand)' == '' and Exists('$(CleatRepo)src/Cleat.Host/bin/Release/net10.0/cleat')">"$(CleatRepo)src/Cleat.Host/bin/Release/net10.0/cleat"</CleatCommand>
+    <CleatCommand Condition="'$(CleatCommand)' == ''">dotnet cleat</CleatCommand>
   </PropertyGroup>
 </Project>

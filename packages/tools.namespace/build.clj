@@ -1,7 +1,7 @@
 ;; Builds tools.namespace (partial port) with tools.build: one package assembly
 ;; Cleat.ToolsNamespace.dll, packed as the NuGet package Cleat.ToolsNamespace.
 ;;
-;;   packages/tools.build/bin/cleat-build pack | install [:local-feed '"dir"'] | push [:source '"url"']
+;;   cleat -T:build pack | install [:local-feed '"dir"'] | push [:source '"url"']
 (ns build
   (:require [clojure.tools.build.api :as b]))
 

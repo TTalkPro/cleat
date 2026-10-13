@@ -1,9 +1,9 @@
 ;; Builds the nrepl package with tools.build (packages/tools.build):
 ;; one package assembly Cleat.Nrepl.dll, packed as the NuGet package Cleat.Nrepl.
 ;;
-;;   packages/tools.build/bin/cleat-build pack [:version '"1.8.0"']
-;;   packages/tools.build/bin/cleat-build install [:local-feed '"dir"']
-;;   packages/tools.build/bin/cleat-build push [:source '"https://host/v3/index.json"'] [:api-key '"..."']
+;;   cleat -T:build pack [:version '"1.8.0"']
+;;   cleat -T:build install [:local-feed '"dir"']
+;;   cleat -T:build push [:source '"https://host/v3/index.json"'] [:api-key '"..."']
 (ns build
   (:require [clojure.tools.build.api :as b]))
 

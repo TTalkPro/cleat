@@ -7,10 +7,13 @@
 ;; `build` namespace, i.e. build.clj in the project root); the rest are
 ;; key/value pairs read as EDN, passed as one params map.
 ;;
-;; `-M:alias1:alias2 args...` runs the project instead, as `clj -M:alias` does
-;; (bin/cleat-run): the basis of cleat.edn with those aliases gives the load
-;; path (-I each entry), the aliases' :cleat-opts and :main-opts come next,
-;; then args; the terminal is passed on, and the exit status is the program's.
+;; `-M:alias1:alias2 args...` runs the project instead, as `clj -M:alias` does:
+;; the basis of cleat.edn with those aliases gives the load path (-I each
+;; entry), the aliases' :cleat-opts and :main-opts come next, then args; the
+;; terminal is passed on, and the exit status is the program's.
+;;
+;; The cleat host has both built in (cleat-071): `cleat -T:build fn :k v` and
+;; `cleat -M:alias args`, the latter in the same process (deps-args).
 
 (ns clojure.tools.build.main
   (:require
@@ -19,29 +22,39 @@
 
 (defn- usage []
   (binding [*out* *err*]
-    (println "Usage: cleat-build FUNCTION [:key value]...")
-    (println "       cleat-run -M:alias[:alias...] [args...]")
+    (println "Usage: cleat -T:NS FUNCTION [:key value]...   (NS: build for build.clj)")
+    (println "       cleat -M:alias[:alias...] [args...]")
     (println "  FUNCTION - a function taking a params map; unqualified names are in the build namespace (build.clj)")
     (println "  :key value - EDN pairs, merged into the params map")))
 
-(defn run-command
-  "The command line for -M:aliases with args (a vector of strings)."
-  [alias-arg args]
+(defn deps-args
+  "What -M:alias1:alias2 means for the project in the current directory:
+  {:load-path [entries of the basis], :args [the aliases' :cleat-opts, then
+  :main-opts]}. The cleat host (cleat -M:…, cleat-071) puts :load-path on its
+  load path and runs :args followed by the rest of its command line."
+  [alias-arg]
   (let [aliases (->> (str/split (subs alias-arg 2) #":") (remove str/blank?) (map keyword) vec)
         create-basis (requiring-resolve 'clojure.tools.build.api/create-basis)
-        cleat (requiring-resolve 'clojure.tools.build.tasks.process/cleat-executable)
         {:keys [classpath-roots argmap]} (create-basis {:aliases aliases})]
+    {:load-path (mapv str classpath-roots)
+     :args (vec (concat (:cleat-opts argmap) (:main-opts argmap)))}))
+
+(defn run-command
+  "The command line for -M:aliases with args (a vector of strings), as a
+  separate cleat process."
+  [alias-arg args]
+  (let [{:keys [load-path] deps :args} (deps-args alias-arg)
+        cleat (requiring-resolve 'clojure.tools.build.tasks.process/cleat-executable)]
     (vec (concat (cleat)
-                 (mapcat #(vector "-I" (str %)) classpath-roots)
-                 (:cleat-opts argmap)
-                 (:main-opts argmap)
+                 (mapcat #(vector "-I" %) load-path)
+                 deps
                  args))))
 
 (defn- run-aliases
   "-M:aliases: run the project's cleat with the basis's load path and the
   aliases' :main-opts, standard streams inherited; returns the exit status.
   SIGTERM is passed on to the program (and this process waits for it), so
-  killing cleat-run stops what it runs instead of orphaning it; Ctrl-C reaches
+  killing the runner stops what it runs instead of orphaning it; Ctrl-C reaches
   both through the terminal anyway."
   [alias-arg args]
   (let [[cmd & cmd-args] (run-command alias-arg args)
@@ -75,12 +88,12 @@
       (usage)
       (System.Environment/Exit (if f 0 2)))
     (when (odd? (count kvs))
-      (binding [*out* *err*] (println "cleat-build: key/value args must come in pairs:" (str/join " " kvs)))
+      (binding [*out* *err*] (println "cleat -T: key/value args must come in pairs:" (str/join " " kvs)))
       (System.Environment/Exit 2))
     (let [sym (symbol f)
           sym (if (namespace sym) sym (symbol "build" (name sym)))
           params (into {} (map (fn [[k v]] [(edn/read-string k) (edn/read-string v)]) (partition 2 kvs)))
           fvar (or (requiring-resolve sym)
-                   (throw (ex-info (str "cleat-build: no function " sym) {:fn sym})))]
+                   (throw (ex-info (str "cleat -T: no function " sym) {:fn sym})))]
       (@fvar params)
       (shutdown-agents))))

@@ -29,8 +29,8 @@
 //                         src/boot/Cleat.Clojure.Libs.dll（designs/17）；宿主登记 Clojure 镜像旁的它，require 走包程序集
 //                         （从源码加载不了的命名空间跳过）                                  [cleat-033、cleat-067]
 //   pack [-o 目录] [--version 版本]
-//                         运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）：Release 构建、compile-libs，再
-//                         dotnet pack src/Cleat.Runtime；默认输出 artifacts/nuget/。推到本地目录源或 BaGetter 后 C# / F#
+//                         运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）与 dotnet tool 包 Cleat.Cli（cleat-071）：
+//                         Release 构建、compile-libs、tools.build 的包程序集，再 dotnet pack；默认输出 artifacts/nuget/。推到本地目录源或 BaGetter 后 C# / F#
 //                         项目引用它与 cleat 的包程序集即可（运行时第一次用到时自己启动）
 //   bench [-r 次数] [--write] [--only 正则]
 //                         运行 bench/ 下的基准（每个一次宿主进程，逐个打印 BENCH <名字> <毫秒>），聚合最小/中位；
@@ -185,11 +185,43 @@ void Pack(string[] a)
     }
     BuildCSharp();
     CompileLibs([]);
+    CompileToolLibs();
     var args = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Runtime", "Cleat.Runtime.csproj"), "-c", "Release", "-o", outDir,
                                   "-v", "quiet", "-nologo", "-p:BuildBootImage=false" };
-    if (version != null) args.Add("-p:Version=" + version);
+    // PackageVersion, not Version: a global -p:Version reaches every referenced project and changes the assembly versions
+    // (Cleat.Core 1.0.1.0 …), and package assemblies compiled against those then require them (cleat-071)
+    if (version != null) args.Add("-p:PackageVersion=" + version);
     Run("dotnet", args.ToArray());
-    Console.WriteLine("packed " + string.Join(" ", Directory.GetFiles(outDir, "Cleat.Runtime.*.nupkg").Select(Path.GetFileName)));
+    // dotnet tool 包 Cleat.Cli（cleat-071）：宿主，带镜像、驱动库、随附库与 tools.build
+    var tool = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-o", outDir,
+                                  "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-p:PackAsTool=true",
+                                  "-p:PackageVersion=" + (version ?? CoreVersion()) };
+    Run("dotnet", tool.ToArray());
+    Console.WriteLine("packed " + string.Join(" ", Directory.GetFiles(outDir, "Cleat.*.nupkg").Select(Path.GetFileName)));
+}
+
+// CoreInfo.Version（Cleat.Cli 的缺省版本，与 Cleat.Runtime 的相同）
+string CoreVersion() =>
+    System.Text.RegularExpressions.Regex.Match(File.ReadAllText(Path.Combine(srcDir, "Cleat.Core", "Runtime", "CoreInfo.cs")),
+        "Version = \"([^\"]+)\"").Groups[1].Value;
+
+// tools.build 与 tools.namespace 编成包程序集放进 src/boot/tools/（cleat-071）：Cleat.Cli 随附，宿主的 -M / -T 用它们
+void CompileToolLibs()
+{
+    string host = Bin("Cleat.Host", "cleat.dll"), outDir = Path.Combine(bootDir, "tools");
+    if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
+    Directory.CreateDirectory(outDir);
+    foreach (var (package, assembly, name) in new[] { ("tools.namespace", "Cleat.ToolsNamespace", "tools.namespace"),
+                                                      ("tools.build", "Cleat.ToolsBuild", "tools.build") })
+    {
+        string src = Path.Combine(root, "packages", package, "src");
+        var nses = Directory.GetFiles(src, "*.clj*", SearchOption.AllDirectories)
+            .Select(f => Path.ChangeExtension(Path.GetRelativePath(src, f), null).Replace(Path.DirectorySeparatorChar, '.').Replace('_', '-'))
+            .OrderBy(n => n, StringComparer.Ordinal);
+        Run("dotnet", [host, "-I", outDir, "-I", src, "--compile-package", Path.Combine(outDir, assembly + ".dll"),
+                       "--package", name, "--root", src, .. nses], root);
+    }
+    Console.WriteLine("compiled tools.namespace and tools.build -> " + outDir);
 }
 
 // 基准（cleat-042）：bench/ 下每个 *.clj 一次宿主进程（-m bench.<名字>），解析 BENCH 行，聚合最小/中位。

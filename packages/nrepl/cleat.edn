@@ -1,5 +1,5 @@
 ;; The nrepl package as a cleat project (designs/18): build with tools.build,
-;;   packages/tools.build/bin/cleat-build pack          ; target/Cleat.Nrepl.1.8.0.nupkg
-;;   packages/tools.build/bin/cleat-build install       ; into the local NuGet feed
-;;   packages/tools.build/bin/cleat-build push :source '"https://api.nuget.org/v3/index.json"'
+;;   cleat -T:build pack          ; target/Cleat.Nrepl.1.8.0.nupkg
+;;   cleat -T:build install       ; into the local NuGet feed
+;;   cleat -T:build push :source '"https://api.nuget.org/v3/index.json"'
 {:paths ["src"]}

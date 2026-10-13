@@ -9,6 +9,7 @@
 
 ```
 WebServer/
+  .config/dotnet-tools.json  本地 dotnet tool：Cleat.Cli（命令 cleat），dotnet tool restore 从 BaGetter 装
   nuget.config            包从哪来：BaGetter（Cleat.*）与 nuget.org
   cleat.edn               cleat 项目：加载路径、NuGet 依赖、别名
   build.clj               构建脚本（tools.build）：prep / compile / test / pack / push / publish
@@ -21,8 +22,9 @@ WebServer/
 
 ## 准备
 
-- .NET 10 SDK；cleat（`cleat` 在 PATH 上，或环境变量 `CLEAT` 指向它）；tools.build 的启动脚本 `cleat-build` / `cleat-run`
-  （在 cleat 仓库的 `packages/tools.build/bin/`，放进 PATH）。下文的命令都在本目录执行。
+- .NET 10 SDK。cleat 本身是 dotnet tool `Cleat.Cli`（命令 `cleat`，带运行时与 tools.build），本项目的 `.config/dotnet-tools.json`
+  钉了版本：在本目录 `dotnet tool restore` 一次，之后用 `dotnet cleat …`（也可以 `dotnet tool install -g Cleat.Cli` 全局装，用 `cleat …`）。
+  下文的命令都在本目录执行。
 - 一个 BaGetter，地址写在 `nuget.config`（缺省 `http://localhost:5000/v3/index.json`）：
 
   ```sh
@@ -32,11 +34,14 @@ WebServer/
 - 把 cleat 的包推上去（在 cleat 仓库里；key 用环境变量 `NUGET_API_KEY` 或 `:api-key`）：
 
   ```sh
-  dotnet run tools/build.cs -- pack -o artifacts/nuget                  # Cleat.Runtime
-  dotnet nuget push artifacts/nuget/Cleat.Runtime.1.0.1.nupkg --source bagetter \
-      --configfile examples/WebServer/nuget.config --api-key "$NUGET_API_KEY"
+  dotnet run tools/build.cs -- pack -o artifacts/nuget                  # Cleat.Runtime 与 Cleat.Cli
+  for n in Cleat.Runtime Cleat.Cli; do
+    dotnet nuget push artifacts/nuget/$n.1.0.1.nupkg --source bagetter \
+        --configfile examples/WebServer/nuget.config --api-key "$NUGET_API_KEY"
+  done
+  cleat=$PWD/src/Cleat.Host/bin/Release/net10.0/cleat                   # 仓库里构建出的 cleat
   for p in tools.namespace tools.build nrepl neorepl; do                  # 按依赖顺序
-    (cd packages/$p && cleat-build install && cleat-build push :source '"bagetter"' \
+    (cd packages/$p && $cleat -T:build install && $cleat -T:build push :source '"bagetter"' \
         :configfile '"../../examples/WebServer/nuget.config"')
   done
   ```
@@ -58,11 +63,12 @@ tools.build 的 `create-basis` 把它们交给 `dotnet restore`：源、凭据�
 
 ## 2. 用 neorepl 开发
 
-neorepl 本身也是 BaGetter 上的包，`cleat.edn` 的别名 `:neorepl` 把它加进依赖：
+neorepl 本身也是 BaGetter 上的包，`cleat.edn` 的别名 `:neorepl` 把它加进依赖，`cleat -M:neorepl` 就像 `clj -M:neorepl`：
 
 ```sh
-cleat-build prep          # 先把 C# 库编进 target/dotnet（cleat.edn 的 :paths 里有它）
-cleat-run -M:neorepl      # REPL；没有运行着的 nREPL 服务时，为本项目起一个（jack-in）
+dotnet tool restore                 # 一次：装 Cleat.Cli
+dotnet cleat -T:build prep          # 先把 C# 库编进 target/dotnet（cleat.edn 的 :paths 里有它）
+dotnet cleat -M:neorepl             # REPL；没有运行着的 nREPL 服务时，为本项目起一个（jack-in）
 ```
 
 jack-in 起的服务的加载路径就是项目的 basis（`:neorepl/aliases [:dev]` 加上 `test/`）：项目源码、C# 库、NuGet 依赖都在上面。
@@ -78,7 +84,7 @@ user=> (.Greet (Web.Handlers.) "gen-class")          ; gen-class 的类型在 RE
 user=> (require 'web.handlers-test) (clojure.test/run-tests 'web.handlers-test)
 ```
 
-其他用法：`cleat-run -M:neorepl eval '(+ 1 2)'`、`cleat-run -M:neorepl server`（只起服务，给编辑器连）、`cleat-run -M:test`（跑测试）。
+其他用法：`dotnet cleat -M:neorepl eval '(+ 1 2)'`、`dotnet cleat -M:neorepl server`（只起服务，给编辑器连）、`dotnet cleat -M:test`（跑测试）。
 
 ### 连进正在运行的服务
 
@@ -88,7 +94,7 @@ user=> (require 'web.handlers-test) (clojure.test/run-tests 'web.handlers-test)
 WEB_NREPL_PORT=7888 dotnet run --project host -- --urls http://127.0.0.1:8080
 curl 'http://127.0.0.1:8080/hello?name=cleat'          # {"name":"cleat","message":"hello, cleat!"}
 
-cleat-run -M:neorepl -p 7888
+dotnet cleat -M:neorepl -p 7888
 user=> (in-ns 'web.handlers)
 web.handlers=> (defn greeting-text [n] (str "hi there, " n "!"))
 
@@ -104,13 +110,14 @@ dotnet build host
 按顺序做三件事：
 
 1. 编 `csharp/WebCore`（主机的 `ProjectReference`）；
-2. **编 Clojure**：`host/WebServer.csproj` 里的 MSBuild 目标 `CompileClojure` 运行 `cleat-build compile :dotnet-dir <WebCore 的输出目录>`，
+2. **编 Clojure**：`host/WebServer.csproj` 里的 MSBuild 目标 `CompileClojure` 运行 `dotnet cleat -T:build compile :dotnet-dir <WebCore 的输出目录>`，
    tools.build 的 `compile-clj` 把 `src/` 编成一个包程序集 `target/classes/Web.Handlers.dll`（对着 WebCore.dll 编译）。
    增量：源码、`cleat.edn`、`build.clj`、WebCore.dll 都没变时跳过；
 3. 编 C# 主机：`Web.Handlers.dll` 是普通的程序集引用。`Cleat.Runtime` 包把 cleat 的镜像与驱动库复制到输出目录。
 
-`cleat-build` 与 `cleat` 不在 PATH 上时用 `-p:CleatBuild=…/cleat-build -p:Cleat=…/cleat` 指定（在 cleat 仓库里时自动用仓库里的）。
-发布：`cleat-build publish`（`dotnet publish host`），或直接 `dotnet publish host`。
+调 cleat 的命令是 MSBuild 属性 `CleatCommand`：缺省 `dotnet cleat`（本地工具），全局装的用 `-p:CleatCommand=cleat`；
+示例放在 cleat 仓库里时自动用仓库里构建出的 cleat（`Directory.Build.props`）。
+发布：`dotnet cleat -T:build publish`（`dotnet publish host`），或直接 `dotnet publish host`。
 
 ## 4. gen-class：给 C# 用的 .NET 类型
 
@@ -149,8 +156,8 @@ app.MapGet("/hello", (string? name, IHandlers h) => h.Greet(name ?? ""));
 ## 把 Clojure 部分发布成包
 
 ```sh
-cleat-build pack     # target/Web.Handlers.1.0.0.nupkg：Web.Handlers.dll 与 WebCore.dll，依赖 Cleat.Runtime、Cleat.Nrepl
-cleat-build push     # 推到 nuget.config 的 bagetter（key：$NUGET_API_KEY 或 :api-key）
+dotnet cleat -T:build pack     # target/Web.Handlers.1.0.0.nupkg：Web.Handlers.dll 与 WebCore.dll，依赖 Cleat.Runtime、Cleat.Nrepl
+dotnet cleat -T:build push     # 推到 nuget.config 的 bagetter（key：$NUGET_API_KEY 或 :api-key）
 ```
 
 别的 .NET 项目 `dotnet add package Web.Handlers` 后同样直接 `new Web.Handlers()`。

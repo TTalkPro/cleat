@@ -9,9 +9,9 @@
  :aliases
  {;; on the REPL server's load path too (see :neorepl/aliases)
   :dev {:extra-paths ["test"]}
-  ;; cleat-run -M:test
+  ;; dotnet cleat -M:test
   :test {:extra-paths ["test"] :main-opts ["-m" "web.test-runner"]}
-  ;; cleat-run -M:neorepl -- neorepl, from BaGetter as well
+  ;; dotnet cleat -M:neorepl -- neorepl, from BaGetter as well
   :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.1"}}
             :main-opts ["-m" "neorepl.main"]}}
 

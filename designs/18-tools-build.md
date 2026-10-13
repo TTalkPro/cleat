@@ -52,15 +52,19 @@
 
 参数检查照上游的 `assert-required` / `assert-specs`，但 cleat 没有 clojure.spec：`assert-specs` 用谓词（路径是字符串、路径集合、lib 是符号、basis 是 map）。
 
-## 5. 运行构建脚本
+## 5. 运行构建脚本与项目
 
-上游靠 Clojure CLI 的 `clj -T:build 函数 :键 值`。cleat 给一个入口命名空间 `clojure.tools.build.main`：
+上游靠 Clojure CLI：`clj -T:build 函数 :键 值` 跑构建函数，`clj -M:alias` 按别名跑项目。cleat 把这两个入口做进宿主（cleat-071）：
 
 ```
-cleat -I packages/tools.build/src -I packages/tools.namespace/src -m clojure.tools.build.main build/jar :version '"1.0.0"'
+cleat -T:build pack :version '"1.0.0"'      # build.clj 的 build/pack，键值对按 EDN 读成参数 map（项目根目录进加载路径）
+cleat -M:neorepl                            # 按 cleat.edn 与别名建 basis，加载路径加进本进程，再跑别名的 :cleat-opts / :main-opts 与其余参数
 ```
 
-第一个参数是限定符号（`build/jar` → 加载项目根目录的 `build.clj`，调 `build/jar`），之后是键值对（EDN 读入），与 `-X` / `-T` 相同；`packages/tools.build/bin/cleat-build` 包好加载路径。
+两者都要 tools.build：宿主作为 dotnet tool 发布（`Cleat.Cli`，命令 `cleat`），工具包里随附 `Cleat.ToolsBuild` / `Cleat.ToolsNamespace`
+的包程序集（镜像旁的 `tools/`，比镜像旧时不用）；开发布局下用仓库里的源码。项目里用 `.config/dotnet-tools.json` 钉住版本，
+`dotnet tool restore` 之后 `dotnet cleat …`——源与 BaGetter 照 `nuget.config`。（cleat-069 时这两个入口是 `cleat-build` / `cleat-run`
+两段脚本，按用户意见换成了工具。）
 
 ## 6. 本地源
 
@@ -92,8 +96,8 @@ cleat -I packages/tools.build/src -I packages/tools.namespace/src -m clojure.too
 
 ## 10. 示例项目带来的补充（cleat-069）
 
-- **`cleat-run -M:别名`**（`clojure.tools.build.main` 的 `-M` 分支，`bin/cleat-run`）：相当于 `clj -M:alias`，按别名建 basis，
-  运行 `cleat -I … <:cleat-opts> <:main-opts> 参数…`，终端交给子进程。与 §5 的 `cleat-build 函数`（`clj -T`）并列。
+- **`cleat -M:别名`**（cleat-071 起是宿主的选项，§5；cleat-069 时是脚本 `cleat-run` 与 `clojure.tools.build.main` 的 `-M` 分支）：相当于 `clj -M:alias`，按别名建 basis，
+  运行 `cleat -I … <:cleat-opts> <:main-opts> 参数…`，终端交给子进程。与 §5 的 `cleat -T:build 函数`（`clj -T`）并列。
 - **neorepl 的 jack-in 用 basis**：tools.build 在加载路径上时，服务的加载路径是项目的 basis（`:neorepl/aliases` 选别名）；
   `Cleat.Neorepl` 因此依赖 `Cleat.ToolsBuild`。
 - **tools.build、tools.namespace 也是 NuGet 包**：`Cleat.ToolsBuild`、`Cleat.ToolsNamespace`（版本从上游的 0.10.14、1.5.1 起，之后按修正与运行时更新递增：cleat-070 时为 0.10.16、1.5.2）。包程序集对着某个 Clojure 镜像编译，镜像一变（`Cleat.Runtime` 新版本）就要重编并发新版本。

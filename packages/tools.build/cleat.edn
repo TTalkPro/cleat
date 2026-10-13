@@ -1,6 +1,6 @@
 ;; tools.build as a cleat project (designs/18): packed as Cleat.ToolsBuild, depending
 ;; on Cleat.ToolsNamespace (build and install packages/tools.namespace first);
 ;; it builds itself from source:
-;;   cd packages/tools.build && bin/cleat-build install
+;;   cd packages/tools.build && cleat -T:build install
 {:paths ["src"]
  :deps {Cleat.ToolsNamespace {:nuget/version "1.5.2"}}}

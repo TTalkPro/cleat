@@ -1,5 +1,5 @@
 (ns web.test-runner
-  "Runs the web.*-test namespaces (cleat-run -M:test, or build.clj's test);
+  "Runs the web.*-test namespaces (dotnet cleat -M:test, or build.clj's test);
   the exit status is 0 when they all pass."
   (:require [clojure.test :as t]
             [web.handlers-test]))

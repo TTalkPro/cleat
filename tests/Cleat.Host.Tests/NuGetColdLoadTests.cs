@@ -194,8 +194,8 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             File.Copy(Path.Combine(from, "cleat.edn"), Path.Combine(dir, "cleat.edn"));
             File.Copy(Path.Combine(from, "build.clj"), Path.Combine(dir, "build.clj"));
             File.WriteAllText(Path.Combine(dir, "nuget.config"), NoSources);
-            var b = HostProcessTests.CleatInWithTimeout(dir, null, _env, 600_000,
-                ToolsBuild.Concat(new[] { "-I", ".", "-m", "clojure.tools.build.main", "install", ":local-feed", Edn(_feed) }).ToArray());
+            // cleat -T:build (the host's own -T, cleat-071; tools.build from the repository's sources)
+            var b = HostProcessTests.CleatInWithTimeout(dir, null, _env, 600_000, "-T:build", "install", ":local-feed", Edn(_feed));
             Assert.That(b.ExitCode, Is.EqualTo(0), b.ToString());
             Assert.That(File.Exists(Path.Combine(_feed, id + ".nupkg")), Is.True, id);
         }
@@ -238,14 +238,14 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
     }
 
     /// <summary>
-    /// cleat-069 的验收：examples/WebServer 以本地源代替 BaGetter（同一机制）——clojure.test 通过（cleat-build test）；
-    /// dotnet build host 一条命令编 C# 库、Clojure 包程序集与 C# 主机；主机里 C# 直接用 gen-class 的 Web.Handlers 服务四个接口；
-    /// cleat-run -M:neorepl（neorepl 来自源）连进主机进程内的 nREPL 热替换处理函数；jack-in 起的服务的加载路径有项目代码与 C# 类型。
+    /// cleat-069 / cleat-071 的验收：examples/WebServer 以本地源代替 BaGetter（同一机制）——dotnet tool restore 装上 Cleat.Cli（本地工具），
+    /// dotnet cleat -T:build test 通过；dotnet build host 一条命令编 C# 库、Clojure 包程序集（MSBuild 目标调 dotnet cleat）与 C# 主机；
+    /// 主机里 C# 直接用 gen-class 的 Web.Handlers 服务四个接口；dotnet cleat -M:neorepl（neorepl 来自源）连进主机进程内的 nREPL
+    /// 热替换处理函数；jack-in 起的服务的加载路径有项目代码与 C# 类型。
     /// </summary>
     [Test]
     public async Task ExampleProjectBuildsServesAndDevelopsInteractively()
     {
-        Assume.That(OperatingSystem.IsWindows(), Is.False, "the launchers used here are sh scripts");
         BuildClojurePackages();
         string app = Path.Combine(_dir, "WebServer");
         CopyTree(Path.Combine(HostProcessTests.RepoDir, "examples", "WebServer"), app,
@@ -253,18 +253,18 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
                         || rel == ".nrepl-port" || rel == "nuget.config");
         File.WriteAllText(Path.Combine(app, "nuget.config"),
             $"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /><add key=\"local\" value=\"{_feed}\" /></packageSources></configuration>\n");
-        string cleat = Path.ChangeExtension(HostProcessTests.HostDll, null);
-        var env = _env.Append(("CLEAT", cleat)).ToArray();
-        string[] Main(params string[] args) => ToolsBuild.Concat(new[] { "-I", ".", "-m", "clojure.tools.build.main" }).Concat(args).ToArray();
+        var env = _env;
+        string Cleat(params string[] args) => Run(app, env, "dotnet", new[] { "cleat" }.Concat(args).ToArray());
+
+        // the local tool Cleat.Cli (.config/dotnet-tools.json), from the feed
+        Run(app, env, "dotnet", "tool", "restore");
+        Assert.That(Cleat("--version").Trim(), Does.StartWith("Cleat " + Version + " "));
 
         // the Clojure tests (prep builds the C# library into target/dotnet)
-        var t = HostProcessTests.CleatInWithTimeout(app, null, env, 600_000, Main("test"));
-        Assert.That(t.ExitCode, Is.EqualTo(0), t.ToString());
-        Assert.That(t.Out, Does.Contain("0 failures, 0 errors."));
+        Assert.That(Cleat("-T:build", "test"), Does.Contain("0 failures, 0 errors."));
 
-        // dotnet build: the C# library, the Clojure package assembly, the C# host
-        string cleatBuild = Path.Combine(HostProcessTests.RepoDir, "packages", "tools.build", "bin", "cleat-build");
-        Run(app, env, "dotnet", "build", "host", "-nologo", "-v", "q", "-p:CleatBuild=" + cleatBuild, "-p:Cleat=" + cleat);
+        // dotnet build: the C# library, the Clojure package assembly (the MSBuild target runs dotnet cleat), the C# host
+        Run(app, env, "dotnet", "build", "host", "-nologo", "-v", "q");
         Assert.That(File.Exists(Path.Combine(app, "target", "classes", "Web.Handlers.dll")), Is.True);
 
         int http = FreePort(), nrepl = FreePort();
@@ -291,9 +291,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             Assert.That(counts.Distinct().Count(), Is.EqualTo(8), string.Join(",", counts));
 
             // neorepl (from the feed) into the running host: redefine a handler
-            var e = HostProcessTests.CleatIn(app, null, env, Main("-M:neorepl", "eval", "-p", nrepl.ToString(),
-                "(in-ns 'web.handlers) (defn greeting-text [n] (str \"redefined, \" n))"));
-            Assert.That(e.ExitCode, Is.EqualTo(0), e.ToString());
+            Cleat("-M:neorepl", "eval", "-p", nrepl.ToString(), "(in-ns 'web.handlers) (defn greeting-text [n] (str \"redefined, \" n))");
             Assert.That(await client.GetStringAsync("/hello?name=cleat"), Is.EqualTo("{\"name\":\"cleat\",\"message\":\"redefined, cleat\"}"));
         }
         finally
@@ -304,8 +302,8 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         }
 
         // jack-in: neorepl starts a server for the project; its load path is the project's basis
-        var server = new ProcessStartInfo(cleat) { WorkingDirectory = app, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var a in Main("-M:neorepl", "server")) server.ArgumentList.Add(a);
+        var server = new ProcessStartInfo("dotnet") { WorkingDirectory = app, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in new[] { "cleat", "-M:neorepl", "server" }) server.ArgumentList.Add(a);
         foreach (var (k, v) in env) server.Environment[k] = v;
         using var jack = Process.Start(server)!;
         try
@@ -313,11 +311,10 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             var url = jack.StandardOutput.ReadLineAsync();
             Assert.That(url.Wait(180_000), Is.True, "the jack-in server never started");
             Assert.That(url.Result, Does.StartWith("nrepl://"));
-            var r = HostProcessTests.CleatIn(app, null, env, Main("-M:neorepl", "eval",
-                "(require 'web.handlers) [(web.handlers/greeting-text \"jack-in\") (WebCore.Slug/Make \"A B\") (.Message (.Greet (Web.Handlers.) \"x\"))]"));
-            Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+            var r = Cleat("-M:neorepl", "eval",
+                "(require 'web.handlers) [(web.handlers/greeting-text \"jack-in\") (WebCore.Slug/Make \"A B\") (.Message (.Greet (Web.Handlers.) \"x\"))]");
             // eval prints each form's value: (require …) is nil
-            Assert.That(r.Out.Trim().Split('\n'), Is.EqualTo(new[] { "nil", "[\"hello, jack-in!\" \"a-b\" \"hello, x!\"]" }));
+            Assert.That(r.Trim().Split('\n'), Is.EqualTo(new[] { "nil", "[\"hello, jack-in!\" \"a-b\" \"hello, x!\"]" }));
         }
         finally
         {

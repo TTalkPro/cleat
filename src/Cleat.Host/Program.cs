@@ -42,6 +42,8 @@ public static class Program
         public readonly List<string> PackageRoots = new List<string>();      // --root 源码根目录（缺省全部 -I）
         public readonly List<string> PackageNamespaces = new List<string>();
         public string Report;          // --report stdio|stderr：REPL / -e 的错误报告写到哪（clojure.main 的语义）
+        public string DepsAliases;     // -M:alias…（clj -M）：按 cleat.edn 的别名建 basis 再运行（cleat-071），其余参数在 ScriptArgs
+        public string ToolNs;          // -T:ns（clj -T）：调 ns/函数，键值对在 ScriptArgs（cleat-071）
     }
 
     public static Options Parse(string[] args)
@@ -70,6 +72,10 @@ public static class Program
                 case "-h": case "--help": o.Help = true; return o;
                 case "--version": o.Version = true; return o;
                 case "-": o.Script = "-"; i++; goto done;
+                case var m when m.StartsWith("-M", StringComparison.Ordinal) && (m.Length == 2 || m[2] == ':'):
+                    o.DepsAliases = a; i++; goto done;
+                case var t when t.StartsWith("-T:", StringComparison.Ordinal) && t.Length > 3:
+                    o.ToolNs = a.Substring(3); i++; goto done;
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal) && a.Length > 1) throw new ArgumentException("unknown option: " + a);
                     if (o.CompilePackage != null) { o.PackageNamespaces.Add(a); break; }
@@ -78,7 +84,8 @@ public static class Program
         }
     done:
         o.ScriptArgs = args.Skip(i).ToArray();
-        if (o.Script == null && o.MainNs == null && !o.Repl && o.Inits.Count == 0 && o.CompileBoot == null && o.CompilePackage == null) o.Repl = true;
+        if (o.Script == null && o.MainNs == null && !o.Repl && o.Inits.Count == 0 && o.CompileBoot == null && o.CompilePackage == null
+            && o.DepsAliases == null && o.ToolNs == null) o.Repl = true;
         return o;
     }
 
@@ -124,6 +131,8 @@ public static class Program
         Console.Error.WriteLine("usage: cleat [--scheme-boot dll] [--boot dll | --no-boot] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
         Console.Error.WriteLine("       cleat [--boot dll | --no-boot] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]");
         Console.Error.WriteLine("       cleat -I src... --compile-package out/Name.dll [--package name] [--root dir]... ns...");
+        Console.Error.WriteLine("       cleat -M[:alias...] [options and args...]   run the project in the current directory (cleat.edn), as clj -M");
+        Console.Error.WriteLine("       cleat -T:ns function [:key value]...        call a build function (-T:build: build.clj), as clj -T");
         return 2;
     }
 
@@ -166,6 +175,11 @@ public static class Program
             // 这些命名空间从源码加载
             string libs = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "Cleat.Clojure.Libs.dll");
             if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot)) PackageIndex.RegisterFile(libs);
+            // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用
+            string tools = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "tools");
+            if (Directory.Exists(tools))
+                foreach (string f in Directory.GetFiles(tools, "*.dll"))
+                    if (File.GetLastWriteTimeUtc(f) >= File.GetLastWriteTimeUtc(boot)) PackageIndex.RegisterFile(f);
             // 开发布局（镜像在 src/boot/）：src/clojure 的源码也在加载路径上（JVM 的 clojure.jar 带着源码；按需加载的
             // clojure.core.reducers 等由此可 require）
             string src = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure"));
@@ -224,6 +238,8 @@ public static class Program
         {
             if (o.CompileBoot != null) return CompileBootImage(o);
             if (o.CompilePackage != null) return CompilePackageAssembly(o);
+            if (o.DepsAliases != null) return RunDeps(o);
+            if (o.ToolNs != null) return RunTool(o);
             foreach (var (kind, value) in o.Inits)
             {
                 if (kind == "eval") EvalReader(new StringReader(value), "<eval>", v => { if (v != null) Print(v); });   // clojure.main：每个非 nil 值都打印
@@ -313,6 +329,71 @@ public static class Program
         Cleat.Scheme.Clojure.Driver.CompilePackage(o.PackageName ?? Path.GetFileNameWithoutExtension(dll), forms, roots, dll);
         Console.Error.WriteLine($"cleat: compiled package {Path.GetFileNameWithoutExtension(dll)} in {sw.ElapsedMilliseconds} ms -> {dll}");
         return 0;
+    }
+
+    /// <summary>
+    /// cleat -M:alias… args（clj -M，cleat-071）：tools.build 的 deps-args 按 cleat.edn 与别名算出 basis 的加载路径与别名的
+    /// :cleat-opts / :main-opts；加载路径加进本进程，再按 那些选项 + 其余参数 重新解析命令行运行（同一进程，不另起 cleat）。
+    /// </summary>
+    private static int RunDeps(Options o)
+    {
+        EnsureToolsBuild();
+        RequireNs("clojure.tools.build.main");
+        var r = (IPersistentMap)RT.var("clojure.tools.build.main", "deps-args").invoke(o.DepsAliases);
+        foreach (var p in (System.Collections.IEnumerable)r.valAt(Keyword.intern("load-path")))
+            Loader.AddPath(Path.GetFullPath(p.ToString()!));
+        var args = ((System.Collections.IEnumerable)r.valAt(Keyword.intern("args"))).Cast<object>().Select(x => x.ToString()!)
+            .Concat(o.ScriptArgs).ToArray();
+        var o2 = Parse(args);
+        if (o2.Help) return Usage();
+        if (o2.DepsAliases != null || o2.ToolNs != null || o2.CompileBoot != null || o2.CompilePackage != null)
+            throw new ArgumentException("an alias's :main-opts can't run -M, -T, --compile-boot or --compile-package");
+        o2.Report ??= o.Report;
+        foreach (var d in o2.IncludeDirs) Loader.AddPath(Path.GetFullPath(d));
+        return RunActions(o2);
+    }
+
+    /// <summary>
+    /// cleat -T:ns function :key value…（clj -T，cleat-071）：当前目录（项目根目录）进加载路径，tools.build 的 main 调 ns/function
+    /// （-T:build pack → build.clj 的 build/pack），键值对按 EDN 读成参数 map。
+    /// </summary>
+    private static int RunTool(Options o)
+    {
+        EnsureToolsBuild();
+        if (o.ScriptArgs.Length == 0) throw new ArgumentException($"-T:{o.ToolNs} needs a function name");
+        Loader.AddPath(Directory.GetCurrentDirectory());
+        string fn = o.ScriptArgs[0].Contains('/') ? o.ScriptArgs[0] : o.ToolNs + "/" + o.ScriptArgs[0];
+        RequireNs("clojure.tools.build.main");
+        RT.var("clojure.tools.build.main", "-main").applyTo(RT.seq(new object[] { fn }.Concat(o.ScriptArgs.Skip(1)).ToArray()));
+        return 0;
+    }
+
+    private static void RequireNs(string ns) =>
+        RT.var("clojure.core", "require").invoke(Symbol.intern(ns));
+
+    /// <summary>
+    /// tools.build 在哪（cleat-071）：随附的包程序集（镜像旁的 tools/，Start 登记）；或加载路径上已有它的源码；或开发布局下仓库的
+    /// packages/tools.build/src 与 packages/tools.namespace/src（从镜像与宿主目录往上找）。都没有时报错。
+    /// </summary>
+    private static void EnsureToolsBuild()
+    {
+        const string api = "clojure/tools/build/api";
+        if (PackageIndex.Contains(api)) return;
+        if (Loader.LoadPath.Any(d => File.Exists(Path.Combine(d, api + ".clj")))) return;
+        var starts = new[] { Path.GetDirectoryName(ClojureBootPath ?? "") ?? "", AppContext.BaseDirectory };
+        foreach (var start in starts.Where(s => s.Length > 0))
+            for (var d = new DirectoryInfo(start); d != null; d = d.Parent)
+            {
+                string tb = Path.Combine(d.FullName, "packages", "tools.build", "src"), tn = Path.Combine(d.FullName, "packages", "tools.namespace", "src");
+                if (File.Exists(Path.Combine(tb, api + ".clj")) && Directory.Exists(tn))
+                {
+                    Loader.AddPath(tb);
+                    Loader.AddPath(tn);
+                    return;
+                }
+            }
+        throw new InvalidOperationException("tools.build is not available for -M / -T: this cleat has no bundled tools.build (the Cleat.Cli tool has it) "
+            + "and none is on the load path (-I .../tools.build/src -I .../tools.namespace/src)");
     }
 
     /// <summary>boot-order.edn → 加载形式：kernel 与 core 用 RT.load（core 之前没有 require），其余 (clojure.core/require 'ns)。</summary>

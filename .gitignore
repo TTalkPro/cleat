@@ -81,3 +81,5 @@ packages/*/target/
 .cleat/
 # package launchers (packages/*/bin/ are scripts, not build output)
 !packages/*/bin/
+# cleat-071: tools.build / tools.namespace package assemblies bundled with Cleat.Cli (tools/build.cs pack)
+src/boot/tools/

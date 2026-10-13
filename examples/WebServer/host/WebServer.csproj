@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <!-- The ASP.NET host, in C#. `dotnet build host` builds everything:
          1. csharp/WebCore (ProjectReference), the C# library;
-         2. the Clojure code (target CompileClojure: tools.build's compile, which compiles src/ into
-            the package assembly ../target/classes/Web.Handlers.dll against WebCore.dll);
+         2. the Clojure code (target CompileClojure: `cleat -T:build compile`, build.clj's compile, which
+            compiles src/ into the package assembly ../target/classes/Web.Handlers.dll against WebCore.dll;
+            cleat is the local dotnet tool Cleat.Cli, see ../Directory.Build.props);
          3. this project, which references Web.Handlers.dll like any assembly and uses the gen-class
             type Web.Handlers directly.
        Cleat.Runtime and Cleat.Nrepl come from BaGetter (../nuget.config). -->
@@ -32,10 +33,10 @@
           Inputs="@(ClojureSource);@(_ResolvedProjectReferencePaths)" Outputs="$(ClojureAssembly)">
     <PropertyGroup>
       <WebCoreDir>%(_ResolvedProjectReferencePaths.RootDir)%(_ResolvedProjectReferencePaths.Directory)</WebCoreDir>
-      <ClojureCompile Condition="'$(OS)' != 'Windows_NT'">"$(CleatBuild)" compile :dotnet-dir '"$(WebCoreDir)"'</ClojureCompile>
-      <ClojureCompile Condition="'$(OS)' == 'Windows_NT'">"$(CleatBuild)" compile :dotnet-dir "\"$(WebCoreDir.TrimEnd('\'))\""</ClojureCompile>
+      <ClojureCompile Condition="'$(OS)' != 'Windows_NT'">$(CleatCommand) -T:build compile :dotnet-dir '"$(WebCoreDir)"'</ClojureCompile>
+      <ClojureCompile Condition="'$(OS)' == 'Windows_NT'">$(CleatCommand) -T:build compile :dotnet-dir "\"$(WebCoreDir.TrimEnd('\'))\""</ClojureCompile>
     </PropertyGroup>
     <Message Importance="high" Text="Compiling the Clojure code: $(ClojureAssembly)" />
-    <Exec Command="$(ClojureCompile)" WorkingDirectory="$(ExampleRoot)" EnvironmentVariables="CLEAT=$(Cleat)" />
+    <Exec Command="$(ClojureCompile)" WorkingDirectory="$(ExampleRoot)" />
   </Target>
 </Project>

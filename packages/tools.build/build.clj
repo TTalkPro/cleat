@@ -1,7 +1,7 @@
 ;; Builds tools.build with itself: one package assembly Cleat.ToolsBuild.dll,
 ;; packed as the NuGet package Cleat.ToolsBuild (depends on Cleat.ToolsNamespace).
 ;;
-;;   packages/tools.build/bin/cleat-build pack | install [:local-feed '"dir"'] | push [:source '"url"']
+;;   cleat -T:build pack | install [:local-feed '"dir"'] | push [:source '"url"']
 (ns build
   (:require [clojure.tools.build.api :as b]))
 

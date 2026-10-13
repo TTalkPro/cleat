@@ -75,6 +75,7 @@
 | [cleat-068](tasks/cleat-068-version-and-banner.md) | 版本号与 banner：cleat 1.0.0、`*clojure-version*` 1.13.0、`*cleat-version*`、nREPL describe 的 `:cleat`、`Cleat 1.0.0 (Clojure 1.13.0)` | 后续 | cleat-062、cleat-063 | 完成 |
 | [cleat-069](tasks/cleat-069-example-project.md) | 完整的示例项目 examples/WebServer：BaGetter 取依赖、neorepl 交互开发（jack-in 用 basis、`cleat-run -M:别名`）、`dotnet build` 混合 C#、gen-class 给 C# 用 | 后续 | cleat-066、cleat-067、cleat-068 | 完成 |
 | [cleat-070](tasks/cleat-070-error-phase-and-republish.md) | 错误 phase 对齐 JVM（不带命名空间）、cleat-run 转发 SIGTERM、包的新版本（Cleat.Runtime 1.0.1 等）重推 BaGetter | 后续 | cleat-069 | 完成 |
+| [cleat-071](tasks/cleat-071-cleat-dotnet-tool.md) | cleat 宿主作为 dotnet tool（Cleat.Cli），内置 `-M:别名`（clj -M）与 `-T:build`（clj -T），随附 tools.build；删掉 cleat-run / cleat-build 脚本 | 后续 | cleat-066、cleat-069、cleat-070 | 完成 |
 
 ## 里程碑
 
@@ -91,7 +92,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、056、058 ~ 070（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、056、058 ~ 071（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径

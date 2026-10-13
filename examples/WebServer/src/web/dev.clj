@@ -1,7 +1,7 @@
 (ns web.dev
   "An nREPL server inside the running host (Cleat.Nrepl, a NuGet dependency
   from BaGetter): `WEB_NREPL_PORT=7888 dotnet run --project host`, then
-  `cleat-run -M:neorepl -p 7888` and redefine handlers while it serves."
+  `dotnet cleat -M:neorepl -p 7888` and redefine handlers while it serves."
   (:require [nrepl.server :as server]))
 
 (defonce ^:private nrepl (atom nil))

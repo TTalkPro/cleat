@@ -2,9 +2,9 @@
 ;; package assembly Cleat.Neorepl.dll, packed as the NuGet package Cleat.Neorepl,
 ;; which depends on Cleat.Nrepl (resolved from the local feed or nuget.config's sources).
 ;;
-;;   packages/tools.build/bin/cleat-build pack [:version '"0.1.0"']
-;;   packages/tools.build/bin/cleat-build install [:local-feed '"dir"']
-;;   packages/tools.build/bin/cleat-build push [:source '"https://host/v3/index.json"'] [:api-key '"..."']
+;;   cleat -T:build pack [:version '"0.1.0"']
+;;   cleat -T:build install [:local-feed '"dir"']
+;;   cleat -T:build push [:source '"https://host/v3/index.json"'] [:api-key '"..."']
 (ns build
   (:require [clojure.tools.build.api :as b]))
 

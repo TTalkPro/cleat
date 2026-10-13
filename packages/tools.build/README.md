@@ -36,24 +36,28 @@
   (b/install {:nupkg-file (format "target/%s.%s.nupkg" lib version)}))
 ```
 
-运行（相当于 `clj -T:build pack`）：
+运行（相当于 `clj -T:build pack`；`-T` 与 `-M` 是 cleat 宿主自带的，cleat-071）：
 
 ```sh
-packages/tools.build/bin/cleat-build pack
-packages/tools.build/bin/cleat-build install :version '"1.0.1"'      # 键值对按 EDN 读，并入参数 map
+cleat -T:build pack
+cleat -T:build install :version '"1.0.1"'      # 键值对按 EDN 读，并入参数 map
 ```
+
+cleat 宿主作为 dotnet tool 发布（包 `Cleat.Cli`，命令 `cleat`，随附 tools.build 与 tools.namespace 的包程序集）：
+`dotnet tool install -g Cleat.Cli`，或在项目里 `dotnet new tool-manifest && dotnet tool install Cleat.Cli` 后用 `dotnet cleat …`。
+在 cleat 仓库里直接用构建出的宿主时，`-T` / `-M` 用仓库里 `packages/tools.build/src` 与 `packages/tools.namespace/src` 的源码。
 
 `packages/nrepl/build.clj`、`packages/neorepl/build.clj` 是完整的例子（neorepl 经 NuGet 依赖 Cleat.Nrepl）。
 
 运行项目本身（相当于 `clj -M:alias`，cleat-069）：
 
 ```sh
-packages/tools.build/bin/cleat-run -M:neorepl            # 按 cleat.edn 的别名建 basis，跑别名的 :main-opts
-packages/tools.build/bin/cleat-run -M:test
+cleat -M:neorepl            # 按 cleat.edn 的别名建 basis，跑别名的 :main-opts
+cleat -M:test
 ```
 
-别名里的 `:main-opts`（如 `["-m" "neorepl.main"]`）与 `:cleat-opts` 接在 `-I <basis 的每个加载路径>` 之后，命令行其余参数再接在后面；
-终端照常交给子进程，退出码是它的。一个完整的项目（BaGetter、neorepl、`dotnet build` 混合 C#、gen-class）见 `examples/WebServer`。
+宿主按别名建 basis，把它的加载路径加进**本进程**，再按别名的 `:cleat-opts` + `:main-opts`（如 `["-m" "neorepl.main"]`）+ 命令行其余参数
+运行，与 `clj -M` 一样不另起进程。一个完整的项目（BaGetter、neorepl、`dotnet build` 混合 C#、gen-class）见 `examples/WebServer`。
 
 tools.build 自己也是包：`Cleat.ToolsBuild`（依赖 `Cleat.ToolsNamespace`），各自的 `build.clj` 构建与发布。
 
