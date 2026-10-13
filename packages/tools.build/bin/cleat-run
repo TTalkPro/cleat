@@ -1,0 +1,9 @@
+#!/bin/sh
+# Runs the project in the current directory, as `clj -M:alias` does:
+#   cleat-run -M:alias[:alias...] [args...]
+# The basis of ./cleat.edn with those aliases gives the load path (NuGet deps
+# resolved by dotnet restore, sources and credentials per nuget.config); the
+# aliases' :main-opts come before args. Uses the cleat on PATH, or $CLEAT.
+here=$(cd "$(dirname "$0")/.." && pwd)
+packages=$(dirname "$here")
+exec "${CLEAT:-cleat}" -I "$here/src" -I "$packages/tools.namespace/src" -m clojure.tools.build.main "$@"

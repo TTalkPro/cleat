@@ -1,0 +1,19 @@
+;; The example as a cleat project (packages/tools.build, designs/18).
+{;; Clojure sources, and the C# library's build output (build.clj's prep) so
+ ;; that the REPL and the compiler see WebCore's types
+ :paths ["src" "target/dotnet"]
+
+ ;; NuGet packages, from BaGetter (nuget.config): nREPL, embedded in the host
+ :deps {Cleat.Nrepl {:nuget/version "1.8.0"}}
+
+ :aliases
+ {;; on the REPL server's load path too (see :neorepl/aliases)
+  :dev {:extra-paths ["test"]}
+  ;; cleat-run -M:test
+  :test {:extra-paths ["test"] :main-opts ["-m" "web.test-runner"]}
+  ;; cleat-run -M:neorepl -- neorepl, from BaGetter as well
+  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.0"}}
+            :main-opts ["-m" "neorepl.main"]}}
+
+ ;; the aliases neorepl's jack-in gives the nREPL server's basis
+ :neorepl/aliases [:dev]}

@@ -494,7 +494,9 @@
   Options:
     :nupkg-file - required, path to the nupkg
     :source - source name from nuget.config or URL (BaGetter: http://host/v3/index.json),
-              default = nuget.org
+              default = nuget.org. NuGet pushes to an http:// source only by a name whose
+              nuget.config entry has allowInsecureConnections=\"true\"
+    :configfile - nuget.config to use (default: the project's, found from *project-root*)
     :api-key - default = $NUGET_API_KEY (none when unset)
     :skip-duplicate - true to ignore a version that is already there
     :out, :err, :out-file, :err-file - as for process"

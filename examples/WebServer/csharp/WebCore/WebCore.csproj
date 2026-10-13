@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- C# side of the example's domain: the IHandlers contract the Clojure code implements (gen-class
+       Web.Handlers) and helpers the Clojure code calls directly. Built by `dotnet build` (the host's
+       ProjectReference) and by build.clj's prep (dotnet-build into target/dotnet, on cleat.edn's :paths
+       so the REPL sees these types). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>

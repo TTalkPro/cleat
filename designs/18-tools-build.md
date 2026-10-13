@@ -88,3 +88,18 @@ cleat -I packages/tools.build/src -I packages/tools.namespace/src -m clojure.too
 - **反射**：cleat 不报告反射（`*warn-on-reflection*` 无输出），上游的 `test-capture-reflection` 不移植。
 - **版本序**：`pack` 缺省依赖 `Cleat.Runtime >= 运行着的版本`（现在是 `1.0.0`）；SemVer 里带预发布标签的版本低于同号正式版、标签之间按字典序比较，测试打的运行时包要不低于它（就用 `1.0.0`）。
 - **neorepl 的 jack-in** 仍只读用户项目 `cleat.edn` 的 `:paths` / `:middleware`，没有按 basis 解析 `:deps`（可以建在 `create-basis` 上，另行决定）。
+  ——cleat-069 已改：见 §10。
+
+## 10. 示例项目带来的补充（cleat-069）
+
+- **`cleat-run -M:别名`**（`clojure.tools.build.main` 的 `-M` 分支，`bin/cleat-run`）：相当于 `clj -M:alias`，按别名建 basis，
+  运行 `cleat -I … <:cleat-opts> <:main-opts> 参数…`，终端交给子进程。与 §5 的 `cleat-build 函数`（`clj -T`）并列。
+- **neorepl 的 jack-in 用 basis**：tools.build 在加载路径上时，服务的加载路径是项目的 basis（`:neorepl/aliases` 选别名）；
+  `Cleat.Neorepl` 因此依赖 `Cleat.ToolsBuild`。
+- **tools.build、tools.namespace 也是 NuGet 包**：`Cleat.ToolsBuild 0.10.14`、`Cleat.ToolsNamespace 1.5.1`（版本沿用上游）。
+- **`push` 到 http:// 源**：NuGet 只按 nuget.config 里标了 `allowInsecureConnections` 的**源名字**推送（BaGetter 常见）；`push` 加 `:configfile`，
+  在项目根目录运行（源名字按项目的 nuget.config 查）。
+- **basis 读回退包目录**：`project.assets.json` 的 `packageFolders` 里第一个是全局包目录，其后是回退目录；从回退目录解析到的包只在那里，
+  路径按实际存在的那个目录拼。
+- **运行时扫描应用依赖**（cleat-067 的 `PackageIndex`）不能按 `Cleat.` 前缀跳过程序集：包程序集也可以叫 `Cleat.*`（`Cleat.Nrepl`），
+  只跳过运行时自己的那几个。

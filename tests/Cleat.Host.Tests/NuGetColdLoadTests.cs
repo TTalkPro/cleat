@@ -3,12 +3,13 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using NUnit.Framework;
 
 namespace Cleat.Host.Tests;
 
 /// <summary>
-/// cleat-067 的验收（designs/17 §6）：tools/build.cs pack 打出运行时包 Cleat.Runtime，一个 Clojure 包（gen-class、defrecord、函数）
+/// cleat-067 的验收（designs/17 §6）与 cleat-066、cleat-069 的端到端验收（都要运行时包，fixture 只打一次）：tools/build.cs pack 打出运行时包 Cleat.Runtime，一个 Clojure 包（gen-class、defrecord、函数）
 /// 用 tools.build（cleat-066）编成包程序集再打成 nupkg，两者放进本地目录源（与 BaGetter 同一机制）；一个 C# 与一个 F# 控制台项目只引用那个 Clojure 包，
 /// **不调用任何初始化 API**：gen-class 的构造函数、实例方法、静态方法、Main，defrecord 的实例，CleatRuntime.Var 都能用，
 /// 并发的首次使用只启动一次运行时（命名空间只加载一次）。
@@ -82,9 +83,20 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         _root = Path.Combine(Path.GetTempPath(), "cleat-nuget-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         _feed = Path.Combine(_root, "feed");
         Directory.CreateDirectory(_feed);
-        // 其余依赖从用户的全局包目录取（回退目录），不需要网络
-        string userPackages = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
+        // 其余依赖（FSharp.Core、Microsoft.Extensions.DependencyModel …）从用户的全局包目录取（回退目录），不需要网络。
+        // 回退目录是过滤过的：用户缓存里 cleat 自己的包（如从 BaGetter 装过的 Cleat.*）不能盖过本 fixture 构建的
+        string userCache = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
+        string userPackages = Path.Combine(_root, "fallback");
+        Directory.CreateDirectory(userPackages);
+        if (Directory.Exists(userCache))
+            foreach (var d in Directory.GetDirectories(userCache))
+            {
+                string name = Path.GetFileName(d);
+                if (name.StartsWith("cleat.", StringComparison.OrdinalIgnoreCase) || name.StartsWith("web.", StringComparison.OrdinalIgnoreCase)
+                    || name == "demo") continue;
+                Directory.CreateSymbolicLink(Path.Combine(userPackages, name), d);
+            }
         File.WriteAllText(Path.Combine(_root, "NuGet.config"), $@"<?xml version=""1.0"" encoding=""utf-8""?>
 <configuration>
   <packageSources><clear /><add key=""local"" value=""{_feed}"" /></packageSources>
@@ -160,48 +172,168 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         }), r);
     }
 
+    private static readonly string NoSources =
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /></packageSources></configuration>\n";
+
+    private bool _clojurePackagesBuilt;
+
     /// <summary>
-    /// cleat-066 的验收：packages/nrepl、packages/neorepl 用各自的 build.clj（tools.build）编包程序集、打包、装进本地源；
-    /// 只依赖 Cleat.Neorepl 的项目经 create-basis 从源 restore 到 Cleat.Neorepl 与（传递的）Cleat.Nrepl，运行 neorepl。
+    /// packages/ 下的 tools.namespace、tools.build、nrepl、neorepl 按依赖顺序用各自的 build.clj（tools.build）编包程序集、打包、
+    /// 装进本 fixture 的本地源（只做一次）。包目录复制出来再构建（target/ 不写进仓库）；nuget.config 清空源，依赖只从本地源 restore（不连网）。
     /// </summary>
-    [Test]
-    public void NreplAndNeoreplBuiltWithToolsBuildRestoreFromTheFeed()
+    private void BuildClojurePackages()
     {
-        foreach (var (package, id) in new[] { ("nrepl", "cleat.nrepl.1.8.0"), ("neorepl", "cleat.neorepl.0.1.0") })
+        if (_clojurePackagesBuilt) return;
+        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.1"), ("tools.build", "cleat.toolsbuild.0.10.14"),
+                                             ("nrepl", "cleat.nrepl.1.8.0"), ("neorepl", "cleat.neorepl.0.1.0") })
         {
-            // 包目录复制出来再构建（target/ 不写进仓库）
-            string dir = Path.Combine(_dir, package);
+            string dir = Path.Combine(_root, "sources", package);
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
             string from = Path.Combine(HostProcessTests.RepoDir, "packages", package);
-            foreach (var f in Directory.GetFiles(Path.Combine(from, "src"), "*", SearchOption.AllDirectories))
-            {
-                string to = Path.Combine(dir, "src", Path.GetRelativePath(Path.Combine(from, "src"), f));
-                Directory.CreateDirectory(Path.GetDirectoryName(to)!);
-                File.Copy(f, to);
-            }
+            CopyTree(Path.Combine(from, "src"), Path.Combine(dir, "src"));
             File.Copy(Path.Combine(from, "cleat.edn"), Path.Combine(dir, "cleat.edn"));
             File.Copy(Path.Combine(from, "build.clj"), Path.Combine(dir, "build.clj"));
-            // neorepl 的 Cleat.Nrepl 依赖从本地源 restore：nuget.config 只留本地源（不连网）
-            File.WriteAllText(Path.Combine(dir, "nuget.config"),
-                "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /></packageSources></configuration>\n");
+            File.WriteAllText(Path.Combine(dir, "nuget.config"), NoSources);
             var b = HostProcessTests.CleatInWithTimeout(dir, null, _env, 600_000,
                 ToolsBuild.Concat(new[] { "-I", ".", "-m", "clojure.tools.build.main", "install", ":local-feed", Edn(_feed) }).ToArray());
             Assert.That(b.ExitCode, Is.EqualTo(0), b.ToString());
             Assert.That(File.Exists(Path.Combine(_feed, id + ".nupkg")), Is.True, id);
         }
+        _clojurePackagesBuilt = true;
+    }
 
+    private static void CopyTree(string from, string to, Func<string, bool>? skip = null)
+    {
+        foreach (var f in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
+        {
+            string rel = Path.GetRelativePath(from, f);
+            if (skip != null && skip(rel.Replace('\\', '/'))) continue;
+            string target = Path.Combine(to, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(f, target);
+        }
+    }
+
+    /// <summary>
+    /// cleat-066 的验收：packages/nrepl、packages/neorepl（与 tools.build、tools.namespace）用 tools.build 构建、装进本地源；
+    /// 只依赖 Cleat.Neorepl 的项目经 create-basis 从源 restore 到它与传递的依赖（Cleat.Runtime 不进加载路径），运行 neorepl。
+    /// </summary>
+    [Test]
+    public void NreplAndNeoreplBuiltWithToolsBuildRestoreFromTheFeed()
+    {
+        BuildClojurePackages();
         string app = Path.Combine(_dir, "app");
         Directory.CreateDirectory(app);
         File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Cleat.Neorepl {:nuget/version \"0.1.0\"}}}");
-        File.WriteAllText(Path.Combine(app, "nuget.config"),
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /></packageSources></configuration>\n");
+        File.WriteAllText(Path.Combine(app, "nuget.config"), NoSources);
         string run = "(require '[clojure.tools.build.api :as b])" +
             $"(let [basis (b/create-basis {{:local-feed {Edn(_feed)}}})]" +
             "  (prn (sort (map str (keys (:libs basis)))))" +
             "  (b/process (b/cleat-command {:basis basis :main 'neorepl.main :main-args [\"--help\"]})))";
         var r = HostProcessTests.CleatIn(app, null, _env, ToolsBuild.Concat(new[] { "-e", run }).ToArray());
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        Assert.That(r.Out, Does.StartWith("(\"Cleat.Neorepl\" \"Cleat.Nrepl\")\n"), "Cleat.Runtime stays off the load path");
+        Assert.That(r.Out, Does.StartWith("(\"Cleat.Neorepl\" \"Cleat.Nrepl\" \"Cleat.ToolsBuild\" \"Cleat.ToolsNamespace\")\n"),
+            "Cleat.Runtime stays off the load path");
         Assert.That(r.Out, Does.Contain("Usage: neorepl [COMMAND] [options]"));
+    }
+
+    /// <summary>
+    /// cleat-069 的验收：examples/WebServer 以本地源代替 BaGetter（同一机制）——clojure.test 通过（cleat-build test）；
+    /// dotnet build host 一条命令编 C# 库、Clojure 包程序集与 C# 主机；主机里 C# 直接用 gen-class 的 Web.Handlers 服务四个接口；
+    /// cleat-run -M:neorepl（neorepl 来自源）连进主机进程内的 nREPL 热替换处理函数；jack-in 起的服务的加载路径有项目代码与 C# 类型。
+    /// </summary>
+    [Test]
+    public async Task ExampleProjectBuildsServesAndDevelopsInteractively()
+    {
+        Assume.That(OperatingSystem.IsWindows(), Is.False, "the launchers used here are sh scripts");
+        BuildClojurePackages();
+        string app = Path.Combine(_dir, "WebServer");
+        CopyTree(Path.Combine(HostProcessTests.RepoDir, "examples", "WebServer"), app,
+                 rel => rel.StartsWith("target/") || rel.StartsWith(".cleat/") || rel.Contains("/bin/") || rel.Contains("/obj/")
+                        || rel == ".nrepl-port" || rel == "nuget.config");
+        File.WriteAllText(Path.Combine(app, "nuget.config"),
+            $"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<configuration><packageSources><clear /><add key=\"local\" value=\"{_feed}\" /></packageSources></configuration>\n");
+        string cleat = Path.ChangeExtension(HostProcessTests.HostDll, null);
+        var env = _env.Append(("CLEAT", cleat)).ToArray();
+        string[] Main(params string[] args) => ToolsBuild.Concat(new[] { "-I", ".", "-m", "clojure.tools.build.main" }).Concat(args).ToArray();
+
+        // the Clojure tests (prep builds the C# library into target/dotnet)
+        var t = HostProcessTests.CleatInWithTimeout(app, null, env, 600_000, Main("test"));
+        Assert.That(t.ExitCode, Is.EqualTo(0), t.ToString());
+        Assert.That(t.Out, Does.Contain("0 failures, 0 errors."));
+
+        // dotnet build: the C# library, the Clojure package assembly, the C# host
+        string cleatBuild = Path.Combine(HostProcessTests.RepoDir, "packages", "tools.build", "bin", "cleat-build");
+        Run(app, env, "dotnet", "build", "host", "-nologo", "-v", "q", "-p:CleatBuild=" + cleatBuild, "-p:Cleat=" + cleat);
+        Assert.That(File.Exists(Path.Combine(app, "target", "classes", "Web.Handlers.dll")), Is.True);
+
+        int http = FreePort(), nrepl = FreePort();
+        var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = app, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in new[] { Path.Combine(app, "host", "bin", "Debug", "net10.0", "WebServer.dll"), "--urls", $"http://127.0.0.1:{http}" })
+            psi.ArgumentList.Add(a);
+        psi.Environment["WEB_NREPL_PORT"] = nrepl.ToString();
+        using var host = Process.Start(psi)!;
+        var hostOut = host.StandardOutput.ReadToEndAsync();
+        var hostErr = host.StandardError.ReadToEndAsync();
+        try
+        {
+            using var client = new System.Net.Http.HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{http}") };
+            for (int i = 0; ; i++)
+            {
+                try { await client.GetStringAsync("/slug?title=warm"); break; }
+                catch (System.Net.Http.HttpRequestException) when (i < 240 && !host.HasExited) { await Task.Delay(250); }
+            }
+            Assert.That(await client.GetStringAsync("/hello?name=cleat"), Is.EqualTo("{\"name\":\"cleat\",\"message\":\"hello, cleat!\"}"));
+            using (var sum = await client.PostAsync("/sum", new System.Net.Http.StringContent("[1,2,3,4]", Encoding.UTF8, "application/json")))
+                Assert.That(await sum.Content.ReadAsStringAsync(), Is.EqualTo("{\"sum\":10}"));
+            Assert.That(await client.GetStringAsync("/slug?title=Hello,%20Cleat%20World"), Is.EqualTo("{\"slug\":\"hello-cleat-world\"}"));
+            var counts = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => client.GetStringAsync("/stats")));
+            Assert.That(counts.Distinct().Count(), Is.EqualTo(8), string.Join(",", counts));
+
+            // neorepl (from the feed) into the running host: redefine a handler
+            var e = HostProcessTests.CleatIn(app, null, env, Main("-M:neorepl", "eval", "-p", nrepl.ToString(),
+                "(in-ns 'web.handlers) (defn greeting-text [n] (str \"redefined, \" n))"));
+            Assert.That(e.ExitCode, Is.EqualTo(0), e.ToString());
+            Assert.That(await client.GetStringAsync("/hello?name=cleat"), Is.EqualTo("{\"name\":\"cleat\",\"message\":\"redefined, cleat\"}"));
+        }
+        finally
+        {
+            try { host.Kill(true); } catch (Exception) { }
+            host.WaitForExit(10_000);
+            TestContext.Out.WriteLine("host: " + await hostOut + await hostErr);
+        }
+
+        // jack-in: neorepl starts a server for the project; its load path is the project's basis
+        var server = new ProcessStartInfo(cleat) { WorkingDirectory = app, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var a in Main("-M:neorepl", "server")) server.ArgumentList.Add(a);
+        foreach (var (k, v) in env) server.Environment[k] = v;
+        using var jack = Process.Start(server)!;
+        try
+        {
+            var url = jack.StandardOutput.ReadLineAsync();
+            Assert.That(url.Wait(180_000), Is.True, "the jack-in server never started");
+            Assert.That(url.Result, Does.StartWith("nrepl://"));
+            var r = HostProcessTests.CleatIn(app, null, env, Main("-M:neorepl", "eval",
+                "(require 'web.handlers) [(web.handlers/greeting-text \"jack-in\") (WebCore.Slug/Make \"A B\") (.Message (.Greet (Web.Handlers.) \"x\"))]"));
+            Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+            // eval prints each form's value: (require …) is nil
+            Assert.That(r.Out.Trim().Split('\n'), Is.EqualTo(new[] { "nil", "[\"hello, jack-in!\" \"a-b\" \"hello, x!\"]" }));
+        }
+        finally
+        {
+            // SIGTERM: the server's shutdown hook stops nrepl.cmdline too
+            try { Process.Start("kill", jack.Id.ToString())?.WaitForExit(5000); } catch (Exception) { }
+            if (!jack.WaitForExit(15_000)) try { jack.Kill(true); } catch (Exception) { }
+        }
+    }
+
+    private static int FreePort()
+    {
+        var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        l.Start();
+        int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        return port;
     }
 
     private string App(string name, string ext, string file, string program)

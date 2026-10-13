@@ -45,6 +45,18 @@ packages/tools.build/bin/cleat-build install :version '"1.0.1"'      # 键值对
 
 `packages/nrepl/build.clj`、`packages/neorepl/build.clj` 是完整的例子（neorepl 经 NuGet 依赖 Cleat.Nrepl）。
 
+运行项目本身（相当于 `clj -M:alias`，cleat-069）：
+
+```sh
+packages/tools.build/bin/cleat-run -M:neorepl            # 按 cleat.edn 的别名建 basis，跑别名的 :main-opts
+packages/tools.build/bin/cleat-run -M:test
+```
+
+别名里的 `:main-opts`（如 `["-m" "neorepl.main"]`）与 `:cleat-opts` 接在 `-I <basis 的每个加载路径>` 之后，命令行其余参数再接在后面；
+终端照常交给子进程，退出码是它的。一个完整的项目（BaGetter、neorepl、`dotnet build` 混合 C#、gen-class）见 `examples/WebServer`。
+
+tools.build 自己也是包：`Cleat.ToolsBuild`（依赖 `Cleat.ToolsNamespace`），各自的 `build.clj` 构建与发布。
+
 ## 与上游的对应
 
 | 上游 | cleat |

@@ -32,6 +32,12 @@ public static class PackageIndex
 
     private const string NamespaceAttribute = "Cleat.Core.CleatNamespaceAttribute";
 
+    private static readonly HashSet<string> RuntimeAssemblies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Cleat.Core.dll", "Cleat.Scheme.dll", "Cleat.Hosting.dll", "cleat.dll", "cleat-emit.dll", "stage0.dll",
+        "cleat.boot.dll", "cleat.scheme.boot.dll",
+    };
+
     private static readonly ConcurrentDictionary<string, Entry> s_index = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, bool> s_scannedFiles = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<Assembly, object> s_initialized = new();
@@ -171,8 +177,9 @@ public static class PackageIndex
         foreach (string f in tpa.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             if (framework.Length > 0 && f.StartsWith(framework, StringComparison.Ordinal)) continue;
+            // 运行时自己的程序集没有索引（包程序集可以叫 Cleat.*，如 Cleat.Nrepl，不能按前缀跳过；cleat-069）
             string name = Path.GetFileName(f);
-            if (name.StartsWith("Cleat.", StringComparison.Ordinal) || name.StartsWith("Microsoft.", StringComparison.Ordinal)
+            if (RuntimeAssemblies.Contains(name) || name.StartsWith("Microsoft.", StringComparison.Ordinal)
                 || name.StartsWith("System.", StringComparison.Ordinal)) continue;
             RegisterFile(f, null);
         }

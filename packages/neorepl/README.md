@@ -25,17 +25,25 @@ cleat -I packages/nrepl/src -I packages/neorepl/src -m neorepl.main [命令] [�
 `neorepl --help` 与 `neorepl 命令 --help` 有完整说明。
 
 **jack-in**：没有服务可连时，REPL 为项目起一个服务，结束时停掉；`neorepl server` 起一个常驻的。项目是带 `cleat.edn` 的目录
-（当前目录或最近的上级目录），服务是 cleat 运行 `nrepl.cmdline`，加载路径上是 neorepl 自己用的 nREPL 包与项目的 `:paths`：
+（当前目录或最近的上级目录），服务是 cleat 运行 `nrepl.cmdline`，加载路径上是 neorepl 自己用的 nREPL 包与**项目的 basis**
+（tools.build 的 `create-basis`，cleat-069）：`:paths`、`:deps` 里的 NuGet 包（按 `nuget.config` restore，BaGetter 等私有源可用）与
+`:local/root` 项目、`:neorepl/aliases` 所选别名的路径。tools.build 不在加载路径上时只用 `:paths`（有 `:deps` 时报错）。
 
 ```clojure
 ;; cleat.edn，键都可省
-{:paths ["src"]             ; 缺省 ["src"]
- :middleware [my.app/wrap]} ; 交给 nrepl.cmdline 的 --middleware
+{:paths ["src"]                                  ; 缺省 ["src"]
+ :deps {Some.Lib {:nuget/version "1.0.0"}}        ; 服务的加载路径上也有
+ :aliases {:dev {:extra-paths ["test"]}}
+ :neorepl/aliases [:dev]                         ; jack-in 用的别名
+ :middleware [my.app/wrap]}                      ; 交给 nrepl.cmdline 的 --middleware
 ```
 
-**启动时间**：从源码加载 neorepl 与 nREPL 每次约 7 秒；预编译（AOT，每个命名空间在源码旁边得到 `.clj.dll`）后约 1.4 秒。
-预编译要按依赖顺序、每个命名空间一个进程地 `compile`（同一进程里连着编译时，后编的会引用前面那个求值时生成的内存类型）；
-这件事交给移植中的 tools.build 包（cleat-066）来做。
+**安装**：`bin/neorepl` 从源码运行（带上 nrepl、tools.build、tools.namespace 的源码）。也可以经 NuGet：包 `Cleat.Neorepl`
+（依赖 `Cleat.Nrepl`、`Cleat.ToolsBuild`），在项目的 `cleat.edn` 里写别名
+`:neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.0"}} :main-opts ["-m" "neorepl.main"]}`，用 `cleat-run -M:neorepl` 启动
+（完整的例子见 `examples/WebServer`）。
+
+**启动时间**：从源码加载 neorepl 与 nREPL 每次约 7 秒；从包程序集（`Cleat.Neorepl` / `Cleat.Nrepl`，cleat-067）约 1.1 秒。
 
 ## 测试
 

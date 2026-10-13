@@ -48,7 +48,9 @@ public class PackageTests
             var r = RunPackageTests("-I", dir, "-I", "packages/nrepl/test", "packages/nrepl/test/run.clj");
             Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
             Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
-            r = RunPackageTests("-I", dir, "-I", "packages/neorepl/test", "packages/neorepl/test/run.clj");
+            // jack-in computes the server's load path with tools.build (cleat-069)
+            r = RunPackageTests("-I", dir, "-I", "packages/tools.build/src", "-I", "packages/tools.namespace/src",
+                                "-I", "packages/neorepl/test", "packages/neorepl/test/run.clj");
             Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
             Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
         }
@@ -79,7 +81,8 @@ public class PackageTests
     [Test]
     public void Neorepl()
     {
-        var r = RunPackageTests("-I", "packages/nrepl/src", "-I", "packages/neorepl/src", "-I", "packages/neorepl/test",
+        var r = RunPackageTests("-I", "packages/nrepl/src", "-I", "packages/tools.build/src", "-I", "packages/tools.namespace/src",
+                                "-I", "packages/neorepl/src", "-I", "packages/neorepl/test",
                                 "packages/neorepl/test/run.clj");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));

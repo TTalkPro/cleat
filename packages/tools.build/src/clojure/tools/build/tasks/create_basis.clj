@@ -172,7 +172,9 @@
   [^String assets]
   (with-open [doc (JsonDocument/Parse ^String (slurp assets) (System.Text.Json.JsonDocumentOptions.))]
     (let [root (.RootElement doc)
-          folder (first (first (props (prop root "packageFolders"))))
+          ;; the global packages folder, then fallback folders: a package resolved from a
+          ;; fallback folder is only there
+          folders (map first (props (prop root "packageFolders")))
           libraries (into {} (props (prop root "libraries")))
           target (second (first (props (prop root "targets"))))]
       (into {}
@@ -181,7 +183,10 @@
               :let [[id version] (str/split key #"/" 2)
                     rel (.GetString ^JsonElement (prop (get libraries key) "path"))]]
           [id {:version version
-               :dir (Path/Combine folder rel)
+               :dir (Path/Combine (or (first (filter #(Directory/Exists (Path/Combine ^String % rel)) folders))
+                                      (throw (ex-info (str "Restored package " key " is in none of the package folders")
+                                                      {:folders (vec folders)})))
+                                  rel)
                :runtime (->> (props (prop lib "runtime"))
                              (map first)
                              (remove #(str/ends-with? % "_._"))

@@ -67,7 +67,17 @@
          (is (= ["--middleware" "[my.app/wrap-x]" "--port" "7888"] (take-last 4 command)))))
      (testing "src by default, and no port"
        (spit-file dir "cleat.edn" "")
-       (is (= ["-I" "src" "-m" "nrepl.cmdline"] (take-last 4 (jack-in/command "cleat" {} dir))))))))
+       (is (= ["-I" "src" "-m" "nrepl.cmdline"] (take-last 4 (jack-in/command "cleat" {} dir)))))
+     ;; cleat-069: the server's load path is the project's basis (tools.build is on the tests' load path)
+     (testing "the project's deps and :neorepl/aliases, through tools.build's basis"
+       (spit-file dir "lib/cleat.edn" "{:paths [\"src\" \"res\"]}")
+       (spit-file dir "cleat.edn" (pr-str '{:paths ["src"]
+                                            :deps {my/lib {:local/root "lib"}}
+                                            :aliases {:dev {:extra-paths ["test"]}}
+                                            :neorepl/aliases [:dev]}))
+       (let [lib (Path/GetFullPath (Path/Combine ^String dir "lib"))]
+         (is (= ["-I" "src" "-I" "test" "-I" (Path/Combine lib "src") "-I" (Path/Combine lib "res") "-m" "nrepl.cmdline"]
+                (take-last 10 (jack-in/command "cleat" {} dir)))))))))
 
 (deftest with-server-test
   (call-with-temp-dir

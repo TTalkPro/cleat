@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- The ASP.NET host, in C#. `dotnet build host` builds everything:
+         1. csharp/WebCore (ProjectReference), the C# library;
+         2. the Clojure code (target CompileClojure: tools.build's compile, which compiles src/ into
+            the package assembly ../target/classes/Web.Handlers.dll against WebCore.dll);
+         3. this project, which references Web.Handlers.dll like any assembly and uses the gen-class
+            type Web.Handlers directly.
+       Cleat.Runtime and Cleat.Nrepl come from BaGetter (../nuget.config). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>WebServer</RootNamespace>
+    <ExampleRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..'))</ExampleRoot>
+    <ClojureAssembly>$(ExampleRoot)target/classes/Web.Handlers.dll</ClojureAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Cleat.Runtime" Version="1.0.0" />
+    <PackageReference Include="Cleat.Nrepl" Version="1.8.0" />
+    <ProjectReference Include="../csharp/WebCore/WebCore.csproj" />
+    <Reference Include="Web.Handlers">
+      <HintPath>$(ClojureAssembly)</HintPath>
+    </Reference>
+    <ClojureSource Include="$(ExampleRoot)src/**/*.clj;$(ExampleRoot)cleat.edn;$(ExampleRoot)build.clj" />
+  </ItemGroup>
+
+  <!-- After the project references are built (WebCore.dll exists), before references are resolved
+       (Web.Handlers.dll must exist then). Incremental: skipped while the sources and WebCore.dll are
+       older than the assembly. -->
+  <Target Name="CompileClojure" DependsOnTargets="ResolveProjectReferences" BeforeTargets="ResolveAssemblyReferences"
+          Inputs="@(ClojureSource);@(_ResolvedProjectReferencePaths)" Outputs="$(ClojureAssembly)">
+    <PropertyGroup>
+      <WebCoreDir>%(_ResolvedProjectReferencePaths.RootDir)%(_ResolvedProjectReferencePaths.Directory)</WebCoreDir>
+      <ClojureCompile Condition="'$(OS)' != 'Windows_NT'">"$(CleatBuild)" compile :dotnet-dir '"$(WebCoreDir)"'</ClojureCompile>
+      <ClojureCompile Condition="'$(OS)' == 'Windows_NT'">"$(CleatBuild)" compile :dotnet-dir "\"$(WebCoreDir.TrimEnd('\'))\""</ClojureCompile>
+    </PropertyGroup>
+    <Message Importance="high" Text="Compiling the Clojure code: $(ClojureAssembly)" />
+    <Exec Command="$(ClojureCompile)" WorkingDirectory="$(ExampleRoot)" EnvironmentVariables="CLEAT=$(Cleat)" />
+  </Target>
+</Project>

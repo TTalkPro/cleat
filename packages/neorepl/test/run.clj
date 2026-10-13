@@ -1,6 +1,7 @@
 ;; Runs the neorepl package's tests on cleat:
 ;;
-;;   cleat -I packages/nrepl/src -I packages/neorepl/src -I packages/neorepl/test packages/neorepl/test/run.clj [ns-regex]
+;;   cleat -I packages/nrepl/src -I packages/tools.build/src -I packages/tools.namespace/src \
+;;         -I packages/neorepl/src -I packages/neorepl/test packages/neorepl/test/run.clj [ns-regex]
 ;;
 ;; Every neorepl.*-test namespace under test/ runs (those matching ns-regex when
 ;; given); the exit status is 0 when they all pass, 1 otherwise.

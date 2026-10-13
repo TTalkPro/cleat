@@ -9,8 +9,16 @@
   the nrepl package from the load path neorepl itself runs with. cleat.edn is
   EDN, every key optional:
 
-    {:paths [\"src\"]           ; directories to put on the load path
-     :middleware [my.ns/wrap]}  ; middleware for nrepl.cmdline's --middleware"
+    {:paths [\"src\"]               ; directories to put on the load path
+     :deps {Some.Lib {:nuget/version \"1.0.0\"}}  ; NuGet / :local/root deps
+     :aliases {:dev {:extra-paths [\"test\"]}}
+     :neorepl/aliases [:dev]        ; aliases the server's basis uses
+     :middleware [my.ns/wrap]}      ; middleware for nrepl.cmdline's --middleware
+
+  cleat (cleat-069): with tools.build on the load path, the server's load path
+  is the project's basis (clojure.tools.build.api/create-basis: NuGet deps
+  restored per nuget.config, :local/root projects, alias paths), so it has
+  what the project's code needs; without it, only :paths."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [neorepl.discovery :as discovery]
@@ -89,15 +97,35 @@
       (catch Exception e
         (throw (ex-info (str "Can't read " file ": " (ex-message e)) {:type ::failed}))))))
 
+(defn- project-load-path
+  "The load path for the project in dir: its basis's roots when tools.build
+  is there to compute it (with the :neorepl/aliases), else its :paths."
+  [dir {:keys [paths deps] aliases :neorepl/aliases}]
+  (if-let [create-basis (try (requiring-resolve 'clojure.tools.build.api/create-basis)
+                             (catch Exception _ nil))]
+    (let [root (requiring-resolve 'clojure.tools.build.api/*project-root*)]
+      (try
+        (:classpath-roots (with-bindings {root (Path/GetFullPath ^String dir)}
+                            (create-basis {:aliases (vec aliases)})))
+        (catch Exception e
+          (throw (ex-info (str "Can't compute the project's load path: " (ex-message e))
+                          {:type ::failed} e)))))
+    (if (seq deps)
+      (throw (ex-info "The project's cleat.edn has :deps: put tools.build on neorepl's load path (it resolves them)"
+                      {:type ::failed}))
+      (or paths ["src"]))))
+
 (defn command
   "The command line that starts an nREPL server for tool in the project in
   dir, on port, or any port without one."
   ([tool-name opts] (command tool-name opts "."))
   ([tool-name {:keys [port]} dir]
    (case tool-name
-     "cleat" (let [{:keys [paths middleware]} (project-config dir)]
-               (cond-> (into (cleat-executable) ["-I" (nrepl-source-dir)])
-                 true (into (mapcat #(vector "-I" (str %)) (or paths ["src"])))
+     "cleat" (let [{:keys [middleware] :as config} (project-config dir)
+                   nrepl-dir (nrepl-source-dir)]
+               (cond-> (into (cleat-executable) ["-I" nrepl-dir])
+                 true (into (mapcat #(vector "-I" (str %))
+                                    (remove #{nrepl-dir} (project-load-path dir config))))
                  true (into ["-m" "nrepl.cmdline"])
                  (seq middleware) (into ["--middleware" (pr-str (vec middleware))])
                  port (into ["--port" (str port)]))))))

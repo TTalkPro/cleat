@@ -35,4 +35,4 @@
 
 (defn push [params]
   (let [{:keys [nupkg-file]} (pack params)]
-    (b/push (merge {:nupkg-file nupkg-file} (select-keys params [:source :api-key :skip-duplicate])))))
+    (b/push (merge {:nupkg-file nupkg-file} (select-keys params [:source :api-key :skip-duplicate :configfile])))))
