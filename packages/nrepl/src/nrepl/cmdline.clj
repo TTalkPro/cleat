@@ -1,0 +1,718 @@
+(ns nrepl.cmdline
+  "A proof-of-concept command-line client for nREPL.  Please see
+  e.g. REPL-y for a proper command-line nREPL client @
+  https://github.com/trptcolin/reply/"
+  {:author "Chas Emerick"}
+  (:require
+   [clojure.edn :as edn]
+   [clojure.string :as str]
+   [nrepl.config :as config]
+   [nrepl.core :as nrepl]
+   [nrepl.misc :refer [uuid]]
+   [nrepl.server :as nrepl-server]
+   [nrepl.socket :as socket]
+   [nrepl.transport :as transport]
+   [nrepl.util.threading :as threading]
+   [nrepl.version :as version])
+  (:import
+   [clojure.lang LineNumberingTextReader]
+   [System Uri UriFormatException ConsoleCancelEventArgs ConsoleCancelEventHandler]
+   [System.IO FileNotFoundException IOException]))
+
+;; cleat: ported to the CLR. Run it with
+;;
+;;   cleat -I packages/nrepl/src -m nrepl.cmdline [options]
+;;
+;; Ctrl+C is Console.CancelKeyPress (sun.misc.Signal on the JVM), System/exit
+;; is Environment/Exit, and the port file is deleted on exit through the
+;; ProcessExit event. Missing namespaces throw FileNotFoundException on cleat
+;; too.
+
+(defn- clean-up-and-exit
+  "Performs any necessary clean up and calls `(Environment/Exit status)`."
+  [status]
+  (shutdown-agents)
+  (flush)
+  (binding [*out* *err*] (flush))
+  (Environment/Exit (int status)))
+
+(defn exit
+  "Requests that the process exit with the given `status`.  Does not
+  return."
+  [status]
+  ;; :nrepl/kind is our shared (ns independent) ExceptionInfo discriminator
+  (throw (ex-info nil {:nrepl/kind ::exit ::status status})))
+
+(defn die
+  "`Print`s items in `msg` to *err* and then exits with a status of 2."
+  [& msg]
+  (binding [*out* *err*]
+    (doseq [m msg] (print m)))
+  (exit 2))
+
+(defn set-signal-handler!
+  "Calls (f signal) on Ctrl+C, the only signal handled, instead of exiting."
+  {:author "Colin Jones"}
+  [signal f]
+  (when (= "INT" signal)
+    (Console/add_CancelKeyPress
+                         (gen-delegate ConsoleCancelEventHandler [_ e]
+                           (.set_Cancel ^ConsoleCancelEventArgs e true)
+                           ;; Not on the thread that delivers the signal.
+                           (future (f signal))))))
+
+(def colored-output
+  {:err #(binding [*out* *err*]
+           (print "\033[31m")
+           (print %)
+           (print "\033[m")
+           (flush))
+   :out print
+   :value (fn [x]
+            (print "\033[34m")
+            (print x)
+            (println "\033[m")
+            (flush))})
+
+(def running-repl (atom {:transport nil
+                         :client nil}))
+
+(defn- done?
+  [input]
+  (some (partial = input)
+        ['exit 'quit '(exit) '(quit)]))
+
+(defn repl-intro
+  "Returns nREPL interactive repl intro copy and version info as a new-line
+  separated string."
+  []
+  (format "nREPL %s
+Clojure %s
+%s
+Interrupt: Control+C
+Exit:      Control+D or (exit) or (quit)"
+          (:version-string version/version)
+          (clojure-version)
+          System.Runtime.InteropServices.RuntimeInformation/FrameworkDescription))
+
+(def ^:private permissive-reader-resolver
+  "A reader resolver that accepts any alias or class name. Used when reading
+  user input purely to find form boundaries (see `read-form-for-server`):
+  aliases and classes may exist only in the server's session, so the client
+  must not reject them (this is what lets `::alias/kw` reach the server)."
+  (reify clojure.lang.IReaderResolver
+    (CurrentNS [_] 'user)
+    (ResolveClass [_ sym] sym)
+    (ResolveAlias [_ sym] sym)
+    (ResolveVar [_ sym] sym)
+    (IsSpecial [_ sym] (special-symbol? sym))))
+
+(def ^:private eof-marker (Object.))
+
+(defn- read-form-for-server
+  "Reads a single form from `rdr` and returns a map of `:form` and `:code` -
+  the exact input text that was consumed - or `::eof` when the input is
+  exhausted.
+
+  The client never evaluates the form; it is read only to find its boundary
+  in the input stream (and to detect the exit/quit commands), while `:code`
+  is sent to the server verbatim. Reading is therefore deliberately
+  permissive: `*suppress-read*` keeps record and tagged literals inert, the
+  resolver accepts unknown aliases/classes, and reader conditionals are
+  preserved - all of them are left for the server to actually interpret.
+
+  `*read-eval*` is off because `*suppress-read*` does not cover `#=`: the
+  reader would otherwise evaluate it here, in the client, and the server
+  would then evaluate the same text again. A `#=` form is rejected outright
+  instead."
+  [^LineNumberingTextReader rdr]
+  (binding [*suppress-read* true
+            *read-eval* false
+            *reader-resolver* permissive-reader-resolver]
+    (let [[form code] (try
+                        (read+string {:eof eof-marker :read-cond :preserve} rdr)
+                        (catch IOException _
+                          ;; The input stream is gone (e.g. a closed pipe);
+                          ;; there is nothing left to read, so treat it as
+                          ;; end of input.
+                          [eof-marker nil]))]
+      (if (identical? form eof-marker)
+        ::eof
+        {:form form :code code}))))
+
+(defn- skip-to-end-of-line
+  "Discards the rest of the current line. Used after a reader error, the way
+  `clojure.main`'s REPL does."
+  [^LineNumberingTextReader rdr]
+  (try
+    (.ReadLine rdr)
+    (catch IOException _ nil)))
+
+(defn- run-repl-with-transport
+  [transport {:keys [prompt err out value]
+              :or   {prompt #(print (str % "=> "))
+                     err    print
+                     out    print
+                     value  println}}]
+  (let [client (nrepl/client transport Int64/MaxValue)
+        awaiting (atom {})]
+    (println (repl-intro))
+    (threading/run-with @threading/transport-executor
+      ;; Doesn't matter which executor we hijack here, just don't use `future`.
+      (doseq [res (client)]
+        (some-> (:out res) out)
+        (some-> (:err res) err)
+        (when-let [p (and (some #{:done "done"} (:status res))
+                          (get @awaiting (:id res)))]
+          (deliver p true))
+        (when (some-> ^String (:id res)
+                      (str/starts-with? "nrepl.cmdline-"))
+          (some-> (:value res) value))
+        (flush)))
+    ;; We take 50ms to listen to any greeting messages, and display the value
+    ;; in the `:out` slot.
+    (System.Threading.Thread/Sleep 50)
+    (let [session (nrepl/client-session client)
+          input-reader (LineNumberingTextReader. *in*)]
+      (swap! running-repl assoc :transport transport :client session)
+      (binding [*ns* *ns*]
+        (loop []
+          (prompt *ns*)
+          (flush)
+          (let [input (try
+                        (read-form-for-server input-reader)
+                        (catch Exception e
+                          ;; A broken form should never take the REPL down.
+                          ;; Report it and discard the rest of the line, like
+                          ;; clojure.main does; the reader is then guaranteed
+                          ;; to make progress on the next iteration.
+                          (err (str "Syntax error: "
+                                    (or (ex-message e)
+                                        (some-> (ex-cause e) ex-message)
+                                        (str e))
+                                    "\n"))
+                          (flush)
+                          (skip-to-end-of-line input-reader)
+                          ::retry))]
+            (cond
+              (identical? ::retry input)
+              (recur)
+
+              (or (identical? ::eof input) (done? (:form input)))
+              (clean-up-and-exit 0)
+
+              :else
+              (let [id (str "nrepl.cmdline-" (uuid))]
+                (swap! awaiting assoc id (promise))
+                (doseq [res (nrepl/message session {:op "eval" :code (:code input) :id id})]
+                  (when (:ns res) (set! *ns* (create-ns (symbol (:ns res))))))
+                @(get @awaiting id)
+                (swap! awaiting dissoc id)
+                (recur)))))))))
+
+(defn- connect-url-scheme
+  "If `s` looks like a URI with a scheme (e.g. \"nrepl://…\" or \"http://…\"),
+  return the lower-cased scheme; otherwise nil."
+  [s]
+  (when (string? s)
+    (some-> (re-find #"\A([a-zA-Z][a-zA-Z0-9+.-]*)://" s) second str/lower-case)))
+
+(defn- ensure-url-scheme-support!
+  "Make sure the built-in client can actually use `scheme`.
+
+  HTTP(S) support is provided by the optional `nrepl/drawbridge` library, so
+  require it on demand for those schemes (registering its
+  `nrepl.core/url-connect` implementation) and fail helpfully when it's missing.
+  The `telnet` scheme is rejected here, mirroring the tty guard in
+  `interactive-repl`. Schemes handled by nREPL itself (e.g. `nrepl`) need no
+  extra deps."
+  [scheme]
+  (cond
+    (= "telnet" scheme)
+    (die "The built-in client does not support the tty transport. Consider using `nc` or `telnet`.\n")
+
+    (#{"http" "https"} scheme)
+    (try
+      (require 'drawbridge.client)
+      (catch FileNotFoundException e
+        ;; drawbridge pulls in clj-http and cheshire, which fail the same way,
+        ;; so don't blame drawbridge for one of its dependencies.
+        (if (str/includes? (str (.Message e)) "drawbridge")
+          (die (format "nREPL: connecting to %s URLs requires the nrepl/drawbridge library on the load path.\n"
+                       scheme))
+          (die (format "nREPL: couldn't load drawbridge.client: %s\n" (.Message e))))))))
+
+(def ^:private unix-url-transports
+  "Transports keyed by the scheme a filesystem-socket server advertises. Those
+  URLs are opaque (e.g. `nrepl+unix:/tmp/nrepl.sock`), not authority-based, so
+  they need handling separately from the `scheme://host:port` ones."
+  (into {}
+        (map (fn [transport] [(str (transport/uri-scheme transport) "+unix") transport]))
+        [#'transport/bencode #'transport/edn]))
+
+(defn- unix-socket-url
+  "If `s` is a URL a filesystem-socket server advertises, returns a
+  `[transport path]` pair; otherwise nil."
+  [s]
+  (when (string? s)
+    (when-let [[_ scheme path] (re-find #"\A([a-zA-Z][a-zA-Z0-9+.-]*):(?!//)(.+)\z" s)]
+      (when-let [transport (unix-url-transports (str/lower-case scheme))]
+        [transport path]))))
+
+(defn- reject-conflicting-url-options!
+  "A URL already says where to connect and which transport to use, so options
+  that would decide the same things can't be honored. The TLS options are the
+  exception - a URL can't carry key material, so those are supplied alongside."
+  [url {:keys [port socket transport]}]
+  (when socket
+    (die (format "nREPL: --socket can't be combined with the URL %s.\n" url)))
+  (when port
+    (die (format "nREPL: --port can't be combined with the URL %s.\n" url)))
+  ;; bencode is the default, so anything else means --transport was given.
+  (when (and transport (not= transport #'transport/bencode))
+    (die (format "nREPL: --transport can't be combined with the URL %s; the transport comes from the scheme.\n" url))))
+
+(def ^:private tls-url-transports
+  "The transports the built-in client can use over TLS, keyed by the URL
+  scheme a TLS-enabled server advertises in its startup message - the
+  transport's own URI scheme with an appended \"s\", the same rule
+  `nrepl.socket/as-nrepl-uri` uses to produce it."
+  (into {}
+        (map (fn [transport] [(str (transport/uri-scheme transport) "s") transport]))
+        [#'transport/bencode #'transport/edn]))
+
+(defn- tls-url-connect
+  "Connects to a TLS URL (see `tls-url-transports`), as advertised in a
+  TLS-enabled server's startup message. The TLS keys must be supplied
+  separately via the `:tls-keys-file`/`:tls-keys-str` options."
+  [url scheme {:keys [tls-keys-file tls-keys-str]}]
+  (when-not (or tls-keys-file tls-keys-str)
+    (die (format "nREPL: %s:// URLs require --tls-keys-file or --tls-keys-str.\n" scheme)))
+  ;; cleat: System.Uri accepts what java.net.URI rejects (nothing after
+  ;; scheme://) and rejects ports over 65535 that java.net.URI parses, so the
+  ;; parts are taken apart here to give the same errors.
+  (let [[_ authority port-str] (re-matches #"(?i)[a-z][a-z0-9+.-]*://(\[[^\]]*\]|[^/:?#]*)(?::(\d*))?([/?#].*)?" url)
+        _ (when (or (nil? authority) (str/blank? url) (re-matches #"(?i)[a-z][a-z0-9+.-]*://" url))
+            (die (format "nREPL: Invalid URL %s (%s).\n" url "Expected authority")))
+        host (when-not (str/blank? authority)
+               (if (str/starts-with? authority "[")
+                 (subs authority 1 (dec (count authority)))
+                 authority))
+        port (if (str/blank? port-str) -1 (Int64/Parse ^String port-str))]
+    (when-not host
+      (die (format "nREPL: Can't extract a host from the URL %s.\n" url)))
+    (when (or (zero? port) (> port 65535))
+      (die (format "nREPL: Invalid port %d in URL %s.\n" port url)))
+    (nrepl/connect :host host
+                   ;; The same default port nrepl.core/url-connect uses for
+                   ;; the other nrepl schemes.
+                   :port (if (pos? port) port 7888)
+                   :transport-fn (tls-url-transports scheme)
+                   :tls-keys-file tls-keys-file
+                   :tls-keys-str tls-keys-str)))
+
+(defn- run-repl
+  ([{:keys [server options]}]
+   (let [{:keys [host port socket] :or {host "127.0.0.1"}} server
+         {:keys [transport tls-keys-file tls-keys-str] :or {transport #'transport/bencode}} options
+         scheme (connect-url-scheme host)
+         unix-url (unix-socket-url host)
+         conflicting (assoc server :transport (:transport options))]
+     (run-repl-with-transport
+      (cond
+        unix-url
+        (do (reject-conflicting-url-options! host conflicting)
+            (nrepl/connect :socket (second unix-url) :transport-fn (first unix-url)))
+
+        (contains? tls-url-transports scheme)
+        (do (reject-conflicting-url-options! host conflicting)
+            (tls-url-connect host scheme options))
+
+        scheme
+        (do (when (or tls-keys-file tls-keys-str)
+              (die (format "nREPL: TLS options with a URL are only supported for %s URLs.\n"
+                           (str/join " or " (map #(str % "://") (keys tls-url-transports))))))
+            (reject-conflicting-url-options! host conflicting)
+            (ensure-url-scheme-support! scheme)
+            (try
+              (nrepl/url-connect host)
+              (catch UriFormatException e
+                (die (format "nREPL: Invalid URL %s (%s).\n" host (.Message e))))
+              (catch ArgumentException e
+                (die (format "nREPL: %s\n" (.Message e))))))
+
+        socket
+        (nrepl/connect :socket socket :transport-fn transport)
+
+        (and host port)
+        (nrepl/connect :host host :port port :transport-fn transport :tls-keys-file tls-keys-file :tls-keys-str tls-keys-str)
+
+        :else
+        (die "Must supply host/port, socket, or a URL."))
+      options)))
+  ([host port]
+   (run-repl host port nil))
+  ([host port options]
+   (run-repl {:server  (cond-> {}
+                         host (assoc :host host)
+                         port (assoc :port port))
+              :options options})))
+
+(def ^:private option-shorthands
+  {"-i" "--interactive"
+   "-r" "--repl"
+   "-f" "--repl-fn"
+   "-c" "--connect"
+   "-b" "--bind"
+   "-h" "--host"
+   "-p" "--port"
+   "-s" "--socket"
+   "-m" "--middleware"
+   "-t" "--transport"
+   "-n" "--handler"
+   "-v" "--version"})
+
+(def ^:private unary-options
+  #{"--interactive"
+    "--connect"
+    "--color"
+    "--help"
+    "--version"
+    "--verbose"})
+
+(defn- expand-shorthands
+  "Expand shorthand options into their full forms."
+  [args]
+  (map (fn [arg] (or (option-shorthands arg) arg)) args))
+
+(defn- keywordize-options [options]
+  (reduce-kv
+   #(assoc %1 (keyword (str/replace-first %2 "--" "")) %3)
+   {}
+   options))
+
+(defn- split-args
+  "Convert `args` into a map of options + a list of args.
+  Unary options are set to true during this transformation.
+  Returns a vector combining the map and the list."
+  [args]
+  (loop [[arg & rem-args :as args] args
+         options {}]
+    (if-not (and arg (re-matches #"-.*" arg))
+      [options args]
+      (if (unary-options arg)
+        (recur rem-args
+               (assoc options arg true))
+        (recur (rest rem-args)
+               (assoc options arg (first rem-args)))))))
+
+(defn help
+  []
+  ;; Updating this? Remember to also update server.adoc
+  "Usage:
+
+  -i/--interactive            Start nREPL and connect to it with the built-in client.
+  -f/--repl-fn REPL-FN        The function to run as the built-in REPL when combined with --interactive; defaults to `nrepl.cmdline/run-repl`. Must be expressed as a namespace-qualified symbol. The underlying var will be automatically `require`d.
+  -c/--connect                Connect to a running nREPL with the built-in client.
+  -C/--color                  Use colors to differentiate values from output in the REPL. Must be combined with --interactive.
+  -b/--bind ADDR              Bind address, by default \"127.0.0.1\".
+  -h/--host ADDR              Host address to connect to when using --connect. Defaults to \"127.0.0.1\". May also be a URL the server advertises on startup - nrepl://host:port, nrepls://host:port for TLS servers (requires --tls-keys-file or --tls-keys-str), nrepl+unix:/path for filesystem sockets, or http(s)://host/repl with nrepl/drawbridge on the classpath. The transport comes from the scheme, so --transport, --port and --socket can't be combined with a URL.
+  -p/--port PORT              Start nREPL on PORT. Defaults to 0 (random port) if not specified.
+  -s/--socket PATH            Start nREPL on filesystem socket at PATH or nREPL to connect to when using --connect.
+  --tls-keys-file FILE        Enable TLS, reading the CA certificate, own certificate and private key from FILE. Applies both when starting a server and when using --connect. See the TLS section of the manual for details on generating the keys.
+  --tls-keys-str KEYS         Same as --tls-keys-file, but the key material is passed directly as a string.
+  --ack ACK-PORT              Acknowledge the port of this server to another nREPL server running on ACK-PORT.
+  -n/--handler HANDLER        The nREPL message handler to use for each incoming connection; defaults to the result of `(nrepl.server/default-handler)`. Must be expressed as a namespace-qualified symbol. The underlying var will be automatically `require`d.
+  -m/--middleware MIDDLEWARE  A sequence of vars (expressed as namespace-qualified symbols), representing middleware you wish to mix in to the nREPL handler. The underlying vars will be automatically `require`d. If unavailable, the server will exit unless symbols are marked with ^:optional metadata.
+  -t/--transport TRANSPORT    The transport to use (default `nrepl.transport/bencode`), expressed as a namespace-qualified symbol. The underlying var will be automatically `require`d.
+  --help                      Show this help message.
+  -v/--version                Display the nREPL version.
+  --verbose                   Show verbose output.")
+
+(defn- require-and-resolve
+  "Attempts to resolve the config `key`'s `value` as a namespaced symbol
+  and returns the related var if successful.  Otherwise calls `die`."
+  [key sym]
+  (when-not (symbol? sym)
+    (die (format "nREPL %s: %s is not a symbol\n" (name key) (pr-str sym))))
+  (when-not (namespace sym)
+    (die (format "nREPL %s: %s has no namespace\n" (name key) sym)))
+  (requiring-resolve sym))
+
+(defn- resolve-mware-by-name [sym]
+  (try (require-and-resolve :middleware sym)
+       (catch FileNotFoundException _
+         (when-not (:optional (meta sym))
+           (die (format "nREPL %s: unable to resolve %s\n" "middleware" sym))))))
+
+(defn- expand-list-of-mware
+  [var]
+  (let [x @var]
+    (if (sequential? x)
+      (into [] (keep resolve-mware-by-name) x)
+      [var])))
+
+(defn- handle-interrupt
+  [_signal]
+  (let [transport (:transport @running-repl)
+        client (:client @running-repl)]
+    (if (and transport client)
+      (doseq [res (nrepl/message client {:op "interrupt"})]
+        (when (= ["done" "session-idle"] (:status res))
+          (clean-up-and-exit 0)))
+      (clean-up-and-exit 0))))
+
+(defn- ->mw-list
+  [middleware-var-strs]
+  (into [] (comp (keep #(resolve-mware-by-name (symbol %)))
+                 (mapcat expand-list-of-mware))
+        middleware-var-strs))
+
+(defn- build-handler
+  "Build an nREPL handler from `middleware`.
+  `middleware` is a sequence of vars or string which can be resolved
+  to vars, representing middleware you wish to mix in to the nREPL
+  handler. Vars can resolve to a sequence of vars, in which case
+  they'll be flattened into the list of middleware."
+  [middleware]
+  (apply nrepl.server/default-handler (->mw-list middleware)))
+
+(defn- ->int [x]
+  (cond
+    (nil? x) x
+    (number? x) x
+    :else (Int32/Parse ^String x)))
+
+(defn- sanitize-middleware-option
+  "Sanitize the middleware option.  In the config it can be either a
+  symbol or a vector of symbols."
+  [mw-opt]
+  (if (symbol? mw-opt)
+    [mw-opt]
+    mw-opt))
+
+(defn parse-cli-values
+  "Converts relevant command line argument values to their config
+  representation."
+  [options]
+  (reduce-kv (fn [result k v]
+               (case k
+                 (:handler :transport :middleware) (assoc result k (edn/read-string v))
+                 result))
+             options
+             options))
+
+(defn- meta-merge
+  "Metadata-aware function used for specifying merge behavior."
+  [config-opt cli-opt]
+  (if (some (comp :concat meta) [config-opt cli-opt]) (into config-opt cli-opt) cli-opt))
+
+(defn args->cli-options
+  "Takes CLI args list and returns vector of parsed options map and
+  remaining args."
+  [args]
+  (let [[options _args] (split-args (expand-shorthands args))
+        merge-config (partial merge-with meta-merge config/config)
+        options (-> options
+                    (keywordize-options)
+                    (parse-cli-values)
+                    (merge-config))]
+    [options _args]))
+
+(defn display-help
+  "Prints the help copy to the screen and exits the program with exit code 0."
+  []
+  (println (help))
+  (exit 0))
+
+(defn display-version
+  "Prints nREPL version to the screen and exits the program with exit code 0."
+  []
+  (println (:version-string version/version))
+  (exit 0))
+
+(defn- options->transport
+  "Takes a map of nREPL CLI options.
+  Returns either a default transport or the value of :transport."
+  [options]
+  (or (some->> options
+               (:transport)
+               (require-and-resolve :transport))
+      #'transport/bencode))
+
+(defn- options->handler
+  "Takes a map of nREPL CLI options and list of middleware.
+  Returns a request handler function.
+  If some handler was explicitly passed we'll use it, otherwise we'll build
+  one from whatever was passed via --middleware"
+  [options middleware]
+  (or (some->> options
+               (:handler)
+               (require-and-resolve :handler))
+      (build-handler middleware)))
+
+(defn- options->ack-port
+  "Takes a map of nREPL CLI options.
+  Returns integer ack port or nil."
+  [options]
+  (->int (:ack options)))
+
+(defn- options->repl-fn
+  "Takes a map of nREPL CLI options.
+  Returns either the :repl-fn config option or uses run-repl."
+  [options]
+  (or (some->> options
+               (:repl-fn)
+               (symbol)
+               (require-and-resolve :repl-fn))
+      #'run-repl))
+
+(defn- options->greeting
+  "Takes a map of nREPL CLI options and the selected transport for the server.
+  Returns a greeting function or nil."
+  [_options transport]
+  (when (= transport #'transport/tty)
+    #'transport/tty-greeting))
+
+(defn connection-opts
+  "Takes map of nREPL CLI options
+  Returns map of processed options used to connect or start a nREPL server."
+  [options]
+  {:port (->int (:port options))
+   :host (:host options)
+   :socket (:socket options)
+   :transport (options->transport options)
+   :repl-fn (options->repl-fn options)
+   :tls-keys-str (:tls-keys-str options)
+   :tls-keys-file (:tls-keys-file options)})
+
+(defn server-opts
+  "Takes a map of nREPL CLI options
+  Returns map of processed options to start an nREPL server."
+  [options]
+  (let [middleware (sanitize-middleware-option (:middleware options))
+        {:keys [host port socket transport tls-keys-str tls-keys-file]} (connection-opts options)]
+    (merge options
+           {:host host
+            :port port
+            :socket socket
+            :transport transport
+            :bind (:bind options)
+            :middleware middleware
+            :tls-keys-str tls-keys-str
+            :tls-keys-file tls-keys-file
+            :handler (options->handler options middleware)
+            :greeting (options->greeting options transport)
+            :ack-port (options->ack-port options)
+            :repl-fn (options->repl-fn options)})))
+
+(defn interactive-repl
+  "Runs an interactive repl if :interactive CLI option is true otherwise
+  puts the current thread to sleep
+  Takes nREPL server map and processed CLI options map.
+  Returns nil."
+  [server options]
+  (let [transport (:transport options)
+        repl-fn (:repl-fn options)
+        socket (:socket server)
+        host (:host server)
+        port (:port server)]
+    (when (= transport #'transport/tty)
+      (die "The built-in client does not support the tty transport. Consider using `nc` or `telnet`.\n"))
+    (if socket
+      (repl-fn {:server  server
+                :options (merge (when (:color options) colored-output)
+                                {:transport transport})})
+      (repl-fn host port
+               (merge (when (:color options) colored-output)
+                      {:transport transport}
+                      (select-keys options [:tls-keys-str :tls-keys-file]))))))
+
+(defn connect-to-server
+  "Connects to a running nREPL server and runs a REPL. Exits program when REPL
+  is closed.
+  Takes a map of nREPL CLI options."
+  [{:keys [host port socket] :as options}]
+  (interactive-repl {:host   host
+                     :port   port
+                     :socket socket}
+                    options)
+  (exit 0))
+
+(defn server-started-message
+  "Returns nREPL server started message that some tools rely on to parse the
+  connection details from.
+  Takes nREPL server map and processed CLI options map.
+  Returns connection header string."
+  [{:keys [host port socket] :as server} options]
+  (let [transport (:transport options)
+        uri (socket/as-nrepl-uri server (transport/uri-scheme transport))]
+    ;; The format here is important, as some tools (e.g. CIDER) parse the string
+    ;; to extract from it the host and the port to connect to
+    (if socket
+      (str "nREPL server started on socket " uri)
+      (format "nREPL server started on port %d on host %s - %s"
+              port host uri))))
+
+(defn save-port-file
+  "Writes a file relative to project classpath with port number so other tools
+  can infer the nREPL server port.
+  Takes nREPL server map and processed CLI options map.
+  Returns nil."
+  [server _options]
+  ;; Many clients look for this file to infer the port to connect to
+  (let [port (:port server)
+        port-file (System.IO.Path/GetFullPath ".nrepl-port")]
+    (socket/delete-on-exit! port-file)
+    (spit port-file port)))
+
+(defn start-server
+  "Creates an nREPL server instance.
+  Takes map of CLI options.
+  Returns nREPL server map."
+  [{:keys [port bind socket handler transport greeting ack-port tls-keys-str tls-keys-file]}]
+  (nrepl-server/start-server
+   :port port
+   :bind bind
+   :socket socket
+   :handler handler
+   :transport-fn transport
+   :greeting-fn greeting
+   :ack-port ack-port
+   :tls-keys-str tls-keys-str
+   :tls-keys-file tls-keys-file))
+
+(defn dispatch-commands
+  "Look at options to dispatch a specified command.
+  Takes CLI options map. May return a server map, nil, or exit."
+  [options]
+  (cond (:help options)    (display-help)
+        (:version options) (display-version)
+        (:connect options) (connect-to-server (connection-opts options))
+        :else (let [options (server-opts options)
+                    server (start-server options)]
+                (println (server-started-message server options))
+                (save-port-file server options)
+                (if (:interactive options)
+                  (interactive-repl server options)
+                  ;; Lock the main thread to prevent process from quitting while
+                  ;; the server is running.
+                  @(promise)))))
+
+(defn -main
+  [& args]
+  (try
+    (set-signal-handler! "INT" handle-interrupt)
+    (let [[options _args] (args->cli-options args)]
+      (dispatch-commands options))
+    (catch clojure.lang.ExceptionInfo ex
+      (let [{:keys [:nrepl/kind ::status]} (ex-data ex)]
+        (case kind
+          ::exit (clean-up-and-exit status)
+          (:nrepl.server/no-filesystem-sockets
+           :nrepl.server/invalid-start-request)
+          (do
+            (binding [*out* *err*]
+              (println (.Message ex)))
+            (clean-up-and-exit 2))
+          (throw ex))))))

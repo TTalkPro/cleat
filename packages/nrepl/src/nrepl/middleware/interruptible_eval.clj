@@ -1,0 +1,238 @@
+(ns nrepl.middleware.interruptible-eval
+  "Supports the ability to evaluate code. The name of the middleware is
+  slightly misleading, as interrupt is currently supported at a session level
+  but the name is retained for backwards compatibility."
+  {:author "Chas Emerick"}
+  (:refer-clojure :exclude [read])
+  (:require
+   clojure.main
+   clojure.test
+   [nrepl.middleware :refer [set-descriptor!]]
+   [nrepl.middleware.caught :as caught]
+   [nrepl.middleware.print :as print]
+   [nrepl.transport :as t]
+   [nrepl.util.threading :as threading])
+  (:import
+   (clojure.lang LineNumberingTextReader LispReader+ReaderException PushbackTextReader)
+   (System.IO StringReader TextWriter)
+   (System.Threading ThreadInterruptedException)))
+
+;; cleat: ported to the CLR. The reader is clojure.lang.LineNumberingTextReader
+;; (LineNumberingPushbackReader on the JVM); evaluation goes through
+;; clojure.core/eval, as cleat has no clojure.lang.Compiler; an interrupted
+;; evaluation is one nREPL interrupted (see nrepl.util.threading/interrupted?),
+;; there being no ThreadDeath;
+;; Compiler/SOURCE_PATH and Compiler/SOURCE are the vars *file* and
+;; *source-path*.
+
+(def ^:dynamic *msg*
+  "The message currently being evaluated."
+  nil)
+
+(defn- set-line!
+  [^LineNumberingTextReader reader line]
+  (.set_LineNumber reader (int line)))
+
+(defn- source-logging-pushback-reader
+  [code line column]
+  ;; cleat: LineNumberingTextReader has no column setter, and setting its
+  ;; private field by reflection doesn't work either (cleat hands Int32 values
+  ;; to the CLR as Int64), so the code starts after column - 1 spaces, which
+  ;; the reader skips as whitespace, counting columns.
+  (let [code (if (and column (> column 1))
+               (str (String. \space (int (dec column))) code)
+               code)
+        reader (LineNumberingTextReader. (StringReader. code))]
+    (when line (set-line! reader (int line)))
+    reader))
+
+(defn- interrupted?
+  "Returns true if the given throwable was ultimately caused by an interrupt.
+  cleat: the JVM version looks for the ThreadDeath that Thread.stop throws.
+  The CLR can't stop a thread, so this asks whether nREPL interrupted the
+  thread instead: whatever it throws from then on is the interrupt's doing."
+  [^Exception _e]
+  (threading/interrupted?))
+
+(defn- short-file-name [source-path]
+  (try (System.IO.Path/GetFileName ^String source-path)
+       (catch Exception _)))
+
+(def ^:private ^System.Reflection.FieldInfo has-unread-field
+  (.GetField PushbackTextReader "_hasUnread"
+             (enum-or System.Reflection.BindingFlags/NonPublic System.Reflection.BindingFlags/Instance)))
+
+(defn- skip-stdin-newline []
+  ;; NB: confusing hack. When `(read)` is issued to an input stream, it
+  ;; returns a Lisp form, ending with the last character of the form,
+  ;; naturally (e.g. a closing paren). However, it is expected that any
+  ;; trailing newline after such form is thrown away in order for a
+  ;; subsequent `(read-line)` call to not just return that empty newline but
+  ;; the actual following content. To simulate this behavior, we run
+  ;; this newline-skipping function after every `eval` request.
+  ;; Note that we check if stdin is ready in order not to block if it is empty.
+  ;; The evaluated code may have set! *in* to some other Reader; the hack only
+  ;; makes sense for the line-numbering reader a session binds *in* to.
+  ;; cleat: TextReader has no ready(). Input is ready when the reader holds a
+  ;; character it unread (reading a symbol ends by unreading what follows it),
+  ;; or when the session's queue polling reader, in the session's metadata, has
+  ;; some.
+  (when (instance? LineNumberingTextReader *in*)
+    (let [queue-ready? (some-> *msg* :session meta :nrepl.middleware.session/queue-reader :ready?)]
+      (when (or (and has-unread-field (.GetValue has-unread-field *in*))
+                (and queue-ready? (queue-ready?)))
+        (clojure.main/skip-if-eol *in*)))))
+
+(defn evaluator
+  "Return a closure that evaluates msg's `:code` (either a string or a seq of
+  forms to be evaluated) within the dynamic context of its session. `:ns` can be
+  optionally specified (resolved via `find-ns`). The message MUST contain a
+  Transport implementation in :transport; expression results and errors will be
+  sent via that Transport."
+  [msg]
+  (fn run []
+    (let [{:keys [eval ns code file file-name line column]} msg
+          ;; Qualified read-fn and eval-fn are a way for middleware to provide
+          ;; custom read and eval functions which can be runtime closures.
+          ;; `:eval` parameter that can come from a client can only be a symbol
+          ;; pointing to a var.
+          read-fn (or (::read-fn msg) clojure.core/read)
+          eval-fn (or (::eval-fn msg) (some-> eval symbol find-var))
+          ;; Needed exclusively by `load-file` middleware to say that if error
+          ;; happens anywhere during the evaluation of the file, don't try
+          ;; evaluating subsequent forms.
+          stop-on-error? (::stop-on-error msg)
+          ;; A way to provide extra temporary bindings (not session-persisted).
+          bindings (or (::bindings msg) {})
+          file-name (or file-name (short-file-name file))
+          explicit-ns (some-> ns symbol find-ns)
+          eof (Object.)
+          errored? (volatile! false)
+          read-cond (keyword (:read-cond msg :allow))
+          read (cond (string? code)
+                     (let [reader (source-logging-pushback-reader code line column)]
+                       #(read-fn {:read-cond read-cond :eof eof} reader))
+
+                     ;; Special case, only used for TTY transport.
+                     (instance? PushbackTextReader code)
+                     (let [already-read? (volatile! false)]
+                       ;; For TTY, only allow one read per eval, then
+                       ;; return EOF.
+                       #(if @already-read?
+                          eof
+                          (do (vreset! already-read? true)
+                              (read-fn {:read-cond read-cond :eof eof} code))))
+
+                     (instance? System.Collections.IEnumerable code)
+                     (let [code (.GetEnumerator ^System.Collections.IEnumerable code)]
+                       #(if (.MoveNext code)
+                          (.Current code)
+                          eof)))
+          caught (fn [^Exception e]
+                   (set! *e e)
+                   (vreset! errored? true)
+                   (when-not (interrupted? e)
+                     (t/respond-to msg {::caught/throwable e
+                                        :status #{:eval-error}
+                                        :ex (str (class e))
+                                        :root-ex (str (class (clojure.main/root-cause e)))})))]
+      (push-thread-bindings (merge (when explicit-ns {#'*ns* explicit-ns})
+                                   (when (and file file-name)
+                                     {#'*file* file
+                                      #'*source-path* file-name})
+                                   bindings))
+      (try
+        (loop []
+          (let [input (try
+                        (clojure.main/with-read-known (read))
+                        (catch Exception e
+                          (let [e (if (instance? LispReader+ReaderException e)
+                                    (ex-info nil {:clojure.error/phase :read-source} e)
+                                    e)]
+                            ;; If error happens during read phase, call
+                            ;; caught-hook but don't continue executing.
+                            (caught e)
+                            eof)))]
+            (when-not (identical? input eof)
+              (try
+                (let [value (if eval-fn
+                              (eval-fn input)
+                              ;; Not `eval`: the message's :eval is a local here.
+                              (clojure.core/eval input))]
+                  (set! *3 *2)
+                  (set! *2 *1)
+                  (set! *1 value)
+                  (try
+                    (.Flush ^TextWriter *err*)
+                    (.Flush ^TextWriter *out*)
+                    (t/respond-to msg {:ns (str (ns-name *ns*))
+                                       :value value
+                                       ::print/keys #{:value}})
+                    (catch Exception e
+                      (throw (ex-info nil {:clojure.error/phase :print-eval-result} e)))))
+                (catch Exception e
+                  (caught e)))
+              ;; Otherwise, when errors happen during eval/print phase,
+              ;; report the exception but continue executing the
+              ;; remaining readable forms, unless we load the whole file.
+              (when-not (and stop-on-error? @errored?)
+                (recur)))))
+
+        (catch Exception e
+          (caught e))
+        (finally
+          ;; The evaluated code may have closed *out* or *in* (e.g. `(slurp
+          ;; *in*)`). An exception escaping from here would kill the session
+          ;; thread, and the client would never see `done`.
+          (try
+            (flush)
+            (skip-stdin-newline)
+            (catch Exception _))
+          (pop-thread-bindings))))))
+
+(defn interruptible-eval
+  "Evaluation middleware that supports interrupts.  Returns a handler that supports
+   \"eval\" and \"interrupt\" :op-erations that delegates to the given handler
+   otherwise."
+  [h & _configuration]
+  (fn [{:keys [op session id ns code] :as msg}]
+    (let [{:keys [exec]} (meta session)]
+      (if (= op "eval")
+        (cond (nil? code)
+              (t/respond-to msg :status #{:error :no-code :done})
+
+              (not (or (string? code) (instance? System.Collections.IEnumerable code)
+                       (instance? PushbackTextReader code)))
+              (t/respond-to msg :status #{:error :unknown-code-type :done})
+
+              (and (some? ns) (nil? (some-> ns symbol find-ns)))
+              (t/respond-to msg {:status #{:error :namespace-not-found :done}
+                                 :ns     ns})
+
+              :else (exec id
+                          (evaluator msg)
+                          #(t/respond-to msg :status :done)
+                          msg))
+        (h msg)))))
+
+(set-descriptor! #'interruptible-eval
+                 {:requires #{"clone" "close" #'caught/wrap-caught #'print/wrap-print}
+                  :expects #{}
+                  :handles {"eval"
+                            {:doc "Evaluates code. Note that unlike regular stream-based Clojure REPLs, nREPL's `\"eval\"` short-circuits on first read error and will not try to read and execute the remaining code in the message."
+                             :requires {"code" "The code to be evaluated."
+                                        "session" "The ID of the session within which to evaluate the code."}
+                             :optional (merge caught/wrap-caught-optional-arguments
+                                              print/wrap-print-optional-arguments
+                                              {"id" "An opaque message ID that will be included in responses related to the evaluation, and which may be used to restrict the scope of a later \"interrupt\" operation."
+                                               "eval" "A fully-qualified symbol naming a var whose function value will be used to evaluate [code], instead of `clojure.core/eval` (the default)."
+                                               "ns" "The namespace in which to perform the evaluation. The supplied namespace must exist already (e.g. be loaded). If no namespace is specified the evaluation falls back to `*ns*` for the session in question."
+                                               "file" "The path to the file containing [code]. `clojure.core/*file*` will be bound to this."
+                                               "file-name" "Name of source file, e.g. io.clj. Do not confuse with `file` param which contains full path while `file-name` is only the short file name. Both parameters are needed to properly set the bytecode location metadata."
+                                               "line" "The line number in [file] at which [code] starts."
+                                               "column" "The column number in [file] at which [code] starts."
+                                               "read-cond" "The options passed to the reader before the evaluation. Useful when middleware in a higher layer wants to process reader conditionals."})
+                             :returns {"ns" "*ns*, after successful evaluation of `code`."
+                                       "value" "The result of evaluating `code`, often `read`able. This printing is provided by the `print` middleware. Superseded by `ex` and `root-ex` if an exception occurs during evaluation."
+                                       "ex" "The type of exception thrown, if any. If present, then `:value` will be absent."
+                                       "root-ex" "The type of the root exception thrown, if any. If present, then `:value` will be absent."}}}})
