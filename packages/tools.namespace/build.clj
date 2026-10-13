@@ -6,7 +6,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.ToolsNamespace)
-(def default-version "1.5.1")
+(def default-version "1.5.2")
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

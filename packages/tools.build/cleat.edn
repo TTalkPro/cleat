@@ -3,4 +3,4 @@
 ;; it builds itself from source:
 ;;   cd packages/tools.build && bin/cleat-build install
 {:paths ["src"]
- :deps {Cleat.ToolsNamespace {:nuget/version "1.5.1"}}}
+ :deps {Cleat.ToolsNamespace {:nuget/version "1.5.2"}}}

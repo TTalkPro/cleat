@@ -9,7 +9,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.Neorepl)
-(def default-version "0.1.0")
+(def default-version "0.1.1")   ; neorepl 0.1.0's port, package revision 1 (cleat-070: rebuilt for Cleat.Runtime 1.0.1)
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

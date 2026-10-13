@@ -1,6 +1,6 @@
 # cleat-070 错误 phase 对齐 JVM、cleat-run 的 SIGTERM、包的新版本
 
-- 里程碑：后续　依赖：cleat-069　状态：进行中
+- 里程碑：后续　依赖：cleat-069　状态：完成
 
 ## 背景
 
@@ -24,3 +24,18 @@ cleat-069 收尾时（2026-10-13）：
 2. `cleat-run -M`：子进程继承标准流；收到 SIGTERM 转给子进程并等它退出。
 3. 新版本：`Cleat.Runtime 1.0.1`（`CoreInfo.Version`，新包声明 `Cleat.Runtime >= 1.0.1`）、`Cleat.Nrepl 1.8.1`、`Cleat.Neorepl 0.1.1`、
    `Cleat.ToolsBuild 0.10.16`、`Cleat.ToolsNamespace 1.5.2`；示例改引用它们。先在本地目录源上验证同一批 nupkg，再推 BaGetter，再用 BaGetter 实跑示例。
+
+## 结论（2026-10-13）
+
+完成，分两次提交。
+
+- **错误 phase**：对照 JVM Clojure 改正后，neorepl / nREPL 显示编译错误不再抛 "No matching clause"；全量 610/610。
+  另记：`clojure.main/ex-str` 的输出比 JVM 多 `(ExpanderException)` 与重复的位置前缀（`ExpanderException` 没有像 `CompilerException`
+  那样把原因包成 cause），只影响显示，留待以后。
+- **BaGetter**：`Cleat.ToolsBuild 0.10.14` 已 unlist、推了 0.10.15；改 `core.clj` 之后 Clojure 镜像变了，又发了一批对着新镜像编译的新版本：
+  `Cleat.Runtime 1.0.1`、`Cleat.ToolsNamespace 1.5.2`、`Cleat.ToolsBuild 0.10.16`、`Cleat.Nrepl 1.8.1`、`Cleat.Neorepl 0.1.1`
+  （nrepl / neorepl 的版本号在上游版本上加修订号）。先在本地目录源上用同一批 nupkg 验证示例全流程，再推送；之后在 `examples/WebServer`
+  用真实的 BaGetter 实跑：测试、`dotnet build host`、主机服务、neorepl 连进主机热替换、jack-in 都通过，basis 解析到的全是新版本。
+  旧版本仍在 BaGetter 上（与旧运行时彼此一致，示例已改引用新版本）。
+- **测试**：`NuGetColdLoadTests` 与 `PackageTests`（8 个）通过。
+- **之后**：用户定把 `cleat-run` / `cleat-build` 脚本换成 dotnet tool（宿主即工具，见 cleat-071）。

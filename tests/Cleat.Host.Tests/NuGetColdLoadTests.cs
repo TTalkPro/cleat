@@ -17,9 +17,9 @@ namespace Cleat.Host.Tests;
 [Category("Bootstrap"), NonParallelizable]
 public class NuGetColdLoadTests
 {
-    // at least the running version (CoreInfo.Version, 1.0.0): packages built with the default :runtime-version depend on
-    // Cleat.Runtime >= it (and in SemVer 1.0.0-anything sorts below 1.0.0); the fixture's NuGet caches are isolated
-    private const string Version = "1.0.0";
+    // at least the running version (CoreInfo.Version, 1.0.1): packages built with the default :runtime-version depend on
+    // Cleat.Runtime >= it (and in SemVer 1.0.1-anything sorts below 1.0.1); the fixture's NuGet caches are isolated
+    private const string Version = "1.0.1";
 
     private const string GreeterSource = @"(ns demo.greeter
   (:require [clojure.string :as str])
@@ -184,8 +184,8 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
     private void BuildClojurePackages()
     {
         if (_clojurePackagesBuilt) return;
-        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.1"), ("tools.build", "cleat.toolsbuild.0.10.15"),
-                                             ("nrepl", "cleat.nrepl.1.8.0"), ("neorepl", "cleat.neorepl.0.1.0") })
+        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.2"), ("tools.build", "cleat.toolsbuild.0.10.16"),
+                                             ("nrepl", "cleat.nrepl.1.8.1"), ("neorepl", "cleat.neorepl.0.1.1") })
         {
             string dir = Path.Combine(_root, "sources", package);
             if (Directory.Exists(dir)) Directory.Delete(dir, true);
@@ -224,7 +224,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         BuildClojurePackages();
         string app = Path.Combine(_dir, "app");
         Directory.CreateDirectory(app);
-        File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Cleat.Neorepl {:nuget/version \"0.1.0\"}}}");
+        File.WriteAllText(Path.Combine(app, "cleat.edn"), "{:deps {Cleat.Neorepl {:nuget/version \"0.1.1\"}}}");
         File.WriteAllText(Path.Combine(app, "nuget.config"), NoSources);
         string run = "(require '[clojure.tools.build.api :as b])" +
             $"(let [basis (b/create-basis {{:local-feed {Edn(_feed)}}})]" +
