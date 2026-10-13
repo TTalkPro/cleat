@@ -17,9 +17,9 @@ namespace Cleat.Host.Tests;
 [Category("Bootstrap"), NonParallelizable]
 public class NuGetColdLoadTests
 {
-    // at least the running version (CoreInfo.Version, 1.0.1): packages built with the default :runtime-version depend on
-    // Cleat.Runtime >= it (and in SemVer 1.0.1-anything sorts below 1.0.1); the fixture's NuGet caches are isolated
-    private const string Version = "1.0.1";
+    // at least the running version (CoreInfo.Version, 1.0.2): packages built with the default :runtime-version depend on
+    // Cleat.Runtime >= it (and in SemVer 1.0.2-anything sorts below 1.0.2); the fixture's NuGet caches are isolated
+    private const string Version = "1.0.2";
 
     private const string GreeterSource = @"(ns demo.greeter
   (:require [clojure.string :as str])
@@ -265,6 +265,14 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
 
         // dotnet build: the C# library, the Clojure package assembly (the MSBuild target runs dotnet cleat), the C# host
         Run(app, env, "dotnet", "build", "host", "-nologo", "-v", "q");
+
+        // cleat-072: the -main gen-class Web.Cli, run three ways, and -X with the alias's :exec-fn / :exec-args
+        Assert.That(Cleat("-M:cli", "sum", "1", "2", "3"), Is.EqualTo("6\n"));
+        Assert.That(Cleat("-M", "-m", "web.cli", "greet", "Bob"), Is.EqualTo("hello, Bob!\n"));
+        Assert.That(Run(app, env, "dotnet", Path.Combine(app, "host", "bin", "Debug", "net10.0", "WebServer.dll"), "cli", "slug", "Hello C#"),
+            Is.EqualTo("hello-c\n"));
+        Assert.That(Cleat("-X:greet"), Is.EqualTo("hello, world!\n"));
+        Assert.That(Cleat("-X:greet", ":name", "\"you\""), Is.EqualTo("hello, you!\n"));
         Assert.That(File.Exists(Path.Combine(app, "target", "classes", "Web.Handlers.dll")), Is.True);
 
         int http = FreePort(), nrepl = FreePort();

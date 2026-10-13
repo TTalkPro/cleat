@@ -1,5 +1,12 @@
 using WebCore;
 
+// `cli …`: the gen-class Web.Cli (src/web/cli.clj, :main true) has a static Main; C# calls it like any other.
+if (args.Length > 0 && args[0] == "cli")
+{
+    Web.Cli.Main(args[1..]);
+    return;
+}
+
 // The host is plain ASP.NET. The handlers are Clojure: Web.Handlers is a gen-class type (src/web/handlers.clj)
 // implementing the C# interface WebCore.IHandlers. Creating it starts the cleat runtime on first use -- there is
 // no initialization call.

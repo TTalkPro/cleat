@@ -9,6 +9,10 @@
  :aliases
  {;; on the REPL server's load path too (see :neorepl/aliases)
   :dev {:extra-paths ["test"]}
+  ;; dotnet cleat -M:cli sum 1 2 3 -- web.cli's -main (a gen-class with :main)
+  :cli {:main-opts ["-m" "web.cli"]}
+  ;; dotnet cleat -X:greet [:name '"you"'] -- a function taking a map
+  :greet {:exec-fn web.cli/greet :exec-args {:name "world"}}
   ;; dotnet cleat -M:test
   :test {:extra-paths ["test"] :main-opts ["-m" "web.test-runner"]}
   ;; dotnet cleat -M:neorepl -- neorepl, from BaGetter as well

@@ -54,17 +54,22 @@
 
 ## 5. 运行构建脚本与项目
 
-上游靠 Clojure CLI：`clj -T:build 函数 :键 值` 跑构建函数，`clj -M:alias` 按别名跑项目。cleat 把这两个入口做进宿主（cleat-071）：
+上游靠 Clojure CLI。cleat 把它的执行模式做进宿主（cleat-071、072），语义照 CLI：
 
-```
-cleat -T:build pack :version '"1.0.0"'      # build.clj 的 build/pack，键值对按 EDN 读成参数 map（项目根目录进加载路径）
-cleat -M:neorepl                            # 按 cleat.edn 与别名建 basis，加载路径加进本进程，再跑别名的 :cleat-opts / :main-opts 与其余参数
-```
+| 命令 | 作用 |
+|---|---|
+| `cleat -M[:别名…] [-m ns] 参数…` | 跑 `-main`：按 `cleat.edn` 与别名建 basis，加载路径加进本进程，接着跑别名的 `:cleat-opts` / `:main-opts` 与其余参数；别名没有 `:main-opts` 又没有别的参数时进 REPL |
+| `cleat -X[:别名…] [ns/fn] :键 值…` | 调函数，参数是一个 map：项目的 basis；函数取命令行的（不限定时用别名的 `:ns-default`）或别名的 `:exec-fn`；参数是别名的 `:exec-args` 并上键值对（键可以是路径 `[:a :b]`） |
+| `cleat -T:别名 fn :键 值…`（也写 `-T别名`） | 工具函数，**不带项目的 deps 与 paths**：别名的 `:deps`、`:paths`（缺省 `["."]`）、`:ns-default`、`:exec-args`；`cleat.edn` 没有这个别名时名字就是命名空间，加载路径是项目根目录——`-T:build pack` 调 build.clj 的 `build/pack`（tools.build 随附） |
+| `-Sdeps EDN` / `-Spath` / `-P` | 并在 `cleat.edn` 之上的临时配置 / 打印加载路径 / 只解析与下载依赖 |
 
-两者都要 tools.build：宿主作为 dotnet tool 发布（`Cleat.Cli`，命令 `cleat`），工具包里随附 `Cleat.ToolsBuild` / `Cleat.ToolsNamespace`
-的包程序集（镜像旁的 `tools/`，比镜像旧时不用）；开发布局下用仓库里的源码。项目里用 `.config/dotnet-tools.json` 钉住版本，
-`dotnet tool restore` 之后 `dotnet cleat …`——源与 BaGetter 照 `nuget.config`。（cleat-069 时这两个入口是 `cleat-build` / `cleat-run`
-两段脚本，按用户意见换成了工具。）
+没有的：`-A`（CLI 已弃用，报错提示改用 `-M` / `-X`）、`-Ttools install` 与已安装的工具（cleat 的工具走 dotnet tool）、`-J`（没有 JVM）、`-Srepro`
+（没有用户级的 deps 文件）。
+
+这些模式都要 tools.build：宿主作为 dotnet tool 发布（`Cleat.Cli`，命令 `cleat`），工具包里随附 `Cleat.ToolsBuild` / `Cleat.ToolsNamespace`
+的包程序集（镜像旁的 `tools/`，比镜像旧时不用）；开发布局（仓库里构建出的 cleat）下用仓库里的源码，不用随附的那份（它是 pack 的构建产物，
+会落后于源码）。项目里用 `.config/dotnet-tools.json` 钉住版本，`dotnet tool restore` 之后 `dotnet cleat …`——源与 BaGetter 照 `nuget.config`。
+（cleat-069 时这两个入口是 `cleat-build` / `cleat-run` 两段脚本，按用户意见换成了工具。）
 
 ## 6. 本地源
 

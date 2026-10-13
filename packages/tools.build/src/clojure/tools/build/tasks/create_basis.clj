@@ -32,6 +32,11 @@
     (or (edn/read-string (slurp path)) {})
     {}))
 
+(defn read-project
+  "The project's cleat.edn (in *project-root*), read; {} when there's none."
+  ([] (read-project "cleat.edn"))
+  ([path] (read-edn-file (Path/GetFullPath (api/resolve-path path)))))
+
 (defn- merge-edn
   "Merge cleat.edn maps: :deps and :aliases merge, other keys are replaced."
   [a b]

@@ -43,7 +43,9 @@ public static class Program
         public readonly List<string> PackageNamespaces = new List<string>();
         public string Report;          // --report stdio|stderr：REPL / -e 的错误报告写到哪（clojure.main 的语义）
         public string DepsAliases;     // -M:alias…（clj -M）：按 cleat.edn 的别名建 basis 再运行（cleat-071），其余参数在 ScriptArgs
-        public string ToolNs;          // -T:ns（clj -T）：调 ns/函数，键值对在 ScriptArgs（cleat-071）
+        public string ExecMode, ExecAlias;   // -X:alias… / -T:alias（clj -X / -T）：调函数，参数 map；函数名与键值对在 ScriptArgs（cleat-071、072）
+        public string SDeps;           // -Sdeps EDN：并在 cleat.edn 之上（clj -Sdeps）
+        public bool SPath, Prepare;    // -Spath：打印加载路径；-P：只解析与下载依赖（clj -Spath / -P）
     }
 
     public static Options Parse(string[] args)
@@ -74,8 +76,16 @@ public static class Program
                 case "-": o.Script = "-"; i++; goto done;
                 case var m when m.StartsWith("-M", StringComparison.Ordinal) && (m.Length == 2 || m[2] == ':'):
                     o.DepsAliases = a; i++; goto done;
-                case var t when t.StartsWith("-T:", StringComparison.Ordinal) && t.Length > 3:
-                    o.ToolNs = a.Substring(3); i++; goto done;
+                case var x when x.StartsWith("-X", StringComparison.Ordinal) && (x.Length == 2 || x[2] == ':'):
+                    o.ExecMode = "X"; o.ExecAlias = a; i++; goto done;
+                case var t when t.StartsWith("-T", StringComparison.Ordinal) && t.Length > 2:
+                    // -T:build (an alias) and -Tbuild (clj's installed-tool spelling) both name the tool
+                    o.ExecMode = "T"; o.ExecAlias = t[2] == ':' ? a : "-T:" + a.Substring(2); i++; goto done;
+                case "-Sdeps" when i + 1 < args.Length: o.SDeps = args[++i]; break;
+                case "-Spath": o.SPath = true; break;
+                case "-P": o.Prepare = true; break;
+                case var al when al.StartsWith("-A", StringComparison.Ordinal):
+                    throw new ArgumentException("-A is not supported (deprecated in the Clojure CLI): use -M:alias for a REPL or -main, -X:alias for a function");
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal) && a.Length > 1) throw new ArgumentException("unknown option: " + a);
                     if (o.CompilePackage != null) { o.PackageNamespaces.Add(a); break; }
@@ -85,7 +95,7 @@ public static class Program
     done:
         o.ScriptArgs = args.Skip(i).ToArray();
         if (o.Script == null && o.MainNs == null && !o.Repl && o.Inits.Count == 0 && o.CompileBoot == null && o.CompilePackage == null
-            && o.DepsAliases == null && o.ToolNs == null) o.Repl = true;
+            && o.DepsAliases == null && o.ExecMode == null && !o.SPath && !o.Prepare) o.Repl = true;
         return o;
     }
 
@@ -131,8 +141,9 @@ public static class Program
         Console.Error.WriteLine("usage: cleat [--scheme-boot dll] [--boot dll | --no-boot] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
         Console.Error.WriteLine("       cleat [--boot dll | --no-boot] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]");
         Console.Error.WriteLine("       cleat -I src... --compile-package out/Name.dll [--package name] [--root dir]... ns...");
-        Console.Error.WriteLine("       cleat -M[:alias...] [options and args...]   run the project in the current directory (cleat.edn), as clj -M");
-        Console.Error.WriteLine("       cleat -T:ns function [:key value]...        call a build function (-T:build: build.clj), as clj -T");
+        Console.Error.WriteLine("       cleat [-Sdeps EDN] [-Spath | -P] -M[:alias...] [options and args...]   run the project (cleat.edn), as clj -M");
+        Console.Error.WriteLine("       cleat [-Sdeps EDN] -X[:alias...] [ns/fn] [:key value]...   call a function with a map, as clj -X");
+        Console.Error.WriteLine("       cleat -T:alias function [:key value]...    a tool function without the project's deps (-T:build: build.clj), as clj -T");
         return 2;
     }
 
@@ -175,9 +186,11 @@ public static class Program
             // 这些命名空间从源码加载
             string libs = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "Cleat.Clojure.Libs.dll");
             if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot)) PackageIndex.RegisterFile(libs);
-            // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用
+            // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用；
+            // 开发布局（镜像在仓库的 src/boot，旁边有 packages/tools.build/src）下不用：那是 pack 留下的构建产物，会落后于源码
             string tools = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "tools");
-            if (Directory.Exists(tools))
+            bool devLayout = File.Exists(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "..", "packages", "tools.build", "src", "clojure", "tools", "build", "api.clj"));
+            if (Directory.Exists(tools) && !devLayout)
                 foreach (string f in Directory.GetFiles(tools, "*.dll"))
                     if (File.GetLastWriteTimeUtc(f) >= File.GetLastWriteTimeUtc(boot)) PackageIndex.RegisterFile(f);
             // 开发布局（镜像在 src/boot/）：src/clojure 的源码也在加载路径上（JVM 的 clojure.jar 带着源码；按需加载的
@@ -238,8 +251,9 @@ public static class Program
         {
             if (o.CompileBoot != null) return CompileBootImage(o);
             if (o.CompilePackage != null) return CompilePackageAssembly(o);
+            if (o.SPath || o.Prepare) return PathOrPrepare(o);
             if (o.DepsAliases != null) return RunDeps(o);
-            if (o.ToolNs != null) return RunTool(o);
+            if (o.ExecMode != null) return RunExec(o);
             foreach (var (kind, value) in o.Inits)
             {
                 if (kind == "eval") EvalReader(new StringReader(value), "<eval>", v => { if (v != null) Print(v); });   // clojure.main：每个非 nil 值都打印
@@ -339,14 +353,14 @@ public static class Program
     {
         EnsureToolsBuild();
         RequireNs("clojure.tools.build.main");
-        var r = (IPersistentMap)RT.var("clojure.tools.build.main", "deps-args").invoke(o.DepsAliases);
+        var r = (IPersistentMap)RT.var("clojure.tools.build.main", "deps-args").invoke(o.DepsAliases, o.SDeps);
         foreach (var p in (System.Collections.IEnumerable)r.valAt(Keyword.intern("load-path")))
             Loader.AddPath(Path.GetFullPath(p.ToString()!));
         var args = ((System.Collections.IEnumerable)r.valAt(Keyword.intern("args"))).Cast<object>().Select(x => x.ToString()!)
             .Concat(o.ScriptArgs).ToArray();
         var o2 = Parse(args);
         if (o2.Help) return Usage();
-        if (o2.DepsAliases != null || o2.ToolNs != null || o2.CompileBoot != null || o2.CompilePackage != null)
+        if (o2.DepsAliases != null || o2.ExecMode != null || o2.CompileBoot != null || o2.CompilePackage != null)
             throw new ArgumentException("an alias's :main-opts can't run -M, -T, --compile-boot or --compile-package");
         o2.Report ??= o.Report;
         foreach (var d in o2.IncludeDirs) Loader.AddPath(Path.GetFullPath(d));
@@ -354,17 +368,31 @@ public static class Program
     }
 
     /// <summary>
-    /// cleat -T:ns function :key value…（clj -T，cleat-071）：当前目录（项目根目录）进加载路径，tools.build 的 main 调 ns/function
-    /// （-T:build pack → build.clj 的 build/pack），键值对按 EDN 读成参数 map。
+    /// cleat -X:alias… [ns/fn] :key value… 与 cleat -T:alias fn :key value…（clj -X / -T，cleat-072）：tools.build 的 exec! 在本进程里
+    /// 加上加载路径（-X：项目的 basis；-T：工具别名的 :deps / :paths，缺省只有项目根目录），调函数，参数是一个 map。
     /// </summary>
-    private static int RunTool(Options o)
+    private static int RunExec(Options o)
     {
         EnsureToolsBuild();
-        if (o.ScriptArgs.Length == 0) throw new ArgumentException($"-T:{o.ToolNs} needs a function name");
-        Loader.AddPath(Directory.GetCurrentDirectory());
-        string fn = o.ScriptArgs[0].Contains('/') ? o.ScriptArgs[0] : o.ToolNs + "/" + o.ScriptArgs[0];
         RequireNs("clojure.tools.build.main");
-        RT.var("clojure.tools.build.main", "-main").applyTo(RT.seq(new object[] { fn }.Concat(o.ScriptArgs.Skip(1)).ToArray()));
+        RT.var("clojure.tools.build.main", "exec!").invoke(o.ExecMode, o.ExecAlias, RT.seq(o.ScriptArgs), o.SDeps);
+        return 0;
+    }
+
+    /// <summary>
+    /// -Spath（打印加载路径，按路径分隔符连接）与 -P（只解析、下载依赖，不运行）：用 -M / -X 的别名（没有时项目本身）建 basis。
+    /// </summary>
+    private static int PathOrPrepare(Options o)
+    {
+        EnsureToolsBuild();
+        RequireNs("clojure.tools.build.main");
+        string alias = o.DepsAliases ?? (o.ExecMode == "X" ? "-M" + o.ExecAlias.Substring(2) : "-M");
+        var r = (IPersistentMap)RT.var("clojure.tools.build.main", "deps-args").invoke(alias, o.SDeps);
+        if (o.SPath)
+        {
+            var path = ((System.Collections.IEnumerable)r.valAt(Keyword.intern("load-path"))).Cast<object>().Select(x => x.ToString());
+            Console.Out.WriteLine(string.Join(Path.PathSeparator, path));
+        }
         return 0;
     }
 

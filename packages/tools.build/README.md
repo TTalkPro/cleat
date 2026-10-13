@@ -49,11 +49,14 @@ cleat 宿主作为 dotnet tool 发布（包 `Cleat.Cli`，命令 `cleat`，随�
 
 `packages/nrepl/build.clj`、`packages/neorepl/build.clj` 是完整的例子（neorepl 经 NuGet 依赖 Cleat.Nrepl）。
 
-运行项目本身（相当于 `clj -M:alias`，cleat-069）：
+运行项目本身，照 Clojure CLI 的执行模式（cleat-069、071、072；完整的表见 designs/18 §5）：
 
 ```sh
-cleat -M:neorepl            # 按 cleat.edn 的别名建 basis，跑别名的 :main-opts
-cleat -M:test
+cleat -M:neorepl                         # clj -M：按 cleat.edn 的别名建 basis，跑别名的 :main-opts
+cleat -M -m my.app arg                   # 不用别名也行
+cleat -X:deploy :env :prod               # clj -X：调函数（别名的 :exec-fn / :exec-args / :ns-default），参数是 map
+cleat -T:mytool fn :k v                  # clj -T：工具别名的 :deps / :paths，不带项目的依赖
+cleat -Spath -M:dev                      # 打印加载路径；-P 只下载依赖；-Sdeps '{…}' 临时并入
 ```
 
 宿主按别名建 basis，把它的加载路径加进**本进程**，再按别名的 `:cleat-opts` + `:main-opts`（如 `["-m" "neorepl.main"]`）+ 命令行其余参数

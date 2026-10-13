@@ -27,23 +27,105 @@
     (println "  FUNCTION - a function taking a params map; unqualified names are in the build namespace (build.clj)")
     (println "  :key value - EDN pairs, merged into the params map")))
 
+(defn- alias-keys
+  "The aliases in an -M:a:b / -X:a:b / -T:a style argument (after its 2-char flag)."
+  [arg]
+  (->> (str/split (subs arg 2) #":") (remove str/blank?) (map keyword) vec))
+
+(defn- basis
+  [params]
+  ((requiring-resolve 'clojure.tools.build.api/create-basis) params))
+
+(defn- extra-deps
+  "-Sdeps's EDN (a map merged over cleat.edn), or nil."
+  [sdeps]
+  (when (seq sdeps) (edn/read-string sdeps)))
+
 (defn deps-args
   "What -M:alias1:alias2 means for the project in the current directory:
   {:load-path [entries of the basis], :args [the aliases' :cleat-opts, then
   :main-opts]}. The cleat host (cleat -M:…, cleat-071) puts :load-path on its
-  load path and runs :args followed by the rest of its command line."
-  [alias-arg]
-  (let [aliases (->> (str/split (subs alias-arg 2) #":") (remove str/blank?) (map keyword) vec)
-        create-basis (requiring-resolve 'clojure.tools.build.api/create-basis)
-        {:keys [classpath-roots argmap]} (create-basis {:aliases aliases})]
-    {:load-path (mapv str classpath-roots)
-     :args (vec (concat (:cleat-opts argmap) (:main-opts argmap)))}))
+  load path and runs :args followed by the rest of its command line.
+  sdeps is -Sdeps's EDN, merged over cleat.edn."
+  ([alias-arg] (deps-args alias-arg nil))
+  ([alias-arg sdeps]
+   (let [{:keys [classpath-roots argmap]} (basis (cond-> {:aliases (alias-keys alias-arg)}
+                                                   (seq sdeps) (assoc :extra (extra-deps sdeps))))]
+     {:load-path (mapv str classpath-roots)
+      :args (vec (concat (:cleat-opts argmap) (:main-opts argmap)))})))
+
+(defn- read-kvs
+  "Command line key/value pairs as EDN: a key is a keyword, or a vector of
+  keywords (a path, as clj -X allows)."
+  [kvs]
+  (when (odd? (count kvs))
+    (throw (ex-info (str "key/value args must come in pairs: " (str/join " " kvs)) {:type ::usage})))
+  (reduce (fn [m [k v]]
+            (let [k (edn/read-string k)
+                  v (edn/read-string v)]
+              (if (vector? k) (assoc-in m k v) (assoc m k v))))
+          {} (partition 2 kvs)))
+
+(defn exec-plan
+  "What -X:aliases or -T:alias with args (a function name, then key/value
+  pairs) means: {:load-path [...] :fn qualified-symbol :params map}.
+
+  -X (clj -X): the project's basis with the aliases; the function is the first
+  arg when it isn't a key (unqualified names take the aliases' :ns-default),
+  else the aliases' :exec-fn; params are the aliases' :exec-args merged with the
+  key/value pairs.
+
+  -T (clj -T): a tool, without the project's deps or paths: the alias's :deps
+  and :paths (default [\".\"], the project root) when cleat.edn has the alias,
+  its :ns-default and :exec-args. Without such an alias the name is the
+  namespace (cleat: -T:build calls build.clj's functions with the bundled
+  tools.build, no alias needed)."
+  [mode alias-arg args sdeps]
+  (let [aliases (alias-keys alias-arg)
+        [f kvs] (if (and (seq args) (not (str/starts-with? (first args) ":")) (not (str/starts-with? (first args) "[")))
+                  [(first args) (rest args)]
+                  [nil args])
+        project (let [read (requiring-resolve 'clojure.tools.build.tasks.create-basis/read-project)] (read))
+        [load-path argmap]
+        (case mode
+          "X" (let [{:keys [classpath-roots argmap]} (basis (cond-> {:aliases aliases}
+                                                                 (seq sdeps) (assoc :extra (extra-deps sdeps))))]
+                [classpath-roots argmap])
+          "T" (let [alias (first aliases)
+                    tool (get-in project [:aliases alias])]
+                (when (next aliases)
+                  (throw (ex-info "-T takes one tool alias" {:type ::usage})))
+                (if tool
+                  (let [{:keys [classpath-roots]} (basis {:project (merge {:paths ["."] :deps {}}
+                                                                          (select-keys tool [:paths :deps]))
+                                                          :extra (extra-deps sdeps)})]
+                    [classpath-roots (dissoc tool :paths :deps)])
+                  [["."] {:ns-default (symbol (name alias))}])))
+        f (or (some-> f symbol) (:exec-fn argmap)
+              (throw (ex-info (str "-" mode ": no function to run (give one, or :exec-fn in the alias)") {:type ::usage})))
+        f (if (namespace f) f
+              (if-let [ns (:ns-default argmap)]
+                (symbol (str ns) (name f))
+                (throw (ex-info (str "-" mode ": unqualified function " f " and no :ns-default") {:type ::usage}))))]
+    {:load-path (mapv str load-path)
+     :fn f
+     :params (merge (:exec-args argmap) (read-kvs kvs))}))
+
+(defn exec!
+  "Runs -X / -T in this process (the cleat host calls it): adds the plan's load
+  path, then calls the function with the params map."
+  [mode alias-arg args sdeps]
+  (let [{:keys [load-path fn params]} (exec-plan mode alias-arg (vec args) sdeps)]
+    (doseq [p load-path] (Cleat.Core.Runtime.Loader/AddPath (System.IO.Path/GetFullPath ^String p)))
+    (let [fvar (or (requiring-resolve fn)
+                   (throw (ex-info (str "-" mode ": no function " fn) {:type ::usage})))]
+      (@fvar params))))
 
 (defn run-command
   "The command line for -M:aliases with args (a vector of strings), as a
   separate cleat process."
   [alias-arg args]
-  (let [{:keys [load-path] deps :args} (deps-args alias-arg)
+  (let [{:keys [load-path] deps :args} (deps-args alias-arg nil)
         cleat (requiring-resolve 'clojure.tools.build.tasks.process/cleat-executable)]
     (vec (concat (cleat)
                  (mapcat #(vector "-I" %) load-path)
