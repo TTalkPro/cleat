@@ -118,11 +118,9 @@ See docs/license.txt. |#
         chr
         (char-upcase chr)))
 
+  ;; $char-foldcase：(char-downcase (char-upcase c))，#\x130、#\x131 不变（iron-072：一次原语调用，原来两次）
   (define/contract (char-foldcase chr:char)
-    (case chr
-      [(#\x130 #\x131) chr]
-      [else
-        (char-downcase (char-upcase chr))]))
+    ($char-foldcase chr))
     
   (define/contract (char-alphabetic? chr:char)
     ($char-alphabetic? chr))               
@@ -134,13 +132,13 @@ See docs/license.txt. |#
     ($char-whitespace? chr))               
 
   (define/contract (char-upper-case? chr:char)
-    (eq? 'Lu (char-general-category chr)))
+    ($char-upper-case? chr))
     
   (define/contract (char-lower-case? chr:char)
-    (eq? 'Ll (char-general-category chr)))
+    ($char-lower-case? chr))
     
   (define/contract (char-title-case? chr:char)
-    (eq? 'Lt (char-general-category chr)))
+    ($char-title-case? chr))
         
   (define/contract (char-general-category chr:char)
     ($char-general-category chr))
@@ -158,13 +156,12 @@ See docs/license.txt. |#
             [(a:string b:string) 
               (cmp ($string-compare a b) 0)]
             [(a:string b . rest)
-              (for-all
-                (lambda (x)
-                  (unless (string? x) (assertion-violation 'name "not a string" x))  
-                  (let ((r (cmp ($string-compare a x) 0)))
-                    (set! a x)
-                    r))
-                (cons b rest))]))]))                       
+              (let ((all (cons b rest)))   ; 先检查全部参数再比较：短路为 #f 后不漏检（iron-072）
+                (for-each (lambda (x) (unless (string? x) (assertion-violation 'name "not a string" x))) all)
+                (let loop ((a a) (l all))
+                  (or (null? l)
+                      (let ((x (car l)))
+                        (and (cmp ($string-compare a x) 0) (loop x (cdr l)))))))]))]))                       
 
   (define-string-compare string=? $fx=?)
   (define-string-compare string<? $fx<?)
@@ -189,13 +186,12 @@ See docs/license.txt. |#
             [(a:string b:string) 
               (cmp ($string-ci-compare a b) 0)]
             [(a:string b . rest)
-              (for-all
-                (lambda (x)
-                  (unless (string? x) (assertion-violation 'name "not a string" x))  
-                  (let ((r (cmp ($string-ci-compare a x) 0)))
-                    (set! a x)
-                    r))
-                (cons b rest))]))]))
+              (let ((all (cons b rest)))   ; 先检查全部参数再比较：短路为 #f 后不漏检（iron-072）
+                (for-each (lambda (x) (unless (string? x) (assertion-violation 'name "not a string" x))) all)
+                (let loop ((a a) (l all))
+                  (or (null? l)
+                      (let ((x (car l)))
+                        (and (cmp ($string-ci-compare a x) 0) (loop x (cdr l)))))))]))]))
 
   (define-string-ci-compare string-ci=? $fx=?)
   (define-string-ci-compare string-ci<? $fx<?)
@@ -211,13 +207,12 @@ See docs/license.txt. |#
             [(a:char b:char)
               (cmp (char->integer a) (char->integer b))]
             [(a:char b . rest)
-              (for-all
-                (lambda (x)
-                  (unless (char? x) (assertion-violation 'name "not a char" x))  
-                  (let ((r (cmp (char->integer a) (char->integer x))))
-                    (set! a x)
-                    r))
-                (cons b rest))]))]))         
+              (let ((all (cons b rest)))   ; 先检查全部参数再比较：短路为 #f 后不漏检（iron-072）
+                (for-each (lambda (x) (unless (char? x) (assertion-violation 'name "not a char" x))) all)
+                (let loop ((a a) (l all))
+                  (or (null? l)
+                      (let ((x (car l)))
+                        (and (cmp (char->integer a) (char->integer x)) (loop x (cdr l)))))))]))]))         
   
   (define-char-compare char=? $fx=?)
   (define-char-compare char<? $fx<?)
@@ -231,15 +226,14 @@ See docs/license.txt. |#
         (define/contract name
           (case-lambda
             [(a:char b:char)
-              (cmp (char->integer (char-foldcase a)) (char->integer (char-foldcase b)))]
+              (cmp (char->integer ($char-foldcase a)) (char->integer ($char-foldcase b)))]
             [(a:char b . rest)
-              (for-all
-                (lambda (x)
-                  (unless (char? x) (assertion-violation 'name "not a char" x))  
-                  (let ((r (cmp (char->integer (char-foldcase a)) (char->integer (char-foldcase x)))))
-                    (set! a x)
-                    r))
-                (cons b rest))]))]))    
+              (let ((all (cons b rest)))   ; 先检查全部参数再比较：短路为 #f 后不漏检（iron-072）
+                (for-each (lambda (x) (unless (char? x) (assertion-violation 'name "not a char" x))) all)
+                (let loop ((a a) (l all))
+                  (or (null? l)
+                      (let ((x (car l)))
+                        (and (cmp (char->integer ($char-foldcase a)) (char->integer ($char-foldcase x))) (loop x (cdr l)))))))]))]))    
     
   (define-char-ci-compare char-ci=? $fx=?)
   (define-char-ci-compare char-ci<? $fx<?)
@@ -277,15 +271,27 @@ See docs/license.txt. |#
               (string (char-upcase c)))))
       str))
       
+  ;; 词 = 字母 / 数字的连续段，夹在字母之间的 ' . : · ’ 不断词（UAX #29 的简化）；每个词第一个有大小写的字符取
+  ;; title case（有特殊映射的查表），其余小写。原来按"前一个字符是空白"判词首，(string-titlecase "33ar") 得 "33ar"
+  ;; 而不是 R6RS 的 "33Ar"（iron-072 对拍 Chez mats）
   (define/contract (string-titlecase str:string)
-    (string-fold 
-      (lambda (c b a)
-        (if (or (not b) (char-whitespace? b))
-            (let ((uc (hashtable-ref title-case-map c #f)))
-              (or uc
-                  (string (char-titlecase c))))
-            (string (char-downcase c))))
-      str))
+    (let-values (((p get) (open-string-output-port)))
+      (let ((n (string-length str)))
+        (define (letter-at? i) (and (fx<? -1 i n) (char-alphabetic? (string-ref str i))))
+        (define (word-char? c i)
+          (or (char-alphabetic? c) (char-numeric? c)
+              (and (memv c '(#\' #\. #\: #\xB7 #\x2019)) (letter-at? (fx- i 1)) (letter-at? (fx+ i 1)))))
+        (define (cased? c) (or (char-upper-case? c) (char-lower-case? c) (char-title-case? c)))
+        (let loop ((i 0) (seen-cased? #f))
+          (when (fx<? i n)
+            (let ((c (string-ref str i)))
+              (cond
+                [(not (word-char? c i)) (put-char p c) (loop (fx+ i 1) #f)]
+                [(and (not seen-cased?) (cased? c))
+                 (put-string p (or (hashtable-ref title-case-map c #f) (string (char-titlecase c))))
+                 (loop (fx+ i 1) #t)]
+                [else (put-char p (char-downcase c)) (loop (fx+ i 1) seen-cased?)]))))
+        (get))))
     
   (define/contract (string-foldcase str:string)
     (string-fold-fast

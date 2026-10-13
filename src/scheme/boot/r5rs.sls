@@ -54,12 +54,14 @@ See docs/license.txt. |#
   (define/contract (generic-quotient n1:integer n2:integer)
     (* (sign n1) (sign n2) (div (abs n1) (abs n2))))
 
+  ;; 按定义 n1 - n2 * q 整除时得 0.0，不是 -0.0（(remainder -4.0 2.0)；iron-072 对拍 Chez mats）
+  (define (drop-negative-zero r) (if (eqv? r -0.0) 0.0 r))
   (define/contract (generic-remainder n1:integer n2:integer)
-    (* (sign n1) (mod (abs n1) (abs n2))))
+    (drop-negative-zero (* (sign n1) (mod (abs n1) (abs n2)))))
 
   (define/contract (generic-modulo n1:integer n2:integer)
     (let ((s (sign n2)))
-      (* s (mod (* s n1) (abs n2)))))
+      (drop-negative-zero (* s (mod (* s n1) (abs n2))))))
 
   (define (quotient n1 n2)
     (cond

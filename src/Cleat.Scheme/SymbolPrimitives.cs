@@ -34,7 +34,7 @@ public static class SymbolPrimitives
         return Unspecified.Instance;
     }
 
-    [Primitive("string->symbol", Flags = PrimitiveFlags.Pure)]
+    [Primitive("string->symbol", Flags = PrimitiveFlags.Pure, Sig = "(string) -> (symbol)")]
     public static object StringToSymbol(object str) => str switch
     {
         string s => Symbol.Intern(s),
@@ -43,7 +43,7 @@ public static class SymbolPrimitives
         _ => Errors.AssertionViolation("string->symbol", "not a string", str),
     };
 
-    [Primitive("symbol->string", Flags = PrimitiveFlags.Pure)]
+    [Primitive("symbol->string", Flags = PrimitiveFlags.Pure, Sig = "(symbol) -> (string)")]
     public static object SymbolToString(object symbol) => SchemeString.Normalize(Sym(symbol, "symbol->string").Name);
 
     [Primitive("gensym")]

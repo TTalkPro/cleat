@@ -449,21 +449,16 @@ See docs/license.txt. |#
   (define (cdddar x) (cdddr (car x)))
   (define (cddddr x) (cdddr (cdr x)))
 
+  ;; 先检查全部参数再比较：短路为 #f 后不漏检（(symbol=? 't 'f 3) 须报错；iron-072 对拍 Chez mats）
   (define (symbol=? a b . rest)
-    (unless (symbol? a) (assertion-violation 'symbol=? "not a symbol" a))
-    (for-all 
-      (lambda (x) 
-        (unless (symbol? x) (assertion-violation 'symbol=? "not a symbol" x))
-        (eq? a x)) 
-      (cons b rest)))
+    (let ((all (cons a (cons b rest))))
+      (for-each (lambda (x) (unless (symbol? x) (assertion-violation 'symbol=? "not a symbol" x))) all)
+      (for-all (lambda (x) (eq? a x)) (cdr all))))
 
   (define (boolean=? a b . rest)
-    (unless (boolean? a) (assertion-violation 'boolean=? "not a boolean" a))
-    (for-all 
-      (lambda (x) 
-        (unless (boolean? x) (assertion-violation 'boolean=? "not a boolean" x))
-        (eq? a x)) 
-      (cons b rest)))
+    (let ((all (cons a (cons b rest))))
+      (for-each (lambda (x) (unless (boolean? x) (assertion-violation 'boolean=? "not a boolean" x))) all)
+      (for-all (lambda (x) (eq? a x)) (cdr all))))
       
   (define (vector-length=? vecs)
     (apply = (map vector-length vecs)))

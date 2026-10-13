@@ -34,6 +34,44 @@
               (g$fl*$4$%b b '2.5)
               (g$+$5$Cuser a b)
               (g$-$6$%b a b '1))))))
+    ;; iron-069：查表驱动的常量折叠与丢弃——boot 过程（$%b 位置）的常量调用折叠（fx+、bitwise-and、char-upcase、
+    ;; vector-ref、car、vector-length、=），C# 原语折叠（$fx+、not、null?），变参 + 的常量部分先合并，
+    ;; fx 溢出不折叠，除零不折叠，用户自己的 fx+（位置不是 boot 的）不折叠，begin 中 cons / pair? 的调用删掉而 car 的保留
+    (cp0-fold
+     (case-lambda
+       ((x y)
+        (begin
+          (g$cons$1$%b x '1)
+          (g$pair?$2$%b x)
+          (g$car$3$%b x)
+          (if (g$=$4$%b '1 '1.0)
+              (g$+$5$%b '1 '2 x '3)
+              (g$fx+$6$%b '2147483647 '1))
+          (g$fxdiv$7$%b '7 '0)
+          (g$fx+$8$Cuser '1 '2)
+          (vector
+            (g$fx+$9$%b '1 '2)
+            (g$bitwise-and$10$%b '6 '3)
+            (g$char-upcase$11$%b '#\a)
+            (g$vector-ref$12$%b '#(a b) '1)
+            (g$car$13$%b '(1 2))
+            (g$vector-length$14$%b '#(1 2 3))
+            ($fx+ '1 '2)
+            (not '#f)
+            (null? '())
+            (g$expt$15$%b '2 '10)
+            (g$string-ref$16$%b '"abc" '1))))))
+    ;; iron-069：签名给类型推断——n 由 vector-length 定为 int32，循环里 (fx<? i n) 不再检查 n
+    (sig-typed-loop
+     (case-lambda
+       ((v)
+        ((letrec ((loop (case-lambda
+                          ((i n acc)
+                           (if (g$fx<?$1$%b i n)
+                               (loop (g$fx+$2$%b i '1) n (g$+$3$%b acc (g$char->integer$4$%b (g$string-ref$5$%b v i))))
+                               acc)))))
+           loop)
+         '0 (g$string-length$6$%b v) '0))))
     ;; iron-034c：循环变量拆箱——i 由 $fx+ 定为 int32，acc 由 fl+ 定为 double，xs 不定类型；
     ;; 被闭包捕获的 j 不拆箱
     (typed-loop

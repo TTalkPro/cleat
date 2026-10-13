@@ -21,6 +21,7 @@ C# 一侧在 `src/Cleat.Scheme`（运行时）、`src/Cleat.Stage0`（Lcore 解�
 | `lib/nanopass/implementation-helpers.cleat-scheme.sls` | `src/scheme/lib/nanopass/` | 元层对 nanopass 的覆盖适配库（库扩展名 `.cleat-scheme.sls` 只选中它；源自 IronScheme 的 `implementation-helpers.ironscheme.sls`，cleat-059 改名） |
 | `nanopass/` | 子模块 `src/scheme/lib/nanopass-framework-scheme/` | nanopass 框架原样快照（不含 `.git`） |
 | `tests/r6rs/` | Racket `racket/r6rs` 的 `r6rs-test/tests/r6rs`，经 IronScheme / skeg 纳入（cleat-061） | R6RS 测试套件；在本目录下 `(cleat-scheme-test)` 或运行 `tests/r6rs/run.sps`；门禁 `R6RSConformanceTests`（8971 项全部通过，cleat-075）。Apache-2.0 或 MIT（目录内 `LICENSE.txt`） |
+| `tests/chez-mats/` | Chez Scheme 10.5 `mats/` 的 18 个文件原样拷贝，运行器 `run.sps` / `mkknown.py` / `known.ss` 来自 skeg（iron-072；cleat-077 纳入） | Chez 的 mat 子句逐条求值作对拍（`run.sps [-v|-t] 文件.ms …`）；已知差异按原因登记在 `known.ss`（由 `mkknown.py` 按 cleat 的结果生成）；门禁 `ChezMatsTests`，每个文件 `fail 0`。Apache-2.0（目录内 `NOTICE`） |
 | `clojure/` | cleat 新增（cleat-048 起） | 按需加载、不进 Scheme 镜像的 Clojure 侧库，如 `(clojure syntax-kinds)`（把 Clojure 集合登记为语法扩展）、`(clojure namespaces)`（命名空间模型，cleat-049）、`(clojure syntax)`（特殊形式与 defmacro 垫片，cleat-050）、`(clojure compile)`（存 dll，cleat-051）、`(clojure driver)`（编译驱动与钩子登记，cleat-052；宿主程序 `host.sps` 与预编译脚本 `build-host.sps`）；库名 `(clojure x)` 由搜索目录 `.` 找到 |
 
 库名暂时仍是 `(ironscheme …)` / `(boot …)` / `(nanopass …)`（cleat-054 改名）。psyntax 的文件定位器把 `(cleat scheme compiler parse)`

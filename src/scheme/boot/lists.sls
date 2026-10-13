@@ -126,7 +126,11 @@ See docs/license.txt. |#
               e
               (find proc r)))))
          
+  (define (check-proc who proc)
+    (unless (procedure? proc) (assertion-violation who "not a procedure" proc)))
+
   (define (partition proc l)
+    (check-proc 'partition proc)   ; 空表也要检查（iron-072 对拍 Chez mats）
     (let f ((l l)(a '())(b '()))
       (if (null? l)
           (values (reverse! a) (reverse! b))
@@ -136,6 +140,7 @@ See docs/license.txt. |#
                 (f (cdr l) a (cons e b)))))))
       
   (define (remp proc l)
+    (check-proc 'remp proc)   ; 空表也要检查（iron-072 对拍 Chez mats）
     (let f ((l l)(a '()))
       (if (null? l)
           (reverse! a)
@@ -145,6 +150,7 @@ See docs/license.txt. |#
                 (f (cdr l) (cons e a)))))))
             
   (define (filter proc l)
+    (check-proc 'filter proc)   ; 空表也要检查（iron-072 对拍 Chez mats）
     (let f ((l l)(a '()))
       (if (null? l)
           (reverse! a)

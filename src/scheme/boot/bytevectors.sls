@@ -193,6 +193,23 @@ See docs/license.txt. |#
     (if ($fx<? k 0) ($fx+ k 256) k))
     
   (define (->fixnum b) b)
+
+  ;; R6RS：endianness 只能是 big / little；native 访问的下标须按宽度对齐；u8 / s8 各按自己的范围检查
+  ;; （原来 ->byte 对两者都放行 -128..255；iron-072 对拍 Chez mats）
+  (define (check-endianness who end)
+    (unless (or (eq? end 'little) (eq? end 'big))
+      (assertion-violation who "invalid endianness" end)))
+  (define (check-aligned who k size)
+    (unless (and (fixnum? k) ($fx=? ($fxmod k size) 0))
+      (assertion-violation who "index not a multiple of the width" k size)))
+  (define (->u8 k)
+    (unless (and (fixnum? k) ($fx<=? 0 k) ($fx<=? k 255))
+      (assertion-violation #f "not an octet" k))
+    k)
+  (define (->s8 k)
+    (unless (and (fixnum? k) ($fx<=? -128 k) ($fx<=? k 127))
+      (assertion-violation #f "not a byte" k))
+    (if ($fx<? k 0) ($fx+ k 256) k))
   
   (define/contract make-bytevector
     (case-lambda
@@ -254,7 +271,7 @@ See docs/license.txt. |#
     (let: (((bv : Byte[]) bv)((k : Int32) k))
       (unless ($and? ($fx>=? k 0) ($fx<? k ($bytevector-length bv)))
         (assertion-violation 'bytevector-u8-set! "indexer out of bounds" bv k)) 
-      ($bytevector-set! bv k (->byte value))))
+      ($bytevector-set! bv k (->u8 value))))
    
   (define/contract (bytevector-s8-ref bv:bytevector k:fixnum)
     (let: (((bv : Byte[]) bv)((k : Int32) k))
@@ -266,7 +283,7 @@ See docs/license.txt. |#
     (let: (((bv : Byte[]) bv)((k : Int32) k))
       (unless ($and? ($fx>=? k 0) ($fx<? k ($bytevector-length bv)))
         (assertion-violation 'bytevector-s8-set! "indexer out of bounds" bv k)) 
-      ($bytevector-set! bv k (->byte value))))
+      ($bytevector-set! bv k (->s8 value))))
    
   (define/contract (bytevector->u8-list bv:bytevector)
     (let: (((bv : Byte[]) bv))
@@ -287,10 +304,11 @@ See docs/license.txt. |#
               (f ($fx+ i 1) (cdr lst)))))))
               
   (define/contract (bytevector-uint-ref bv:bytevector k:fixnum end:symbol size:fixnum)
+    (check-endianness 'bytevector-uint-ref end)
     (when ($fxnegative? k)
       (assertion-violation 'bytevector-uint-ref "not a non-negative exact integer" k))
-    (when ($fxnegative? size)
-      (assertion-violation 'bytevector-uint-ref "not a non-negative exact integer" size))
+    (unless ($fx>? size 0)   ; size 须为正（R6RS；iron-072 对拍 Chez mats）
+      (assertion-violation 'bytevector-uint-ref "not a positive exact integer" size))
     (let ((sb (make-bytevector size)))
       (bytevector-copy! bv k sb 0 size)
       (when (eq? end 'big)
@@ -306,10 +324,11 @@ See docs/license.txt. |#
             ($bytes->bignum data))])))
                                                    
   (define/contract (bytevector-sint-ref bv:bytevector k:fixnum end:symbol size:fixnum)
+    (check-endianness 'bytevector-sint-ref end)
     (when ($fxnegative? k)
       (assertion-violation 'bytevector-sint-ref "not a non-negative exact integer" k))
-    (when ($fxnegative? size)
-      (assertion-violation 'bytevector-sint-ref "not a non-negative exact integer" size))
+    (unless ($fx>? size 0)   ; size 须为正（R6RS；iron-072 对拍 Chez mats）
+      (assertion-violation 'bytevector-sint-ref "not a positive exact integer" size))
     (let ((sb (make-bytevector size)))
       (bytevector-copy! bv k sb 0 size)
       (when (eq? end 'big)
@@ -323,15 +342,16 @@ See docs/license.txt. |#
           ($bytes->bignum sb)])))
                            
   (define/contract (bytevector-uint-set! bv:bytevector k:fixnum n end:symbol size:fixnum) 
+    (check-endianness 'bytevector-uint-set! end)
     (when ($fxnegative? k)
       (assertion-violation 'bytevector-uint-set! "not a non-negative exact integer" k))
-    (when ($fxnegative? size)
-      (assertion-violation 'bytevector-uint-set! "not a non-negative exact integer" size))
+    (unless ($fx>? size 0)   ; size 须为正（R6RS；iron-072 对拍 Chez mats）
+      (assertion-violation 'bytevector-uint-set! "not a positive exact integer" size))
 	  (when (negative? n)
 	    (assertion-violation 'bytevector-uint-set! "not a non-negative exact integer" n))
     (case size
       [(1)
-        ($bytevector-set! bv k (->byte n))]
+        ($bytevector-set! bv k (->u8 n))]
       [(2 4 8)
         (let ((data ($uint->bytes n size)))
           (when (eq? end 'big)
@@ -352,13 +372,14 @@ See docs/license.txt. |#
     (void))
           
   (define/contract (bytevector-sint-set! bv:bytevector k:fixnum n end:symbol size:fixnum) 
+    (check-endianness 'bytevector-sint-set! end)
     (when ($fxnegative? k)
       (assertion-violation 'bytevector-sint-set! "not a non-negative exact integer" k))
-    (when ($fxnegative? size)
-      (assertion-violation 'bytevector-sint-set! "not a non-negative exact integer" size))
+    (unless ($fx>? size 0)   ; size 须为正（R6RS；iron-072 对拍 Chez mats）
+      (assertion-violation 'bytevector-sint-set! "not a positive exact integer" size))
     (case size
       [(1)
-        ($bytevector-set! bv k (->byte n))]
+        ($bytevector-set! bv k (->s8 n))]
       [(2 4 8)
         (let ((data ($sint->bytes n size)))
           (when (eq? end 'big)
@@ -523,10 +544,12 @@ See docs/license.txt. |#
   (define (bytevector-s16-ref bytevector k endianness)     
     (bytevector-sint-ref bytevector k endianness 2))
     
-  (define (bytevector-u16-native-ref bytevector k)     
+  (define (bytevector-u16-native-ref bytevector k)
+    (check-aligned 'bytevector-u16-native-ref k 2)
     (bytevector-uint-ref bytevector k (native-endianness) 2))
     
-  (define (bytevector-s16-native-ref bytevector k)     
+  (define (bytevector-s16-native-ref bytevector k)
+    (check-aligned 'bytevector-s16-native-ref k 2)
     (bytevector-sint-ref bytevector k (native-endianness) 2))
     
   (define (bytevector-u16-set! bytevector k n endianness)     
@@ -535,10 +558,12 @@ See docs/license.txt. |#
   (define (bytevector-s16-set! bytevector k n endianness)     
     (bytevector-sint-set! bytevector k n endianness 2))
     
-  (define (bytevector-u16-native-set! bytevector k n)     
+  (define (bytevector-u16-native-set! bytevector k n)
+    (check-aligned 'bytevector-u16-native-set! k 2)
     (bytevector-uint-set! bytevector k n (native-endianness) 2))
     
-  (define (bytevector-s16-native-set! bytevector k n)     
+  (define (bytevector-s16-native-set! bytevector k n)
+    (check-aligned 'bytevector-s16-native-set! k 2)
     (bytevector-sint-set! bytevector k n (native-endianness) 2))
      
   (define (bytevector-u32-ref bytevector k endianness)     
@@ -547,10 +572,12 @@ See docs/license.txt. |#
   (define (bytevector-s32-ref bytevector k endianness)     
     (bytevector-sint-ref bytevector k endianness 4))
     
-  (define (bytevector-u32-native-ref bytevector k)     
+  (define (bytevector-u32-native-ref bytevector k)
+    (check-aligned 'bytevector-u32-native-ref k 4)
     (bytevector-uint-ref bytevector k (native-endianness) 4))
     
-  (define (bytevector-s32-native-ref bytevector k)     
+  (define (bytevector-s32-native-ref bytevector k)
+    (check-aligned 'bytevector-s32-native-ref k 4)
     (bytevector-sint-ref bytevector k (native-endianness) 4))
     
   (define (bytevector-u32-set! bytevector k n endianness)     
@@ -559,10 +586,12 @@ See docs/license.txt. |#
   (define (bytevector-s32-set! bytevector k n endianness)     
     (bytevector-sint-set! bytevector k n endianness 4))
     
-  (define (bytevector-u32-native-set! bytevector k n)       
+  (define (bytevector-u32-native-set! bytevector k n)
+    (check-aligned 'bytevector-u32-native-set! k 4)
     (bytevector-uint-set! bytevector k n (native-endianness) 4))
     
-  (define (bytevector-s32-native-set! bytevector k n)     
+  (define (bytevector-s32-native-set! bytevector k n)
+    (check-aligned 'bytevector-s32-native-set! k 4)
     (bytevector-sint-set! bytevector k n (native-endianness) 4))
      
   (define (bytevector-u64-ref bytevector k endianness)     
@@ -571,10 +600,12 @@ See docs/license.txt. |#
   (define (bytevector-s64-ref bytevector k endianness)     
     (bytevector-sint-ref bytevector k endianness 8))
     
-  (define (bytevector-u64-native-ref bytevector k)     
+  (define (bytevector-u64-native-ref bytevector k)
+    (check-aligned 'bytevector-u64-native-ref k 8)
     (bytevector-uint-ref bytevector k (native-endianness) 8))
     
-  (define (bytevector-s64-native-ref bytevector k)     
+  (define (bytevector-s64-native-ref bytevector k)
+    (check-aligned 'bytevector-s64-native-ref k 8)
     (bytevector-sint-ref bytevector k (native-endianness) 8))
     
   (define (bytevector-u64-set! bytevector k n endianness)     
@@ -583,10 +614,12 @@ See docs/license.txt. |#
   (define (bytevector-s64-set! bytevector k n endianness)     
     (bytevector-sint-set! bytevector k n endianness 8))
     
-  (define (bytevector-u64-native-set! bytevector k n)     
+  (define (bytevector-u64-native-set! bytevector k n)
+    (check-aligned 'bytevector-u64-native-set! k 8)
     (bytevector-uint-set! bytevector k n (native-endianness) 8))
     
-  (define (bytevector-s64-native-set! bytevector k n)    
+  (define (bytevector-s64-native-set! bytevector k n)
+    (check-aligned 'bytevector-s64-native-set! k 8)
     (bytevector-sint-set! bytevector k n (native-endianness) 8))
     
   (define/contract (bytevector-ieee-single-native-ref bytevector k:fixnum)

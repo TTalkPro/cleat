@@ -158,11 +158,16 @@ See docs/license.txt. |#
       (assertion-violation 'bitwise-bit-field "cannot be negative" ei3)) 
     (unless (<= ei2 ei3)
       (assertion-violation 'bitwise-bit-field "must be less than or equal" ei2 ei3))
-    (if (and (fixnum? ei1) (< -1 ei3 32))
-        (fxbit-field ei1 ei2 ei3)
-        (bitwise-arithmetic-shift-right
-          (bitwise-and ei1 (bitwise-not (bitwise-arithmetic-shift-left -1 ei3)))
-          ei2)))
+    (cond
+      [(and (fixnum? ei1) (< -1 ei3 32))
+       (fxbit-field ei1 ei2 ei3)]
+      ;; 起点超出 fixnum（高于任何位）：非负数那里全 0，负数全 1（iron-072 对拍 Chez mats）
+      [(not (fixnum? ei2))
+       (if (negative? ei1) (- (bitwise-arithmetic-shift-left 1 (- ei3 ei2)) 1) 0)]
+      [else
+       (bitwise-arithmetic-shift-right
+         (bitwise-and ei1 (bitwise-not (bitwise-arithmetic-shift-left -1 ei3)))
+         ei2)]))
   
   (define (bitwise-copy-bit-field to start end from)
     (when (negative? start)
@@ -191,6 +196,7 @@ See docs/license.txt. |#
           [else ($bignum-shift-right (->bignum ei) ($fx- k))])
         (exact
           (cond
+            [(eqv? ei 0) 0]              ; 0 移任意位仍是 0（移位量为 bignum 时也不报实现限制）
             [(negative? ei)
               (if (negative? k)
                   -1
@@ -222,6 +228,10 @@ See docs/license.txt. |#
           (bitwise-arithmetic-shift ei1 (- ei2)))))
     
   (define (bitwise-rotate-bit-field n start end count)
+    (for-each (lambda (x)
+                (unless (and (integer? x) (exact? x))
+                  (assertion-violation 'bitwise-rotate-bit-field "not an exact integer" x)))
+              (list n start end count))
     (when (negative? start)
       (assertion-violation 'bitwise-rotate-bit-field "cannot be negative" start))
     (when (negative? end)

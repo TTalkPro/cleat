@@ -1,0 +1,11 @@
+The *.ms files in this directory are unmodified copies of test files from the
+Chez Scheme repository (https://github.com/cisco/ChezScheme, directory mats/),
+Chez Scheme Version 10.5.0, Copyright 1984-2026 Cisco Systems, Inc.
+
+They are licensed under the Apache License, Version 2.0; a copy is available at
+http://www.apache.org/licenses/LICENSE-2.0. Per the upstream NOTICE, the test
+code includes work developed by William D Clinger, Dirk Lutzebaeck, Oscar
+Waddell and R. Kent Dybvig.
+
+run.sps, mkknown.py and known.ss come from Skeg (BSD) and are adapted to cleat. The files are
+read and evaluated clause by clause by run.sps; nothing in them is rewritten.

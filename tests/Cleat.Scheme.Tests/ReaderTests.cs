@@ -258,7 +258,8 @@ public class NumberParserTests
     {
         Assert.That(Builtins.StringToNumber("ff", 16), Is.EqualTo(255));
         Assert.That(Builtins.StringToNumber("#b11", 16), Is.EqualTo(3));     // 前缀优先
-        Assert.That(Builtins.StringToNumber("12", 7), Is.SameAs(RT.False));
+        Assert.Throws<SchemeRuntimeError>(() => Builtins.StringToNumber("12", 7));   // radix 只能是 2/8/10/16（R6RS，iron-072）
+        Assert.That(Builtins.StringToNumber("1|21"), Is.EqualTo(1.0));   // 尾数宽度使结果不精确
         Assert.That(Builtins.StringToNumber("zz"), Is.SameAs(RT.False));
     }
 }

@@ -30,6 +30,7 @@ See docs/license.txt. |#
     (nanopass)
     (cleat scheme compiler languages)
     (cleat scheme compiler primitives)
+    (cleat scheme compiler primdata)
     (cleat scheme compiler constants)
     (only (cleat scheme unsafe) $immutable-string? $get-environment-variable)
     (only (cleat scheme clr) clr-is clr-prop-get clr-call clr-static-call)
@@ -686,12 +687,16 @@ See docs/license.txt. |#
        (cond ((memq pr fx-result-prims) 'fx) ((memq pr fl-result-prims) 'fl) (else #f))]
       [(call ,e0 ,e* ...)
        (let ((op (inline-op e0 (length e*))))
-         (and op (memq (car op) '(add sub mul div))
-              (case (cdr op)
-                ((fx fl) (cdr op))
-                ;; 通用算符（iron-066）：操作数都是 flonum 时结果是 flonum；fixnum 的和可能溢出成 bignum，不算 fx
-                (else (fold-left (lambda (t a) (and t (meet-type t (let ((ta (expr-type a env))) (and (memq ta '(fl top)) ta)))))
-                                 'top e*)))))]
+         (if op
+             (and (memq (car op) '(add sub mul div))
+                  (case (cdr op)
+                    ((fx fl) (cdr op))
+                    ;; 通用算符（iron-066）：操作数都是 flonum 时结果是 flonum；fixnum 的和可能溢出成 bignum，不算 fx
+                    (else (fold-left (lambda (t a) (and t (meet-type t (let ((ta (expr-type a env))) (and (memq ta '(fl top)) ta)))))
+                                     'top e*))))
+             ;; 其余 boot 过程按 primdata 的签名（iron-069）：vector-length / char->integer / fxand … 正常返回时必是 fixnum，
+             ;; flsqrt / fixnum->flonum … 必是 flonum（参数不对时报错，不影响返回值的类型）
+             (boot-call-result-type e0 (length e*))))]
       [(if ,e0 ,e1 ,e2) (meet-type (expr-type e1 env) (expr-type e2 env))]
       [(begin ,e* ... ,e) (expr-type e env)]
       [(let ([,x* ,e*] ...) ,body) (expr-type body env)]
@@ -701,6 +706,24 @@ See docs/license.txt. |#
 
   (define (meet-type a b)
     (cond ((eq? a 'top) b) ((eq? b 'top) a) ((eq? a b) a) (else #f)))
+
+  ;; (gref boot 位置) 的调用按签名的结果类型给 fx / fl，其余 #f；按位置符号缓存
+  (define boot-result-cache (make-eq-hashtable))
+  (define (boot-call-result-type e0 argc)
+    (nanopass-case (L3 Expr) e0
+      [(gref ,s)
+       (let ((p (let ((r (hashtable-ref boot-result-cache s 'unknown)))
+                  (if (eq? r 'unknown)
+                      (let ((r (let ((name (boot-location-name s))) (and name (primdata-lookup name)))))
+                        (hashtable-set! boot-result-cache s r)
+                        r)
+                      r))))
+         (and p (primdata-arity-ok? p argc)
+              (case (primdata-result-type p)
+                ((fixnum) 'fx)
+                ((flonum) 'fl)
+                (else #f))))]
+      [else #f]))
 
   ;; 收集候选（iron-034c）。用库层的一个 define-pass 遍历整棵树：nanopass-case 每次调用都现场建一个 pass
   ;; （一组闭包），按节点调用它的遍历每个节点约 1 KB，编译种子时多分配一百多 MB

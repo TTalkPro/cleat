@@ -80,7 +80,7 @@ See docs/license.txt. |#
           (f (cdr s) (cons* sep (car s) a)))))
               
   (define (make-name symbols)
-    (string->symbol (string-join " " (map symbol->string symbols))))
+    (string->symbol (if (null? symbols) "" (string-join " " (map symbol->string symbols)))))   ; 空枚举（iron-072）
 
   (define (make-enumeration symbols)
     (let-values (((s mapping mask) (make-info symbols)))
@@ -152,28 +152,30 @@ See docs/license.txt. |#
       (enum-set-subset? enumset1 enumset2)
       (enum-set-subset? enumset2 enumset1)))
 
+  ;; 类型不同报错而不是返回 #f（R6RS 14.2；iron-072）
+  (define (check-same-type who enumset1 enumset2)
+    (unless (enum-type=? enumset1 enumset2)
+      (assertion-violation who "enum sets of different types" enumset1 enumset2)))
+
   (define/contract (enum-set-union enumset1:enum enumset2:enum)
-    (if (enum-type=? enumset1 enumset2)
-        (make-enum
-          (bitwise-ior (enum-value enumset1) (enum-value enumset2))
-          (enum-info enumset1))
-        #f))
+    (check-same-type 'enum-set-union enumset1 enumset2)
+    (make-enum
+      (bitwise-ior (enum-value enumset1) (enum-value enumset2))
+      (enum-info enumset1)))
 
   (define/contract (enum-set-intersection enumset1:enum enumset2:enum)
-    (if (enum-type=? enumset1 enumset2)
-        (make-enum
-          (bitwise-and (enum-value enumset1) (enum-value enumset2))
-          (enum-info enumset1))
-        #f))
+    (check-same-type 'enum-set-intersection enumset1 enumset2)
+    (make-enum
+      (bitwise-and (enum-value enumset1) (enum-value enumset2))
+      (enum-info enumset1)))
 
   (define/contract (enum-set-difference enumset1:enum enumset2:enum)
-    (if (enum-type=? enumset1 enumset2)
-        (make-enum
-          (bitwise-and 
-            (enum-value enumset1) 
-            (bitwise-not (enum-value enumset2)))
-          (enum-info enumset1))
-        #f))
+    (check-same-type 'enum-set-difference enumset1 enumset2)
+    (make-enum
+      (bitwise-and 
+        (enum-value enumset1) 
+        (bitwise-not (enum-value enumset2)))
+      (enum-info enumset1)))
 
   (define/contract (enum-set-complement enumset:enum)
     (make-enum

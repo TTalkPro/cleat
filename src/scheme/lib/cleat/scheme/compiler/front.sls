@@ -11,7 +11,7 @@ See docs/license.txt. |#
 ;;;   simplify-letrec    L0 → L1：recognize-let（((lambda (x …) body) e …) → let）与 letrec 拆分：
 ;;;                      连续的、未被赋值的 lambda 绑定成为一组 letrec；其余绑定成为 let；
 ;;;                      右边引用了"之后才绑定"的变量时，这些变量先绑定为未初始化，再按顺序 set!
-;;;   cp0-lite           L1 → L1：if 的常量测试、begin 中无副作用的常量、少量纯原语的常量折叠
+;;;   cp0-lite           L1 → L1：if 的常量测试、begin 中可丢弃的调用、原语与 boot 过程的常量折叠（查表，iron-069）
 ;;;   convert-assignments L1 → L2：既被赋值又被捕获的词法变量改为 Box
 (library (cleat scheme compiler front)
   (export analyze simplify-letrec check-forward cp0-lite convert-assignments
@@ -19,8 +19,11 @@ See docs/license.txt. |#
   (import
     (rnrs)
     (only (cleat scheme) void)
+    (only (cleat scheme unsafe) $get-environment-variable)
     (nanopass)
-    (cleat scheme compiler languages))
+    (cleat scheme compiler languages)
+    (cleat scheme compiler primitives)
+    (cleat scheme compiler primdata))
 
   ;; —— 小集合（无重复的列表）——
   (define (set-add x s) (if (memq x s) s (cons x s)))
@@ -195,44 +198,79 @@ See docs/license.txt. |#
       [,x (if (forward? x) `(primcall $check-initialized ,x (quote ,x)) x)]))
 
   ;; —— cp0-lite：L1 → L1 ——
-  (define (fixnum-value? d) (and (fixnum? d) #t))
+  ;; 常量折叠查表驱动（iron-069）：C# 原语按 primitives.ss 的 mifoldable 标志 + primdata 的折叠实现；
+  ;; boot 导出的过程（+ fx+ vector-ref car …在用户代码里是 boot 位置的全局调用）按位置符号名字查 primdata。
+  ;; effect 上下文（begin 的中间项）删掉标 discard 且 unrestricted、参数都简单的调用。
+  ;; 测量开关：CLEAT_NO_069 含 fold / discard 时分别关掉，为 1 时全关。
+  (define no-069 (or ($get-environment-variable "CLEAT_NO_069") ""))
+  (define (opt-069-off? name)
+    (or (string=? no-069 "1")
+        (let ((n (string-length name)) (m (string-length no-069)))
+          (let loop ((i 0)) (and (<= (+ i n) m) (or (string=? (substring no-069 i (+ i n)) name) (loop (+ i 1))))))))
+  (define fold-on? (not (opt-069-off? "fold")))
+  (define discard-on? (not (opt-069-off? "discard")))
 
   (define-pass cp0-lite : L1 (ir) -> L1 ()
     (definitions
       (define (const? e) (nanopass-case (L1 Expr) e [(quote ,d) #t] [else #f]))
       (define (const-value e) (nanopass-case (L1 Expr) e [(quote ,d) d] [else #f]))
-      ;; 只折叠这些原语（原语表中都标为 pure），结果仍是可编码的常量
-      (define (fold pr args)
-        (and (for-all const? args)
-             (let ((vs (map const-value args)))
-               (case pr
-                 ((not) (and (= (length vs) 1) (list (not (car vs)))))
-                 ((null?) (and (= (length vs) 1) (list (null? (car vs)))))
-                 ((pair?) (and (= (length vs) 1) (list (pair? (car vs)))))
-                 ((eq?) (and (= (length vs) 2) (for-all (lambda (v) (or (symbol? v) (boolean? v) (null? v) (fixnum? v))) vs)
-                             (list (eq? (car vs) (cadr vs)))))
-                 ((fixnum?) (and (= (length vs) 1) (list (fixnum? (car vs)))))
-                 (($fx+ $fx- $fx* $fx<? $fx<=? $fx>? $fx>=? $fx=?)
-                  (and (= (length vs) 2) (for-all fixnum-value? vs)
-                       (let ((a (car vs)) (b (cadr vs)))
-                         (case pr
-                           (($fx+) (let ((r (+ a b))) (and (fixnum? r) (list r))))
-                           (($fx-) (let ((r (- a b))) (and (fixnum? r) (list r))))
-                           (($fx*) (let ((r (* a b))) (and (fixnum? r) (list r))))
-                           (($fx<?) (list (< a b)))
-                           (($fx<=?) (list (<= a b)))
-                           (($fx>?) (list (> a b)))
-                           (($fx>=?) (list (>= a b)))
-                           (else (list (= a b)))))))
-                 (else #f))))))
+      ;; 简单表达式：求值没有副作用也不会报错
+      (define (simple? e) (nanopass-case (L1 Expr) e [(quote ,d) #t] [,x #t] [else #f]))
+      ;; boot 过程的调用：(gref 位置) 的位置是 boot 的（$%b）且名字在 primdata 里 → 条目，否则 #f
+      (define (boot-primdata e0)
+        (nanopass-case (L1 Expr) e0
+          [(gref ,s) (let ((name (boot-location-name s))) (and name (primdata-lookup name)))]
+          [else #f]))
+      ;; (list 结果) 或 #f
+      (define (fold-primcall pr args)
+        (and fold-on? (for-all const? args) (primcall-fold pr (map const-value args))))
+      (define (fold-call p args)
+        (and fold-on? (primdata-arity-ok? p (length args))
+             (for-all const? args) (primdata-fold p (map const-value args))))
+      ;; 变参算术的常量参数先合并（partial-folder，Chez 的 cp02 / cp03 之一）：精确实数常量不少于两个时合并成
+      ;; 一个放在最前面——精确算术可交换结合，非常量参数的相对顺序不变；不精确常量不动（舍入与求值顺序有关）
+      (define (exact-real-const? e)
+        (let ((d (const-value e))) (and (const? e) (number? d) (real? d) (exact? d))))
+      (define (partial-fold p args)
+        (and fold-on? (primdata-flag? p 'partial-folder)
+             (let ((cs (filter exact-real-const? args)))
+               (and (>= (length cs) 2)
+                    (let ((r (primdata-fold p (map const-value cs))))
+                      (and r
+                           (with-output-language (L1 Expr)
+                             (cons `(quote ,(car r)) (filter (lambda (e) (not (exact-real-const? e))) args)))))))))
+      ;; effect 上下文可删的调用
+      ;; 常量总是删（iron-069 之前就如此）；开关只管按标志删调用
+      (define (discardable? e)
+        (or (const? e)
+            (and discard-on?
+             (nanopass-case (L1 Expr) e
+               [(primcall ,pr ,e* ...)
+                (and (for-all simple? e*)
+                     (let ((p (primitive-info pr)))
+                       (and p (let ((o (primitive-overload p (length e*))))
+                                (and o (overload-flag? o 'discard) (overload-flag? o 'unrestricted))))))]
+               [(call ,e0 ,e* ...)
+                (and (for-all simple? e*)
+                     (let ((p (boot-primdata e0)))
+                       (and p (primdata-flag? p 'discard) (primdata-flag? p 'unrestricted)
+                            (primdata-arity-ok? p (length e*)))))]
+               [else #f])))))
     (Expr : Expr (ir) -> Expr ()
       [(if ,[e0] ,[e1] ,[e2])
        (if (const? e0) (if (const-value e0) e1 e2) `(if ,e0 ,e1 ,e2))]
       [(primcall ,pr ,[e*] ...)
-       (let ((r (fold pr e*)))
+       (let ((r (fold-primcall pr e*)))
          (if r `(quote ,(car r)) `(primcall ,pr ,e* ...)))]
+      [(call ,[e0] ,[e*] ...)
+       (let ((p (boot-primdata e0)))
+         (cond
+           ((not p) `(call ,e0 ,e* ...))
+           ((fold-call p e*) => (lambda (r) `(quote ,(car r))))
+           ((partial-fold p e*) => (lambda (args) `(call ,e0 ,args ...)))
+           (else `(call ,e0 ,e* ...))))]
       [(begin ,[e*] ... ,[e])
-       (let ((e* (filter (lambda (x) (not (const? x))) e*)))
+       (let ((e* (filter (lambda (x) (not (discardable? x))) e*)))
          (if (null? e*) e `(begin ,e* ... ,e)))]))
 
   ;; —— convert-assignments：L1 → L2 ——

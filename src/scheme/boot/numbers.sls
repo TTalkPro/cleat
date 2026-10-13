@@ -251,7 +251,9 @@ See docs/license.txt. |#
       (assertion-violation 'fixnum->flonum "not a fixnum" x))
     ($fixnum->flonum x))
         
-  (define (nan? num)
+  ;; nan? / finite? / infinite?：R6RS 11.7.4.3 的参数是实数，复数报错（iron-072 对拍 Chez mats）。
+  ;; 库内部（integer?、rational? 等谓词，div-and-mod）对复数也要问，用带 * 的宽松版本。
+  (define (nan*? num)
     (cond
       [(or (fixnum? num)
            (bignum? num)
@@ -265,8 +267,8 @@ See docs/license.txt. |#
             (flnan? (complexnum-imag-part num)))]
       [else
         (assertion-violation 'nan? "not a number" num)]))
-        
-  (define (finite? num)
+
+  (define (finite*? num)
     (cond
       [(or (fixnum? num)
            (bignum? num)
@@ -279,9 +281,9 @@ See docs/license.txt. |#
         (and (flfinite? (complexnum-real-part num))
              (flfinite? (complexnum-imag-part num)))]
       [else
-        (assertion-violation 'finite? "not a number" num)]))        
-        
-  (define (infinite? num)
+        (assertion-violation 'finite? "not a number" num)]))
+
+  (define (infinite*? num)
     (cond
       [(or (fixnum? num)
            (bignum? num)
@@ -295,6 +297,13 @@ See docs/license.txt. |#
             (flinfinite? (complexnum-imag-part num)))]
       [else
         (assertion-violation 'infinite? "not a number" num)]))
+
+  (define (check-real who num)
+    (when (or (complexnum? num) (rectnum? num))
+      (assertion-violation who "not a real" num)))
+  (define (nan? num) (check-real 'nan? num) (nan*? num))
+  (define (finite? num) (check-real 'finite? num) (finite*? num))
+  (define (infinite? num) (check-real 'infinite? num) (infinite*? num))
         
   (define (exact? obj)
     (cond
@@ -347,8 +356,8 @@ See docs/license.txt. |#
       [(and (or (complexnum? obj) 
                 (rectnum? obj)
                 (flonum? obj)) 
-            (finite? obj) 
-            (not (nan? obj)))
+            (finite*? obj) 
+            (not (nan*? obj)))
         (let ((i (imag-part obj)))
           (and (exact? i) 
                (zero? i)))]
@@ -363,8 +372,8 @@ See docs/license.txt. |#
                 (complexnum? obj) 
                 (rectnum? obj)
                 (flonum? obj))
-            (finite? obj) 
-            (not (nan? obj)))            
+            (finite*? obj) 
+            (not (nan*? obj)))            
         (let ((i (imag-part obj)))
           (and (exact? i) 
                (zero? i)
@@ -392,8 +401,8 @@ See docs/license.txt. |#
       [(and (or (complexnum? obj) 
                 (rectnum? obj)
                 (flonum? obj)) 
-            (finite? obj) 
-            (not (nan? obj)))
+            (finite*? obj) 
+            (not (nan*? obj)))
         (let ((i (imag-part obj)))
           (zero? i))]
       [else #f])) 
@@ -407,8 +416,8 @@ See docs/license.txt. |#
                 (complexnum? obj) 
                 (rectnum? obj)
                 (flonum? obj))
-            (finite? obj) 
-            (not (nan? obj)))            
+            (finite*? obj) 
+            (not (nan*? obj)))            
         (let ((i (imag-part obj)))
           (and (zero? i)
                (= (denominator (real-part obj)) 1)))]
@@ -493,31 +502,61 @@ See docs/license.txt. |#
       [else
         (assertion-violation 'exact "not a number" num)])) 
         
+  ;; bignum 与整数值 flonum 混合时先把 bignum 转 flonum 会溢出成 ±inf.0，(remainder #e1e1000 3.0) 得 +nan.0；
+  ;; 这种情况按精确整数计算后再取不精确（Chez 同；iron-072 对拍 Chez mats）
+  (define (mixed-big-flonum? x1 x2)
+    (or (and (bignum? x1) (flonum? x2) (integer? x2))
+        (and (flonum? x1) (integer? x1) (bignum? x2))))
+
   (define/contract (div0 x1:real x2:real)
-    (let* ((d (div x1 x2))
-           (m (- x1 (* d x2))))
-      (cond 
-        [(< m (magnitude (/ x2 2))) d]
-        [(positive? x2) (+ d 1)]
-        [else (- d 1)])))
+    (if (mixed-big-flonum? x1 x2)
+        (inexact (div0 (exact x1) (exact x2)))
+        (let* ((d (div x1 x2))
+               (m (- x1 (* d x2))))
+          (cond 
+            [(< m (magnitude (/ x2 2))) d]
+            [(positive? x2) (+ d 1)]
+            [else (- d 1)]))))
   
-  (define/contract (mod x1:real x2:real)
-    (- x1 (* (div x1 x2) x2)))
+  ;; 两个 fixnum、除数不是 0 / -1 时直接取截断余数再修正到 [0, |x2|)（cleat-077：iron-072 给 div 加了 nan / 无穷与
+  ;; bignum-flonum 混合的检查，mod 又经 div，fixnum 的 mod 慢了近一半）。除数 -1 时 .NET 的 % 对最小 fixnum 抛溢出，走原实现
+  (define mod
+    (let ()
+      (define/contract (mod x1:real x2:real)
+        (if (mixed-big-flonum? x1 x2)
+            (inexact (mod (exact x1) (exact x2)))
+            (- x1 (* (div x1 x2) x2))))
+      (lambda (x1 x2)
+        (if (and ($fixnum? x1) ($fixnum? x2) (not ($fx=? x2 0)) (not ($fx=? x2 -1)))
+            (let ((r ($fxmod x1 x2)))
+              (cond
+                [(not ($fx<? r 0)) r]
+                [($fx>? x2 0) ($fx+ r x2)]
+                [else ($fx- r x2)]))
+            (mod x1 x2)))))
 
   (define/contract (mod0 x1:real x2:real)
-    (if (infinite? x2)
-        +nan.0
-        (- x1 (* (div0 x1 x2) x2))))
+    (cond
+      [(infinite*? x2) +nan.0]
+      [(mixed-big-flonum? x1 x2) (inexact (mod0 (exact x1) (exact x2)))]
+      [else (- x1 (* (div0 x1 x2) x2))]))
     
   (define/contract (div-and-mod x1:real x2:real)
-    (let ((d (div x1 x2)))
-      (values d (- x1 (* d x2)))))
+    (if (mixed-big-flonum? x1 x2)
+        (let-values (((d m) (div-and-mod (exact x1) (exact x2))))
+          (values (inexact d) (inexact m)))
+        (let ((d (div x1 x2)))
+          (values d (- x1 (* d x2))))))
 
   (define/contract (div0-and-mod0 x1:real x2:real)
-    (let ((d (div0 x1 x2)))
-      (if (infinite? x2)
-          (values d +nan.0)
-          (values d (- x1 (* d x2))))))
+    (cond
+      [(infinite*? x2) (values (div0 x1 x2) +nan.0)]
+      [(mixed-big-flonum? x1 x2)
+       (let-values (((d m) (div0-and-mod0 (exact x1) (exact x2))))
+         (values (inexact d) (inexact m)))]
+      [else
+       (let ((d (div0 x1 x2)))
+         (values d (- x1 (* d x2))))]))
       
   (define/contract (add1 x:number)
     (+ x 1))
@@ -539,7 +578,23 @@ See docs/license.txt. |#
       [(num)
         (number->string num 10)]
       [(num radix prec)
-        (number->string num radix)]
+        ;; 精度参数：精确正整数，且 num 须不精确（R6RS 11.7.4.4；Chez 同），输出本身不受影响
+        (unless (and (fixnum? prec) ($fx>? prec 0))
+          (assertion-violation 'number->string "not a positive fixnum" prec))
+        (unless (and (number? num) (inexact? num))
+          (assertion-violation 'number->string "precision given for exact number" num prec))
+        ;; R6RS 11.7.4.4：不精确的实部 / 虚部（无穷与 NaN 除外）写出尾数宽度 |p，p 是 ≥ 精度且能还原 z 的最小值；
+        ;; double 一律 53 位，故 p = max(prec, 53)（Chez 同：(number->string 100.5 10 10) 为 "100.5|53"）
+        (let ((p (number->string (if ($fx<? prec 53) 53 prec))))
+          (define (part x)
+            (let ((s (number->string x radix)))
+              (if (and (flonum? x) (not (nan*? x)) (not (infinite*? x))) (string-append s "|" p) s)))
+          (if (complexnum? num)
+              (let ((r (real-part num)) (i (imag-part num)))
+                (string-append (if (zero? r) "" (part r))
+                               (if (or (negative? i) (nan*? i) (infinite*? i) (eqv? i -0.0)) "" "+")
+                               (part i) "i"))
+              (part num)))]
       [(num radix)
         (unless (fixnum? radix)
           (assertion-violation 'number->string "not a fixnum" radix))
@@ -567,8 +622,8 @@ See docs/license.txt. |#
                                (number->string (real-part num) radix))
                            (if (let ((i (imag-part num)))
                                  (or (negative? i)
-                                     (nan? i)
-                                     (infinite? i)
+                                     (nan*? i)
+                                     (infinite*? i)
                                      (eqv? i -0.0)))
                                "" 
                                "+")
@@ -589,6 +644,12 @@ See docs/license.txt. |#
   (define-syntax fixnum-or-flonum->flonum
     (syntax-rules ()
       [(_ x) (let ((v x)) (if (fixnum? v) ($fixnum->flonum v) v))]))
+
+  ;; 多参数比较短路为 #f 后仍检查余下参数（R6RS 要求参数都是数 / 实数，(= 4 3 'a) 须报错；iron-072 对拍 Chez mats）
+  (define (check-rest-numbers who l)
+    (for-each (lambda (x) (unless (number? x) (assertion-violation who "not a number" x))) l))
+  (define (check-rest-reals who l)
+    (for-each (lambda (x) (unless (real? x) (assertion-violation who "not a real" x))) l))
 
   (define-syntax define-comparer 
     (lambda (x)
@@ -641,7 +702,7 @@ See docs/license.txt. |#
                         [(null? b) #t]
                         [(name a ($car b))
                           (f ($car b) ($cdr b))]
-                        [else #f]))])))])))
+                        [else (check-rest-numbers 'name ($cdr b)) #f]))])))])))
                         
   (define-syntax define-real-comparer 
     (lambda (x)
@@ -682,7 +743,7 @@ See docs/license.txt. |#
                         [(null? b) #t]
                         [(name a ($car b))
                           (f ($car b) ($cdr b))]
-                        [else #f]))])))])))                        
+                        [else (check-rest-reals 'name ($cdr b)) #f]))])))])))                        
                         
   (define-comparer =)
   (define-real-comparer <)
@@ -732,8 +793,8 @@ See docs/license.txt. |#
       [(ratnum? num)
         (exact (ratnum-numerator num))]
       [(and (real? num)
-            (finite? num)
-            (not (nan? num)))
+            (finite*? num)
+            (not (nan*? num)))
         (inexact (numerator (exact num)))]
       [else
         (assertion-violation 'numerator "not a real" num)]))
@@ -744,8 +805,8 @@ See docs/license.txt. |#
       [(ratnum? num)
         (exact (ratnum-denominator num))]
       [(and (real? num)
-            (finite? num)
-            (not (nan? num)))
+            (finite*? num)
+            (not (nan*? num)))
         (inexact (denominator (exact num)))]
       [else
         (assertion-violation 'denominator "not a real" num)]))
@@ -846,7 +907,7 @@ See docs/license.txt. |#
             (if (exact? num)
               (assertion-violation 'log "not possible" num)
               -inf.0)]
-          [(infinite? num)
+          [(infinite*? num)
             (if (negative? num)
               (make-complexnum (inexact (abs num)) 0)
               num)]
@@ -855,12 +916,26 @@ See docs/license.txt. |#
       [(num1 num2)
         (/ (log num1) (log num2))]))
         
-  (define/contract (div x1:real x2:real)
-    (when (zero? x2)
-      (assertion-violation 'div "divide by zero" x1 x2))
-    (when (or (nan? x1) (infinite? x1))
-      (assertion-violation 'div "cannot be nan or infinite" x1 x2))
-    (generic-div x1 x2))
+  ;; 两个 fixnum、除数不是 0 / -1 时：截断商，余数为负时向使余数非负的方向修正（R6RS 的 div：x1 = q·x2 + m，0 ≤ m < |x2|）；
+  ;; |x2| ≥ 2 时 |q| ≤ 2^30，修正不会溢出（cleat-077，见 mod）。其余走原实现（报错、bignum、flonum、最小 fixnum ÷ -1）
+  (define div
+    (let ()
+      (define/contract (div x1:real x2:real)
+        (when (zero? x2)
+          (assertion-violation 'div "divide by zero" x1 x2))
+        (when (or (nan*? x1) (infinite*? x1))
+          (assertion-violation 'div "cannot be nan or infinite" x1 x2))
+        (if (mixed-big-flonum? x1 x2)
+            (inexact (generic-div (exact x1) (exact x2)))
+            (generic-div x1 x2)))
+      (lambda (x1 x2)
+        (if (and ($fixnum? x1) ($fixnum? x2) (not ($fx=? x2 0)) (not ($fx=? x2 -1)))
+            (let ((q ($fxdiv x1 x2)))
+              (cond
+                [(not ($fx<? ($fxmod x1 x2) 0)) q]
+                [($fx>? x2 0) ($fx- q 1)]
+                [else ($fx+ q 1)]))
+            (div x1 x2)))))
              
   (define abs
     (let ()
@@ -970,7 +1045,7 @@ See docs/license.txt. |#
         (make-rectangular 0 (sqrt (- num)))]
       [(bignum? num)
         (bignum-sqrt num)]
-      [(infinite? num) num]
+      [(infinite*? num) num]
       [(ratnum? num)
         (let ((n (bignum-sqrt (ratnum-numerator num)))
               (d (bignum-sqrt (ratnum-denominator num))))
@@ -1003,8 +1078,8 @@ See docs/license.txt. |#
     (fold-left 
       (lambda (a b)
         (cond
-          [(nan? a) a]
-          [(nan? b) b]
+          [(nan*? a) a]
+          [(nan*? b) b]
           [else        
             (let ((r (if (< a b) b a)))
               (if (or (inexact? a) (inexact? b))
@@ -1022,8 +1097,8 @@ See docs/license.txt. |#
     (fold-left 
       (lambda (a b)
         (cond
-          [(nan? a) a]
-          [(nan? b) b]
+          [(nan*? a) a]
+          [(nan*? b) b]
           [else        
             (let ((r (if (> a b) b a)))
               (if (or (inexact? a) (inexact? b))
@@ -1052,14 +1127,14 @@ See docs/license.txt. |#
       [(a:integer) (abs a)]
       [(a:integer b:integer) 
         (if (or (zero? a)(zero? b))
-            0
+            (if (and (exact? a) (exact? b)) 0 0.0)   ; (lcm 10.0 0) 为 0.0：不精确传染
             (abs (* (/ a (gcd a b)) b)))]
       [(a:integer b:integer . rest)
         (fold-left lcm (abs a) (cons b rest))]))
               
   ;; from SLIB
   (define/contract (rationalize x:real e:real) 
-    (if (or (and (infinite? x) (infinite? e)) (nan? x) (nan? e))
+    (if (or (and (infinite*? x) (infinite*? e)) (nan*? x) (nan*? e))
         +nan.0
         (let ((r (apply / (find-ratio x e))))
           (if (and (exact? x) (exact? e))
@@ -1111,9 +1186,79 @@ See docs/license.txt. |#
         (make-implementation-restriction-violation)
         (make-who-condition 'expt)
         (make-message-condition "not supported")
-        (make-irritants-condition obj1 obj2)))
+        (make-irritants-condition (list obj1 obj2))))
+    ;; 整数幂：bignum 指数运算；负指数取倒数（0 无精确倒数，报实现限制违例）
+    (define (expt/bignum obj1 obj2 neg?)
+      (cond
+        ;; 指数超出 fixnum：底数只能是 0、±1，其余结果装不下（原来 ->fixnum 抛 OverflowException；Chez 报 out of memory）。
+        ;; 按数值而不是 bignum? 判断：flonum 打印器会传来值很小但未规范化成 fixnum 的 BigInteger 指数
+        [(> obj2 (greatest-fixnum))
+         (cond
+           [(or (= obj1 0) (= obj1 1)) obj1]
+           [(= obj1 -1) (if (even? obj2) 1 -1)]
+           [else (raise (make-restriction-violation))])]
+        [else
+         (let* ((a (->bignum obj1))
+                (r ($bignum-expt a (->fixnum obj2))))
+           (if neg?
+               (if (zero? r)
+                   (raise (make-restriction-violation))
+                   (/ 1 r))
+               (exact r)))]))
+    ;; 确定幂指数符号后按操作数类型分派
+    (define (expt/number obj1 obj2 e)
+      (let* ((neg? (negative? obj2))
+             (obj2 (if neg? (abs obj2) obj2)))
+        (cond
+          [(and e (integer? obj1) (integer? obj2))
+           (expt/bignum obj1 obj2 neg?)]
+          [(and e (rational? obj1) (integer? obj2))
+           (let* ((f (->ratnum obj1)))
+             (if neg?
+                 (/ (expt (denominator f) obj2) (expt (numerator f) obj2))
+                 (/ (expt (numerator f) obj2) (expt (denominator f) obj2))))]
+          ;; flonum 底数、精确整数指数：奇数大指数转 flonum 后成了偶数，Math.Pow 会丢掉负底数的符号，
+          ;; (expt -inf.0 (+ 1 (expt 2 100))) 应为 -inf.0、(expt -0.0 (+ 1 (expt 2 55))) 应为 -0.0（iron-072）
+          [(and (flonum? obj1) (exact? obj2) (integer? obj2))
+           (let* ((r ($flexpt ($flabs obj1) (inexact obj2)))
+                  (r (if (and (odd? obj2) (or (negative? obj1) (eqv? obj1 -0.0))) (- r) r)))
+             (if neg? (/ 1 r) r))]
+          [(and (real? obj1) (real? obj2))
+           (let ((r ($flexpt (inexact obj1) (inexact obj2))))
+             (if neg?
+                 (/ 1 r)
+                 r))]
+          [else
+           (raise (make-restriction-violation))])))
+    ;; 零底数、非零指数的不精确结果：-0.0 的精确奇数次幂保留符号（(expt -0.0 (+ 1 (expt 2 55))) 为 -0.0，
+    ;; 负指数为 -inf.0）；大指数转 flonum 后成了偶数，Math.Pow 看不出奇偶
+    (define (zero-expt obj1 obj2)
+      (if (and (eqv? obj1 -0.0) (exact? obj2) (integer? obj2))
+          (let ((r ($flexpt 0.0 (inexact obj2))))
+            (if (odd? obj2) (- r) r))
+          ($flexpt (inexact obj1) (inexact obj2))))
+    ;; 通用分支：先按零值/单位元短路，再进入类型分派
+    (define (expt* obj1 obj2)
+      (let ((e (and (exact? obj1) (exact? obj2)))
+            (z1 (zero? obj1))
+            (z2 (zero? obj2)))
+        (cond
+          ;; 0 的负实数次幂：精确时没有值（1/0），报 &implementation-restriction（R6RS 允许报错或返回未指定数，
+          ;; 其测试套件按此条件类型接住；Chez 也报错）；不精确时按 IEEE 给 ±inf.0（iron-072）
+          [(and z1 (real? obj2) (negative? obj2))
+           (if e
+               (raise (make-restriction-violation))
+               (zero-expt obj1 obj2))]
+          [(and z1 (not z2))
+           (if e 0 (zero-expt obj1 obj2))]
+          [(or z2 (= obj1 1))
+           (if e 1 1.0)]
+          [(= obj2 1)
+           (if e obj1 (inexact obj1))]
+          [else
+           (expt/number obj1 obj2 e)])))
     (cond
-      [(infinite? obj2)
+      [(infinite*? obj2)
         (if (negative? obj2)
             (if (> (abs obj1) 1)
                 0.0
@@ -1136,40 +1281,7 @@ See docs/license.txt. |#
                (real-part r)
                r))]
       [else
-        (let ((e (and (exact? obj1) (exact? obj2)))
-              (z1 (zero? obj1))
-              (z2 (zero? obj2)))
-          (cond
-            [(and z1 (not z2))
-              (if e 0 0.0)]
-            [(or z2 (= obj1 1))
-              (if e 1 1.0)]
-            [(= obj2 1)
-              (if e obj1 (inexact obj1))]
-            [else
-              (let* ((neg? (negative? obj2))
-                     (obj2 (if neg? (abs obj2) obj2)))
-                (cond
-                  [(and e (integer? obj1) (integer? obj2))
-                    (let* ((a (->bignum obj1))
-                           (r ($bignum-expt a (->fixnum obj2))))
-                       (if neg? 
-                           (if (zero? r)
-                               (raise (make-restriction-violation))
-                               (/ 1 r))
-                           (exact r)))]
-                  [(and e (rational? obj1) (integer? obj2))
-                    (let* ((f (->ratnum obj1)))
-                       (if neg?
-                           (/ (expt (denominator f) obj2) (expt (numerator f) obj2))
-                           (/ (expt (numerator f) obj2) (expt (denominator f) obj2))))]
-                  [(and (real? obj1) (real? obj2))
-                    (let ((r ($flexpt (inexact obj1) (inexact obj2))))
-                      (if neg? 
-                          (/ 1 r)
-                          r))]
-                  [else 
-                    (raise (make-restriction-violation))]))]))]))
+        (expt* obj1 obj2)]))
                    
   ; TODO: improve this    
   (define/contract (fx*/carry fx1:fixnum fx2:fixnum fx3:fixnum)
@@ -1281,6 +1393,53 @@ See docs/license.txt. |#
   (define (get-chr i)
     (integer->char (+ (char->integer #\0)(fxmod i 10))))  
 
+  ;; -3 ≤ k ≤ 0 的小负指数输出："0." 后接 -k 个 0 再接数字
+  (define (flonum->string/negative k n p r)
+    (put-string p "0.")
+    (let f ((i k))
+      (unless (zero? i)
+        (put-string p "0")
+        (f (+ i 1))))
+    (let f ((n n))
+      (unless (null? n)
+        (put-char p (get-chr (car n)))
+        (f (cdr n))))
+    (r))
+
+  ;; 指数记法输出：d.ddddde±xx
+  (define (flonum->string/exponent k n p r)
+    (put-char p (get-chr (car n)))
+    (unless (null? (cdr n))          ; 只有一位有效数字时写 1e23 而不是 1.e23
+      (put-string p "."))
+    (let f ((n (cdr n)))
+      (unless (null? n)
+        (put-char p (get-chr (car n)))
+        (f (cdr n))))
+    (put-string p "e")
+    (display (- k 1) p)
+    (r))
+
+  ;; 0 ≤ k ≤ 9 的普通十进制输出：逐位写数字，k 处补小数点，末尾不足补 "0"
+  (define (flonum->string/plain k n p r)
+    (let f ((i 0) (n n))
+      (cond
+        [(null? n)
+         (if (< i k)
+             (begin
+               (put-string p "0")
+               (f (+ i 1) n))
+             (begin
+               (when (= i k)
+                 (put-string p ".0"))
+               (r)))]
+        [else
+         (when (= i k)
+           (when (zero? k)
+             (put-string p "0"))
+           (put-string p "."))
+         (put-char p (get-chr (car n)))
+         (f (+ i 1) (cdr n))])))
+
   (define (flonum->string flo)
     (cond
       [(flzero? flo) (if (fl<? (fl/ 1.0 flo) 0.0) "-0.0" "0.0")]
@@ -1298,48 +1457,14 @@ See docs/license.txt. |#
               (put-string p "-"))
             (cond
               [(<= 0 k 9)
-                ; print small positive exponent
-                (let f ((i 0)(n n))
-                  (cond
-                    [(null? n)
-                      (if (< i k)
-                          (begin
-                            (put-string p "0")
-                            (f (+ i 1) n))
-                          (begin
-                            (when (= i k)
-                              (put-string p ".0"))
-                            (r)))]
-                    [else
-                      (when (= i k)
-                        (when (zero? k)
-                          (put-string p "0"))
-                        (put-string p "."))
-                      (put-char p (get-chr (car n)))
-                      (f (+ i 1) (cdr n))]))]
+               ; 指数非负且不大：直接十进制
+               (flonum->string/plain k n p r)]
               [(<= -3 k 0)
-                ; print small negative exponent
-                (put-string p "0.")
-                (let f ((i k))
-                  (unless (zero? i)
-                    (put-string p "0")
-                    (f (+ i 1))))
-                (let f ((n n))
-                  (unless (null? n)
-                    (put-char p (get-chr (car n)))
-                    (f (cdr n))))
-                (r)]
+                ; 小负指数
+                (flonum->string/negative k n p r)]
               [else
-                ; print with exponent
-                (put-char p (get-chr (car n)))
-                (put-string p ".")
-                (let f ((i 0)(n (cdr n)))
-                  (unless (null? n)
-                    (put-char p (get-chr (car n)))
-                    (f (+ i 1) (cdr n))))
-                (put-string p "e")
-                (display (- k 1) p)
-                (r)])))]))
+                ; 指数记法
+                (flonum->string/exponent k n p r)])))]))
 
   ;; 运行时（Cleat.Scheme）经 RuntimeHooks 回调这些过程（见 boot/exceptions.sls）
   ($set-runtime-hook! 'exact exact)

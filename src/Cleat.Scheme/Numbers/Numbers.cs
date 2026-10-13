@@ -215,7 +215,7 @@ public partial class Builtins
 
     #region math
 
-    [Primitive("fx+internal", Flags = PrimitiveFlags.Pure)]
+    [Primitive("fx+internal", Flags = PrimitiveFlags.Pure, Sig = "(fixnum fixnum) -> (integer)")]
     public static object FxPlusInternal(object ao, object bo)
     {
         int a = (int)ao, b = (int)bo;
@@ -228,7 +228,7 @@ public partial class Builtins
         return RT.Box(rr);
     }
 
-    [Primitive("fx-internal", Flags = PrimitiveFlags.Pure)]
+    [Primitive("fx-internal", Flags = PrimitiveFlags.Pure, Sig = "(fixnum fixnum) -> (integer)")]
     public static object FxMinusInternal(object ao, object bo)
     {
         int a = (int)ao, b = (int)bo;
@@ -241,7 +241,7 @@ public partial class Builtins
         return RT.Box(rr);
     }
 
-    [Primitive("fx*internal", Flags = PrimitiveFlags.Pure)]
+    [Primitive("fx*internal", Flags = PrimitiveFlags.Pure, Sig = "(fixnum fixnum) -> (integer)")]
     public static object FxMultiplyInternal(object ao, object bo)
     {
         int a = (int)ao, b = (int)bo;
@@ -254,7 +254,7 @@ public partial class Builtins
         return RT.Box(rr);
     }
 
-    [Primitive("fxarithmetic-shift-left-internal", Flags = PrimitiveFlags.Pure)]
+    [Primitive("fxarithmetic-shift-left-internal", Flags = PrimitiveFlags.Pure, Sig = "(fixnum fixnum) -> (integer)")]
     public static object FxShiftLeftInternal(object ao, object bo)
     {
         int a = (int)ao, b = (int)bo;
@@ -653,21 +653,9 @@ public partial class Builtins
                         var ff = ConvertToReal(first);
                         var ss = ConvertToReal(second);
 
-                        var ffa = Math.Abs(ff);
-                        var ssa = Math.Abs(ss);
-                        var r = ffa / ssa;
-                        r = Math.Floor(r);
-                        if (ff < 0 && !double.IsInfinity(ss) && ffa != ssa * r)
-                        {
-                            r++;
-                        }
-
-                        if (ff < 0 ^ ss < 0)
-                        {
-                            r = -r;
-                        }
-
-                        return r;
+                        // 与 fldiv 相同（iron-072 对拍 Chez）：除数为正时 floor(x1/x2)，否则 -floor(x1/-x2)；
+                        // 原来取绝对值后再定符号，(div -0.0 2) 得 0.0、(mod -0.0 2) 得 -0.0
+                        return ss > 0 ? Math.Floor(ff / ss) : -Math.Floor(ff / -ss);
                     }
             }
         }

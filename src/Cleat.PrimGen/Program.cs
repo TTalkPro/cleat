@@ -88,13 +88,41 @@ public static class Program
         if (f.HasFlag(PrimitiveFlags.Pure)) names.Add("pure");
         if (f.HasFlag(PrimitiveFlags.Unsafe)) names.Add("unsafe");
         if (f.HasFlag(PrimitiveFlags.AllowTailCall)) names.Add("allow-tail-call");
+        if (f.HasFlag(PrimitiveFlags.Mifoldable)) names.Add("mifoldable");
+        if (f.HasFlag(PrimitiveFlags.Discard)) names.Add("discard");
+        if (f.HasFlag(PrimitiveFlags.Unrestricted)) names.Add("unrestricted");
+        if (f.HasFlag(PrimitiveFlags.SafeOnGoodArgs)) names.Add("safeongoodargs");
         return "(" + string.Join(" ", names) + ")";
+    }
+
+    private static readonly HashSet<string> s_sigTypes = new()
+    {
+        "ptr", "fixnum", "flonum", "number", "integer", "boolean", "char", "string", "symbol", "pair", "list",
+        "vector", "bytevector", "procedure", "void",
+    };
+
+    /// <summary>"(a b ...) -> (r)" → ((a b ...) (r))；没有签名时 #f。类型名拼错在生成时就报错。</summary>
+    private static string Sig(PrimitiveOverload o)
+    {
+        string sig = o.Attribute.Sig;
+        if (sig == null) return "#f";
+        var m = System.Text.RegularExpressions.Regex.Match(sig, @"^\(([^()]*)\)\s*->\s*\(([^()]*)\)$");
+        if (!m.Success) throw new InvalidOperationException($"{o.Attribute.Name}: bad sig '{sig}'");
+        var args = m.Groups[1].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var results = m.Groups[2].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var t in args.Concat(results))
+            if (t != "..." && !s_sigTypes.Contains(t)) throw new InvalidOperationException($"{o.Attribute.Name}: unknown sig type '{t}'");
+        bool rest = args.Length > 0 && args[^1] == "...";
+        int fixedCount = rest ? args.Length - 2 : args.Length;   // "a b ..." 表示 b 可重复 0 次以上
+        if (rest != o.HasRest || (!rest && fixedCount != o.FixedArity) || (rest && fixedCount != o.FixedArity))
+            throw new InvalidOperationException($"{o.Attribute.Name}: sig '{sig}' does not match the overload's arity");
+        return "((" + string.Join(" ", args) + ") (" + string.Join(" ", results) + "))";
     }
 
     private static string Str(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
-    private static string Overload(string type, string method, int fixedArity, bool hasRest, string flags, string inline) =>
-      "\n    (overload " + Str(type) + ' ' + Str(method) + ' ' + fixedArity + ' ' + (hasRest ? "#t" : "#f") + ' ' + flags + ' ' + inline + ')';
+    private static string Overload(string type, string method, int fixedArity, bool hasRest, string flags, string inline, string sig) =>
+      "\n    (overload " + Str(type) + ' ' + Str(method) + ' ' + fixedArity + ' ' + (hasRest ? "#t" : "#f") + ' ' + flags + ' ' + inline + ' ' + sig + ')';
 
     /// <summary>Scheme 编译器读的原语表：Cleat.Scheme 的 [Primitive] 原语 + Cleat.Core 的 kernel 表 + special。</summary>
     public static string Generate()
@@ -104,10 +132,13 @@ public static class Program
         sb.Append(";;; 设计：designs/02-runtime.md §5、designs/15 §1；IronScheme 03 §6\n");
         sb.Append(";;;\n");
         sb.Append(";;; (primitive 名字 重载 …)\n");
-        sb.Append(";;;   重载 = (overload \"类型全名\" \"方法名\" 固定参数个数 剩余参数? (标志 …) 内联模板)\n");
-        sb.Append(";;;   标志：pure（可常量折叠）、unsafe（不做类型检查）、allow-tail-call、inline（kernel 表：发射器有内联模板）；内联模板为名字或 #f\n");
+        sb.Append(";;;   重载 = (overload \"类型全名\" \"方法名\" 固定参数个数 剩余参数? (标志 …) 内联模板 签名)\n");
+        sb.Append(";;;   标志：pure（无副作用）、unsafe（不做类型检查）、allow-tail-call、mifoldable（常量参数可在编译期折叠）、\n");
+        sb.Append(";;;         discard（结果可丢弃）、unrestricted（任何参数都不报错）、safeongoodargs（参数类型已知正确时免检查）；\n");
+        sb.Append(";;;         inline（kernel 表：发射器有内联模板）；语义见 Cleat.Scheme/Primitive.cs（照 Chez cmacros.ss 的 prim-mask，skeg iron-069）。内联模板为名字或 #f\n");
+        sb.Append(";;;   签名 = ((参数类型 …) (结果类型 …)) 或 #f；参数类型表末尾的 ... 表示前一个类型可重复\n");
         sb.Append(";;; (special 名字 种类)：编译器专门处理的原语；同名的 primitive 条目（若有）是非内联时的后备实现\n");
-        sb.Append("(primitive-table 1\n");
+        sb.Append("(primitive-table 2\n");
 
         // 两张表按名字合并排序（Scheme 原语名与 cleat.kernel/… 不会重名）
         var entries = new SortedDictionary<string, string>(StringComparer.Ordinal);
@@ -116,7 +147,7 @@ public static class Program
             var e = new StringBuilder();
             // 重载按（固定参数个数、是否剩余参数、类型名、方法名）排序，保证输出稳定
             foreach (var o in kv.Value.OrderBy(o => o.FixedArity).ThenBy(o => o.HasRest).ThenBy(o => o.Method.DeclaringType.FullName, StringComparer.Ordinal).ThenBy(o => o.Method.Name, StringComparer.Ordinal))
-                e.Append(Overload(o.Method.DeclaringType.FullName, o.Method.Name, o.FixedArity, o.HasRest, Flags(o.Attribute.Flags), o.Attribute.Inline ?? "#f"));
+                e.Append(Overload(o.Method.DeclaringType.FullName, o.Method.Name, o.FixedArity, o.HasRest, Flags(o.Attribute.Flags), o.Attribute.Inline ?? "#f", Sig(o)));
             entries.Add(kv.Key, e.ToString());
         }
         foreach (var g in Primitives.Table.GroupBy(e => e.Name))
@@ -129,7 +160,7 @@ public static class Program
                 var flags = new List<string>();
                 if (p.Pure) flags.Add("pure");
                 if (p.Inline) flags.Add("inline");
-                e.Append(Overload(p.Type.FullName, p.Method, rest ? ps.Length - 1 : ps.Length, rest, "(" + string.Join(" ", flags) + ")", "#f"));
+                e.Append(Overload(p.Type.FullName, p.Method, rest ? ps.Length - 1 : ps.Length, rest, "(" + string.Join(" ", flags) + ")", "#f", "#f"));
             }
             entries.Add("cleat.kernel/" + g.Key, e.ToString());
         }

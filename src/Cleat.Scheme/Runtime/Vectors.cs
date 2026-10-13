@@ -13,7 +13,7 @@ namespace Cleat.Scheme;
 
 public partial class Builtins
 {
-    [Primitive("vector", Inline = "vector")]
+    [Primitive("vector", Inline = "vector", Flags = PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr ...) -> (vector)")]
     public static object Vector(params object[] args)
     {
         return args;

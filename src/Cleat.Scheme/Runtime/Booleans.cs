@@ -10,7 +10,7 @@ namespace Cleat.Scheme;
 
 public partial class Builtins
 {
-    [Primitive("not", Flags = PrimitiveFlags.Pure, Inline = "not")]
+    [Primitive("not", Flags = PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Inline = "not", Sig = "(ptr) -> (boolean)")]
     public static object Not(object obj)
     {
         return GetBool(!RT.IsTrue(obj));

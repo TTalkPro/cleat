@@ -54,13 +54,13 @@ public partial class Builtins
     [Primitive("string->number", Flags = PrimitiveFlags.Pure)]
     public static object StringToNumber(object obj) => ParseNumber(RequiresNotNull<string>(obj)) ?? FALSE;
 
-    /// <summary>radix 只接受 2、8、10、16（与旧系统一致，其他返回 #f）；文本中的前缀优先于 radix。</summary>
+    /// <summary>radix 只接受 2、8、10、16（R6RS；其他值报 &amp;assertion，iron-072 对拍 Chez mats）；文本中的前缀优先于 radix。</summary>
     [Primitive("string->number", Flags = PrimitiveFlags.Pure)]
     public static object StringToNumber(object obj, object radix)
     {
         string s = RequiresNotNull<string>(obj);
         int r = RequiresNotNull<int>(radix);
-        if (r != 2 && r != 8 && r != 10 && r != 16) return FALSE;
+        if (r != 2 && r != 8 && r != 10 && r != 16) return AssertionViolation("string->number", "not a valid radix", radix);
         return ParseNumber(s, r) ?? FALSE;
     }
 

@@ -9,7 +9,7 @@ namespace Cleat.Scheme;
 /// 数字解析（R6RS 4.2.8），取代旧系统由 gppg 生成的 NumberParser。语义逐条对照旧语法（IronScheme/Compiler/NumberParser.y）：
 /// - 前缀 #x #b #o #d 与 #e #i 各至多一个、顺序任意；
 /// - 十进制下无小数点、无指数的是精确整数，否则是 flonum；#e 时小数按十进制字符串精确换算（#e1.1 = 11/10）；
-/// - 指数标记 e s f d l 等价；尾数宽度 |n 忽略；溢出得到 +inf.0；
+/// - 指数标记 e s f d l 等价；尾数宽度 |p 使结果不精确，p < 53 时按 p 位有效数字舍入（"0.1|10" = 0.0999755859375，Chez 同）；溢出得到 +inf.0；
 /// - 复数：直角（a+bi、+i、-i、a+inf.0i …）与极坐标（a@b）；
 /// - 分母为 0 的分数、无法解析的文本：返回 null。
 /// 精确 / 非精确转换直接用 C# 实现，不经 Scheme 钩子（reader 在 boot 镜像加载前也要能用）。
@@ -114,7 +114,7 @@ public partial class Builtins
     }
 
     private static readonly Regex s_decimal10 = new Regex(
-      @"^(?:(?<int>\d+)(?:(?<dot>\.)(?<frac>\d*))?|(?<dot>\.)(?<frac>\d+))(?:[esfdlESFDL](?<exp>[+-]?\d+))?(?:\|\d+)?$",
+      @"^(?:(?<int>\d+)(?:(?<dot>\.)(?<frac>\d*))?|(?<dot>\.)(?<frac>\d+))(?:[esfdlESFDL](?<exp>[+-]?\d+))?(?:\|(?<width>\d+))?$",
       RegexOptions.Compiled | RegexOptions.ExplicitCapture);
 
     private const long MaxExponent = 100000;
@@ -135,8 +135,8 @@ public partial class Builtins
         {
             var m = s_decimal10.Match(s);
             if (!m.Success) return null;
-            bool hasDot = m.Groups["dot"].Success, hasExp = m.Groups["exp"].Success;
-            if (!hasDot && !hasExp) return ParseUInteger(m.Groups["int"].Value, 10);
+            bool hasDot = m.Groups["dot"].Success, hasExp = m.Groups["exp"].Success, hasWidth = m.Groups["width"].Success;
+            if (!hasDot && !hasExp && !hasWidth) return ParseUInteger(m.Groups["int"].Value, 10);
             string intPart = m.Groups["int"].Success ? m.Groups["int"].Value : "";
             string fracPart = m.Groups["frac"].Success ? m.Groups["frac"].Value : "";
             // 指数可能超出 int 范围（如 tests/r6rs/contrib.sls 中的 0e9999999999999999999999）：
@@ -148,9 +148,23 @@ public partial class Builtins
             if (wantExact)
                 return Math.Abs(exp) >= MaxExponent ? null : ExactDecimal(intPart, fracPart, (int)exp);
             string text = (intPart.Length == 0 ? "0" : intPart) + "." + (fracPart.Length == 0 ? "0" : fracPart) + "e" + exp.ToString(CultureInfo.InvariantCulture);
-            return double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);   // .NET Core 3.0+ 正确舍入，溢出得 ∞
+            double d = double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);   // .NET Core 3.0+ 正确舍入，溢出得 ∞
+            // 尾数宽度（R6RS 4.2.8）：|p 且 p < 53 时舍入到 p 位有效数字（iron-072 对拍 Chez mats）
+            return hasWidth && int.TryParse(m.Groups["width"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out int width) && width < 53
+                ? RoundToBits(d, width) : d;
         }
         return ParseUInteger(s, radix);
+    }
+
+    /// <summary>把正规 double 的有效数字舍入到 bits 位（向偶数舍入）：直接在位模式上加半个单位，进位自然进入指数。</summary>
+    private static double RoundToBits(double d, int bits)
+    {
+        if (bits < 1 || bits >= 53 || d == 0 || !double.IsFinite(d)) return d;
+        long b = BitConverter.DoubleToInt64Bits(d);
+        int drop = 53 - bits;
+        long half = 1L << (drop - 1), low = b & ((1L << drop) - 1);
+        long rounded = low == half ? (((b >> drop) & 1) == 0 ? b : b + half) : b + half;
+        return BitConverter.Int64BitsToDouble(rounded & (-1L << drop));
     }
 
     private static object ParseUInteger(string s, int radix) =>

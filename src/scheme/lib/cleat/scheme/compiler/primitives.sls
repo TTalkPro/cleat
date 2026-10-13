@@ -10,6 +10,8 @@ See docs/license.txt. |#
 ;;;   (primitive-table-file [路径])     原语表文件，默认 "boot/primitives.ss"（相对当前目录）
 ;;;   (primitive-info 名字)             → primitive 记录或 #f
 ;;;   (primitive-overload 信息 实参个数) → 匹配的重载或 #f
+;;;   重载的 flags 是符号表（pure unsafe allow-tail-call mifoldable discard unrestricted safeongoodargs，iron-069），
+;;;   sig 是 ((参数类型 …) (结果类型 …)) 或 #f；表版本 2
 (library (cleat scheme compiler primitives)
   (export
     primitive-table-file
@@ -17,18 +19,23 @@ See docs/license.txt. |#
     primitive?
     primitive-name primitive-overloads primitive-special
     primitive-overload
-    overload-type overload-method overload-fixed overload-rest? overload-flags overload-inline
-    overload-pure? overload-allow-tail-call?)
+    overload-type overload-method overload-fixed overload-rest? overload-flags overload-inline overload-sig
+    overload-pure? overload-allow-tail-call? overload-flag? overload-result-type)
   (import (rnrs) (only (cleat scheme) make-parameter))
 
   (define-record-type primitive
     (fields name overloads special))
 
   (define-record-type overload
-    (fields type method fixed rest? flags inline))
+    (fields type method fixed rest? flags inline sig))
 
-  (define (overload-pure? o) (and (memq 'pure (overload-flags o)) #t))
-  (define (overload-allow-tail-call? o) (and (memq 'allow-tail-call (overload-flags o)) #t))
+  (define (overload-flag? o flag) (and (memq flag (overload-flags o)) #t))
+  (define (overload-pure? o) (overload-flag? o 'pure))
+  (define (overload-allow-tail-call? o) (overload-flag? o 'allow-tail-call))
+  ;; 签名的（唯一）结果类型，没有签名或多值时 #f
+  (define (overload-result-type o)
+    (let ((sig (overload-sig o)))
+      (and sig (pair? (cadr sig)) (null? (cdadr sig)) (caadr sig))))
 
   (define table #f)
   (define table-file-set? #f)
@@ -62,7 +69,7 @@ See docs/license.txt. |#
                     baked
                     (call-with-input-file (primitive-table-file) read)))
           (ht (make-eq-hashtable)))
-      (unless (and (pair? form) (eq? (car form) 'primitive-table) (eqv? (cadr form) 1))
+      (unless (and (pair? form) (eq? (car form) 'primitive-table) (eqv? (cadr form) 2))
         (assertion-violation 'primitive-info "bad primitive table" (primitive-table-file)))
       (for-each
         (lambda (entry)
@@ -72,7 +79,7 @@ See docs/license.txt. |#
                (hashtable-set! ht name
                  (make-primitive name
                    (map (lambda (o)
-                          ;; (overload "类型" "方法" 固定参数个数 剩余参数? (标志 …) 内联模板)
+                          ;; (overload "类型" "方法" 固定参数个数 剩余参数? (标志 …) 内联模板 签名)
                           (apply make-overload (cdr o)))
                         (cddr entry))
                    (let ((old (hashtable-ref ht name #f))) (and old (primitive-special old)))))))

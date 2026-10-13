@@ -174,7 +174,9 @@ See docs/license.txt. |#
                         [(null? b) #t]
                         [(name a ($car b))
                           (f ($car b) ($cdr b))]
-                        [else #f]))])))])))
+                        [else   ; 短路为 #f 后仍检查余下参数（iron-072 对拍 Chez mats）
+                          (for-each (lambda (x) (unless (flonum? x) (assertion-violation 'name "not a flonum" x))) ($cdr b))
+                          #f]))])))])))
                         
   (define-fl-comparer fl=?)
   (define-fl-comparer fl<?)

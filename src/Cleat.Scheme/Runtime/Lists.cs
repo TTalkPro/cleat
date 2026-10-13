@@ -14,20 +14,20 @@ namespace Cleat.Scheme;
 
 public partial class Builtins
 {
-    [Primitive("pair?", Flags = PrimitiveFlags.Pure, Inline = "pair?")]
+    [Primitive("pair?", Flags = PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Inline = "pair?", Sig = "(ptr) -> (boolean)")]
     public static object IsPair(object arg1)
     {
         return GetBool(arg1 is Cons);
     }
 
-    [Primitive("null?", Flags = PrimitiveFlags.Pure, Inline = "null?")]
+    [Primitive("null?", Flags = PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Inline = "null?", Sig = "(ptr) -> (boolean)")]
     public static object IsNull(object arg1)
     {
         return GetBool(arg1 is EmptyList);
     }
 
     /// <summary>(nil? x)：x 是否为 #nil（.NET null）。与 null?（空表 '()）不同。</summary>
-    [Primitive("nil?", Flags = PrimitiveFlags.Pure, Inline = "nil?")]
+    [Primitive("nil?", Flags = PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Inline = "nil?", Sig = "(ptr) -> (boolean)")]
     public static object IsNil(object arg1)
     {
         return GetBool(arg1 == null);
@@ -81,7 +81,7 @@ public partial class Builtins
         return new Cons(car);
     }
 
-    [Primitive("cons", Inline = "cons")]
+    [Primitive("cons", Inline = "cons", Flags = PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr ptr) -> (pair)")]
     public static object Cons(object car, object cdr)
     {
         return new Cons(car, cdr);
@@ -112,7 +112,7 @@ public partial class Builtins
         return c;
     }
 
-    [Primitive("car", Inline = "car")]
+    [Primitive("car", Inline = "car", Flags = PrimitiveFlags.Mifoldable, Sig = "(pair) -> (ptr)")]
     public static object Car(object args)
     {
         Cons c = args as Cons;
@@ -123,7 +123,7 @@ public partial class Builtins
         return c.car;
     }
 
-    [Primitive("cdr", Inline = "cdr")]
+    [Primitive("cdr", Inline = "cdr", Flags = PrimitiveFlags.Mifoldable, Sig = "(pair) -> (ptr)")]
     public static object Cdr(object args)
     {
         Cons c = args as Cons;

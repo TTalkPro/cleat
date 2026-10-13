@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections;
 using System.Globalization;
 using System.IO;
@@ -94,7 +95,7 @@ public static class HostPrimitives
     public static object IsCompoundCondition(object o) => RT.Bool(o is CompoundCondition);
 
     /// <summary>记录对象（复合条件也是 Record 的子类，但不算）。</summary>
-    [Primitive("$record?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$record?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsRecord(object o) => RT.Bool(o is Record && o is not CompoundCondition);
 
     [Primitive("$record-rtd", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
@@ -113,18 +114,18 @@ public static class HostPrimitives
     public static object RcdProtocol(object rcd) => ((RecordConstructorDescriptor)rcd).protocol;
 
     /// <summary>可变串：SchemeString 的可变串，或旧运行时的 StringBuilder。</summary>
-    [Primitive("$string-mutable?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$string-mutable?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsStringMutable(object o) => RT.Bool(o is StringBuilder || (o is SchemeString s && s.IsMutable));
 
     /// <summary>恰为 eq 散列表（不是自定义散列表或只读表）。</summary>
-    [Primitive("$eq-hashtable?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$eq-hashtable?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsEqHashtable(object o) => RT.Bool(o != null && o.GetType() == typeof(Hashtable));
 
     private static readonly System.Text.RegularExpressions.Regex s_plainString =
       new System.Text.RegularExpressions.Regex("^[ !#-\\[\\]-~]*\\z", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>只含可打印 ASCII、且没有 " 与 \ 的字符串（Lcil 文本里可整段写出）。</summary>
-    [Primitive("$plain-string?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$plain-string?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsPlainString(object s) => RT.Bool(s_plainString.IsMatch(s.ToString()));
 
     #endregion
@@ -149,51 +150,51 @@ public static class HostPrimitives
     [Primitive("$valuetype-vector?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object IsValueTypeVector(object o) => RT.Bool(o is Array a && a.GetType().GetElementType().IsValueType);
 
-    [Primitive("$condition?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$condition?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsCondition(object o) => RT.Bool(o is Condition);
 
-    [Primitive("$fixnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Inline = "$fixnum?")]
+    [Primitive("$fixnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Inline = "$fixnum?", Sig = "(ptr) -> (boolean)")]
     public static object IsFixnum(object o) => RT.Bool(o is int);
 
-    [Primitive("$flonum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Inline = "$flonum?")]
+    [Primitive("$flonum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Inline = "$flonum?", Sig = "(ptr) -> (boolean)")]
     public static object IsFlonum(object o) => RT.Bool(o is double);
 
-    [Primitive("$bignum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$bignum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsBignum(object o) => RT.Bool(o is BigInteger);
 
-    [Primitive("$rectnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$rectnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsRectnum(object o) => RT.Bool(o is ComplexFraction);
 
-    [Primitive("$ratnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$ratnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsRatnum(object o) => RT.Bool(o is Fraction);
 
-    [Primitive("$complexnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$complexnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsComplexnum(object o) => RT.Bool(o is Complex64);
 
     /// <summary>不可变字符串（宿主的字符串对象）。</summary>
-    [Primitive("$immutable-string?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$immutable-string?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsImmutableString(object o) => RT.Bool(o is string);
 
     /// <summary>可变字符串（SchemeString；旧的 StringBuilder 也算）。</summary>
-    [Primitive("$mutable-string?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$mutable-string?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsMutableString(object o) => RT.Bool(o is SchemeString || o is StringBuilder);
 
-    [Primitive("$char?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$char?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsChar(object o) => RT.Bool(o is char || o is SchemeChar);
 
-    [Primitive("$vector?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$vector?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsVector(object o) => RT.Bool(o is object[]);
 
-    [Primitive("$bytevector?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$bytevector?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsBytevector(object o) => RT.Bool(o is byte[]);
 
-    [Primitive("$symbol?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$symbol?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsSymbol(object o) => RT.Bool(o is Symbol);
 
-    [Primitive("$boolean?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$boolean?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsBoolean(object o) => RT.Bool(o is bool);
 
-    [Primitive("$procedure?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$procedure?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsProcedure(object o) => RT.Bool(o is Procedure);
 
     [Primitive("$multiple-values?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
@@ -244,76 +245,89 @@ public static class HostPrimitives
 
     #region 字符与字符串（boot/base.sls、unicode.sls）
 
-    [Primitive("$char->integer", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$char->integer", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (fixnum)")]
     public static object CharToInteger(object ch) => RT.Box(Builtins.CharCode(ch));
 
     /// <summary>码点 → 字符（BMP 外为 SchemeChar）；范围由调用方检查。</summary>
-    [Primitive("$integer->char", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$integer->char", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(fixnum) -> (char)")]
     public static object IntegerToChar(object n)
     {
         int k = (int)n;
         return k > 0xFFFF ? new SchemeChar(k) : (char)k;
     }
 
-    [Primitive("$char-upcase", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
-    public static object CharUpcase(object ch) => ch is char c ? char.ToUpper(c) : Builtins.CharUpcaseWide(ch);
+    // 字符分类与大小写映射（iron-072）：BMP 内直接用 char 的静态方法（不分配字符串、不取当前文化），
+    // 之外经 Rune；大小写为 Unicode 的简单映射（不变区域），与 R6RS 的 char-upcase 等相同
+    [Primitive("$char-upcase", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (char)")]
+    public static object CharUpcase(object ch) => ch is char c ? char.ToUpperInvariant(c) : Builtins.CharUpcaseWide(ch);
 
-    [Primitive("$char-downcase", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
-    public static object CharDowncase(object ch) => ch is char c ? char.ToLower(c) : Builtins.CharDowncaseWide(ch);
+    [Primitive("$char-downcase", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (char)")]
+    public static object CharDowncase(object ch) => ch is char c ? char.ToLowerInvariant(c) : Builtins.CharDowncaseWide(ch);
 
-    [Primitive("$char-alphabetic?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
-    public static object IsCharAlphabetic(object ch) => RT.Bool(char.IsLetter(ch.ToString(), 0));
+    /// <summary>R6RS char-foldcase：(char-downcase (char-upcase c))，土耳其语的 İ (U+130)、ı (U+131) 不变。</summary>
+    [Primitive("$char-foldcase", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (char)")]
+    public static object CharFoldcase(object ch) =>
+      ch is char c
+        ? (c < 0x80 ? (c >= 'A' && c <= 'Z' ? (char)(c + 32) : c)
+           : c == '\u0130' || c == '\u0131' ? c : char.ToLowerInvariant(char.ToUpperInvariant(c)))
+        : Builtins.CharDowncaseWide(Builtins.CharUpcaseWide(ch));
 
-    [Primitive("$char-numeric?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
-    public static object IsCharNumeric(object ch) => RT.Bool(char.IsNumber(ch.ToString(), 0));
+    // R6RS 11.11 按 Unicode 派生属性定义：Alphabetic = L* + Nl + Other_Alphabetic（含 Other_Upper/Lowercase），
+    // Uppercase = Lu + Other_Uppercase，Lowercase = Ll + Other_Lowercase；.NET 只给一般类别，差集查生成的区间表
+    // （UnicodeProperties.cs）。字母走 .NET 快路径，其余才二分查表。
+    [Primitive("$char-alphabetic?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (boolean)")]
+    public static object IsCharAlphabetic(object ch)
+    {
+        if (ch is char c && char.IsLetter(c)) return RT.True;
+        int cp = Builtins.CharCode(ch);
+        var cat = CategoryOf(ch);
+        return RT.Bool(cat is UnicodeCategory.UppercaseLetter or UnicodeCategory.LowercaseLetter or UnicodeCategory.TitlecaseLetter
+                       or UnicodeCategory.ModifierLetter or UnicodeCategory.OtherLetter or UnicodeCategory.LetterNumber
+                       || UnicodeProperties.Contains(UnicodeProperties.OtherAlphabetic, cp)
+                       || UnicodeProperties.Contains(UnicodeProperties.OtherUppercase, cp)
+                       || UnicodeProperties.Contains(UnicodeProperties.OtherLowercase, cp));
+    }
 
-    [Primitive("$char-whitespace?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
-    public static object IsCharWhitespace(object ch) => RT.Bool(char.IsWhiteSpace(ch.ToString(), 0));
+    [Primitive("$char-numeric?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (boolean)")]
+    public static object IsCharNumeric(object ch) =>
+      RT.Bool(ch is char c ? char.IsNumber(c) : System.Text.Rune.IsNumber(new System.Text.Rune(Builtins.CharCode(ch))));
+
+    [Primitive("$char-whitespace?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (boolean)")]
+    public static object IsCharWhitespace(object ch) =>
+      RT.Bool(ch is char c ? char.IsWhiteSpace(c) : System.Text.Rune.IsWhiteSpace(new System.Text.Rune(Builtins.CharCode(ch))));
+
+    private static UnicodeCategory CategoryOf(object ch) =>
+      ch is char c ? char.GetUnicodeCategory(c) : System.Text.Rune.GetUnicodeCategory(new System.Text.Rune(Builtins.CharCode(ch)));
+
+    /// <summary>UnicodeCategory 枚举值 → R6RS 的两字母符号（按枚举序排列，启动时驻留一次）。</summary>
+    private static readonly object[] s_categorySymbols = new[]
+    {
+        "Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl", "No", "Zs", "Zl", "Zp",
+        "Cc", "Cf", "Cs", "Co", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sm", "Sc", "Sk", "So", "Cn",
+    }.Select(n => (object)Symbol.Intern(n)).ToArray();
 
     /// <summary>Unicode 一般类别，R6RS 的两字母符号（Lu、Ll …）。</summary>
-    [Primitive("$char-general-category", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
-    public static object CharGeneralCategory(object ch) => Symbol.Intern(char.GetUnicodeCategory(ch.ToString(), 0) switch
-    {
-        UnicodeCategory.ClosePunctuation => "Pe",
-        UnicodeCategory.ConnectorPunctuation => "Pc",
-        UnicodeCategory.Control => "Cc",
-        UnicodeCategory.CurrencySymbol => "Sc",
-        UnicodeCategory.DashPunctuation => "Pd",
-        UnicodeCategory.DecimalDigitNumber => "Nd",
-        UnicodeCategory.EnclosingMark => "Me",
-        UnicodeCategory.FinalQuotePunctuation => "Pf",
-        UnicodeCategory.Format => "Cf",
-        UnicodeCategory.InitialQuotePunctuation => "Pi",
-        UnicodeCategory.LetterNumber => "Nl",
-        UnicodeCategory.LineSeparator => "Zl",
-        UnicodeCategory.LowercaseLetter => "Ll",
-        UnicodeCategory.MathSymbol => "Sm",
-        UnicodeCategory.ModifierLetter => "Lm",
-        UnicodeCategory.ModifierSymbol => "Sk",
-        UnicodeCategory.NonSpacingMark => "Mn",
-        UnicodeCategory.OpenPunctuation => "Ps",
-        UnicodeCategory.OtherLetter => "Lo",
-        UnicodeCategory.OtherNotAssigned => "Cn",
-        UnicodeCategory.OtherNumber => "No",
-        UnicodeCategory.OtherPunctuation => "Po",
-        UnicodeCategory.OtherSymbol => "So",
-        UnicodeCategory.ParagraphSeparator => "Zp",
-        UnicodeCategory.PrivateUse => "Co",
-        UnicodeCategory.SpaceSeparator => "Zs",
-        UnicodeCategory.SpacingCombiningMark => "Mc",
-        UnicodeCategory.Surrogate => "Cs",
-        UnicodeCategory.TitlecaseLetter => "Lt",
-        UnicodeCategory.UppercaseLetter => "Lu",
-        _ => "Cn",
-    });
+    [Primitive("$char-general-category", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (symbol)")]
+    public static object CharGeneralCategory(object ch) => s_categorySymbols[(int)CategoryOf(ch)];
+
+    [Primitive("$char-upper-case?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (boolean)")]
+    public static object IsCharUpperCase(object ch) =>
+      RT.Bool(CategoryOf(ch) == UnicodeCategory.UppercaseLetter || UnicodeProperties.Contains(UnicodeProperties.OtherUppercase, Builtins.CharCode(ch)));
+
+    [Primitive("$char-lower-case?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (boolean)")]
+    public static object IsCharLowerCase(object ch) =>
+      RT.Bool(CategoryOf(ch) == UnicodeCategory.LowercaseLetter || UnicodeProperties.Contains(UnicodeProperties.OtherLowercase, Builtins.CharCode(ch)));
+
+    [Primitive("$char-title-case?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(char) -> (boolean)")]
+    public static object IsCharTitleCase(object ch) => RT.Bool(CategoryOf(ch) == UnicodeCategory.TitlecaseLetter);
 
     [Primitive("$make-string", Flags = PrimitiveFlags.Unsafe)]
     public static object MakeString(object k, object fill) => Builtins.MakeString((int)k, fill);
 
-    [Primitive("$string-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$string-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(string) -> (fixnum)")]
     public static object StringLength(object s) => RT.Box(Builtins.StringLength(s));
 
-    [Primitive("$string-ref", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$string-ref", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(string fixnum) -> (char)")]
     public static object StringRef(object s, object k) => Builtins.StringRef(s, (int)k);
 
     [Primitive("$string-set!", Flags = PrimitiveFlags.Unsafe)]
@@ -407,7 +421,7 @@ public static class HostPrimitives
     }
 
     /// <summary>任何宿主数组的长度（object[]、byte[]、int[]、double[] …）。</summary>
-    [Primitive("$vector-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$vector-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(vector) -> (fixnum)")]
     public static object VectorLength(object v) => RT.Box(((Array)v).Length);
 
     [Primitive("$vector->list", Flags = PrimitiveFlags.Unsafe)]
@@ -502,7 +516,7 @@ public static class HostPrimitives
     [Primitive("$random-next", Flags = PrimitiveFlags.Unsafe)]
     public static object RandomNext(object random, object k) => RT.Box(((Random)random).Next((int)k));
 
-    [Primitive("$hashtable?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$hashtable?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable | PrimitiveFlags.Discard | PrimitiveFlags.Unrestricted, Sig = "(ptr) -> (boolean)")]
     public static object IsHashtable(object o) => RT.Bool(o is Hashtable);
 
     /// <summary>散列表的键：空表（null）换成哨兵，宿主散列表的键不能是 null。</summary>
@@ -606,7 +620,7 @@ public static class HostPrimitives
 
     #region 字节向量（boot/bytevectors.sls）
 
-    [Primitive("$bytevector-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$bytevector-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(bytevector) -> (fixnum)")]
     public static object BytevectorLength(object bv) => RT.Box(((byte[])bv).Length);
 
     [Primitive("$make-bytevector", Flags = PrimitiveFlags.Unsafe)]
@@ -789,7 +803,7 @@ public static class HostPrimitives
     [Primitive("$ratnum->flonum", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object RatnumToFlonum(object r) => ((Fraction)r).ToDouble(null);
 
-    [Primitive("$fixnum->flonum", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$fixnum->flonum", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(fixnum) -> (flonum)")]
     public static object FixnumToFlonum(object n) => (double)(int)n;
 
     [Primitive("$complexnum->rectnum", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
@@ -882,35 +896,35 @@ public static class HostPrimitives
     [Primitive("$bignum-shift-right", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object BignumShiftRight(object b, object k) => Builtins.ToIntegerIfPossible(ToBignum(b) >> (int)k);
 
-    [Primitive("$fxabs", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$fxabs", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(fixnum) -> (fixnum)")]
     public static object FxAbs(object n) => RT.Box(Math.Abs((int)n));
 
-    [Primitive("$flinfinite?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$flinfinite?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(flonum) -> (boolean)")]
     public static object IsFlInfinite(object d) => RT.Bool(double.IsInfinity((double)d));
 
-    [Primitive("$flnan?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$flnan?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(flonum) -> (boolean)")]
     public static object IsFlNan(object d) => RT.Bool(double.IsNaN((double)d));
 
-    [Primitive("$flsin", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlSin(object d) => Math.Sin(ToDouble(d));
-    [Primitive("$flcos", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlCos(object d) => Math.Cos(ToDouble(d));
-    [Primitive("$fltan", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlTan(object d) => Math.Tan(ToDouble(d));
-    [Primitive("$flasin", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlAsin(object d) => Math.Asin(ToDouble(d));
-    [Primitive("$flacos", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlAcos(object d) => Math.Acos(ToDouble(d));
-    [Primitive("$flatan", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlAtan(object d) => Math.Atan(ToDouble(d));
-    [Primitive("$flatan2", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlAtan2(object y, object x) => Math.Atan2(ToDouble(y), ToDouble(x));
-    [Primitive("$flsinh", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlSinh(object d) => Math.Sinh(ToDouble(d));
-    [Primitive("$flcosh", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlCosh(object d) => Math.Cosh(ToDouble(d));
-    [Primitive("$fltanh", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlTanh(object d) => Math.Tanh(ToDouble(d));
-    [Primitive("$fllog", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlLog(object d) => Math.Log(ToDouble(d));
-    [Primitive("$fllog2", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlLog2(object d, object b) => Math.Log(ToDouble(d), ToDouble(b));
-    [Primitive("$flsqrt", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlSqrt(object d) => Math.Sqrt(ToDouble(d));
-    [Primitive("$flexp", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlExp(object d) => Math.Exp(ToDouble(d));
-    [Primitive("$flexpt", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlExpt(object d, object n) => Math.Pow(ToDouble(d), ToDouble(n));
-    [Primitive("$flceiling", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlCeiling(object d) => Math.Ceiling(ToDouble(d));
-    [Primitive("$flfloor", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlFloor(object d) => Math.Floor(ToDouble(d));
-    [Primitive("$fltruncate", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlTruncate(object d) => Math.Truncate(ToDouble(d));
-    [Primitive("$flround", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlRound(object d) => Math.Round(ToDouble(d));
-    [Primitive("$flabs", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)] public static object FlAbs(object d) => Math.Abs(ToDouble(d));
+    [Primitive("$flsin", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlSin(object d) => Math.Sin(ToDouble(d));
+    [Primitive("$flcos", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlCos(object d) => Math.Cos(ToDouble(d));
+    [Primitive("$fltan", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlTan(object d) => Math.Tan(ToDouble(d));
+    [Primitive("$flasin", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlAsin(object d) => Math.Asin(ToDouble(d));
+    [Primitive("$flacos", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlAcos(object d) => Math.Acos(ToDouble(d));
+    [Primitive("$flatan", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlAtan(object d) => Math.Atan(ToDouble(d));
+    [Primitive("$flatan2", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum flonum) -> (flonum)")] public static object FlAtan2(object y, object x) => Math.Atan2(ToDouble(y), ToDouble(x));
+    [Primitive("$flsinh", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlSinh(object d) => Math.Sinh(ToDouble(d));
+    [Primitive("$flcosh", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlCosh(object d) => Math.Cosh(ToDouble(d));
+    [Primitive("$fltanh", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlTanh(object d) => Math.Tanh(ToDouble(d));
+    [Primitive("$fllog", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlLog(object d) => Math.Log(ToDouble(d));
+    [Primitive("$fllog2", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum flonum) -> (flonum)")] public static object FlLog2(object d, object b) => Math.Log(ToDouble(d), ToDouble(b));
+    [Primitive("$flsqrt", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlSqrt(object d) => Math.Sqrt(ToDouble(d));
+    [Primitive("$flexp", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum) -> (flonum)")] public static object FlExp(object d) => Math.Exp(ToDouble(d));
+    [Primitive("$flexpt", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Sig = "(flonum flonum) -> (flonum)")] public static object FlExpt(object d, object n) => Math.Pow(ToDouble(d), ToDouble(n));
+    [Primitive("$flceiling", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(flonum) -> (flonum)")] public static object FlCeiling(object d) => Math.Ceiling(ToDouble(d));
+    [Primitive("$flfloor", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(flonum) -> (flonum)")] public static object FlFloor(object d) => Math.Floor(ToDouble(d));
+    [Primitive("$fltruncate", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(flonum) -> (flonum)")] public static object FlTruncate(object d) => Math.Truncate(ToDouble(d));
+    [Primitive("$flround", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(flonum) -> (flonum)")] public static object FlRound(object d) => Math.Round(ToDouble(d));
+    [Primitive("$flabs", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure | PrimitiveFlags.Mifoldable, Sig = "(flonum) -> (flonum)")] public static object FlAbs(object d) => Math.Abs(ToDouble(d));
 
     private static Complex64 ToComplex(object o) => o is Complex64 c ? c : Complex64.Make(ToDouble(o), 0);
 

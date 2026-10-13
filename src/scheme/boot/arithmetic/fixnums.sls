@@ -285,7 +285,9 @@ See docs/license.txt. |#
                         [(null? b) #t]
                         [(name a ($car b))
                           (f ($car b) ($cdr b))]
-                        [else #f]))])))])))
+                        [else   ; 短路为 #f 后仍检查余下参数（iron-072 对拍 Chez mats）
+                          (for-each (lambda (x) (unless (fixnum? x) (assertion-violation 'name "not a fixnum" x))) ($cdr b))
+                          #f]))])))])))
 
   (define-fx-comparer fx=?)
   (define-fx-comparer fx<?)
@@ -337,13 +339,12 @@ See docs/license.txt. |#
       [else
         ($fx+ ($fxdiv ($fx+ x1 1) x2) 1)]))
 
+  ;; 除数为 -1 时余数恒为 0：最小 fixnum 的商会溢出，余数不会（iron-072 对拍 Chez mats）
   (define-fx* (fxmod x1 x2)
     (check
       (when ($fx=? 0 x2)
-        (assertion-violation 'fxmod "divide by zero" x1 x2))
-      (when (and ($fx=? -1 x2) ($fx=? (least-fixnum) x1))
-        (overflow-error 'fxmod x1 x2)))
-    ($fx- 0 ($fx- ($fx* (fxdiv* x1 x2) x2) x1)))
+        (assertion-violation 'fxmod "divide by zero" x1 x2)))
+    (if ($fx=? -1 x2) 0 ($fx- 0 ($fx- ($fx* (fxdiv* x1 x2) x2) x1))))
 
   (define-fx (fxdiv-and-mod x1 x2)
     (when ($fx=? 0 x2)
@@ -376,9 +377,7 @@ See docs/license.txt. |#
   (define-fx (fxmod0 x1 x2)
     (when ($fx=? 0 x2)
       (assertion-violation 'fxmod0 "divide by zero" x1 x2))
-    (when (and ($fx=? -1 x2) ($fx=? (least-fixnum) x1))
-      (overflow-error 'fxmod0 x1 x2))
-    ($fx- 0 ($fx- ($fx* (fxdiv0* x1 x2) x2) x1)))
+    (if ($fx=? -1 x2) 0 ($fx- 0 ($fx- ($fx* (fxdiv0* x1 x2) x2) x1))))
     
   (define-fx (fxdiv0-and-mod0 x1 x2)
     (when ($fx=? 0 x2)
@@ -480,8 +479,8 @@ See docs/license.txt. |#
       (assertion-violation 'fxrotate-bit-field "start must be between 0 and 31 inclusive" start)) 
     (when (or ($fx<? end 0) ($fx>=? end 32))
       (assertion-violation 'fxrotate-bit-field "end must be between 0 and 31 inclusive" end))
-    (unless ($fx<=? count ($fx- end start))
-      (assertion-violation 'fxrotate-bit-field "count must be less than or equal to the difference of end and start" count))
+    (unless (and ($fx<=? 0 count) ($fx<=? count ($fx- end start)))
+      (assertion-violation 'fxrotate-bit-field "count must be between 0 and the difference of end and start" count))
     (let* ((width ($fx- end start))
            (field1 (fxbit-field* n start ($fx- end count)))
            (field2 (fxbit-field* n start end)))
