@@ -12,9 +12,10 @@ See docs/license.txt. |#
 ;;;                      连续的、未被赋值的 lambda 绑定成为一组 letrec；其余绑定成为 let；
 ;;;                      右边引用了"之后才绑定"的变量时，这些变量先绑定为未初始化，再按顺序 set!
 ;;;   cp0-lite           L1 → L1：if 的常量测试、begin 中可丢弃的调用、原语与 boot 过程的常量折叠（查表，iron-069）
+;;;   simplify-if        L1 → L1：if 的测试规范化、外层已知真假的测试在分支里折叠、常量分支（iron-073）
 ;;;   convert-assignments L1 → L2：既被赋值又被捕获的词法变量改为 Box
 (library (cleat scheme compiler front)
-  (export analyze simplify-letrec check-forward cp0-lite convert-assignments
+  (export analyze simplify-letrec check-forward cp0-lite simplify-if convert-assignments
           analysis-assigned analysis-captured analysis-massigned)
   (import
     (rnrs)
@@ -337,6 +338,173 @@ See docs/license.txt. |#
       [(begin ,[e*] ... ,[e])
        (let ((e* (filter (lambda (x) (not (discardable? x))) e*)))
          (if (null? e*) e `(begin ,e* ... ,e)))]))
+
+;; —— simplify-if：L1 → L1（iron-073，照 Chez cpnanopass 的 np-simplify-if 裁剪）——
+  ;; 内联（iron-070）把 and / or / not 与谓词复制进调用处后，常见嵌套的 if、重复的测试与只差真假的常量分支。
+  ;; 这里只做不复制代码、不改变求值的化简：
+  ;; 1. 测试规范化：(if (not t) a b) → (if t b a)；测试是 (if t #f #t) 同理；(if t K #f)（K 为真值常量）→ t。
+  ;; 2. 已知的测试：外层 (if t …) 的真分支里 t 为真、假分支里为假；(and t1 t2) 为真时两项都真，(or t1 t2) 为假时两项都假。
+  ;;    内层的同一测试直接选分支。只记"可比较"的测试——无副作用、结果只取决于不被 set! 的变量与不可变常量：
+  ;;    变量本身、类型谓词、eq? / eqv?、数值与字符比较（对同样的参数总得同样的结果；外层求值没有报错，内层也不会）。
+  ;; 3. 常量分支：(if t #t #f) 且 t 的结果必是布尔 → t；两支是同一个常量或同一个变量 → (begin t 那一支)，
+  ;;    t 可比较（无副作用）时只留那一支。
+  ;; 测量开关：CLEAT_NO_073 为 1 或含 if 时关。
+  (define no-073 (or ($get-environment-variable "CLEAT_NO_073") ""))
+  (define simplify-if-on? (not (or (string=? no-073 "1") (string-contains? no-073 "if"))))
+
+  ;; 结果只取决于参数、不读可变状态的测试（C# 原语名 / boot 过程名）
+  (define pure-test-prims '(pair? null? nil? eq? $fixnum? $flonum?))
+  (define pure-test-procs
+    '(pair? null? vector? string? symbol? boolean? char? procedure? bytevector? number? complex? real? rational?
+      integer? exact? inexact? fixnum? flonum? exact-integer? zero? positive? negative? odd? even? nan? finite? infinite?
+      eq? eqv? = < > <= >= fx=? fx<? fx>? fx<=? fx>=? fxzero? fxpositive? fxnegative? fxodd? fxeven?
+      fl=? fl<? fl>? fl<=? fl>=? flzero? flpositive? flnegative? char=? char<? char>? char<=? char>=?))
+  ;; 结果必是布尔的原语
+  (define bool-prims '(pair? null? nil? eq? eqv? not $fixnum? $flonum?))
+
+  ;; 收集被 set! 的变量（内联复制出的新变量不在 analyze 的表里，所以自己走一遍）
+  (define (assigned-vars ir)
+    (let ((t (make-eq-hashtable)))
+      (define (walk* es) (for-each walk es))
+      (define (walk-le le)
+        (nanopass-case (L1 LambdaExpr) le
+          [(lambda ,nm ,cl* ...) (for-each walk-cl cl*)]))
+      (define (walk-cl cl)
+        (nanopass-case (L1 Clause) cl [(clause (,x* ...) ,x ,body) (walk body)]))
+      (define (walk e)
+        (nanopass-case (L1 Expr) e
+          [(set! ,x ,e) (hashtable-set! t x #t) (walk e)]
+          [(if ,e0 ,e1 ,e2) (walk e0) (walk e1) (walk e2)]
+          [(begin ,e* ... ,e) (walk* e*) (walk e)]
+          [(gset! ,s ,e) (walk e)]
+          [(mset! ,x ,e) (walk e)]
+          [(primcall ,pr ,e* ...) (walk* e*)]
+          [(lambda ,nm ,cl* ...) (for-each walk-cl cl*)]
+          [(letrec ([,x* ,le*] ...) ,body) (for-each walk-le le*) (walk body)]
+          [(let ([,x* ,e*] ...) ,body) (walk* e*) (walk body)]
+          [(library ,d ([,x* ,s* ,e*] ...) ,body) (walk* e*) (walk body)]
+          [(call ,e ,e* ...) (walk e) (walk* e*)]
+          [(and ,e* ...) (walk* e*)]
+          [(or ,e* ...) (walk* e*)]
+          [(throw ,e) (walk e)]
+          [(try-finally ,e0 ,e1) (walk e0) (walk e1)]
+          [(try-catch ,e (,d* ,e*) ...) (walk e) (walk* e*)]
+          [(label ,x (,x* ...) ,body0 ,body1) (walk body0) (walk body1)]
+          [(jump ,x ,e* ...) (walk* e*)]
+          [(escape-frame ,x ,body) (walk body)]
+          [(try-handle ,x ,body0 ,body1) (walk body0) (walk body1)]
+          ;; cleat 的 Clojure 节点（漏掉其中的 set! 会让被赋值的变量当作不变的测试折叠）
+          [(clj-var-set! ,d ,e) (walk e)]
+          [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (walk e0) (walk e1)]
+          [(clj-invoke ,e ,e* ...) (walk e) (walk* e*)]
+          [(clj-keyword-invoke ,d ,e ,e* ...) (walk e) (walk* e*)]
+          [(clj-call ,d0 ,d1 ,e* ...) (walk* e*)]
+          [(clj-static-call ,d0 ,d1 ,e* ...) (walk* e*)]
+          [(clj-case ,d ,e0 ,e1 ,e* ...) (walk e0) (walk e1) (walk* e*)]
+          [(clj-deftype ,d (,x* ...) ,le* ...) (for-each walk-le le*)]
+          [(host-call ,d0 ,d1 ,st ,e* ...) (walk* e*)]
+          [(host-field-get ,d0 ,d1 ,st ,e* ...) (walk* e*)]
+          [(host-field-set ,d0 ,d1 ,st ,e* ...) (walk* e*)]
+          [(host-new ,d ,e* ...) (walk* e*)]
+          [(host-new-array ,d ,e) (walk e)]
+          [(host-cast ,d ,e) (walk e)]
+          [(host-is ,d ,e) (walk e)]
+          [(unsupported ,d ,e* ...) (walk* e*)]
+          [else (void)]))
+      (walk ir)
+      t))
+
+  (define (simplify-if ir) (if simplify-if-on? (simplify-if-pass ir) ir))
+
+  (define-pass simplify-if-pass : L1 (ir) -> L1 ()
+    (definitions
+      (define assigned (assigned-vars ir))
+      (define (const? e) (nanopass-case (L1 Expr) e [(quote ,d) #t] [else #f]))
+      (define (const-value e) (nanopass-case (L1 Expr) e [(quote ,d) d] [else #f]))
+      (define (false-const? e) (and (const? e) (not (const-value e))))
+      (define (true-const? e) (and (const? e) (const-value e) #t))
+      ;; 相等即同一对象的常量（键里用 equal? 比较也就是 eqv?）
+      (define (stable-const? d) (or (symbol? d) (boolean? d) (null? d) (char? d) (and (fixnum? d) (exact? d))))
+      (define (boot-name e0)
+        (nanopass-case (L1 Expr) e0 [(gref ,s) (boot-location-name s)] [else #f]))
+      (define (arg-key e)
+        (nanopass-case (L1 Expr) e
+          [,x (and (not (hashtable-ref assigned x #f)) (list 'v x))]
+          [(quote ,d) (and (stable-const? d) (list 'q d))]
+          [else #f]))
+      (define (args-key e*)
+        (let loop ((es e*) (acc '()))
+          (cond ((null? es) (reverse acc))
+                ((arg-key (car es)) => (lambda (k) (loop (cdr es) (cons k acc))))
+                (else #f))))
+      ;; 可比较的测试的键，否则 #f
+      (define (test-key e)
+        (nanopass-case (L1 Expr) e
+          [,x (arg-key e)]
+          [(primcall ,pr ,e* ...)
+           (and (memq pr pure-test-prims) (let ((k (args-key e*))) (and k (cons pr k))))]
+          [(call ,e0 ,e* ...)
+           (let ((name (boot-name e0)))
+             (and name (memq name pure-test-procs) (let ((k (args-key e*))) (and k (cons name k)))))]
+          [else #f]))
+      (define (bool-valued? e)
+        (nanopass-case (L1 Expr) e
+          [(quote ,d) (boolean? d)]
+          [(primcall ,pr ,e* ...) (and (memq pr bool-prims) #t)]
+          [(call ,e0 ,e* ...)
+           (let ((p (let ((name (boot-name e0))) (and name (primdata-lookup name)))))
+             (and p (primdata-arity-ok? p (length e*)) (eq? (primdata-result-type p) 'boolean)))]
+          [(if ,e0 ,e1 ,e2) (and (bool-valued? e1) (bool-valued? e2))]
+          [else #f]))
+      ;; 测试规范化：返回 (values 测试 交换两支?)
+      (define (norm-test e)
+        (let loop ((e e) (swap? #f))
+          (nanopass-case (L1 Expr) e
+            [(primcall ,pr ,e* ...)
+             (if (and (eq? pr 'not) (= (length e*) 1)) (loop (car e*) (not swap?)) (values e swap?))]
+            [(if ,e0 ,e1 ,e2)
+             (cond ((and (false-const? e1) (true-const? e2)) (loop e0 (not swap?)))
+                   ((and (true-const? e1) (false-const? e2)) (loop e0 swap?))
+                   (else (values e swap?)))]
+            [else (values e swap?)])))
+      (define (known-value t known)
+        (let ((k (test-key t)))
+          (let ((p (and k (assoc k known)))) (if p (cdr p) 'unknown))))
+      (define (add t v known)
+        (let ((k (test-key t))) (if k (cons (cons k v) known) known)))
+      ;; 测试为真 / 为假时成立的事实
+      (define (true-facts t known)
+        (let ((known (add t #t known)))
+          (nanopass-case (L1 Expr) t
+            [(if ,e0 ,e1 ,e2) (if (false-const? e2) (true-facts e1 (true-facts e0 known)) known)]      ; (and e0 e1)
+            [else known])))
+      (define (false-facts t known)
+        (let ((known (add t #f known)))
+          (nanopass-case (L1 Expr) t
+            [(if ,e0 ,e1 ,e2) (if (true-const? e1) (false-facts e2 (false-facts e0 known)) known)]     ; (or e0 e2)
+            [else known])))
+      (define (same-leaf? a b)
+        (or (and (const? a) (const? b) (eq? (const-value a) (const-value b)))
+            (nanopass-case (L1 Expr) a
+              [,x (nanopass-case (L1 Expr) b [,x1 (eq? x x1)] [else #f])]
+              [else #f]))))
+    (Expr : Expr (ir known) -> Expr ()
+      [(if ,[e0] ,e1 ,e2)
+       (let-values (((t swap?) (norm-test e0)))
+         (let ((a (if swap? e2 e1)) (b (if swap? e1 e2)))
+           (case (known-value t known)
+             ((#t) (Expr a known))
+             ((#f) (Expr b known))
+             (else
+              (let ((a (Expr a (true-facts t known))) (b (Expr b (false-facts t known))))
+                (cond
+                  ((and (true-const? a) (eq? (const-value a) #t) (false-const? b) (bool-valued? t)) t)
+                  ((same-leaf? a b) (if (test-key t) a `(begin ,t ,a)))
+                  (else `(if ,t ,a ,b))))))))])
+    ;; 声明出来，known 才会传进 lambda 体（自动生成的处理器不带额外参数）
+    (LambdaExpr : LambdaExpr (ir known) -> LambdaExpr ())
+    (Clause : Clause (ir known) -> Clause ())
+    (Expr ir '()))
 
   ;; —— convert-assignments：L1 → L2 ——
   (define-pass convert-assignments : L1 (ir an) -> L2 ()

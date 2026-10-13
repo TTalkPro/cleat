@@ -15,7 +15,10 @@ public static class RT
 
     public static object Bool(bool b) => b ? True : False;
 
-    private const int MinCache = -1024, MaxCache = 1024;
+    // 缓存 [-1024, 16384)（iron-071；原来到 1024）。超出缓存的 fixnum 每次都分配，ack 这类深递归里每次 gen0 回收都要扫整个栈，
+    // 分配占了大半时间。上限是折中：65536 时 ack 再快 20%，但 bv2string（0 ~ 65535 的随机值）慢 10%——随机取散在 2 MB 里的缓存
+    // 对象，cache miss 比新分配还贵。Box 保持原样：加 AggressiveInlining 后 ray、divrec 慢 8 ~ 13%（缓存范围不变也一样）
+    private const int MinCache = -1024, MaxCache = 16384;
     private static readonly object[] s_intCache = MakeIntCache();
 
     private static object[] MakeIntCache()

@@ -126,6 +126,84 @@
                                acc)))))
            loop)
          '0 (g$string-length$6$%b v) '0))))
+    ;; iron-071：拆箱循环——i、s 的回边实参是通用 - / +，推测为 fixnum：入口检查 n 是 fixnum 进快循环（int32 局部变量，
+    ;; 回边按 int64 算、检查范围），否则 / 溢出时装箱进慢循环；ys 的回边是 cdr，不推测
+    (spec-loop
+     (case-lambda
+       ((n xs)
+        ((letrec ((loop (case-lambda
+                          ((i s ys)
+                           (if (g$<$1$%b i '0)
+                               (cons s ys)
+                               (loop (g$-$2$%b i '1) (g$+$3$%b i s) (g$cdr$4$%b ys)))))))
+           loop)
+         n '0 xs))))
+    ;; iron-071：谓词收窄——(fixnum? x) 为真的分支里 x 上的 + 与 < 直接拆箱、不检查类型；y 不收窄；
+    ;; (and (flonum? a) (flonum? b)) 两个都收窄；分支里给 z 赋值时 z 不收窄
+    (narrow-predicate
+     (case-lambda
+       ((x y a b z)
+        (begin
+          (if (g$fixnum?$1$%b x) (g$+$2$%b x y) '#f)
+          (if (if (g$flonum?$3$%b a) (g$flonum?$3$%b b) '#f) (g$*$4$%b a b) '#f)
+          (if (g$fixnum?$1$%b z) (begin (set! z y) (g$<$5$%b z '0)) '#f)))))
+    ;; iron-073：if 化简——(not t) 交换两支；外层 (pair? x) 为假的分支里内层同一测试直接选支；(and a b) 为真时 a、b 都真；
+    ;; (if (null? y) #t #f) 结果必是布尔 → (null? y)；两支是同一常量 → 只留常量（测试无副作用）；被 set! 的 z 不参与
+    (simplify-if
+     (case-lambda
+       ((x y a b z)
+        (begin
+          (set! z a)
+          (cons (if (not (pair? x)) (if (pair? x) (car x) '2) '1)
+                (cons (if (if a b '#f) (if a (if b '3 '4) '5) '6)
+                      (cons (if (if (null? y) '#t '#f) '7 '8)
+                            (cons (if (null? y) '#t '#f)
+                                  (cons (if (eq? x y) '9 '9)
+                                        (if z (if z '10 '11) '12))))))))))
+    ;; iron-073：commonize——只差局部变量名的两个闭合 lambda 共用一个过程字段；体不同或有自由变量（f）的不共享
+    (commonize
+     (case-lambda
+       ((f)
+        (cons (case-lambda ((a) ($fx+ a '1)))
+              (cons (case-lambda ((b) ($fx+ b '1)))
+                    (cons (case-lambda ((c) ($fx+ c '2)))
+                          (case-lambda ((d) ($fx+ d f)))))))))
+    ;; iron-071：类型格——cond 收窄：(list? l) 为真时 l 是 list，再经 (null? l) 的假分支成 pair，car 不检查；
+    ;; (pair? m) 的假分支不收窄，真分支里 (pair? m) 直接是 #t；被 set! 的 w 不收窄
+    (narrow-cond
+     (case-lambda
+       ((l m w)
+        (begin
+          (if (g$list?$1$%b l) (if (null? l) '0 (car l)) '#f)
+          (if (pair? m) (if (pair? m) (cdr m) '#f) (g$vector?$2$%b m))
+          (if (pair? w) (begin (set! w (cdr w)) (car w)) '#f)))))
+    ;; iron-071：已执行的操作收窄——(car q) 之后 q 是 pair，(cdr q) 不检查、(pair? q) 是 #t；(vector-set! v i a) 之后
+    ;; v 是 vector（vector-ref 不检查向量）、i 是 fixnum（不检查下标类型）
+    (narrow-effect
+     (case-lambda
+       ((q v i)
+        ((case-lambda
+           ((a b)
+            (begin
+              (g$vector-set!$1$%b v i a)
+              (cons (g$vector-ref$2$%b v i) (if (pair? q) b '#f)))))
+         (car q) (cdr q)))))
+    ;; iron-071：签名传播与 label 合流——n 由 vector-length 定为 int32；p 由 cons 定为 pair，car 不检查；
+    ;; acc 的定义是 '0 与 (+ acc (vector-length v))，合流为精确整数：+ 只有 fixnum 路径，没有 flonum 路径
+    (sig-lattice
+     (case-lambda
+       ((v)
+        ((case-lambda
+           ((n p)
+            (cons (car p)
+                  ((letrec ((loop (case-lambda
+                                    ((i acc)
+                                     (if ($fx<? i n)
+                                         (loop ($fx+ i '1) (g$+$2$%b acc (g$vector-length$1$%b v)))
+                                         acc)))))
+                     loop)
+                   '0 '0))))
+         (g$vector-length$1$%b v) (cons v '())))))
     ;; iron-034c：循环变量拆箱——i 由 $fx+ 定为 int32，acc 由 fl+ 定为 double，xs 不定类型；
     ;; 被闭包捕获的 j 不拆箱
     (typed-loop
@@ -230,6 +308,7 @@
            (an (analyze l0))
            (l1 (cp0-lite (check-forward (simplify-letrec l0 an) an)))
            (l1 (if inline-enabled? (cp0-lite (simplify-lets (cp0-inline l1 an) an)) l1))   ; 与驱动相同（iron-070）
+           (l1 (simplify-if l1))                                                              ; iron-073
            (l2 (convert-assignments l1 an))
            (l3 (uncover-free l2)))
       (check! name "l0" (pp->string (unparse-L0 l0)))

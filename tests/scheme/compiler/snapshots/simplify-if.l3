@@ -1,0 +1,20 @@
+(lambda #f
+  ()
+  (clause
+    (x y a b z)
+    #f
+    (begin
+      (set! z a)
+      (primcall
+        cons
+        (if (primcall pair? x) '1 '2)
+        (primcall
+          cons
+          (if (if a b '#f) '3 '6)
+          (primcall
+            cons
+            (if (primcall null? y) '7 '8)
+            (primcall
+              cons
+              (primcall null? y)
+              (primcall cons '9 (if z (if z '10 '11) '12)))))))))

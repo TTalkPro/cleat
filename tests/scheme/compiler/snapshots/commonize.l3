@@ -1,0 +1,15 @@
+(lambda #f
+  ()
+  (clause
+    (f)
+    #f
+    (primcall
+      cons
+      (lambda #f () (clause (a) #f (primcall $fx+ a '1)))
+      (primcall
+        cons
+        (lambda #f () (clause (b) #f (primcall $fx+ b '1)))
+        (primcall
+          cons
+          (lambda #f () (clause (c) #f (primcall $fx+ c '2)))
+          (lambda #f (f) (clause (d) #f (primcall $fx+ d f))))))))

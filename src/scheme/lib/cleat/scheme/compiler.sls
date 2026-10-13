@@ -72,6 +72,8 @@ See docs/license.txt. |#
            (l1 (cp0-lite (check-forward (simplify-letrec l0 an) an)))
            ;; 过程内联与 let 传播（iron-070；CLEAT_NO_070=1 时关），内联暴露的常量再折叠一次
            (l1 (if inline-enabled? (cp0-lite (simplify-lets (cp0-inline l1 an) an)) l1))
+           ;; if 化简（iron-073；CLEAT_NO_073 为 1 或含 if 时关）
+           (l1 (simplify-if l1))
            (_ (dump-pass "l1" unparse-L1 l1))
            (l2 (convert-assignments l1 an))
            (_ (dump-pass "l2" unparse-L2 l2))

@@ -11,7 +11,8 @@ public static class InlineArith
     public static object Subtract(int a, int b) => Result((long)a - b);
     public static object Multiply(int a, int b) => Result((long)a * b);
 
-    private static object Result(long r) => r == (int)r ? RT.Box((int)r) : Builtins.ToIntegerIfPossible(r);
+    /// <summary>int64 结果装箱：在 fixnum 范围内是 fixnum，否则是大整数。拆箱循环（iron-071）溢出转慢路径时也用。</summary>
+    public static object Result(long r) => r == (int)r ? RT.Box((int)r) : Builtins.ToIntegerIfPossible(r);
 
     public static object FxAdd(int a, int b) => FxResult((long)a + b);
     public static object FxSubtract(int a, int b) => FxResult((long)a - b);

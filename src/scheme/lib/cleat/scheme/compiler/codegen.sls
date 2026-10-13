@@ -500,6 +500,11 @@ See docs/license.txt. |#
   (define sound-types (make-eq-hashtable))
   ;; 原始签名子句的 L / D 形参（cleat-042）：类型固定（不是推断候选），推断与代码生成都当作已知
   (define fixed-types (make-eq-hashtable))
+  ;; 变量的已知类型（iron-071，类型格的元素），不改变存储：推断出的 let / label 变量（拆箱的除外），与生成某段代码期间
+  ;; 由谓词或已执行的操作收窄出的事实（进出该段时加上、恢复）
+  (define var-facts (make-eq-hashtable))
+  ;; 被 set! 赋值的局部变量：不参与收窄（每个编译单元重算）
+  (define assigned-vars (make-eq-hashtable))
 
   ;; 测量用（iron-034）：环境变量 CLEAT_SCHEME_NO_034 设置时关掉 034 的生成优化（内联算术、拆箱、单元内直接调用），
   ;; 同一个 boot 镜像里对照编译时间与运行时间
@@ -647,12 +652,52 @@ See docs/license.txt. |#
                                          acc)))))))
           '()))
 
+  ;; ———————————————— 类型格（iron-071，照 Chez cptypes-lattice.ss 裁剪）————————————————
+  ;; 元素：fx fl int（精确整数，可能是大整数）real num bool char symbol pair null list vector。
+  ;; 推断里另有 top（还没定，乐观不动点的起点）与 #f（什么都可能）。父子关系只有下面几条，其余互不相交
+  (define type-parents '((fx . int) (int . real) (fl . real) (real . num) (pair . list) (null . list)))
+  (define (type-ancestors t)
+    (if t (cons t (let ((p (assq t type-parents))) (if p (type-ancestors (cdr p)) '()))) '()))
+  (define (type<=? a b) (and a b (memq b (type-ancestors a)) #t))
+  (define (type-disjoint? a b) (and a b (not (type<=? a b)) (not (type<=? b a))))
+  ;; 合流（if 两支、label 各 jump 的实参、变量的各定义）：最小公共上界
+  (define (type-join a b)
+    (cond ((eq? a 'top) b)
+          ((eq? b 'top) a)
+          ((not (and a b)) #f)
+          (else (let ((bs (type-ancestors b))) (find (lambda (t) (memq t bs)) (type-ancestors a))))))
+  ;; 收窄：已知是 a、又知是 b → 较具体的一个（不相容时分支走不到，取 b）
+  (define (type-meet a b)
+    (cond ((not a) b) ((not b) a) ((type<=? a b) a) (else b)))
+  ;; 已知是 a、又知不是 b
+  (define (type-minus a b)
+    (cond ((and (eq? a 'list) (eq? b 'null)) 'pair)
+          ((and (eq? a 'list) (eq? b 'pair)) 'null)
+          (else a)))
+  ;; 只用于数值推断的旧名字：fx 与 fl 合流为 real，拆箱只认 fx / fl，效果与原来的 #f 相同
+  (define (meet-type a b) (type-join a b))
+
+  ;; 常量的类型
+  (define (datum-type d)
+    (cond ((and (fixnum? d) (exact? d)) 'fx)
+          ((flonum? d) 'fl)
+          ((and (integer? d) (exact? d)) 'int)
+          ((and (number? d) (real? d)) 'real)
+          ((number? d) 'num)
+          ((boolean? d) 'bool)
+          ((char? d) 'char)
+          ((symbol? d) 'symbol)
+          ((null? d) 'null)
+          ((pair? d) 'pair)
+          ((vector? d) 'vector)
+          (else #f)))
+
   (define fx-result-prims '($fx+ $fx- $fx* $fxand $fxior $fxxor $fxnot $as-fixnum))
   (define fx-compare-prims '($fx=? $fx<? $fx>? $fx<=? $fx>=? $fxzero? $fxnegative? $fxpositive?))
   (define fl-compare-prims '($fl=? $fl<? $fl>? $fl<=? $fl>=?))
   (define fl-result-prims '($fl+ $fl- $fl* $fl/ $as-flonum))
+  (define bool-result-prims '(eq? not null? nil? pair? $fixnum? $flonum?))
 
-  ;; 表达式的类型：fx / fl / #f；env：变量 → fx | fl | top（还没定）| #f
   ;; (quote d) 的 d，否则 (void)（L3 引用字面量的数据）
   (define (quoted-datum e)
     (nanopass-case (L3 Expr) e
@@ -695,12 +740,11 @@ See docs/license.txt. |#
               (cons op (list-tail e* 3))))]
       [else #f]))
 
+  ;; 表达式的类型（上面的格元素，另有 cleat-042 的 l64：Clojure 的 long，与格里其余元素都不相交）或 #f；env：变量 → 类型 |
+  ;; top（还没定）。不在 env 里的变量查收窄与推断记下的事实（var-facts）
   (define (expr-type e env)
     (nanopass-case (L3 Expr) e
-      [(quote ,d) (cond ((clr-is System.Int64 d) 'l64)
-                        ((and (fixnum? d) (exact? d)) 'fx)
-                        ((flonum? d) 'fl)
-                        (else #f))]
+      [(quote ,d) (if (clr-is System.Int64 d) 'l64 (datum-type d))]
       [(clj-call ,d0 ,d1 ,e* ...)
        (guard (equal? d0 "PrimInvoke"))
        (sig-char-raw (sig-ret (quoted-datum (car e*))))]
@@ -712,47 +756,61 @@ See docs/license.txt. |#
          (cond ((and ts (for-all (lambda (t) (eq? t 'l64)) ts)) 'l64)
                ((and ts (for-all (lambda (t) (memq t '(l64 top))) ts)) 'top)
                (else (host-call-type d0 d1 e* env))))]
-      [,x (hashtable-ref env x #f)]
+      [,x (if (hashtable-contains? env x) (hashtable-ref env x #f) (hashtable-ref var-facts x #f))]
       [(primcall ,pr ,e* ...)
-       (cond ((memq pr fx-result-prims) 'fx) ((memq pr fl-result-prims) 'fl) (else #f))]
+       (cond ((memq pr fx-result-prims) 'fx)
+             ((memq pr fl-result-prims) 'fl)
+             ((or (memq pr bool-result-prims) (memq pr fx-compare-prims) (memq pr fl-compare-prims)) 'bool)
+             ((eq? pr 'cons) 'pair)
+             (else #f))]
       [(call ,e0 ,e* ...)
        (let ((op (inline-op e0 (length e*))))
-         (if op
-             (and (memq (car op) '(add sub mul div))
-                  (case (cdr op)
-                    ((fx fl) (cdr op))
-                    ;; 通用算符（iron-066）：操作数都是 flonum 时结果是 flonum；fixnum 的和可能溢出成 bignum，不算 fx
-                    (else (fold-left (lambda (t a) (and t (meet-type t (let ((ta (expr-type a env))) (and (memq ta '(fl top)) ta)))))
-                                     'top e*))))
-             ;; 其余 boot 过程按 primdata 的签名（iron-069）：vector-length / char->integer / fxand … 正常返回时必是 fixnum，
-             ;; flsqrt / fixnum->flonum … 必是 flonum（参数不对时报错，不影响返回值的类型）
-             (boot-call-result-type e0 (length e*))))]
-      [(if ,e0 ,e1 ,e2) (meet-type (expr-type e1 env) (expr-type e2 env))]
+         (cond
+           (op
+            (case (car op)
+              ((add sub mul div)
+               (case (cdr op)
+                 ((fx fl) (cdr op))
+                 ;; 通用算符（iron-066）：操作数都是 flonum 时结果是 flonum；都是精确整数时是精确整数（fixnum 的和可能溢出成
+                 ;; 大整数，不算 fx）
+                 (else (let ((ts (map (lambda (a) (expr-type a env)) e*)))
+                         (cond ((for-all (lambda (t) (memq t '(fl top))) ts) (fold-left type-join 'top ts))
+                               ((and (not (eq? (car op) 'div)) (for-all (lambda (t) (memq t '(fx int top))) ts)) 'int)
+                               (else #f))))))
+              ((eq lt le gt ge) 'bool)
+              (else #f)))
+           ((unary-inline-op e0 (length e*)) 'bool)
+           ;; 其余 boot 过程按 primdata 的签名（iron-069）：vector-length / char->integer / fxand … 正常返回时必是 fixnum，
+           ;; flsqrt / fixnum->flonum … 必是 flonum，cons 是 pair（参数不对时报错，不影响返回值的类型）
+           (else (boot-call-result-type e0 (length e*)))))]
+      [(if ,e0 ,e1 ,e2) (type-join (expr-type e1 env) (expr-type e2 env))]
       [(begin ,e* ... ,e) (expr-type e env)]
       [(let ([,x* ,e*] ...) ,body) (expr-type body env)]
       [(jump ,x ,e* ...) 'top]                 ; 不返回：不影响 if 另一支的类型
       [(throw ,e) 'top]
       [else #f]))
 
-  (define (meet-type a b)
-    (cond ((eq? a 'top) b) ((eq? b 'top) a) ((eq? a b) a) (else #f)))
+  ;; primdata 签名的结果类型 → 格元素
+  (define sig-types
+    '((fixnum . fx) (flonum . fl) (integer . int) (number . num) (boolean . bool) (char . char) (symbol . symbol)
+      (pair . pair) (list . list) (vector . vector)))
 
-  ;; (gref boot 位置) 的调用按签名的结果类型给 fx / fl，其余 #f；按位置符号缓存
+  ;; (gref boot 位置) 的调用按签名的结果类型给格元素，其余 #f；按位置符号缓存
   (define boot-result-cache (make-eq-hashtable))
   (define (boot-call-result-type e0 argc)
+    (let ((p (boot-primdata e0)))
+      (and p (primdata-arity-ok? p argc)
+           (let ((r (assq (primdata-result-type p) sig-types))) (and r (cdr r))))))
+
+  (define (boot-primdata e0)
     (nanopass-case (L3 Expr) e0
       [(gref ,s)
-       (let ((p (let ((r (hashtable-ref boot-result-cache s 'unknown)))
-                  (if (eq? r 'unknown)
-                      (let ((r (let ((name (boot-location-name s))) (and name (primdata-lookup name)))))
-                        (hashtable-set! boot-result-cache s r)
-                        r)
-                      r))))
-         (and p (primdata-arity-ok? p argc)
-              (case (primdata-result-type p)
-                ((fixnum) 'fx)
-                ((flonum) 'fl)
-                (else #f))))]
+       (let ((r (hashtable-ref boot-result-cache s 'unknown)))
+         (if (eq? r 'unknown)
+             (let ((r (let ((name (boot-location-name s))) (and name (primdata-lookup name)))))
+               (hashtable-set! boot-result-cache s r)
+               r)
+             r))]
       [else #f]))
 
   ;; 收集候选（iron-034c）。用库层的一个 define-pass 遍历整棵树：nanopass-case 每次调用都现场建一个 pass
@@ -765,11 +823,11 @@ See docs/license.txt. |#
   (define-pass infer-walk : L3 (ir add-def! exclude! labels candidate? use!) -> * (v)
     ;; 处理器只取一个参数，for-each 直接传处理器，不为每个节点新建闭包
     (MaybeTyped : Expr (ir) -> * (b)
-      [(quote ,d) (or (fixnum? d) (flonum? d) (clr-is System.Int64 d))]
+      [(quote ,d) (or (clr-is System.Int64 d) (and (datum-type d) #t))]
       [,x (candidate? x)]
       [(clj-call ,d0 ,d1 ,e* ...) (or (equal? d0 "PrimInvoke") (and (host-call-layout d0 d1 e*) #t))]
-      [(primcall ,pr ,e* ...) (and (or (memq pr fx-result-prims) (memq pr fl-result-prims)) #t)]
-      [(call ,e0 ,e* ...) (and (inline-op e0 (length e*)) #t)]
+      [(primcall ,pr ,e* ...) (and (or (memq pr fx-result-prims) (memq pr fl-result-prims) (eq? pr 'cons)) #t)]
+      [(call ,e0 ,e* ...) (and (or (inline-op e0 (length e*)) (boot-call-result-type e0 (length e*))) #t)]
       [(if ,e0 ,e1 ,e2) (or (MaybeTyped e1) (MaybeTyped e2))]
       [(begin ,e* ... ,e) (MaybeTyped e)]
       [(let ([,x* ,e*] ...) ,body) (MaybeTyped body)]
@@ -868,6 +926,53 @@ See docs/license.txt. |#
            (for-each (lambda (p c) (let ((r (sig-char-raw c))) (when r (hashtable-set! fixed-types p r))))
                      x* (sig-params sig))]))))
 
+  ;; 记下被 set! 赋值的变量（iron-071：收窄只对不被赋值的变量做）。嵌套的 lambda 也要走：被捕获又被赋值的变量已经装箱
+  ;; （mref），这里只剩方法内的局部变量。cleat 的 L3 的每个复合节点都要走到（漏掉 Clojure 节点里的 set! 会让被赋值的变量被收窄）
+  (define-pass collect-assigned! : L3 (ir) -> * (v)
+    (Body : Clause (ir) -> * (v)
+      [(clause (,x* ...) ,x ,body) (Expr body)])
+    (Expr : Expr (ir) -> * (v)
+      [(set! ,x ,e) (hashtable-set! assigned-vars x #t) (Expr e)]
+      [(if ,e0 ,e1 ,e2) (Expr e0) (Expr e1) (Expr e2)]
+      [(begin ,e* ... ,e) (for-each Expr e*) (Expr e)]
+      [(gset! ,s ,e) (Expr e)]
+      [(mset! ,x ,e) (Expr e)]
+      [(primcall ,pr ,e* ...) (for-each Expr e*)]
+      [(lambda ,nm (,x* ...) ,cl* ...) (for-each Body cl*)]
+      [(letrec ([,x* ,le*] ...) ,body) (for-each Expr le*) (Expr body)]
+      [(let ([,x* ,e*] ...) ,body) (for-each Expr e*) (Expr body)]
+      [(library ,d ([,x* ,s* ,e*] ...) ,body) (for-each Expr e*) (Expr body)]
+      [(call ,e ,e* ...) (Expr e) (for-each Expr e*)]
+      [(and ,e* ...) (for-each Expr e*)]
+      [(or ,e* ...) (for-each Expr e*)]
+      [(throw ,e) (Expr e)]
+      [(try-finally ,e0 ,e1) (Expr e0) (Expr e1)]
+      [(try-catch ,e (,d* ,e*) ...) (Expr e) (for-each Expr e*)]
+      [(label ,x (,x* ...) ,body0 ,body1) (Expr body0) (Expr body1)]
+      [(jump ,x ,e* ...) (for-each Expr e*)]
+      [(escape-frame ,x ,body) (Expr body)]
+      [(try-handle ,x ,body0 ,body1) (Expr body0) (Expr body1)]
+      [(host-call ,d0 ,d1 ,st ,e* ...) (for-each Expr e*)]
+      [(host-field-get ,d0 ,d1 ,st ,e* ...) (for-each Expr e*)]
+      [(host-field-set ,d0 ,d1 ,st ,e* ...) (for-each Expr e*)]
+      [(host-new ,d ,e* ...) (for-each Expr e*)]
+      [(host-new-array ,d ,e) (Expr e)]
+      [(host-cast ,d ,e) (Expr e)]
+      [(host-is ,d ,e) (Expr e)]
+      [(unsupported ,d ,e* ...) (for-each Expr e*)]
+      [(box ,e) (Expr e)]
+      [(set-box! ,x ,e) (hashtable-set! assigned-vars x #t) (Expr e)]
+      [(clj-var-set! ,d ,e) (Expr e)]
+      [(clj-def ,d ,st0 ,st1 ,e0 ,e1) (Expr e0) (Expr e1)]
+      [(clj-invoke ,e ,e* ...) (Expr e) (for-each Expr e*)]
+      [(clj-keyword-invoke ,d ,e ,e* ...) (Expr e) (for-each Expr e*)]
+      [(clj-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
+      [(clj-static-call ,d0 ,d1 ,e* ...) (for-each Expr e*)]
+      [(clj-case ,d ,e0 ,e1 ,e* ...) (Expr e0) (Expr e1) (for-each Expr e*)]
+      [(clj-deftype ,d (,x* ...) ,le* ...) (for-each Expr le*)]
+      [else (void)])
+    (Expr ir))
+
   ;; 过程体的 L3 节点数是否超过 n（数到 n 就停）；嵌套的 lambda 是别的方法，不数
   (define-pass count-nodes : L3 (ir n) -> * (v)
     (definitions
@@ -899,7 +1004,11 @@ See docs/license.txt. |#
     (Expr ir)
     (> count n))
 
-  (define (infer-var-types! form)
+  (define (infer-var-types! form) (infer-var-types-into! form #f var-types))
+
+  ;; seeds：#f，或 变量 → fx / fl 的表——这些变量的类型定死（不按定义推断），供拆箱循环（iron-071）在推测的形参类型下
+  ;; 重算循环体里的变量；结果写进 out
+  (define (infer-var-types-into! form seeds out)
     (let ((defs (make-eq-hashtable))       ; 候选变量 → 定义表达式列表（#f 是占位：label 的形参先登记）
           (excluded (make-eq-hashtable))
           (labels (make-eq-hashtable)))    ; label 名 → 形参表
@@ -917,7 +1026,8 @@ See docs/license.txt. |#
       ;; 工作表求不动点：类型只会从 top 往下走（top → fx/fl → #f），某个变量变了只重算依赖它的变量
       (let ((env (make-eq-hashtable))
             (users (make-eq-hashtable))     ; 变量 → 定义里引用了它的候选
-            (cands (filter (lambda (x) (not (hashtable-ref excluded x #f)))
+            (cands (filter (lambda (x) (and (not (hashtable-ref excluded x #f))
+                                            (not (and seeds (hashtable-contains? seeds x)))))
                            (vector->list (hashtable-keys defs)))))
         (define (deps e)                     ; expr-type 会查的变量
           (nanopass-case (L3 Expr) e
@@ -932,36 +1042,382 @@ See docs/license.txt. |#
              (let ((op (inline-op e0 (length e*))))
                (if (and op (eq? (cdr op) 'generic)) (apply append (map deps e*)) '()))]
             [else '()]))
-        (let-values (((ks vs) (hashtable-entries fixed-types)))
-          (vector-for-each (lambda (k v) (hashtable-set! env k v) (hashtable-set! var-types k v) (hashtable-set! sound-types k v)) ks vs))
-        (for-each (lambda (x) (hashtable-set! env x 'top)) cands)
-        (for-each (lambda (x)
-                    (for-each (lambda (e)
-                                (for-each (lambda (v) (hashtable-set! users v (cons x (hashtable-ref users v '()))))
-                                          (deps e)))
-                              (hashtable-ref defs x '())))
-                  cands)
-        (let loop ((work cands))
+        (define (meet-defs x)                ; x 的定义列表逐个合流类型
+          (let ((t (let f ((es (hashtable-ref defs x '())) (t 'top))
+                     (if (or (null? es) (not t)) t (f (cdr es) (meet-type t (expr-type (car es) env)))))))
+            ;; 内联子句的形参（$inl，见 (clojure syntax) 的 inline-call）不推断为 double（cleat-042）
+            (if (and (eq? t 'fl) (inlined-binding? x)) #f t)))
+        (define (user-entries! x e)          ; 把候选 x 记进其定义 e 引用到的变量的 users
+          (for-each (lambda (v)
+                      (hashtable-set! users v (cons x (hashtable-ref users v '()))))
+                    (deps e)))
+        (define (propagate! work)            ; 不动点迭代：类型变化者的影响者重新入队
           (unless (null? work)
             (let* ((x (car work))
                    (old (hashtable-ref env x #f))
-                   (new (and old
-                             (let ((t (let f ((es (hashtable-ref defs x '())) (t 'top))
-                                        (if (or (null? es) (not t)) t (f (cdr es) (meet-type t (expr-type (car es) env)))))))
-                               ;; 内联子句的形参（$inl，见 (clojure syntax) 的 inline-call）不推断为 double
-                               (if (and (eq? t 'fl) (inlined-binding? x)) #f t)))))
+                   (new (and old (meet-defs x))))
               (if (and old (not (eq? old new)))
                   (begin
                     (hashtable-set! env x new)
-                    (loop (append (hashtable-ref users x '()) (cdr work))))
-                  (loop (cdr work))))))
+                    (propagate! (append (hashtable-ref users x '()) (cdr work))))
+                  (propagate! (cdr work))))))
+        (define (decide! x)                  ; 原始用法不少于装箱用法的变量记入 var-types（拆箱），其余有类型的记入 var-facts
+          (let ((t (hashtable-ref env x #f)))
+            ;; 宿主调用按推断收敛后的类型选重载（cleat-042），不论是否拆箱；推测（seeds）下的不算
+            (when (and (memq t '(fx fl l64)) (not seeds)) (hashtable-set! sound-types x t))
+            (cond ((and (memq t '(fx fl l64))
+                        (<= (hashtable-ref boxed-uses x 0) (hashtable-ref raw-uses x 0)))
+                   (hashtable-set! out x t))
+                  ;; 推测（seeds）下算出的类型只在快循环里成立，不记；l64（Clojure 的 long）只在拆箱时才当作已知（同 cleat-042）
+                  ((and t (not (memq t '(top l64))) (not seeds))
+                   (hashtable-set! var-facts x t)))))
+        ;; 原始签名子句的 L / D 形参（cleat-042）：类型固定，不是推断候选
+        (let-values (((ks vs) (hashtable-entries fixed-types)))
+          (vector-for-each (lambda (k v)
+                             (hashtable-set! env k v)
+                             (unless seeds (hashtable-set! var-types k v) (hashtable-set! sound-types k v)))
+                           ks vs))
+        (when seeds
+          (let-values (((ks ts) (hashtable-entries seeds)))
+            (vector-for-each (lambda (k t) (hashtable-set! env k t)) ks ts)))
+        (for-each (lambda (x) (hashtable-set! env x 'top)) cands)
         (for-each (lambda (x)
-                    (let ((t (hashtable-ref env x #f)))
-                      (when (memq t '(fx fl l64)) (hashtable-set! sound-types x t))
-                      (when (and (memq t '(fx fl l64))
-                                 (<= (hashtable-ref boxed-uses x 0) (hashtable-ref raw-uses x 0)))
-                        (hashtable-set! var-types x t))))
-                  cands))))
+                    (for-each (lambda (e) (user-entries! x e))
+                              (hashtable-ref defs x '())))
+                  cands)
+        (propagate! cands)
+        (for-each decide! cands))))
+
+  ;; ———————————————— 拆箱循环（iron-071）————————————————
+  ;; 最内层的 label 循环里，形参的回边实参都是"fixnum 形"（fixnum 常量、已知 fixnum、本组形参、或它们的通用 + - *）时，
+  ;; 推测这些形参是 fixnum：循环体生成两份。快的一份形参是 int32 局部变量，回边上的通用算术按 int64 算，结果都在 fixnum
+  ;; 范围内就直接回快循环（不装箱）；入口实参不是 fixnum、或算术溢出时，把当前值装箱转到慢的一份（与原来的生成相同）。
+  ;; Chez 的 fixnum 不用分配，这里每轮 + - 的结果都要装箱（超出缓存时分配），sum 一类计数循环的大半时间在这上面。
+  (define no-071 (or ($get-environment-variable "CLEAT_NO_071") ""))
+  (define opt-spec? (not (or (string=? no-071 "1") (string-contains? no-071 "spec"))))
+  (define spec-body-limit 600)             ; 循环体超过这么多 L3 节点不复制
+
+  ;; (call (gref +|-|*) a b) 的通用算符（不是 fx+ 等）时返回 add / sub / mul
+  (define (generic-arith-op e)
+    (nanopass-case (L3 Expr) e
+      [(call ,e0 ,e* ...)
+       (let ((op (inline-op e0 (length e*))))
+         (and op (eq? (cdr op) 'generic) (memq (car op) '(add sub mul)) (car op)))]
+      [else #f]))
+
+  (define (arith-operands e)
+    (nanopass-case (L3 Expr) e [(call ,e0 ,e* ...) e*] [else '()]))
+
+  ;; 推测的形参集合 S，或 #f
+  (define (loop-spec-params mc x x* body0 body1)
+    ;; 局部变量清除（cleat-042）生效的方法里不做：循环体生成两份，引用计数按一份算。cleat 的元层没有 async 帧
+    ;; （Clojure 的 ^:async fn 不会有推测所需的 Scheme 通用算术）
+    (and opt-infer? opt-spec? (not (mctx-big? mc)) (not (clearing? mc))
+         (exists (lambda (p) (not (hashtable-ref var-types p #f))) x*)
+         (not (bigger-than? body1 spec-body-limit))
+         (let ((labels (make-eq-hashtable)) (back (make-eq-hashtable)) (entry (make-eq-hashtable))
+               (excluded (make-eq-hashtable)) (raw (make-eq-hashtable)) (boxed (make-eq-hashtable)))
+           (define (walk e defs)
+             (infer-walk e
+                         (lambda (v e) (when (and e (memq v x*)) (hashtable-set! defs v (cons e (hashtable-ref defs v '())))))
+                         (lambda (v) (hashtable-set! excluded v #t))
+                         labels
+                         (lambda (v) #f)
+                         (lambda (v raw?)
+                           (when (memq v x*)
+                             (let ((t (if raw? raw boxed))) (hashtable-set! t v (+ 1 (hashtable-ref t v 0))))))))
+           (define (var-in? e s) (nanopass-case (L3 Expr) e [,x (and (memq x s) #t)] [else #f]))
+           (define (fx-simple? e s) (or (eq? (static-type e) 'fx) (var-in? e s)))
+           (define (fx-like? e s)
+             (or (fx-simple? e s)
+                 (and (generic-arith-op e) (for-all (lambda (a) (fx-simple? a s)) (arith-operands e)))))
+           (hashtable-set! labels x x*)
+           (walk body1 back)
+           ;; 循环体里还有 label：不是最内层，不复制（嵌套复制会指数增长）
+           (and (= (hashtable-size labels) 1)
+                (begin
+                  (walk body0 entry)
+                  (let* ((defs-of (lambda (t p) (hashtable-ref t p '())))
+                         (s0 (filter
+                               (lambda (p)
+                                 (and (not (hashtable-ref var-types p #f))
+                                      (not (hashtable-ref excluded p #f))
+                                      (pair? (defs-of back p))
+                                      ;; 有 fixnum 的迹象：某个实参是 fixnum 常量或通用算术
+                                      (exists (lambda (e) (or (fixnum-constant e) (generic-arith-op e)))
+                                              (append (defs-of entry p) (defs-of back p)))
+                                      (not (exists (lambda (e) (eq? (static-type e) 'fl)) (defs-of entry p)))
+                                      (<= (hashtable-ref boxed p 0) (hashtable-ref raw p 0))))
+                               x*)))
+                    ;; 不动点：回边实参不是 fixnum 形的形参去掉，直到不变
+                    (let loop ((s s0))
+                      (let ((s1 (filter (lambda (p) (for-all (lambda (e) (fx-like? e s)) (defs-of back p))) s)))
+                        (cond ((null? s1) #f)
+                              ((= (length s1) (length s)) s1)
+                              (else (loop s1)))))))))))
+
+  ;; 推测 S 为 fixnum 时循环体里的变量类型：在 var-types 的副本上按 S 重算 body1
+  (define (loop-spec-types s body1)
+    (let ((spec (hashtable-copy var-types #t)) (seeds (hashtable-copy var-types #t)))
+      (for-each (lambda (p) (hashtable-set! seeds p 'fx)) s)
+      (infer-var-types-into! body1 seeds spec)
+      (for-each (lambda (p) (hashtable-set! spec p 'fx)) s)
+      spec))
+
+  (define (loc-raw-type loc) (and (eq? (car loc) 'tlocal) (cddr loc)))
+  (define (loc-index loc) (if (eq? (car loc) 'tlocal) (cadr loc) (cdr loc)))
+
+  ;; (label x (x* ...) body0 body1) 的拆箱生成：body0（入口）；快的一份；慢的一份
+  (define (cg-spec-label! x x* body0 body1 s mc ctx)
+    (let* ((base var-types)
+           (spec (loop-spec-types s body1))
+           (fast-locs (begin (set! var-types spec)
+                             (let ((l (map (lambda (p) (bind-local! mc p) (hashtable-ref (mctx-vars mc) p #f)) x*)))
+                               (set! var-types base)
+                               l)))
+           (slow-locs (map (lambda (p) (bind-local! mc p) (hashtable-ref (mctx-vars mc) p #f)) x*))
+           (fast-l (new-label! mc)) (slow-l (new-label! mc)) (end-l (new-label! mc)))
+      (define (entry mode) (vector 'spec mode fast-l slow-l fast-locs slow-locs))
+      (define (bind-copy! locs) (for-each (lambda (p l) (hashtable-set! (mctx-vars mc) p l)) x* locs))
+      (hashtable-set! (mctx-labels mc) x (entry 'dispatch))
+      (let ((code (with-buffer mc (lambda () (cg body0 mc ctx)))))
+        (emit-code! mc code)
+        (when (or (branches-to? code fast-l) (branches-to? code slow-l))
+          (let ((fast (with-buffer mc
+                        (lambda ()
+                          (bind-copy! fast-locs)
+                          (set! var-types spec)
+                          (cg body1 mc ctx)
+                          (set! var-types base)))))
+            (unless (eq? ctx 'tail) (emit! mc `(br ,end-l)))
+            (when (branches-to? code fast-l)
+              (emit! mc `(label ,fast-l))
+              (emit-code! mc fast)
+              (unless (eq? ctx 'tail) (emit! mc `(br ,end-l))))
+            (when (or (branches-to? code slow-l) (branches-to? fast slow-l))
+              (emit! mc `(label ,slow-l))
+              (hashtable-set! (mctx-labels mc) x (entry 'slow))
+              (bind-copy! slow-locs)
+              (cg body1 mc ctx))
+            (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))))))
+
+  ;; 跳到拆箱循环。慢的一份里跳回慢循环；入口与快的一份里：实参能定为 fixnum 就进快循环，否则装箱后进慢循环
+  (define (cg-spec-jump! entry e* mc ctx)
+    (let ((mode (vector-ref entry 1)) (fast-l (vector-ref entry 2)) (slow-l (vector-ref entry 3))
+          (fast-locs (vector-ref entry 4)) (slow-locs (vector-ref entry 5)))
+      (define (stloc! loc) (emit! mc `(stloc ,(loc-index loc))))
+      (if (eq? mode 'slow)
+          (let ((temps (map (lambda (loc a)
+                              (let ((rt (loc-raw-type loc)))
+                                (if rt (cg-raw a mc rt) (cg a mc 'value))
+                                (let ((t (new-local! mc (if rt (type-clr rt) obj)))) (emit! mc `(stloc ,t)) t)))
+                            slow-locs e*)))
+            (for-each (lambda (loc t) (emit! mc `(ldloc ,t)) (stloc! loc)) slow-locs temps)
+            (emit! mc `(br ,slow-l)))
+          ;; 每个实参存进临时变量：(种类 . 下标)，种类 i32 / f64 / i64（通用算术按 int64 算）/ obj / obj-fx / obj-fl（要检查）
+          (let* ((temps
+                  (map (lambda (loc a)
+                         (define (temp! kind type) (let ((t (new-local! mc type))) (emit! mc `(stloc ,t)) (cons kind t)))
+                         (case (loc-raw-type loc)
+                           ((fx)
+                            (cond
+                              ((eq? (static-type a) 'fx) (cg-raw a mc 'fx) (temp! 'i32 int32-type))
+                              ((and (generic-arith-op a)
+                                    (for-all (lambda (o) (eq? (static-type o) 'fx)) (arith-operands a)))
+                               (operands! mc (map (lambda (o) (lambda () (cg-raw o mc 'fx) (emit! mc '(conv.i8))))
+                                                  (arith-operands a)))
+                               (emit! mc (case (generic-arith-op a) ((add) '(add)) ((sub) '(sub)) (else '(mul))))
+                               (temp! 'i64 int64-type))
+                              (else (cg a mc 'value) (temp! 'obj-fx obj))))
+                           ((fl)
+                            (if (eq? (static-type a) 'fl)
+                                (begin (cg-raw a mc 'fl) (temp! 'f64 double-type))
+                                (begin (cg a mc 'value) (temp! 'obj-fl obj))))
+                           (else (cg a mc 'value) (temp! 'obj obj))))
+                       fast-locs e*))
+                 (fail (new-label! mc))
+                 (checked? #f))
+            (for-each (lambda (t)
+                        (case (car t)
+                          ((i64) (set! checked? #t)
+                           (emit! mc `(ldloc ,(cdr t)) '(conv.i4) '(conv.i8) `(ldloc ,(cdr t)) `(bne.un ,fail)))
+                          ((obj-fx obj-fl) (set! checked? #t)
+                           (emit! mc `(ldloc ,(cdr t)) `(isinst ,(if (eq? (car t) 'obj-fx) int32-type double-type))
+                                  `(brfalse ,fail)))))
+                      temps)
+            (for-each (lambda (loc t)
+                        (emit! mc `(ldloc ,(cdr t)))
+                        (case (car t)
+                          ((i64) (emit! mc '(conv.i4)))
+                          ((obj-fx) (emit! mc `(unbox.any ,int32-type)))
+                          ((obj-fl) (emit! mc `(unbox.any ,double-type))))
+                        (stloc! loc))
+                      fast-locs temps)
+            (emit! mc `(br ,fast-l))
+            (when checked?
+              (emit! mc `(label ,fail))
+              (for-each (lambda (loc t)
+                          (emit! mc `(ldloc ,(cdr t)))
+                          (let ((st (loc-raw-type loc)))
+                            (case (car t)
+                              ((i32) (unless st (box-raw! mc 'fx)))
+                              ((f64) (unless st (box-raw! mc 'fl)))
+                              ((i64) (if st
+                                         (emit! mc '(conv.i4))
+                                         (emit! mc `(call ,arith-type "Result" (,int64-type) ,obj))))
+                              (else (when st (emit! mc `(unbox.any ,(type-clr st)))))))
+                          (stloc! loc))
+                        slow-locs temps)
+              (emit! mc `(br ,slow-l)))))
+      ;; 之后的代码不可达；补一个值保持栈形状一致（同 throw）
+      (case ctx
+        ((value) (emit! mc '(ldnull)))
+        ((test) (emit! mc '(ldc.i4 0)))
+        (else (void)))))
+
+  ;; ———————————————— 收窄（iron-071）————————————————
+  ;; 生成某段代码期间，变量的类型比推断的更具体时记进 var-facts（进入时加上、离开时恢复）。来源两种：
+  ;; 1. 谓词：(if (pair? x) e1 e2) 的 e1 里 x 是 pair；e2 里 x 不是 pair（x 已知是 list 时就是 null）。not、
+  ;;    (and …)（展开成 (if t1 t2 #f)）、(or …) 照逻辑组合；cond 的各子句是嵌套的 if，前面子句的假分支事实自然带进后面。
+  ;; 2. 已执行的操作：let 的右边、begin 的前几项里无条件执行的 (car x) / (cdr x) 正常返回后 x 是 pair，
+  ;;    (vector-ref v i) / (vector-set! v i y) 之后 v 是 vector、i 是 fixnum，fx+ 等之后操作数是 fixnum（否则已经报错）。
+  ;; 只收窄方法内的局部变量与参数中不被 set! 的（jump 给 label 形参赋值后回到 label 头，离开了收窄的范围）。
+  ;; 消费：fixnum / flonum 的内联算术与比较直接拆箱；car / cdr 不检查类型；vector-ref / vector-set! 不检查向量；
+  ;; 结果已知的类型谓词直接是常量；精确整数的通用算术不生成 flonum 路径
+  (define opt-narrow? (not (or (string=? no-071 "1") (string-contains? no-071 "narrow"))))
+
+  (define (append-map f l) (apply append (map f l)))
+
+  (define (narrowable? mc x)
+    (let ((loc (hashtable-ref (mctx-vars mc) x #f)))
+      (and loc (memq (car loc) '(arg local)) (not (hashtable-ref assigned-vars x #f)))))
+
+  ;; 类型谓词 → 格元素：C# 原语，与 boot 过程（按名字）
+  (define pred-prim-types '((pair? . pair) (null? . null) ($fixnum? . fx) ($flonum? . fl)))
+  (define pred-boot-types
+    '((pair? . pair) (null? . null) (list? . list) (vector? . vector) (fixnum? . fx) (flonum? . fl)
+      (exact-integer? . int) (real? . real) (number? . num) (boolean? . bool) (char? . char) (symbol? . symbol)))
+
+  ;; (call e0 a) 是类型谓词时给出类型
+  (define (call-pred-type e0 argc)
+    (and (= argc 1)
+         (let ((op (unary-inline-op e0 argc)))
+           (case op
+             ((fixnum?) 'fx)
+             ((flonum?) 'fl)
+             (else (nanopass-case (L3 Expr) e0
+                     [(gref ,s) (let ((name (boot-location-name s)))
+                                  (and name (let ((r (assq name pred-boot-types))) (and r (cdr r)))))]
+                     [else #f]))))))
+
+  (define (fact x kind t) (cons x (cons kind t)))
+
+  ;; 测试 e0 为真 / 为假时成立的事实：(values 真 假)，事实是 (x pos . 类型) 或 (x neg . 类型)
+  (define (test-facts e0 mc)
+    (define (none) (values '() '()))
+    (define (on-var e t)
+      (nanopass-case (L3 Expr) e
+        [,x (if (narrowable? mc x) (values (list (fact x 'pos t)) (list (fact x 'neg t))) (none))]
+        [else (none)]))
+    (define (const? e pred) (nanopass-case (L3 Expr) e [(quote ,d) (pred d)] [else #f]))
+    (define (true-facts e) (let-values (((t f) (test-facts e mc))) t))
+    (define (false-facts e) (let-values (((t f) (test-facts e mc))) f))
+    (if (not opt-narrow?)
+        (none)
+        (nanopass-case (L3 Expr) e0
+          [(primcall ,pr ,e* ...)
+           (cond ((and (eq? pr 'not) (= (length e*) 1))
+                  (let-values (((t f) (test-facts (car e*) mc))) (values f t)))
+                 ((and (= (length e*) 1) (assq pr pred-prim-types)) => (lambda (r) (on-var (car e*) (cdr r))))
+                 ;; (eq? x '())
+                 ((and (eq? pr 'eq?) (= (length e*) 2) (const? (cadr e*) null?)) (on-var (car e*) 'null))
+                 (else (none)))]
+          [(call ,e ,e* ...)
+           (let ((t (call-pred-type e (length e*))))
+             (if t (on-var (car e*) t) (none)))]
+          [(and ,e* ...) (values (append-map true-facts e*) '())]
+          [(or ,e* ...) (values '() (append-map false-facts e*))]
+          [(if ,e1 ,e2 ,e3)
+           (cond ((const? e3 not) (values (append (true-facts e1) (true-facts e2)) '()))                 ; (and e1 e2)
+                 ((and (const? e2 not) (const? e3 (lambda (d) (eq? d #t)))) (let-values (((t f) (test-facts e1 mc))) (values f t)))
+                 ((const? e2 (lambda (d) d)) (values '() (append (false-facts e1) (false-facts e3))))    ; (or e1 e3)
+                 (else (none)))]
+          [else (none)])))
+
+  ;; e 正常求值完之后成立的事实（只看无条件求值的部分：调用与原语的操作数，不进 if / lambda）
+  (define (effect-facts e mc)
+    (define (var e) (nanopass-case (L3 Expr) e [,x (and (narrowable? mc x) x)] [else #f]))
+    (define (pos e t) (let ((x (var e))) (if x (list (fact x 'pos t)) '())))
+    (if (not opt-narrow?)
+        '()
+        (nanopass-case (L3 Expr) e
+          [(primcall ,pr ,e* ...)
+           (append (append-map (lambda (a) (effect-facts a mc)) e*)
+                   (if (and (memq pr '(car cdr $car $cdr)) (= (length e*) 1)) (pos (car e*) 'pair) '()))]
+          [(call ,e0 ,e* ...)
+           (let ((argc (length e*)))
+             (append (append-map (lambda (a) (effect-facts a mc)) e*)
+                     (cond ((vector-op e0 argc) (append (pos (car e*) 'vector) (pos (cadr e*) 'fx)))
+                           ((let ((op (inline-op e0 argc))) (and op (eq? (cdr op) 'fx)))
+                            (append-map (lambda (a) (pos a 'fx)) e*))
+                           (else '()))))]
+          [else '()])))
+
+  (define (fact-of x) (or (hashtable-ref var-types x #f) (hashtable-ref var-facts x #f)))
+
+  ;; 加上事实，返回恢复用的表；拆箱的变量（var-types）不动
+  (define (push-facts! facts)
+    (let loop ((fs facts) (undo '()))
+      (if (null? fs)
+          undo
+          (let* ((x (caar fs)) (kind (cadar fs)) (t (cddar fs)) (cur (fact-of x))
+                 (new (if (eq? kind 'pos) (type-meet cur t) (and cur (type-minus cur t)))))
+            (if (and new (not (eq? new cur)) (not (hashtable-contains? var-types x)))
+                (let ((old (hashtable-ref var-facts x #f)))
+                  (hashtable-set! var-facts x new)
+                  (loop (cdr fs) (cons (cons x old) undo)))
+                (loop (cdr fs) undo))))))
+
+  (define (pop-facts! undo)
+    (for-each (lambda (u)
+                (if (cdr u) (hashtable-set! var-facts (car u) (cdr u)) (hashtable-delete! var-facts (car u))))
+              undo))
+
+  ;; (list #t / #f) 或 #f（不知道）
+  (define (known-pred e t)
+    (let ((r (pred-result e t))) (and (boolean? r) (list r))))
+
+  ;; 测试 e0 是类型谓词（或其 not）且结果已知：(list #t / #f)，否则 #f
+  (define (known-test e0)
+    (nanopass-case (L3 Expr) e0
+      [(primcall ,pr ,e* ...)
+       (cond ((and (eq? pr 'not) (= (length e*) 1))
+              (let ((k (known-test (car e*)))) (and k (list (not (car k))))))
+             ((and (= (length e*) 1) (assq pr pred-prim-types)) => (lambda (r) (known-pred (car e*) (cdr r))))
+             (else #f))]
+      [(call ,e ,e* ...)
+       (let ((t (call-pred-type e (length e*)))) (and t (known-pred (car e*) t)))]
+      [else #f]))
+
+  ;; 操作数是变量，不必求值
+  (define (cg-known-bool! mc b ctx)
+    (case ctx
+      ((effect) (void))
+      ((test) (emit! mc `(ldc.i4 ,(if b 1 0))))
+      (else (load-constant! mc b) (finish-value! mc ctx))))
+
+  (define (with-facts facts thunk)
+    (let ((undo (push-facts! facts)))
+      (thunk)
+      (pop-facts! undo)))
+
+  ;; 类型谓词作用在类型已知的变量上：#t / #f；不知道时 'unknown
+  (define (pred-result e t)
+    (let ((vt (nanopass-case (L3 Expr) e [,x (fact-of x)] [else #f])))
+      (cond ((not (and opt-narrow? vt t)) 'unknown)
+            ((type<=? vt t) #t)
+            ((type-disjoint? vt t) #f)
+            (else 'unknown))))
 
   (define (type-clr t)
     (case t
@@ -1396,6 +1852,13 @@ See docs/license.txt. |#
                (let ((d (nanopass-case (L3 Expr) (car e*) [(host-cast ,d ,e) d] [else #f])))
                  (and d (loop (cdr e*) (cons d acc))))))))
 
+  ;; let 单个绑定的求值代码：拆箱的变量（且不是大过程）用原始形式（iron-071 的 let 逐个绑定、带收窄事实时用）
+  (define (binding-code mc x e)
+    (with-buffer mc
+      (lambda ()
+        (let ((t (and (not (mctx-big? mc)) (hashtable-ref var-types x #f))))
+          (if t (cg-raw e mc t) (cg e mc 'value))))))
+
   ;; ———————————————— 表达式 ————————————————
 
 ;; 局部逃逸（cleat-076，照 skeg iron-068）：k 不是对象，只是"结果变量 + 出口标签"。体在值上下文里求值后存入结果变量；
@@ -1478,6 +1941,10 @@ See docs/license.txt. |#
        ;; 局部循环（iron-034b，lower-loops 产生）：形参是 IL 局部变量，
        ;; jump 给它们赋值后 br 到循环体。body0 一次都没跳到循环体时循环体不可达，不生成
        ;; （否则无条件分支之后的标签处栈深无法单遍推导，ECMA-335 III.1.7.5）
+       (let ((s (loop-spec-params mc x x* body0 body1)))
+        (if s
+         (cg-spec-label! x x* body0 body1 s mc ctx)
+         (begin
        (for-each (lambda (p) (bind-local! mc p)) x*)
        (let ((lf (new-label! mc)) (end-l (new-label! mc)))
          (hashtable-set! (mctx-labels mc) x (cons lf x*))
@@ -1491,8 +1958,10 @@ See docs/license.txt. |#
                (for-each (lambda (v) (hashtable-update! pinned v (lambda (n) (+ n 1)) 0)) outer)
                (cg body1 mc ctx)
                (for-each (lambda (v) (hashtable-update! pinned v (lambda (n) (- n 1)) 0)) outer))
-             (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))))]
+             (unless (eq? ctx 'tail) (emit! mc `(label ,end-l)))))))))]
       [(jump ,x ,e* ...)
+       (if (vector? (hashtable-ref (mctx-labels mc) x #f))
+           (cg-spec-jump! (hashtable-ref (mctx-labels mc) x #f) e* mc ctx)
        (let* ((entry (or (hashtable-ref (mctx-labels mc) x #f) (error 'codegen "jump to unknown label" x)))
               ;; 实参先全部求值到临时变量再写入形参（并行赋值）；有类型的形参用原始值的临时变量
               (temps (map (lambda (p a)
@@ -1506,7 +1975,7 @@ See docs/license.txt. |#
          (case ctx
            ((value) (emit! mc '(ldnull)))
            ((test) (emit! mc '(ldc.i4 0)))
-           (else (void))))]
+           (else (void)))))]
       [(escape-frame ,x ,body)
        ;; 局部逃逸的 call-with-return（cleat-076，照 skeg iron-068；lower-loops 产生）：k 只在空栈位置被直接调用，
        ;; 不创建 EscapeContinuation，(k v) 是存值后 br / leave 到帧的出口，见 cg-local-escape!
@@ -1542,22 +2011,30 @@ See docs/license.txt. |#
          ((test) (emit! mc `(ldc.i4 ,(if d 1 0))))
          (else (load-constant! mc d) (finish-value! mc ctx)))]
       [(if ,e0 ,e1 ,e2)
-       (let ((else-l (new-label! mc)) (end-l (new-label! mc)))
-         (cg (or (truthy-bool-call e0) e0) mc 'test)
-         (emit! mc `(brfalse ,else-l))
-         ;; 局部变量清除按分支：生成 then 支时先扣掉 else 支的引用数，then 支里的最后一个引用在 if 之后没有引用时就清；
-         ;; 生成 else 支前加回（if 之后的计数与不分支时相同）
-         (let ((c2 (branch-ref-counts mc e2)))
-           (adjust-uses! mc c2 -)
-           (cg e1 mc ctx)
-           (adjust-uses! mc c2 +))
-         (unless (eq? ctx 'tail) (emit! mc `(br ,end-l)))
-         (emit! mc `(label ,else-l))
-         (cg e2 mc ctx)
-         (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))]
+       (let ((k (known-test e0)))
+         (if k
+             ;; 测试的结果已知（iron-071：类型谓词作用在类型已知的变量上），只生成那一支（没生成的一支里的引用不再扣减，
+             ;; 局部变量清除只会更保守）
+             (cg (if (car k) e1 e2) mc ctx)
+             (let ((else-l (new-label! mc)) (end-l (new-label! mc)))
+               (cg (or (truthy-bool-call e0) e0) mc 'test)
+               (emit! mc `(brfalse ,else-l))
+               (let-values (((t-facts f-facts) (test-facts e0 mc)))
+                 ;; 局部变量清除按分支：生成 then 支时先扣掉 else 支的引用数，then 支里的最后一个引用在 if 之后没有引用时就清；
+                 ;; 生成 else 支前加回（if 之后的计数与不分支时相同）
+                 (let ((c2 (branch-ref-counts mc e2)))
+                   (adjust-uses! mc c2 -)
+                   (with-facts t-facts (lambda () (cg e1 mc ctx)))
+                   (adjust-uses! mc c2 +))
+                 (unless (eq? ctx 'tail) (emit! mc `(br ,end-l)))
+                 (emit! mc `(label ,else-l))
+                 (with-facts f-facts (lambda () (cg e2 mc ctx))))
+               (unless (eq? ctx 'tail) (emit! mc `(label ,end-l))))))]
       [(begin ,e* ... ,e)
-       (for-each (lambda (x) (cg x mc 'effect)) e*)
-       (cg e mc ctx)]
+       ;; 前几项无条件执行的操作带出的事实（iron-071）在后面成立
+       (let ((undo (fold-left (lambda (undo x) (cg x mc 'effect) (append (push-facts! (effect-facts x mc)) undo)) '() e*)))
+         (cg e mc ctx)
+         (pop-facts! undo))]
       [(set! ,x ,e)
        (cg e mc 'value)
        (store-var! mc x)
@@ -1621,13 +2098,15 @@ See docs/license.txt. |#
       [(let ([,x* ,e*] ...) ,body)
        ;; 右边依次求值并存入新变量（IL 局部变量；有类型的是 int32 / double 局部变量）；
        ;; 右边看不到同一 let 绑定的变量
-       (let ((codes (map (lambda (x e)
-                           (with-buffer mc (lambda ()
-                                             (let ((t (and (not (mctx-big? mc)) (hashtable-ref var-types x #f))))
-                                               (if t (cg-raw e mc t) (cg e mc 'value))))))
-                         x* e*)))
-         (for-each (lambda (x code) (emit-code! mc code) (bind-value! mc x)) x* codes)
-         (cg body mc ctx))]
+       ;; 前面右边无条件执行的操作带出的事实（iron-071）在后面的右边与体里成立
+       (let loop ((xs x*) (es e*) (codes '()) (undo '()))
+         (if (null? xs)
+             (begin
+               (for-each (lambda (x code) (emit-code! mc code) (bind-value! mc x)) x* (reverse codes))
+               (cg body mc ctx)
+               (pop-facts! undo))
+             (let ((code (binding-code mc (car xs) (car es))))
+               (loop (cdr xs) (cdr es) (cons code codes) (append (push-facts! (effect-facts (car es) mc)) undo)))))]
       [(library ,d ([,x* ,s* ,e*] ...) ,body)
        ;; 非顶层的 library-letrec*（compile-library 把库的 invoke 代码包在 lambda 中）：库变量仍是模块静态字段，
        ;; 按顺序求值并写入；不做已知过程的预链接（已知过程的直接调用不经字段，类的单例由其静态构造函数建立）
@@ -2055,7 +2534,11 @@ See docs/license.txt. |#
   ;; 与一般调用相同（经值槽、callvirt Invoke2），由原过程处理其余类型并报错。操作数都已知类型时没有检查，也没有慢路径。
   (define (cg-inline-op op kind e0 e* mc ctx)
     (let* ((types (map static-type e*))
-           (paths (inline-paths op kind types))
+           ;; fx / fl 算符的操作数已知是另一种类型（cp0 内联后的 (fx+ 1.0 x)、(fl+ 1 x)）时没有快路径，由原过程报错；
+           ;; 已知是精确整数（iron-071）的操作数不可能走 flonum 路径
+           (paths (if (and (memq kind '(fx fl)) (exists (lambda (t) (and t (not (eq? t kind)))) types))
+                      '()
+                      (inline-paths op kind (map (lambda (e t) (or t (and (type<=? (expr-type e var-types) 'int) 'int))) e* types))))
            (slow (new-label! mc))
            (end (new-label! mc))
            (slow-used? #f)
@@ -2218,7 +2701,9 @@ See docs/license.txt. |#
             (else (cg i mc 'value) (emit! mc `(stloc ,li))))
       (when lx (cg (caddr e*) mc 'value) (emit! mc `(stloc ,lx)))
       ;; 快路径
-      (emit! mc `(ldloc ,lv) `(isinst ,obj-array) `(stloc ,arr) `(ldloc ,arr) `(brfalse ,slow))
+      (if (eq? (expr-type v var-types) 'vector)            ; 已知是向量（iron-071 的收窄）
+          (emit! mc `(ldloc ,lv) `(castclass ,obj-array) `(stloc ,arr))
+          (emit! mc `(ldloc ,lv) `(isinst ,obj-array) `(stloc ,arr) `(ldloc ,arr) `(brfalse ,slow)))
       (when li
         (emit! mc `(ldloc ,li) `(isinst ,int32-type) `(brfalse ,slow) `(ldloc ,li) `(unbox.any ,int32-type) `(stloc ,ii)))
       (emit! mc `(ldloc ,ii) `(ldloc ,arr) '(ldlen) '(conv.i4) `(bge.un ,slow))
@@ -2247,6 +2732,9 @@ See docs/license.txt. |#
                      (if (> (mctx-try-depth mc) (cadddr loc)) `(leave ,(caddr loc)) `(br ,(caddr loc))))
               ;; 之后的代码不可达；按上下文补一个占位值，让后续指令的栈形状照常
               (case ctx ((value) (emit! mc '(ldnull))) ((test) (emit! mc '(ldc.i4 0))) (else (void)))))
+        ;; 结果已知的类型谓词（iron-071）
+        ((let ((t (call-pred-type e0 argc))) (and t (known-pred (car e*) t)))
+         => (lambda (b) (cg-known-bool! mc (car b) ctx)))
         ((and opt-inline? (not (top-level-mc? mc)) (unary-inline-op e0 argc))
          => (lambda (op) (cg-unary-op op e0 (car e*) mc ctx)))
         ((and opt-inline? (not (top-level-mc? mc)) (vector-op e0 argc))
@@ -2305,6 +2793,9 @@ See docs/license.txt. |#
         ((not o)
          ;; 没有参数个数相符的重载：经值槽调用，运行时报参数个数错误
          (cg-call-prim-value pr e* mc ctx))
+        ;; 结果已知的类型谓词（iron-071）
+        ((and (= argc 1) (let ((r (assq pr pred-prim-types))) (and r (known-pred (car e*) (cdr r)))))
+         => (lambda (b) (cg-known-bool! mc (car b) ctx)))
         ;; 尾位置的 apply：展开参数后 tail. callvirt InvokeN，保证真尾调用
         ((and (eq? pr 'apply) (>= argc 2) (tail-ok? mc ctx))
          (operands! mc (cons (lambda () (cg (car e*) mc 'value) (emit! mc `(call ,calls-type "Proc" (,obj) ,proc-type)))
@@ -2323,15 +2814,22 @@ See docs/license.txt. |#
            ;; 用户代码编译进内存程序集，JIT 不把 Skeg.Core 的 Car 内联进去（JitDisasm 里是 call [Builtins:Car]），
            ;; 在调用处展开成"isinst Cons 后取字段，否则调 Builtins.Car 报错"（iron-070，错误与 who 不变）
            ((car cdr)
-            (if (or (top-level-mc? mc) (string=? (unit-name (mctx-unit mc)) boot-assembly-name))
-                (cg-static-call! o e* mc ctx)
+            (cond
+              ;; 已知是 pair（iron-071 的收窄）：直接取字段
+              ((and (= argc 1) (eq? (expr-type (car e*) var-types) 'pair))
+               (args!)
+               (emit! mc `(castclass ,cons-type) `(ldfld ,cons-type ,(if (eq? pr 'car) "car" "cdr")))
+               (finish-value! mc ctx))
+              ((or (top-level-mc? mc) (string=? (unit-name (mctx-unit mc)) boot-assembly-name))
+                (cg-static-call! o e* mc ctx))
+              (else
                 (let ((t (new-local! mc obj)) (ok (new-label! mc)) (end (new-label! mc)))
                   (args!)
                   (emit! mc `(stloc ,t) `(ldloc ,t) `(isinst ,cons-type) '(dup) `(brtrue ,ok)
                          '(pop) `(ldloc ,t) `(call ,(overload-type o) ,(overload-method o) (,obj) ,obj) `(br ,end)
                          `(label ,ok) `(ldfld ,cons-type ,(if (eq? pr 'car) "car" "cdr"))
                          `(label ,end))
-                  (finish-value! mc ctx))))
+                  (finish-value! mc ctx)))))
            ((cons)
             (args!)
             (emit! mc `(newobj ,cons-type (,obj ,obj)))
@@ -2433,8 +2931,69 @@ See docs/license.txt. |#
       (if (clj-fn-name? nm)
           (clj-fn-class! mc nm x1* cl* self)
       (if (and opt-shared? (null? fields))
-          (shared-procedure! mc nm cl* self self-mref (and (pair? preset) (car preset)))
+          ;; commonize（iron-073）：本单元里结构相同的闭合 lambda 共用一个过程（同一持有类字段）
+          (let ((key (and opt-commonize? (not self) (null? preset) (lambda-key nm cl*))))
+            (or (and key (hashtable-ref common-lambdas key #f))
+                (let ((c (shared-procedure! mc nm cl* self self-mref (and (pair? preset) (car preset)))))
+                  (when key (hashtable-set! common-lambdas key c))
+                  c)))
           (procedure-class1! mc nm x1* cl* self self-mref preset)))))
+
+  ;; ———————————————— commonize（iron-073，照 Chez cpcommonize.ss 裁剪）————————————————
+  ;; 内联（iron-070）把过程体复制到各调用处，体里的字面 lambda 也随之复制；没有自由变量的（034d 的共享过程）每份都生成
+  ;; 一组子句方法与一个静态字段。这里按结构比较：名字相同、子句的 L3 形式在局部变量按出现顺序改名后相同的闭合 lambda，
+  ;; 共用第一次生成的那个过程（持有类与字段）。闭合的过程没有状态，共用只让本来不同的两个过程对象变成 eq?——
+  ;; R6RS 不规定两次求值同一个 lambda 是否 eq?（Chez 的 commonize 同样如此）。有自由变量的 lambda 不共享（Chez
+  ;; commonization-level 更高时把它们提成 helper，这里不做）。节点数超过上限的不比较（键的计算与体积成正比）。
+  ;; 测量开关：CLEAT_NO_073 为 1 或含 commonize 时关。
+  (define opt-commonize?
+    (let ((v ($get-environment-variable "CLEAT_NO_073")))
+      (not (and (string? v) (or (string=? v "1") (string-contains? v "commonize"))))))
+  (define commonize-node-limit 400)
+  (define common-lambdas (make-hashtable equal-hash equal?))   ; 键 → shared-procedure! 的结果；每个单元清空
+
+  (define (lambda-key nm cl*)
+    (and (for-all (lambda (cl)
+                    (nanopass-case (L3 Clause) cl
+                      [(clause (,x* ...) ,x ,body) (not (count-nodes body commonize-node-limit))]))
+                  cl*)
+         (let ((forms (alpha-normalize (map unparse-L3 cl*))))
+           (and forms (cons nm forms)))))
+
+  ;; 局部变量（子句形参、let / letrec / label / escape-frame / try-handle 绑定的名字）按首次出现的顺序改成 0、1、2 …；
+  ;; 其余符号（全局位置、模块变量、原语名、关键字）与 quote 里的数据不动。quote 了表或向量时为 #f：
+  ;; 常量可能有环，equal-hash 不一定停得下来
+  (define (alpha-normalize forms)
+    (let ((binders (make-eq-hashtable)) (names (make-eq-hashtable)) (n 0) (ok? #t))
+      (define (bind! x) (when (symbol? x) (hashtable-set! binders x #t)))
+      (define (collect e)
+        (when (pair? e)
+          (case (car e)
+            ((quote) (when (and (pair? (cdr e)) (or (pair? (cadr e)) (vector? (cadr e)))) (set! ok? #f)))
+            ((clause) (for-each bind! (cadr e)) (bind! (caddr e)) (collect (cadddr e)))
+            ((let letrec) (for-each (lambda (b) (bind! (car b)) (collect (cadr b))) (cadr e)) (collect (caddr e)))
+            ((label) (bind! (cadr e)) (for-each bind! (caddr e)) (for-each collect (cdddr e)))
+            ((escape-frame try-handle) (bind! (cadr e)) (for-each collect (cddr e)))
+            ;; cleat：含 Clojure 节点、或嵌套的 lambda 名字是记录（Clojure 的 fn*）的不合并
+            ((lambda) (unless (or (symbol? (cadr e)) (string? (cadr e)) (not (cadr e))) (set! ok? #f)) (for-each collect (cddr e)))
+            (else
+             (when (and (symbol? (car e))
+                        (let ((n (symbol->string (car e)))) (and (> (string-length n) 4) (string=? (substring n 0 4) "clj-"))))
+               (set! ok? #f))
+             (for-each collect e)))))
+      (define (rename e)
+        (cond
+          ((symbol? e)
+           (if (hashtable-contains? binders e)
+               (or (hashtable-ref names e #f)
+                   (let ((k n)) (set! n (+ n 1)) (hashtable-set! names e k) k))
+               e))
+          ((and (pair? e) (eq? (car e) 'quote)) e)
+          ((pair? e) (let ((a (rename (car e)))) (cons a (rename (cdr e)))))
+          (else e)))
+      (for-each collect forms)
+      (and ok? (map rename forms))))
+
 
   ;; 034d：共享持有类中的过程。返回 (#t 持有类 字段)
   (define (shared-procedure! mc nm cl* self self-mref k)
@@ -3354,6 +3913,10 @@ See docs/license.txt. |#
       (hashtable-clear! var-types)
       (hashtable-clear! sound-types)
       (hashtable-clear! fixed-types)
+      (hashtable-clear! var-facts)
+      (hashtable-clear! common-lambdas)
+      (hashtable-clear! assigned-vars)
+      (for-each collect-assigned! forms)
       (when opt-infer?
         (let ((flags (loop-forms)))
           (if (and (list? flags) (= (length flags) (length forms)))

@@ -1,0 +1,15 @@
+(lambda #f
+  ()
+  (clause
+    (x y a b z)
+    #f
+    (begin
+      (if (call (gref g$fixnum?$1$%b) x) (call (gref g$+$2$%b) x y) '#f)
+      (if (if (call (gref g$flonum?$3$%b) a)
+            (call (gref g$flonum?$3$%b) b)
+            '#f)
+        (call (gref g$*$4$%b) a b)
+        '#f)
+      (if (call (gref g$fixnum?$1$%b) z)
+        (begin (set! z y) (call (gref g$<$5$%b) z '0))
+        '#f))))
