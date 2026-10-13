@@ -13,7 +13,7 @@
 ;;;   Clojure 值的常量编码器（编译器 (cleat scheme compiler constants) 的外来常量挂钩）在本库体执行时登记。
 
 (library (clojure compile)
-  (export clojure-compile-forms clojure-compile-unit clojure-compile-boot-unit encode-clojure-constant)
+  (export clojure-compile-forms clojure-compile-unit clojure-compile-boot-unit clojure-compile-package-unit encode-clojure-constant)
   (import
     (rnrs)
     (only (cleat scheme) parameterize)
@@ -118,5 +118,90 @@
       (clr-static-call Cleat.Emit.LcilEmitter (Save String String String Boolean) text lcil-path dll-path #f)
       (clr-static-call Cleat.Scheme.Clojure.Driver (WriteInterfaceFile String Object Object) dll-path cores lcil)
       dll-path))
+
+;;; 包程序集（cleat-067，designs/17 §2）：segments 是 ((加载路径 . Lcore列表) …)，按加载顺序；全部形式编成一个单元（每个形式
+  ;;; 一个 Init<k>），之后改写 Lcil：入口 Initialize 只做镜像核对（Init0，有镜像id时）与预链接，每个文件一个入口 Load<i> 依次调它的
+  ;;; Init<k>；程序集级特性 CleatPackage(包名)、CleatNamespace(加载路径, "#Module", "Load<i>") 作索引（加载器先跑一次 Initialize）；
+  ;;; (lazy-start)：类型初始化器先拉起运行时；接口文件作为嵌入资源 cleat.ifc / cleat.inl。
+  (define (clojure-compile-package-unit segments package dll-path image-id)
+    (let* ((check (if image-id
+                      (list (list '$clj-call (list 'quote "CheckBootImage") (list 'quote #f) (list 'quote image-id)))
+                      '()))
+           (cores (apply append check (map cdr segments)))
+           (asm (clr-static-call System.IO.Path GetFileNameWithoutExtension dll-path))
+           (lcil (package-lcil (compile-forms->lcil cores asm "#Module") segments package (length check)))
+           ;; 接口文件作为嵌入资源（designs/17 §2.1）
+           (ifc (clr-static-call Cleat.Scheme.Clojure.Driver WritePackageInterface dll-path cores lcil))
+           (inl (clr-static-call Cleat.Scheme.Clojure.Driver InlineFileOf ifc))
+           (lcil (with-resources lcil (cons (list "cleat.ifc" ifc) (if inl (list (list "cleat.inl" inl)) '())))))
+      (when (string? (clr-static-call System.Environment GetEnvironmentVariable "CLEAT_DUMP_LCIL"))
+        (let ((f (string-append dll-path ".lcil")))
+          (when (file-exists? f) (delete-file f))
+          (call-with-output-file f (lambda (p) (put-string p (compile->lcil-text-from-sexpr lcil))))))
+      (when (file-exists? dll-path) (delete-file dll-path))
+      (clr-static-call Cleat.Emit.LcilEmitter (SaveData Object String String Boolean) lcil dll-path dll-path #f)
+      (clr-static-call Cleat.Scheme.Clojure.Driver DeletePackageInterface ifc)
+      dll-path))
+
+  (define (with-resources lcil resources)
+    (map (lambda (item)
+           (if (and (pair? item) (eq? (car item) 'assembly))
+               (append item (map (lambda (r) (cons 'resource r)) resources))
+               item))
+         lcil))
+
+  (define obj-type "System.Object")
+  (define (init-call k) `(call "#Module" ,(string-append "Init" (number->string k)) () ,obj-type))
+  (define (load-name i) (string-append "Load" (number->string i)))
+
+  ;; (method "Load<i>" …)：依次调 Init<start> … Init<start+n-1>，返回最后一个的值（没有形式时 nil）
+  (define (load-method i start n)
+    `(method ,(load-name i) (attrs static) (params) (ret ,obj-type)
+       (body
+         ,@(if (= n 0)
+               '((ldnull) (ret))
+               (let loop ((k start) (left n))
+                 (if (= left 1)
+                     (list (init-call k) '(ret))
+                     (cons* (init-call k) '(pop) (loop (+ k 1) (- left 1)))))))))
+
+  (define (init-call? x)
+    (and (pair? x) (eq? (car x) 'call) (pair? (cdr x)) (equal? (cadr x) "#Module")))
+
+  ;; Initialize 的体：保留第一个 Init 调用之前的部分（镜像核对与预链接），再调前 nfixed 个 Init，返回 nil
+  (define (rewrite-entry m nfixed)
+    (map (lambda (c)
+           (if (and (pair? c) (eq? (car c) 'body))
+               (let loop ((xs (cdr c)) (acc '()))
+                 (if (or (null? xs) (init-call? (car xs)))
+                     `(body ,@(reverse acc)
+                            ,@(apply append (let f ((k 0)) (if (= k nfixed) '() (cons (list (init-call k) '(pop)) (f (+ k 1))))))
+                            (ldnull) (ret))
+                     (loop (cdr xs) (cons (car xs) acc))))
+               c))
+         m))
+
+  (define (package-lcil lcil segments package nfixed)
+    (let* ((loads (let loop ((ss segments) (i 0) (start nfixed))
+                    (if (null? ss)
+                        '()
+                        (let ((n (length (cdar ss))))
+                          (cons (cons (caar ss) (load-method i start n)) (loop (cdr ss) (+ i 1) (+ start n)))))))
+           (attrs (cons* '(lazy-start)                            ; 类型初始化器先拉起运行时（designs/17 §4）
+                         `(attribute "Cleat.Core.CleatPackageAttribute" ,package)
+                        (map (lambda (l) `(attribute "Cleat.Core.CleatNamespaceAttribute" ,(car l) "#Module" ,(cadr (cdr l))))
+                             loads))))
+      (map (lambda (item)
+             (cond
+               ((and (pair? item) (eq? (car item) 'assembly)) (append item attrs))
+               ((and (pair? item) (eq? (car item) 'type) (equal? (cadr item) "#Module"))
+                (append (map (lambda (x)
+                               (if (and (pair? x) (eq? (car x) 'method) (equal? (cadr x) "Initialize"))
+                                   (rewrite-entry x nfixed)
+                                   x))
+                             item)
+                        (map cdr loads)))
+               (else item)))
+           lcil)))
 
   (set-foreign-constant-encoder! encode-clojure-constant))

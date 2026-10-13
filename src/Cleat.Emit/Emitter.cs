@@ -273,6 +273,13 @@ public sealed partial class LcilEmitter
                 if (f.IsVolatile) _volatile.Add((t.Name, f.Name));
             }
             foreach (var m in t.Methods) DefineMethod(t, tb, m);
+            // (lazy-start)：没有类型初始化器的类型（接口除外）也加一个，只拉起运行时（designs/17 §4.1）
+            if (_asm.LazyStart && !t.Attrs.Contains("interface") && !t.Methods.Any(m => m.IsCctor))
+            {
+                var cil = tb.DefineTypeInitializer().GetILGenerator();
+                EmitEnsureStarted(cil);
+                cil.Emit(OpCodes.Ret);
+            }
         }
         // 3. 方法体
         foreach (var t in _asm.Types)
@@ -289,6 +296,11 @@ public sealed partial class LcilEmitter
         _constantsType?.CreateType();
         foreach (var t in _asm.Types) Create(t);
     }
+
+    /// <summary>call Cleat.Core.Runtime.RuntimeBootstrap.EnsureStarted()：运行时还没启动时启动它（cleat-067）。</summary>
+    private void EmitEnsureStarted(ILGenerator il) =>
+        il.Emit(OpCodes.Call, LoadReference(CoreAssemblyName).GetType("Cleat.Core.Runtime.RuntimeBootstrap", true)
+                                .GetMethod("EnsureStarted", Type.EmptyTypes));
 
     /// <summary>入口（LCIL.md §7）：校验 public static object M()，写程序集级属性 CleatModule("类型", "方法")。</summary>
     private void DefineEntry()
@@ -458,6 +470,7 @@ public sealed partial class LcilEmitter
     {
         var il = b is ConstructorBuilder cb ? cb.GetILGenerator() : ((MethodBuilder)b).GetILGenerator();
         var cx = new BodyContext { IL = il, M = m, Namespaces = m.Namespaces.ToArray(), Runtime = m.Runtime ?? _asm.Runtime };
+        if (_asm.LazyStart && m.IsCctor) EmitEnsureStarted(il);
         foreach (var l in m.Locals) il.DeclareLocal(T(l, m.Pos));
         if (_debug && m.Source != null)
         {
@@ -607,6 +620,8 @@ public sealed partial class LcilEmitter
     private static void WritePE(PersistedAssemblyBuilder ab, LcilAssembly a, string outPath, bool pdb)
     {
         MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData, out MetadataBuilder pdbBuilder);
+        // 框架类型改引用契约程序集（cleat-067）：先加上契约的 AssemblyRef，序列化之后改 TypeRef 的解析范围（ContractRetargeting）
+        var contracts = ContractRetargeting.AddContractReferences(metadata);
         // 确定性：程序集内容哈希 → MVID / 时间戳 / PDB ID（iron-003）
         Func<IEnumerable<Blob>, BlobContentId> idProvider = blobs =>
         {
@@ -625,13 +640,25 @@ public sealed partial class LcilEmitter
             debug = new DebugDirectoryBuilder();
             debug.AddCodeViewEntry(Path.GetFileName(pdbPath), pdbId, portablePdb.FormatVersion);
         }
+        // 嵌入资源（cleat-067）：资源段里每个资源是 4 字节长度加内容，清单资源行记它在段里的偏移
+        BlobBuilder resources = null;
+        foreach (var (name, path) in a.Resources)
+        {
+            resources ??= new BlobBuilder();
+            byte[] data = File.ReadAllBytes(path);
+            metadata.AddManifestResource(ManifestResourceAttributes.Public, metadata.GetOrAddString(name), default, (uint)resources.Count);
+            resources.WriteInt32(data.Length);
+            resources.WriteBytes(data);
+            resources.Align(8);
+        }
         var pe = new ManagedPEBuilder(
           new PEHeaderBuilder(imageCharacteristics: Characteristics.Dll | Characteristics.ExecutableImage),
-          new MetadataRootBuilder(metadata), ilStream, fieldData,
+          new MetadataRootBuilder(metadata), ilStream, fieldData, managedResources: resources,
           debugDirectoryBuilder: debug, deterministicIdProvider: idProvider);
         var peBlob = new BlobBuilder();
         pe.Serialize(peBlob);
         var image = peBlob.ToArray();
+        ContractRetargeting.Retarget(image, contracts);
         MakeDeterministic(image);
         File.WriteAllBytes(outPath, image);
     }

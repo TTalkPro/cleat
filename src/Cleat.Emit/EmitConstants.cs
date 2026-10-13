@@ -27,6 +27,7 @@ public sealed partial class LcilEmitter
         _types[ConstantsTypeName] = _constantsType;              // Lcil 中可写 (ldsfld "$Constants" "c")
         _fields[(ConstantsTypeName, "c")] = (FieldBuilder)_constantsField;
         var il = _constantsType.DefineTypeInitializer().GetILGenerator();
+        if (_asm.LazyStart) EmitEnsureStarted(il);     // 常量（fasl 解码）之前运行时已起来（designs/17 §4.1）
         if (_live != null)
         {
             // 内存模式的活常量：登记到 ConstantPool，类型初始化器按编号取回

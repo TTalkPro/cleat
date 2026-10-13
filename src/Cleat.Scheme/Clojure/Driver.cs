@@ -437,6 +437,7 @@ public static class Driver
             case "compile": CoreHooks.Compile = (r, path, src) => p.Invoke3(r, path, src); break;
             case "macroexpand-1": CoreHooks.Macroexpand1 = (x, env) => p.Invoke1(x); break;
             case "compile-boot": CompileBootHook = (forms, dll) => p.Invoke2(forms, dll); break;
+            case "compile-package": CompilePackageHook = (pkg, forms, roots, dll) => p.Invoke4(pkg, forms, roots, dll); break;
             default: throw new ArgumentException("unknown hook for the Clojure driver: " + name, nameof(name));
         }
     }
@@ -453,6 +454,27 @@ public static class Driver
         object list = EmptyList.Instance;
         foreach (var f in forms.Reverse()) list = new Cons(f, list);
         hook(list, Path.GetFullPath(dllPath));
+    }
+
+    /// <summary>(clojure-compile-package 包名 形式列表 根目录列表或#t dll路径)：编包程序集（cleat-067）；由 (clojure driver) 登记。</summary>
+    public static Func<object, object, object, object, object> CompilePackageHook;
+
+    /// <summary>
+    /// 编包程序集（designs/17 §2.2）：在 user 命名空间里依次求值 forms（通常是 <c>(require 'ns)</c>），roots（源码根目录）下被加载的文件
+    /// 编成一个程序集 dllPath（每个文件一个入口；旁边 .ifc）。roots 为 null 时被加载的全部源码文件都编进去。
+    /// </summary>
+    public static void CompilePackage(string package, System.Collections.IEnumerable forms, System.Collections.IEnumerable roots, string dllPath)
+    {
+        var hook = CompilePackageHook ?? throw new InvalidOperationException("the Clojure driver has not registered compile-package");
+        object list = EmptyList.Instance;
+        foreach (var f in forms.Cast<object>().Reverse()) list = new Cons(f, list);
+        object rs = true;
+        if (roots != null)
+        {
+            rs = EmptyList.Instance;
+            foreach (var r in roots.Cast<object>().Reverse()) rs = new Cons(Path.GetFullPath(r.ToString()), rs);
+        }
+        hook(package, list, rs, Path.GetFullPath(dllPath));
     }
 
     /// <summary>--report stdio（cleat-034，clojure.main 的语义）：错误报告写到 *out* 而不是 *err*。宿主按命令行设置。</summary>
@@ -606,17 +628,39 @@ public static class Driver
     // ———————————————— 四、AOT：输出路径、镜像核对、接口文件 ————————————————
 
     /// <summary>
-    /// (compile-output-path 源路径 源名字) → .clj.dll 的路径：ClojureCLR 的命名（a/b.clj → a.b.clj.dll）。目录：*compile-path* 是字符串时用它，
-    /// 否则用找到源码的那个加载路径目录（源路径去掉源名字），这样加载器下一次在同一目录里找到 dll。
+    /// (compile-output-path 源路径 源名字) → clojure.core/compile 的包程序集路径（designs/17 §2.3）：a/b.clj → a.b.dll。目录：*compile-path*
+    /// 是字符串时用它，否则用找到源码的那个加载路径目录（源路径去掉源名字）。
     /// </summary>
     public static string CompileOutputPath(object sourcePath, object sourceName)
     {
         string path = sourcePath?.ToString() ?? "", name = (sourceName?.ToString() ?? Path.GetFileName(path)).Replace('\\', '/');
-        string file = name.Replace('/', '.') + ".dll";
+        string file = LoadKeyNamespace(LoadKey(sourcePath, sourceName)) + ".dll";
         if (clojure.lang.RT.CompilePathVar.deref() is string dir && dir.Length > 0) return Path.GetFullPath(Path.Combine(dir, file));
         string full = Path.GetFullPath(path).Replace('\\', '/');
         string root = full.EndsWith("/" + name, StringComparison.Ordinal) ? full.Substring(0, full.Length - name.Length) : Path.GetDirectoryName(full);
         return Path.GetFullPath(Path.Combine(root, file));
+    }
+
+    /// <summary>(load-key 源路径 源名字) → 加载器查包索引用的键：去掉扩展名的加载路径（<c>nrepl/server.clj</c> → <c>nrepl/server</c>）。</summary>
+    public static string LoadKey(object sourcePath, object sourceName)
+    {
+        string name = (sourceName as string ?? Path.GetFileName(sourcePath?.ToString() ?? "")).Replace('\\', '/').TrimStart('/');
+        foreach (string ext in new[] { ".cljr", ".cljc", ".clj" })
+            if (name.EndsWith(ext, StringComparison.Ordinal)) return name.Substring(0, name.Length - ext.Length);
+        return name;
+    }
+
+    /// <summary>加载键 → 包程序集名（<c>a/b</c> → <c>a.b</c>）。</summary>
+    public static string LoadKeyNamespace(object key) => (key?.ToString() ?? "").Replace('/', '.');
+
+    public static string PackageFullPath(object path) => Path.GetFullPath(path?.ToString() ?? "");
+
+    /// <summary>(under-directory? 全路径 目录)：文件在目录（递归）下。</summary>
+    public static bool UnderDirectory(object full, object dir)
+    {
+        string d = Path.GetFullPath(dir?.ToString() ?? "");
+        if (!d.EndsWith(Path.DirectorySeparatorChar)) d += Path.DirectorySeparatorChar;
+        return (full?.ToString() ?? "").StartsWith(d, StringComparison.Ordinal);
     }
 
     /// <summary>编译时正在运行的 Clojure boot 镜像（cleat.boot.dll）的 id；没有时 #f。产物入口据此生成 BootInterface.Check。</summary>
@@ -650,7 +694,41 @@ public static class Driver
     /// </summary>
     public static int WriteInterfaceFile(string dllPath, object cores, object lcil)
     {
-        string asm = Path.GetFileNameWithoutExtension(dllPath);
+        var file = BuildInterfaceFile(Path.GetFileNameWithoutExtension(dllPath), cores, lcil, Mvid(dllPath));
+        string ifc = InterfaceFile.PathFor(dllPath);
+        if (File.Exists(ifc)) File.Delete(ifc);
+        file.Save(ifc);
+        return file.Entries.Count;
+    }
+
+    /// <summary>
+    /// 包程序集的接口文件（cleat-067）：写到临时目录（镜像 id 为空——它嵌在自己的程序集里，不会配错），返回 .ifc 的路径；
+    /// 编译驱动把它与旁边的 .inl（有时）作为嵌入资源 cleat.ifc / cleat.inl 发射进程序集，之后 <see cref="DeletePackageInterface"/>。
+    /// </summary>
+    public static string WritePackageInterface(string dllPath, object cores, object lcil)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-ifc-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        string ifc = Path.Combine(dir, InterfaceFile.ResourceName);
+        BuildInterfaceFile(Path.GetFileNameWithoutExtension(dllPath), cores, lcil, Guid.Empty).Save(ifc);
+        return ifc;
+    }
+
+    /// <summary>.ifc 旁的 .inl 存在时返回其路径，否则 #f。</summary>
+    public static object InlineFileOf(string ifc)
+    {
+        string inl = InterfaceFile.InlinePathFor(ifc);
+        return File.Exists(inl) ? inl : s_false;
+    }
+
+    public static void DeletePackageInterface(string ifc)
+    {
+        try { Directory.Delete(Path.GetDirectoryName(ifc)!, true); }
+        catch (IOException) { }
+    }
+
+    private static InterfaceFile BuildInterfaceFile(string asm, object cores, object lcil, Guid imageId)
+    {
         var types = new HashSet<string>(StringComparer.Ordinal);
         CollectTypes(lcil, types);
         var fnNames = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -658,7 +736,7 @@ public static class Driver
         var candidates = new List<(Var v, string cls, int[] arities, object init)>();
         foreach (var core in Items(cores) ?? new List<object>())
             Walk(core, fnNames, defs, candidates);
-        var file = new InterfaceFile { AssemblyName = asm, ImageId = Mvid(dllPath) };
+        var file = new InterfaceFile { AssemblyName = asm, ImageId = imageId };
         foreach (var (v, cls, arities, init) in candidates)
         {
             if (defs[v] != 1 || fnNames[cls] != 1 || !types.Contains(cls)) continue;
@@ -673,10 +751,7 @@ public static class Driver
                 Inline = v.IsMacro ? null : InlineClauses(init),
             });
         }
-        string ifc = InterfaceFile.PathFor(dllPath);
-        if (File.Exists(ifc)) File.Delete(ifc);
-        file.Save(ifc);
-        return file.Entries.Count;
+        return file;
     }
 
     private static Guid Mvid(string dllPath)

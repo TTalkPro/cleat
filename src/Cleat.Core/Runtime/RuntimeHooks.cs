@@ -14,7 +14,7 @@ public static class RuntimeHooks
     /// <summary>执行一段源码：(reader, sourcePath, sourceName) → 逐个读 + 展开 + 编译 + 运行，返回最后一个形式的值。</summary>
     public static Func<TextReader, string, string, object> LoadSource { get; set; }
 
-    /// <summary>同 <see cref="LoadSource"/>，但 <c>*compile-files*</c> 为真时还把结果写成 .clj.dll（编译驱动，cleat-028）。stage0 登记与 LoadSource 相同的实现。</summary>
+    /// <summary>同 <see cref="LoadSource"/>，但 <c>*compile-files*</c> 为真时还把结果编成包程序集（编译驱动，cleat-028、cleat-067）。stage0 登记与 LoadSource 相同的实现。</summary>
     public static Func<TextReader, string, string, object> Compile { get; set; }
 
     /// <summary>求值一个形式。</summary>
@@ -28,6 +28,12 @@ public static class RuntimeHooks
 
     /// <summary>错误报告（*err* 输出）；可选。</summary>
     public static Action<Exception> ReportError { get; set; }
+
+    /// <summary>
+    /// 从源码加载（展开、编译递归深，要大栈）在哪条线程上执行（cleat-067，designs/17 §4.3）：CleatRuntime 登记为"排到它的 512 MB 栈
+    /// 工作线程"，惰性启动之后在调用方线程上触发的源码加载（gen-class 初始化器 require 实现命名空间）因此不会栈溢出。null 时就地执行。
+    /// </summary>
+    public static Func<Func<object>, object> OnLoaderThread { get; set; }
 
     /// <summary>RT.Init 末尾调用一次（登记原语的占位，cleat-011）；可选。</summary>
     public static Action OnInit { get; set; }

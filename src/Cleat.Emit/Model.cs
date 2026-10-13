@@ -17,6 +17,10 @@ public sealed class LcilAssembly
     public string Runtime = LcilRuntime.Clojure;
     /// <summary>(attribute "T" "字符串参数" …)：程序集级自定义属性。</summary>
     public List<(string Type, List<string> Args)> Attributes = new List<(string, List<string>)>();
+    /// <summary>(resource "名字" "文件路径")：嵌入资源（保存 dll 时读入文件）。</summary>
+    public List<(string Name, string Path)> Resources = new List<(string, string)>();
+    /// <summary>(lazy-start)：每个类型初始化器先调 RuntimeBootstrap.EnsureStarted（包程序集，cleat-067）。</summary>
+    public bool LazyStart;
     /// <summary>常量表：下标 → 编码（§3），保持原样交给常量编码器。</summary>
     public List<SNode> Constants = new List<SNode>();
     /// <summary>(live-constants n)：常量由宿主在内存中直接提供（只用于内存模式），个数为 n。</summary>
@@ -176,6 +180,8 @@ public static class LcilParser
                                 case "references": asm.References.AddRange(Strings(cl, 1, "reference")); break;
                                 case "entry": Arity(cl, 2, 2); asm.EntryType = Str(cl[1], "entry type"); asm.EntryMethod = Str(cl[2], "entry method"); break;
                                 case "attribute": Arity(cl, 1); asm.Attributes.Add((Str(cl[1], "attribute type"), Strings(cl, 2, "attribute argument"))); break;
+                                case "lazy-start": Arity(cl, 0, 0); asm.LazyStart = true; break;
+                                case "resource": Arity(cl, 2, 2); asm.Resources.Add((Str(cl[1], "resource name"), Str(cl[2], "resource file"))); break;
                                 case "runtime": Arity(cl, 1, 1); asm.Runtime = Check(cl[1], "runtime", LcilRuntime.All); break;
                                 default: throw Err(cl, "unknown assembly clause: " + cl.Head);
                             }

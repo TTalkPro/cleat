@@ -117,9 +117,9 @@ public class ClassGenerationTests
         Write("src/t043/gc.clj", GenClass);
         var c = Run("-I", "src", "-e", "(binding [*compile-path* \"src\"] (compile 't043.px) (compile 't043.gc))");
         Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
-        Assert.That(File.Exists(Path.Combine(_dir, "src", "t043.gc.clj.dll")), Is.True, c.ToString());
+        Assert.That(File.Exists(Path.Combine(_dir, "src", "t043.gc.dll")), Is.True, c.ToString());
 
-        // 新进程：类型在 .clj.dll 里（不是动态程序集）
+        // 新进程：类型在包程序集里（不是动态程序集）
         var r = Run("-I", "src", "-e", "(require 't043.px 't043.gc)", "-e", "(t043.gc/check)",
                     "-e", "(.FullName (.Assembly t043.gc.Example))",
                     "-e", "(.FullName (.Assembly (class (proxy [System.IO.TextWriter] []))))");
@@ -127,11 +127,11 @@ public class ClassGenerationTests
         var lines = Lines(r);
         Assert.That(lines.Length, Is.EqualTo(3), r.ToString());
         Assert.That(lines[0], Is.EqualTo(GenClassResult), r.ToString());
-        Assert.That(lines[1], Is.EqualTo("\"t043.gc.clj, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\""), r.ToString());
+        Assert.That(lines[1], Is.EqualTo("\"t043.gc, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\""), r.ToString());
         Assert.That(lines[2], Does.StartWith("\"eval$"), "a proxy at the REPL is generated in that evaluation's unit");
 
         // 先用类型、后有命名空间：类型初始化器加载实现命名空间（:load-impl-ns 缺省为真）
-        string dll = Path.Combine(_dir, "src", "t043.gc.clj.dll").Replace("\\", "/");
+        string dll = Path.Combine(_dir, "src", "t043.gc.dll").Replace("\\", "/");
         var l = Run("-I", "src", "-e",
             $"(let [t (.GetType (System.Reflection.Assembly/LoadFrom \"{dll}\") \"t043.gc.Example\")] [(str (Activator/CreateInstance t (object-array [\"q\"]))) (contains? @@#'clojure.core/*loaded-libs* 't043.gc)])");
         Assert.That(l.ExitCode, Is.EqualTo(0), l.ToString());

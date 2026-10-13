@@ -57,7 +57,7 @@
           ;; CLEAT-017: Compiler/IsCompilingSuffix（AOT 时的类名后缀）→ 空串
           [(.ToString ^int (hash inames) "X")] [""])))))                             ;;;[(Integer/toHexString (hash inames))])))))   Added type hint                
 
-;; CLEAT-043: 代理类由特殊形式 proxy-class* 在编译期生成（编译器按 HostSyntax.ProxyLayout 生成真正的子类，AOT 时进 .clj.dll）；
+;; CLEAT-043: 代理类由特殊形式 proxy-class* 在编译期生成（编译器按 HostSyntax.ProxyLayout 生成真正的子类，AOT 时进包程序集）；
 ;; 运行时的 get-proxy-class 求值 (proxy-class* 基类 …) 并按基类缓存。下面是 JVM 的 ASM 生成代码，保留作对照。
   
 ;;;  (let [cv (new ClassWriter (. ClassWriter COMPUTE_MAXS))

@@ -134,29 +134,48 @@ public class LoaderTests
       (body (ldstr ""from-dll"") (call ""Cleat.Core.Tests.LoaderProbe"" ""Hit"" (""System.String"") ""System.Void"")
             (ldstr ""module-value"") (ret)))))";
 
+    // cleat-067：包程序集——Initialize 只跑一次，每个文件一个入口，CleatNamespace 特性作索引
+    private static string PackageLcil(string asmName, string key) => $@"
+(lcil 1
+  (assembly ""{asmName}"" (entry ""#Module"" ""Initialize"")
+    (attribute ""Cleat.Core.CleatPackageAttribute"" ""{asmName}"")
+    (attribute ""Cleat.Core.CleatNamespaceAttribute"" ""{key}"" ""#Module"" ""Load0""))
+  (type ""#Module"" (attrs abstract sealed)
+    (method ""Initialize"" (attrs static) (params) (ret ""System.Object"")
+      (body (ldstr ""init"") (call ""Cleat.Core.Tests.LoaderProbe"" ""Hit"" (""System.String"") ""System.Void"") (ldnull) (ret)))
+    (method ""Load0"" (attrs static) (params) (ret ""System.Object"")
+      (body (ldstr ""from-package"") (call ""Cleat.Core.Tests.LoaderProbe"" ""Hit"" (""System.String"") ""System.Void"")
+            (ldstr ""module-value"") (ret)))))";
+
     [Test]
-    public void NewerCljDllWinsOverSourceAndRunsTheEntry()
+    public void PackageAssemblyIndexWinsOverSourceAndRunsTheEntry()
     {
-        string source = Path.Combine(_dir, "x", "y.clj");
-        File.WriteAllText(source, "(ns x.y)");
-        string dll = Path.Combine(_dir, "x.y.clj.dll");
-        LcilEmitter.Save(ModuleLcil("x.y.clj", "Entry"), "x.y.lcil", dll);
-        File.SetLastWriteTimeUtc(dll, File.GetLastWriteTimeUtc(source).AddMinutes(1));
+        Directory.CreateDirectory(Path.Combine(_dir, "pkgtest"));
+        File.WriteAllText(Path.Combine(_dir, "pkgtest", "a.clj"), "(ns pkgtest.a)");
+        string dll = Path.Combine(_dir, "PkgTest.dll");
+        LcilEmitter.Save(PackageLcil("PkgTest", "pkgtest/a"), "pkgtest.lcil", dll);
         int hookCalls = 0;
         RuntimeHooks.LoadSource = (r, p, n) => { hookCalls++; return null; };
 
-        Loader.Load("x/y");
-        Assert.That(LoaderProbe.LastHit, Is.EqualTo("from-dll"), "the module entry ran");
+        PackageIndex.RegisterDirectory(_dir);
+        Assert.That(PackageIndex.Contains("pkgtest/a"), "indexed from metadata");
+        Assert.That(PackageIndex.Locate("pkgtest/a"), Is.EqualTo(dll));
+        Loader.Load("pkgtest/a");
+        Assert.That(LoaderProbe.LastHit, Is.EqualTo("from-package"), "the namespace entry ran");
         Assert.That(hookCalls, Is.EqualTo(0), "the source hook was not used");
-        Assert.That(Loader.LoadedAssemblies.ContainsKey("x.y.clj"), "the module is registered by assembly name");
-        Assert.That(Loader.FindType("Entry").Assembly.GetName().Name, Is.EqualTo("x.y.clj"));
-        Assert.That(Type.GetType("Entry, x.y.clj", false), Is.Not.Null, "assembly-qualified lookups resolve registered modules");
+        Assert.That(Loader.LoadedAssemblies.ContainsKey("PkgTest"), "the package is registered by assembly name");
 
-        // once the source is newer, the hook is preferred
-        File.SetLastWriteTimeUtc(source, File.GetLastWriteTimeUtc(dll).AddMinutes(1));
+        // Initialize ran once, before the first entry; a second load runs only the entry
         LoaderProbe.LastHit = null;
-        Loader.Load("x/y");
-        Assert.That((hookCalls, LoaderProbe.LastHit), Is.EqualTo((1, (string)null)));
+        Loader.Load("pkgtest/a");
+        Assert.That(LoaderProbe.LastHit, Is.EqualTo("from-package"));
+
+        // *compile-files* loads the source (compiling needs it)
+        Var.pushThreadBindings(RT.map(RT.CompileFilesVar, true));
+        RuntimeHooks.Compile = (r, p, n) => { hookCalls++; return null; };
+        try { Loader.Load("pkgtest/a"); }
+        finally { Var.popThreadBindings(); }
+        Assert.That(hookCalls, Is.EqualTo(1));
     }
 
     [Test]

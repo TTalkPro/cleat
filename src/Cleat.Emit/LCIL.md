@@ -14,7 +14,9 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
     (references "Cleat.Scheme" …)?           ; 额外引用的程序集（名字或 dll 路径）
     (entry "入口类型" "入口方法")?            ; 入口：public static object 方法()（§6）
     (runtime scheme|clojure)?                ; [cleat] 互操作指令与常量表所属的运行时，缺省 clojure（§5、§8）
-    (attribute "T" "字符串参数" …)*)         ; [cleat] 程序集级自定义属性，构造函数只取字符串参数
+    (attribute "T" "字符串参数" …)*          ; [cleat] 程序集级自定义属性，构造函数只取字符串参数
+    (resource "名字" "文件路径")*            ; [cleat] 嵌入资源（只用于保存 dll）：发射时读入文件内容（包程序集的接口文件，cleat-067）
+    (lazy-start)?)                           ; [cleat] 每个类型初始化器（没有的类型补一个，接口除外）先调 RuntimeBootstrap.EnsureStarted（包程序集，cleat-067）
   (constants (0 编码) (1 编码) …)?            ; 常量表（§8 的编码），下标从 0 连续
   (live-constants n)?                        ; 内存模式：常量由宿主直接提供（与 constants 互斥）
   (type …) …)

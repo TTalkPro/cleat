@@ -2807,7 +2807,7 @@ namespace clojure.lang
 
         internal static Type classForName(string p, Namespace ns, bool canCallClrTypeSpec)
         {
-            // CLEAT-012: was Compiler.FindDuplicateType(p); module assemblies (boot image, AOT .clj.dll, in-memory eval
+            // CLEAT-012: was Compiler.FindDuplicateType(p); module assemblies (boot image, AOT package assemblies, in-memory eval
             // assemblies) register with the Loader and are searched first.
             Type t = Cleat.Core.Runtime.Loader.FindType(p);
             if (t != null)
@@ -3500,7 +3500,7 @@ namespace clojure.lang
             load(relativePath, true);
         }
 
-        // CLEAT-012: the search (source vs .clj.dll, embedded resources) moved to Cleat.Core.Runtime.Loader;
+        // CLEAT-012: the search (package assemblies, source, embedded resources) moved to Cleat.Core.Runtime.Loader;
         // the compile/eval half goes through RuntimeHooks (load-source / compile).
         public static void load(String relativePath, Boolean failIfNotFound)
         {

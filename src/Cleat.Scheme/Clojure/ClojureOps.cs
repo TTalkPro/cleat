@@ -229,8 +229,8 @@ public static class ClojureOps
     }
 
     /// <summary>
-    /// AOT 产物（.clj.dll）入口的第一个形式（cleat-052）：编译时运行的 Clojure boot 镜像 id 与现在的不同则抛
-    /// <see cref="Cleat.Core.Runtime.BootInterface.StaleModuleException"/>，加载器回退源码（designs/04 §6）。
+    /// AOT 产物（包程序集）入口的第一个形式（cleat-052）：编译时运行的 Clojure boot 镜像 id 与现在的不同则抛
+    /// <see cref="Cleat.Core.Runtime.BootInterface.StaleModuleException"/>（要求重编，designs/17 §7）。
     /// </summary>
     public static object CheckBootImage(object imageId)
     {
@@ -306,9 +306,13 @@ public static class ClojureOps
     public static void GenClassLoadImpl(string ns)
     {
         var sym = clojure.lang.Symbol.intern(ns);
-        var loaded = ((IDeref)clojure.lang.RT.var("clojure.core", "*loaded-libs*").deref()).deref();
-        if (!clojure.lang.RT.booleanCast(clojure.lang.RT.contains(loaded, sym)))
-            clojure.lang.RT.var("clojure.core", "require").invoke(sym);
+        // 与 serialized-require 同一把锁（cleat-067）：类型冷加载时别的线程可能同时 require 同一个命名空间（CleatRuntime.Var）
+        lock (clojure.lang.RT.REQUIRE_LOCK)
+        {
+            var loaded = ((IDeref)clojure.lang.RT.var("clojure.core", "*loaded-libs*").deref()).deref();
+            if (!clojure.lang.RT.booleanCast(clojure.lang.RT.contains(loaded, sym)))
+                clojure.lang.RT.var("clojure.core", "require").invoke(sym);
+        }
     }
 
     /// <summary>:main 生成的 Main(string[])：以命令行参数调用 -main；-main 返回 Task 时等它完成（ClojureCLR 的做法）。</summary>

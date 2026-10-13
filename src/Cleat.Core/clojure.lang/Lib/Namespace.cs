@@ -108,10 +108,36 @@ namespace clojure.lang
             Namespace ns = _namespaces.Get(name);
             if (ns != null)
                 return ns;
-            Namespace newns = new Namespace(name);
+            // CLEAT-067: a pending namespace (created for a package assembly's Var constants) becomes visible, keeping its Vars
+            Namespace newns = _pending.TryGetValue(name, out var pending) ? pending : new Namespace(name);
             ns = _namespaces.PutIfAbsent(name, newns);
+            if (ns == null)
+            {
+                _pending.TryRemove(name, out _);
+                newns.IsPending = false;
+            }
             return ns ?? newns;
         }
+
+        /// <summary>CLEAT-067: created by <see cref="findOrCreatePending"/> and not yet visible.</summary>
+        internal volatile bool IsPending;
+
+        /// <summary>
+        /// CLEAT-067 (designs/17 §2): Var constants of a package assembly are decoded when the package's constant table is first
+        /// used, which is before most of its namespaces are loaded. Their namespaces are created here as pending: not in
+        /// <see cref="all"/> or <see cref="find"/> (so requiring-resolve / find-ns still see an unloaded namespace) until
+        /// <see cref="findOrCreate"/> (in-ns, ns, create-ns) makes the same object visible.
+        /// </summary>
+        public static Namespace findOrCreatePending(Symbol name)
+        {
+            Namespace ns = _namespaces.Get(name);
+            if (ns != null)
+                return ns;
+            Namespace pending = _pending.GetOrAdd(name, n => new Namespace(n) { IsPending = true });
+            return _namespaces.Get(name) ?? pending;
+        }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Symbol, Namespace> _pending = new();
 
         /// <summary>
         /// Remove a namespace (by name).

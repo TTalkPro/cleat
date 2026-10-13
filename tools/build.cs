@@ -25,9 +25,13 @@
 //                         逐命名空间跑 clojure-test-suite / test_clojure，与 tests/cts-baseline.edn /
 //                         tests/test-clojure-baseline.edn 比较（--write 重写基线）（tools/cts.clj）                 [cleat-032]
 //   compile-libs [命名空间…]
-//                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为 .clj.dll，写在其
-//                         源码旁边（*compile-path* 未设时驱动就写在那里）；加载器的同目录新旧比较让 require 在 dll
-//                         不旧于源码时用 dll，否则回退源码                                          [cleat-033]
+//                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为一个包程序集
+//                         src/boot/Cleat.Clojure.Libs.dll（designs/17）；宿主登记 Clojure 镜像旁的它，require 走包程序集
+//                         （从源码加载不了的命名空间跳过）                                  [cleat-033、cleat-067]
+//   pack [-o 目录] [--version 版本]
+//                         运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）：Release 构建、compile-libs，再
+//                         dotnet pack src/Cleat.Runtime；默认输出 artifacts/nuget/。推到本地目录源或 BaGetter 后 C# / F#
+//                         项目引用它与 cleat 的包程序集即可（运行时第一次用到时自己启动）
 //   bench [-r 次数] [--write] [--only 正则]
 //                         运行 bench/ 下的基准（每个一次宿主进程，逐个打印 BENCH <名字> <毫秒>），聚合最小/中位；
 //                         --write 把结果写到 bench/baseline.edn（优化前后对照，cleat-042）
@@ -80,6 +84,9 @@ try
         case "publish":
             Publish(rest);
             break;
+        case "pack":
+            Pack(rest);
+            break;
         case "bench":
             Bench(rest);
             break;
@@ -96,14 +103,14 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] | bench [-r n] [--write] [--only re]");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] | pack [-o dir] [--version v] | bench [-r n] [--write] [--only re]");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }
 
-// 预编译随附命名空间（cleat-033）：boot-order.edn 里 :boot false 且没有 :loaded-by 的条目（也可在命令行点名）。
-// 每个命名空间一次宿主进程：(compile 'ns) 在 *compile-files* 下从源码加载并把顶层形式写成源码旁边的 .clj.dll；
-// 命名空间之间按 boot-order 顺序，前面的先编译（后面的若 require 了它们就用上 dll）。运行 -c Release 的宿主。
+// 预编译随附命名空间（cleat-033、cleat-067）：boot-order.edn 里 :boot false 且没有 :loaded-by 的条目（也可在命令行点名）。
+// 先在一个宿主进程里逐个试 require，从源码都加载不了的（clojure.repl.deps 需要未内置的 clojure/clr/basis）跳过；其余在一个进程里
+// 编成一个包程序集 src/boot/Cleat.Clojure.Libs.dll（--compile-package，designs/17 §2）。运行 -c Release 的宿主。
 void CompileLibs(string[] a)
 {
     string[] nses = a;
@@ -117,31 +124,26 @@ void CompileLibs(string[] a)
             .ToArray();
     }
     if (nses.Length == 0) throw new CommandFailed("compile-libs: no namespaces found in boot-order.edn");
-    string host = Bin("Cleat.Host", "cleat.dll");
-    int ok = 0;
-    var failed = new List<string>();
-    foreach (string ns in nses)
+    string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure");
+    string probe = "(doseq [n '[" + string.Join(" ", nses) + "]] (println (try (require n) (str \"ok \" n) (catch Exception e (str \"failed \" n \": \" (.Message e))))))";
+    var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true };
+    foreach (var x in new[] { host, "-I", clj, "-e", probe }) psi.ArgumentList.Add(x);
+    using (var p = Process.Start(psi) ?? throw new CommandFailed("cannot start dotnet"))
     {
-        Console.WriteLine($"compile-libs: {ns}");
-        var args = new List<string> { host, "-I", Path.Combine(srcDir, "clojure"),
-            "-e", $"(binding [*compile-files* true] (compile '{ns}))" };
-        try { Run("dotnet", args.ToArray(), root); ok++; }
-        catch (CommandFailed e)
-        {
-            // 从源码都加载不了的命名空间（clojure.repl.deps 需要未内置的 clojure/clr/basis）跳过并说明
-            Console.Error.WriteLine($"compile-libs: warning: {ns} failed (see above); skipped");
-            failed.Add(ns);
-            if (!File.Exists(Path.Combine(srcDir, "clojure", ns.Replace('.', '/').Replace('-', '_') + ".clj.dll"))
-                && !Directory.GetFiles(Path.Combine(srcDir, "clojure"), ns.Replace('-', '_') + "*.dll").Any())
-                Console.Error.WriteLine("compile-libs: (no dll was produced)");
-        }
+        var lines = p.StandardOutput.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        p.WaitForExit();
+        foreach (var l in lines.Where(l => l.StartsWith("failed ")))
+            Console.Error.WriteLine($"compile-libs: warning: {l.Substring(7)}; skipped");
+        nses = lines.Where(l => l.StartsWith("ok ")).Select(l => l.Substring(3).Trim()).ToArray();
     }
-    if (failed.Count > 0) Console.WriteLine($"compile-libs: {ok}/{nses.Length} compiled, skipped: {string.Join(" ", failed)}");
-    else Console.WriteLine($"compile-libs: {nses.Length} namespace(s) compiled");
+    if (nses.Length == 0) throw new CommandFailed("compile-libs: none of the namespaces loads from source");
+    string dll = Path.Combine(bootDir, "Cleat.Clojure.Libs.dll");
+    Run("dotnet", [host, "-I", clj, "--compile-package", dll, "--package", "clojure", "--root", clj, .. nses], root);
+    Console.WriteLine($"compile-libs: {nses.Length} namespace(s) -> {dll}");
 }
 
 // 自包含发布（cleat-034，做法沿用 IronScheme designs/07 §3）：宿主与其 .NET 运行时 + 两个 boot 镜像 + 驱动库 fasl
-// + AOT 库。发布目录本身在加载路径上（AppContext.BaseDirectory），宿主自动找到镜像与库；不裁剪（互操作靠反射元数据）。
+// + 随附库的包程序集。发布目录本身在加载路径上（AppContext.BaseDirectory），宿主自动找到镜像与库；不裁剪（互操作靠反射元数据）。
 void Publish(string[] a)
 {
     string rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, outDir = null;
@@ -162,12 +164,32 @@ void Publish(string[] a)
                    "--self-contained", "-o", outDir, "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-nodeReuse:false"]);
     File.Copy(schemeBoot, Path.Combine(outDir, "cleat.scheme.boot.dll"));
     CopyDir(Path.Combine(bootDir, "cleat.scheme.clojure"), Path.Combine(outDir, "cleat.scheme.clojure"));
-    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "cleat.boot.inl", "boot-order.edn" })
+    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "cleat.boot.inl", "boot-order.edn", "Cleat.Clojure.Libs.dll" })
         if (File.Exists(Path.Combine(bootDir, f))) File.Copy(Path.Combine(bootDir, f), Path.Combine(outDir, f));
-    foreach (var f in Directory.GetFiles(Path.Combine(srcDir, "clojure"), "*.clj.*"))
-        File.Copy(f, Path.Combine(outDir, Path.GetFileName(f)));
     foreach (var f in Directory.GetFiles(outDir, "*.pdb")) File.Delete(f);
     Console.WriteLine("published " + Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat"));
+}
+
+// 运行时的 NuGet 包（cleat-067）：Release 构建（镜像随之生成到 src/boot/）、随附库的包程序集，再打包 src/Cleat.Runtime。
+void Pack(string[] a)
+{
+    string outDir = Path.Combine(root, "artifacts", "nuget"), version = null;
+    for (int i = 0; i < a.Length; i++)
+    {
+        switch (a[i])
+        {
+            case "-o" when i + 1 < a.Length: outDir = Path.GetFullPath(a[++i]); break;
+            case "--version" when i + 1 < a.Length: version = a[++i]; break;
+            default: throw new CommandFailed("pack: unexpected argument " + a[i]);
+        }
+    }
+    BuildCSharp();
+    CompileLibs([]);
+    var args = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Runtime", "Cleat.Runtime.csproj"), "-c", "Release", "-o", outDir,
+                                  "-v", "quiet", "-nologo", "-p:BuildBootImage=false" };
+    if (version != null) args.Add("-p:Version=" + version);
+    Run("dotnet", args.ToArray());
+    Console.WriteLine("packed " + string.Join(" ", Directory.GetFiles(outDir, "Cleat.Runtime.*.nupkg").Select(Path.GetFileName)));
 }
 
 // 基准（cleat-042）：bench/ 下每个 *.clj 一次宿主进程（-m bench.<名字>），解析 BENCH 行，聚合最小/中位。

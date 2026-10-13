@@ -167,7 +167,7 @@ public static class Fasl
                 case CljStr: return Register<object>(def, String());
                 case CljSym: { string ns = String(), name = String(); return Register<object>(def, Clj.Symbol.intern(NsOrNull(ns), name)); }
                 case Kw: { string ns = String(), name = String(); return Register<object>(def, Clj.Keyword.intern(NsOrNull(ns), name)); }
-                case VarTag: { string ns = String(), name = String(); return Register<object>(def, Clj.Var.intern(Clj.Symbol.intern(ns), Clj.Symbol.intern(name))); }
+                case VarTag: { string ns = String(), name = String(); return Register<object>(def, Clj.Var.intern(Clj.Namespace.findOrCreatePending(Clj.Symbol.intern(ns)), Clj.Symbol.intern(name))); }
                 // ———— Scheme 序列 ————
                 case Pair:
                     {

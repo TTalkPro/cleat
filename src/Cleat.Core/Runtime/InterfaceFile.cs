@@ -29,7 +29,8 @@ public sealed class InterfaceFile
     /// <summary>.ifc 旁的内联体文件（cleat-042）</summary>
     public static string InlinePathFor(string ifcPath) => Path.ChangeExtension(ifcPath, ".inl");
 
-    private string _inlinePath;        // 读入时：旁边的 .inl（还没读）
+    private string _inlinePath;        // 读入时：旁边的 .inl（还没读；包程序集里的是 "程序集:cleat.inl"）
+    private Func<Stream> _inlineSource;
     private bool _inlineLoaded;
 
     public string AssemblyName;
@@ -88,7 +89,7 @@ public sealed class InterfaceFile
     {
         var f = Parse(File.ReadAllText(path));
         string inl = InlinePathFor(path);
-        if (File.Exists(inl)) f._inlinePath = inl;
+        if (File.Exists(inl)) { f._inlinePath = inl; f._inlineSource = () => File.OpenRead(inl); }
         return f;
     }
 
@@ -109,8 +110,8 @@ public sealed class InterfaceFile
 
     private void LoadInline()
     {
-        if (_inlinePath == null) return;
-        using var r = new BinaryReader(File.OpenRead(_inlinePath));
+        if (_inlineSource == null) return;
+        using var r = new BinaryReader(_inlineSource());
         if (!Guid.TryParse(r.ReadString(), out var id) || id != ImageId) return;
         var byVar = Entries.ToDictionary(e => e.Var.ToString(), StringComparer.Ordinal);
         int count = r.ReadInt32();
@@ -124,7 +125,7 @@ public sealed class InterfaceFile
         }
     }
 
-    /// <summary>dll 旁的接口文件路径：`x.y.clj.dll` → `x.y.clj.ifc`。</summary>
+    /// <summary>dll 旁的接口文件路径：`x.y.dll` → `x.y.ifc`（包程序集的接口文件是嵌入资源，见 TryRegisterEmbedded）。</summary>
     public static string PathFor(string dllPath) => Path.ChangeExtension(dllPath, ".ifc");
 
     // ———————————————— 已知函数登记 ————————————————
@@ -153,10 +154,38 @@ public sealed class InterfaceFile
         catch (Exception e) { RT.errPrintWriter().WriteLine($"warning: ignoring interface file {p}: {e.Message}"); return false; }
     }
 
+    /// <summary>包程序集里的接口文件（cleat-067）：嵌入资源 <see cref="ResourceName"/> 与 <see cref="InlineResourceName"/>。</summary>
+    public const string ResourceName = "cleat.ifc", InlineResourceName = "cleat.inl";
+
+    /// <summary>
+    /// 程序集里嵌入了接口文件时登记（包程序集，cleat-067）。接口与程序集一起发射，不核对镜像 id（嵌入的接口文件的 id 为空）。
+    /// </summary>
+    public static bool TryRegisterEmbedded(Assembly asm)
+    {
+        try
+        {
+            using var stream = asm.GetManifestResourceStream(ResourceName);
+            if (stream is null) return false;
+            var f = Parse(new StreamReader(stream).ReadToEnd());
+            if (asm.GetManifestResourceInfo(InlineResourceName) is not null)
+            {
+                f._inlinePath = asm.GetName().Name + ":" + InlineResourceName;
+                f._inlineSource = () => asm.GetManifestResourceStream(InlineResourceName);
+            }
+            foreach (var e in f.Entries) { e.Owner = f; s_known[e.Var] = e; }
+            return true;
+        }
+        catch (Exception e)
+        {
+            RT.errPrintWriter().WriteLine($"warning: ignoring the interface file in {asm.GetName().Name}: {e.Message}");
+            return false;
+        }
+    }
+
     public static void ClearKnown() => s_known.Clear();
 }
 
-/// <summary>编译产物（用了 boot 镜像接口的 .clj.dll）在入口开头调用：镜像 id 不符则该产物是对旧镜像编译的，报错让加载方回退源码。</summary>
+/// <summary>编译产物（用了 boot 镜像接口的包程序集）在入口开头调用：镜像 id 不符则该产物是对旧镜像编译的，报错要求重编。</summary>
 public static class BootInterface
 {
     public static Guid? CurrentImageId { get; set; }

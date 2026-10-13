@@ -558,6 +558,9 @@ namespace clojure.lang
         [MethodImpl(MethodImplOptions.Synchronized)]
         public void bindRoot(object root)
         {
+            // CLEAT-067: a def that runs makes a pending namespace visible (see Namespace.findOrCreatePending)
+            if (_ns != null && _ns.IsPending)
+                Namespace.findOrCreate(_ns.Name);
             Validate(getValidator(), root);
             object oldroot = _root;
             _root = root;

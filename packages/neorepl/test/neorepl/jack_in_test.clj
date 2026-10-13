@@ -57,7 +57,10 @@
      (spit-file dir "cleat.edn" "{:paths [\"src\" \"dev\"] :middleware [my.app/wrap-x]}")
      (let [command (jack-in/command "cleat" {:port 7888} dir)]
        (testing "cleat, with the nrepl package and the project's paths on the load path"
-         (is (some #(str/ends-with? % (str "nrepl" Path/DirectorySeparatorChar "src")) command))
+         ;; nREPL's sources, or the directory with its package assembly
+         (is (some #(or (str/ends-with? % (str "nrepl" Path/DirectorySeparatorChar "src"))
+                        (File/Exists (Path/Combine ^String % "Nrepl.dll")))
+                   command))
          (is (= ["-I" "src" "-I" "dev" "-m" "nrepl.cmdline"]
                 (->> command (drop-while #(not= "src" %)) (cons "-I") (take 6)))))
        (testing "and its middleware, and the port"

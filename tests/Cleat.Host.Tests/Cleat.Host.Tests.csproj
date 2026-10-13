@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- 宿主的进程级测试（cleat-052）：以子进程运行 cleat（Scheme 镜像 + 驱动库 + 钩子），经标准输入 / 输出驱动 REPL、脚本、-e、load、
-       require、compile 到 .clj.dll 与回退。 -->
+       require、compile 到包程序集（cleat-067）。 -->
   <PropertyGroup>
     <RootNamespace>Cleat.Host.Tests</RootNamespace>
     <IsPackable>false</IsPackable>

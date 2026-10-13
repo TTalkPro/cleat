@@ -1,0 +1,8 @@
+<Project>
+  <!-- Cleat.Runtime（cleat-067）：镜像、驱动库与随附库复制到输出目录（发布时也带上），运行时按 AppContext.BaseDirectory 找到它们 -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\runtime\**\*"
+          Link="%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+</Project>

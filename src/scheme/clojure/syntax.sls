@@ -1009,7 +1009,7 @@
 
 ;;; proxy-class*（cleat-043）：(proxy-class* 基类? 接口 …) → 生成的代理类型（值为 Type），core_proxy 的 proxy 宏与 get-proxy-class 用。
   ;;; 布局（覆写哪些方法、转发哪些构造函数、类名）由 HostSyntax.ProxyLayout 在展开期算出；类型只取决于基类与接口，
-  ;;; 同一编译单元里同名的只生成一次。AOT 时与 deftype 一样进 .clj.dll。
+  ;;; 同一编译单元里同名的只生成一次。AOT 时与 deftype 一样进包程序集。
   (define-special proxy-class* (e)
     (syntax-case e ()
       ((head base ...)
@@ -1027,7 +1027,7 @@
            #'(k $clj-deftype data (lambda () (k $clj-methods none))))))))
 
 ;;; gen-class*（cleat-043）：(gen-class* {:name … :extends … …}) → 生成的类型（值为 Type）。genclass.clj 的 gen-class 宏展开成它
-  ;;; （JVM 只在 AOT 编译时生成；这里 REPL / 源码加载也生成，AOT 时进 .clj.dll）。布局由 HostSyntax.GenClassLayout 算出。
+  ;;; （JVM 只在 AOT 编译时生成；这里 REPL / 源码加载也生成，AOT 时进包程序集）。布局由 HostSyntax.GenClassLayout 算出。
   (define-special gen-class* (e)
     (syntax-case e ()
       ((head opts)

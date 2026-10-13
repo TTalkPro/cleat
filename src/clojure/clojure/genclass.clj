@@ -94,7 +94,7 @@
   
 ;; CLEAT-043: GenClass/GenerateClass → 特殊形式 gen-class*：编译器按 HostSyntax.GenClassLayout 生成真正的 CLR 类型
 ;; （基类的 public / protected 虚方法按原签名覆写、:methods 按声明的 CLR 类型、:main 生成 Main(string[])），
-;; AOT 时进 .clj.dll；不编译时（REPL、源码加载）也生成——JVM 只在 *compile-files* 时生成
+;; AOT 时进包程序集；不编译时（REPL、源码加载）也生成——JVM 只在 *compile-files* 时生成
  (defn- generate-class [options-map]
    (validate-generate-class-options options-map)
    `(gen-class* ~options-map))

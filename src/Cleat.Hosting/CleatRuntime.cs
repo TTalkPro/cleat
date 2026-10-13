@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using Cleat.Core.Runtime;
 using Cleat.Host;
 using clojure.lang;
 
@@ -18,7 +19,7 @@ public sealed class CleatOptions
     /// <summary>Clojure boot 镜像路径；缺省自动找，找不到时从 src/clojure 源码不可用（宿主同规则）。</summary>
     public string ClojureBoot { get; set; }
 
-    /// <summary>额外的加载路径（require / load 按它找源码与 .clj.dll）。</summary>
+    /// <summary>额外的加载路径（require / load 按它找源码，目录里的包程序集也登记）。</summary>
     public IList<string> LoadPaths { get; } = new List<string>();
 
     /// <summary>*command-line-args* 的值。</summary>
@@ -36,20 +37,37 @@ public static class CleatRuntime
 {
     private static readonly object s_gate = new object();
     private static BlockingCollection<(Func<object>, TaskCompletionSource<object>)> s_queue;
-    private static bool s_initialized;
+    private static volatile bool s_initialized;
+    private static Thread s_worker;
 
     public static bool IsInitialized => s_initialized;
 
-    /// <summary>初始化运行时（加载两个镜像，约 1 s）；重复调用无效果。之后的调用（包括并发的）都串行在工作线程上。</summary>
+    /// <summary>
+    /// 初始化运行时（加载两个镜像，约 1 s）；重复调用无效果。之后的调用（包括并发的）都串行在工作线程上。可以不调：
+    /// <see cref="Eval"/> / <see cref="Require"/> / <see cref="Var"/> 与包程序集里的类型（惰性启动，cleat-067）第一次用到时以缺省选项初始化。
+    /// </summary>
     public static void Init(CleatOptions options = null)
     {
         lock (s_gate)
         {
             if (s_initialized) return;
             s_queue = new BlockingCollection<(Func<object>, TaskCompletionSource<object>)>();
-            var thread = new Thread(WorkerLoop, 512 * 1024 * 1024) { IsBackground = true, Name = "cleat" };
-            thread.Start();
+            s_worker = new Thread(WorkerLoop, 512 * 1024 * 1024) { IsBackground = true, Name = "cleat" };
+            s_worker.Start();
             MarshalLocal<object>(() => { InitBody(options ?? new CleatOptions()); return null; });
+            // 之后在别的线程上触发的源码加载排到工作线程（designs/17 §4.3），带着调用方的动态绑定
+            RuntimeHooks.OnLoaderThread = body =>
+            {
+                if (Thread.CurrentThread == s_worker) return body();
+                var frame = clojure.lang.Var.cloneThreadBindingFrame();
+                return MarshalLocal(() =>
+                {
+                    var saved = clojure.lang.Var.getThreadBindingFrame();
+                    clojure.lang.Var.resetThreadBindingFrame(frame);
+                    try { return body(); }
+                    finally { clojure.lang.Var.resetThreadBindingFrame(saved); }
+                });
+            };
             s_initialized = true;
         }
     }
@@ -74,17 +92,40 @@ public static class CleatRuntime
         });
     }
 
-    /// <summary>命名空间里的 Var 的值（函数）；调用用 invoke(arg…)（IFn）。没有该 Var 或值不是函数时抛异常。</summary>
+    /// <summary>
+    /// 命名空间里的 Var 的值（函数）；调用用 invoke(arg…)（IFn）。命名空间还没加载时先 require 它（包程序集或源码）。
+    /// 没有该 Var 或值不是函数时抛异常。
+    /// </summary>
     public static IFn Var(string ns, string name)
     {
         ArgumentNullException.ThrowIfNull(ns);
         ArgumentNullException.ThrowIfNull(name);
+        if (!s_initialized) Init();
+        EnsureLoaded(ns);
         return Marshal<IFn>(() =>
         {
             var v = Namespace.find(Symbol.intern(ns))?.FindInternedVar(Symbol.intern(name))
               ?? throw new InvalidOperationException($"no such var: {ns}/{name}");
             return v.deref() as IFn ?? throw new InvalidOperationException($"the value of {ns}/{name} is not a function");
         });
+    }
+
+    /// <summary>
+    /// 命名空间不在 *loaded-libs* 里时 require 它，与 serialized-require 同一把锁（并发的冷加载里只加载一次，后来者等它加载完）。
+    /// 在调用方线程上：包程序集的入口就地执行，源码加载经 OnLoaderThread 排到工作线程——若在工作线程上持锁等待，持锁的另一线程的
+    /// 源码加载就排不进去。
+    /// </summary>
+    private static void EnsureLoaded(string ns)
+    {
+        var sym = Symbol.intern(ns);
+        var core = Namespace.find(Symbol.intern("clojure.core"));
+        if (core?.FindInternedVar(Symbol.intern("*loaded-libs*"))?.deref() is not IDeref libs) return;
+        if (RT.booleanCast(RT.contains(libs.deref(), sym))) return;
+        lock (RT.REQUIRE_LOCK)
+        {
+            if (RT.booleanCast(RT.contains(libs.deref(), sym))) return;
+            core.FindInternedVar(Symbol.intern("require")).invoke(sym);   // 加载器自己绑定 *ns* 等，任何线程上都可以
+        }
     }
 
     /// <summary>值的 Clojure 文本形式（pr-str 的输出）。</summary>
@@ -103,12 +144,14 @@ public static class CleatRuntime
 
     private static T Marshal<T>(Func<T> body)
     {
-        if (!s_initialized) throw new InvalidOperationException("cleat is not initialized: call CleatRuntime.Init() first");
+        if (!s_initialized) Init();
         return MarshalLocal(body);
     }
 
     private static T MarshalLocal<T>(Func<T> body)
     {
+        if (Thread.CurrentThread == s_worker) return body();     // 嵌套调用（Clojure 代码里再调 CleatRuntime）
+
         var done = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         s_queue.Add((() => body(), done));
         return (T)done.Task.GetAwaiter().GetResult();

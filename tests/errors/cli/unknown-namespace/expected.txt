@@ -1,3 +1,3 @@
 Execution error (FileNotFoundException) at (REPL:1).
-Could not locate no/such/ns with extensions .cljr, .cljc, .clj, .cljr.dll, .cljc.dll, or .clj.dll on load path [<host>:<host>/:<case>:<repo>/src/clojure].
+Could not locate no/such/ns in a package assembly or with extensions .cljr, .cljc, .clj on load path [<host>:<host>/:<case>:<repo>/src/clojure].
 exit: 1

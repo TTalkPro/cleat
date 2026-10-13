@@ -246,25 +246,44 @@ public class HostProcessTests
         Assert.That(lines[3], Is.EqualTo("false"));
     }
 
-    [Test]
-    public void CompileToCljDllThenLoadInAFreshProcess()
+    /// <summary>包程序集里嵌入的资源（cleat-067：接口文件 cleat.ifc）的文本；没有时 null。按元数据读，不载入程序集。</summary>
+    public static string EmbeddedResource(string dll, string name)
     {
-        string src = Write("lp/my/lib.clj", Lib);
+        using var pe = new System.Reflection.PortableExecutable.PEReader(File.OpenRead(dll));
+        var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+        foreach (var h in md.ManifestResources)
+        {
+            var r = md.GetManifestResource(h);
+            if (md.GetString(r.Name) != name) continue;
+            var section = pe.GetSectionData(pe.PEHeaders.CorHeader!.ResourcesDirectory.RelativeVirtualAddress);
+            var reader = section.GetReader((int)r.Offset, section.Length - (int)r.Offset);
+            int length = reader.ReadInt32();
+            return Encoding.UTF8.GetString(reader.ReadBytes(length));
+        }
+        return null;
+    }
+
+    [Test]
+    public void CompileToPackageAssemblyThenLoadInAFreshProcess()
+    {
+        Write("lp/my/lib.clj", Lib);
         var c = Cleat(null, "-I", "lp", "-e", CompileExpr("my/lib"));
         Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
         Assert.That(c.Out, Is.EqualTo("loading my.lib\n"), "compiling also evaluates each form");
-        string dll = Path.Combine(_dir, "lp", "my.lib.clj.dll"), ifc = Path.Combine(_dir, "lp", "my.lib.clj.ifc");
+        // cleat-067：一个包程序集（my/lib.clj → my.lib.dll），接口文件嵌在里面，旁边没有 .ifc
+        string dll = Path.Combine(_dir, "lp", "my.lib.dll");
         Assert.That(File.Exists(dll), Is.True, "no " + dll);
-        Assert.That(File.Exists(ifc), Is.True, "no " + ifc);
-        string ifcText = File.ReadAllText(ifc);
-        Assert.That(ifcText, Does.Contain(":assembly \"my.lib.clj\""));
-        Assert.That(ifcText, Does.Contain("{:var my.lib/add2, :class \"my.lib$add2, my.lib.clj\", :arities [2], :static true}"));
-        Assert.That(ifcText, Does.Contain("{:var my.lib/multi, :class \"my.lib$multi, my.lib.clj\", :arities [0 1 -2], :static true}"));
+        Assert.That(File.Exists(Path.Combine(_dir, "lp", "my.lib.ifc")), Is.False);
+        string ifcText = EmbeddedResource(dll, "cleat.ifc");
+        Assert.That(ifcText, Is.Not.Null, "the interface file is embedded");
+        Assert.That(ifcText, Does.Contain(":assembly \"my.lib\""));
+        Assert.That(ifcText, Does.Contain("{:var my.lib/add2, :class \"my.lib$add2, my.lib\", :arities [2], :static true}"));
+        Assert.That(ifcText, Does.Contain("{:var my.lib/multi, :class \"my.lib$multi, my.lib\", :arities [0 1 -2], :static true}"));
         Assert.That(ifcText, Does.Not.Contain("my.lib/*level*"), "dynamic Vars are not known functions");
 
-        // 新进程：加载器选 dll（不比源码旧），入口执行全部顶层形式（含副作用），接口文件按 MVID 登记
+        // 新进程：-I 目录里的包程序集登记了 my/lib，require 跑它的入口（含副作用），嵌入的接口文件登记
         var r = Cleat(null, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")", "-e", UseLib, "-e", AssemblyOfAdd2,
-            "-e", "(. Cleat.Core.Runtime.Loader/LoadedAssemblies (ContainsKey \"my.lib.clj\"))",
+            "-e", "(. Cleat.Core.Runtime.Loader/LoadedAssemblies (ContainsKey \"my.lib\"))",
             "-e", "(. (. Cleat.Core.Runtime.InterfaceFile (FindKnown 'my.lib/multi)) ClassName)",
             "-e", "(. (. (. (new my.lib.Point 1 2) GetType) Assembly) FullName)");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
@@ -272,28 +291,28 @@ public class HostProcessTests
         {
             "loading my.lib",
             UseLibResult,
-            "\"my.lib.clj\"",
+            "\"my.lib\"",
             "true",
-            "\"my.lib$multi, my.lib.clj\"",
-            "\"my.lib.clj, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\"",
+            "\"my.lib$multi, my.lib\"",
+            "\"my.lib, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null\"",
         }), r.ToString());
 
-        // 源码比 dll 新：回到源码
-        File.SetLastWriteTimeUtc(src, File.GetLastWriteTimeUtc(dll).AddMinutes(1));
+        // 没有包程序集时从源码加载
+        File.Delete(dll);
         var s = Cleat(null, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")", "-e", AssemblyOfAdd2);
         Assert.That(s.ExitCode, Is.EqualTo(0), s.ToString());
         Assert.That(s.Out.Split('\n')[1], Does.StartWith("\"eval$"), s.ToString());
     }
 
     [Test]
-    public void DllCompiledAgainstAnotherClojureImageFallsBackToSource()
+    public void PackageCompiledAgainstAnotherClojureImageIsRejected()
     {
-        // 两个最小的 .clj.dll 充当两个不同的 Clojure 镜像（--boot 加载的是任何 Cleat 模块；镜像 id 为其 MVID）
+        // 两个最小的包程序集充当两个不同的 Clojure 镜像（--boot 加载的是任何 Cleat 模块；镜像 id 为其 MVID）
         Write("img/image_a.clj", "(def image :a)\n");
         Write("img/image_b.clj", "(def image :b)\n");
         var images = Cleat(null, "-I", "img", "-e", CompileExpr("image_a"), "-e", CompileExpr("image_b"));
         Assert.That(images.ExitCode, Is.EqualTo(0), images.ToString());
-        string a = Path.Combine(_dir, "img", "image_a.clj.dll"), b = Path.Combine(_dir, "img", "image_b.clj.dll");
+        string a = Path.Combine(_dir, "img", "image_a.dll"), b = Path.Combine(_dir, "img", "image_b.dll");
 
         Write("lp/my/lib.clj", Lib);
         var c = Cleat(null, "--boot", a, "-I", "lp", "-e", CompileExpr("my/lib"));
@@ -301,16 +320,14 @@ public class HostProcessTests
 
         var same = Cleat(null, "--boot", a, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")", "-e", AssemblyOfAdd2);
         Assert.That(same.ExitCode, Is.EqualTo(0), same.ToString());
-        Assert.That(same.Out, Is.EqualTo("loading my.lib\n\"my.lib.clj\"\n"));
+        Assert.That(same.Out, Is.EqualTo("loading my.lib\n\"my.lib\"\n"));
         Assert.That(same.Err, Is.Empty);
 
-        var other = Cleat(null, "--boot", b, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")", "-e", UseLib, "-e", AssemblyOfAdd2);
-        Assert.That(other.ExitCode, Is.EqualTo(0), other.ToString());
-        Assert.That(other.Err, Does.Contain("warning: my.lib.clj.dll: module was compiled against boot image"));
-        Assert.That(other.Err, Does.Contain("loading lib.clj instead"));
-        var lines = other.Out.TrimEnd('\n').Split('\n');
-        Assert.That(lines[^2], Is.EqualTo(UseLibResult));
-        Assert.That(lines[^1], Does.StartWith("\"eval$"));
+        // cleat-067：不再回退源码（开发时一律从源码加载，包程序集只在构建时产生），报错让人重编
+        var other = Cleat(null, "--boot", b, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")");
+        Assert.That(other.ExitCode, Is.Not.EqualTo(0), other.ToString());
+        Assert.That(other.Err, Does.Contain("module was compiled against boot image"));
+        Assert.That(other.Err, Does.Contain("recompile"));
     }
 
     [Test]
@@ -352,7 +369,7 @@ public class HostProcessTests
         Assert.That(File.Exists(Path.Combine(outDir, "cleat")) || File.Exists(Path.Combine(outDir, "cleat.exe")), Is.True, output);
         Assert.That(File.Exists(Path.Combine(outDir, "cleat.boot.dll")), Is.True, "Clojure 镜像随发布");
         Assert.That(File.Exists(Path.Combine(outDir, "cleat.scheme.boot.dll")), Is.True, "Scheme 镜像随发布");
-        Assert.That(File.Exists(Path.Combine(outDir, "clojure.core.server.clj.dll")), Is.True, "AOT 库随发布");
+        Assert.That(File.Exists(Path.Combine(outDir, "Cleat.Clojure.Libs.dll")), Is.True, "随附库的包程序集随发布");
         string cleat = Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat");
         var r = CleatIn(outDir, null, null, "-e", "(+ 1 2)", "-e", "(require 'clojure.test.tap)", "-e", ":published-ok");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
@@ -378,12 +395,12 @@ public class HostProcessTests
         Write("lp2/link/a.clj", "(ns link.a)\n(. System.Console (WriteLine \"loading link.a\"))\n(defn inc2 [x] (clojure.core/inc x))\n");
         var ca = Cleat(null, "-I", "lp2", "-e", "(binding [*compile-files* true] (compile 'link.a))");
         Assert.That(ca.ExitCode, Is.EqualTo(0), ca.ToString());
-        Assert.That(File.ReadAllText(Path.Combine(_dir, "lp2", "link.a.clj.ifc")), Does.Contain(":static true"), "接口文件登记 invokeStatic");
+        Assert.That(EmbeddedResource(Path.Combine(_dir, "lp2", "link.a.dll"), "cleat.ifc"), Does.Contain(":static true"), "接口文件登记 invokeStatic");
 
         Write("lp2/link/b.clj", "(ns link.b\n  (:require [link.a]))\n(defn twice [x] (link.a/inc2 (link.a/inc2 x)))\n");
         var cb = Cleat(null, "-I", "lp2", "-e", "(require 'link.a)", "-e", "(binding [*compile-files* true] (compile 'link.b))");
         Assert.That(cb.ExitCode, Is.EqualTo(0), cb.ToString());
-        byte[] bDll = File.ReadAllBytes(Path.Combine(_dir, "lp2", "link.b.clj.dll"));
+        byte[] bDll = File.ReadAllBytes(Path.Combine(_dir, "lp2", "link.b.dll"));
         Assert.That(Encoding.ASCII.GetString(bDll), Does.Contain("invokeStatic"), "B 的 IL 里有直接调用");
 
         var r = Cleat(null, "-I", "lp2", "-e", "(require 'link.b)", "-e", "[(link.b/twice 1)]");
@@ -396,7 +413,7 @@ public class HostProcessTests
         Assert.That(w.ExitCode, Is.EqualTo(0), w.ToString());
         Assert.That(w.Out.TrimEnd('\n').Split('\n')[^1], Is.EqualTo("100"), w.ToString());
 
-        // :reload 重新执行 dll 的入口（副作用再发生一次）
+        // :reload 重新执行包程序集里命名空间的入口（副作用再发生一次）
         var rl = Cleat(null, "-I", "lp2", "-e", "(require 'link.a)", "-e", "(require 'link.a :reload)");
         Assert.That(rl.ExitCode, Is.EqualTo(0), rl.ToString());
         Assert.That(Regex.Matches(rl.Out, "loading link.a").Count, Is.EqualTo(2), rl.ToString());

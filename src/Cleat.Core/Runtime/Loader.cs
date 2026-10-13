@@ -28,7 +28,6 @@ namespace Cleat.Core.Runtime;
 public static class Loader
 {
     private static readonly string[] SourceExtensions = [".cljr", ".cljc", ".clj"];
-    private static readonly string[] AssemblyExtensions = [".cljr.dll", ".cljc.dll", ".clj.dll"];
 
     private static readonly ConcurrentDictionary<string, Assembly> Loaded = new(StringComparer.OrdinalIgnoreCase);
 
@@ -39,6 +38,7 @@ public static class Loader
     {
         LoadPath = InitialLoadPath();
         AssemblyLoadContext.Default.Resolving += OnResolving;
+        PackageIndex.EnsureInitialized();
     }
 
     /// <summary>运行时基目录：AppContext.BaseDirectory（为空时退到 Cleat.Core.dll 所在目录）。</summary>
@@ -79,6 +79,8 @@ public static class Loader
         {
             LoadPath.Add(full);
         }
+
+        PackageIndex.RegisterDirectory(full);   // 目录里的包程序集（cleat-067）
     }
 
     /// <summary>把 <c>~/x</c> 解析到运行时基目录，其它路径取绝对路径。</summary>
@@ -150,32 +152,11 @@ public static class Loader
     }
 
     /// <summary>
-    /// AOT 程序集常量里的类型（cleat-063）：deftype 定义在别的命名空间的 .clj.dll 里，而常量表在本模块的命名空间
-    /// require 它之前就初始化，那时类型还没登记。按类型名的前缀（a.b.C → 命名空间 a.b）在加载路径上找 a.b.clj.dll，
-    /// 只载入程序集（不跑入口；之后 require 照常载入同一个程序集并跑入口），在其中找类型。JVM 上类按名从类路径加载，同理。
+    /// AOT 程序集常量里的类型（cleat-063）：deftype 定义在别的包程序集里、还没载入时，经包索引按类型名的前缀找到并载入
+    /// （不跑入口；<see cref="PackageIndex.FindType"/>）。
     /// </summary>
-    public static Type LoadAssemblyDefining(string typeName)
-    {
-        if (string.IsNullOrEmpty(typeName) || RuntimeBootstrapFlag.DisableFileLoad) return null;
-        string ns = typeName;
-        int dot;
-        while ((dot = ns.LastIndexOf('.')) > 0)
-        {
-            ns = ns.Substring(0, dot);
-            foreach (string dir in LoadPath.ToArray())
-            {
-                FileInfo dll = FirstExisting(dir, ns, AssemblyExtensions);
-                if (dll is null) continue;
-                Assembly asm = Loaded.Values.FirstOrDefault(a => string.Equals(a.Location, dll.FullName, StringComparison.Ordinal))
-                    ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(dll.FullName);
-                Register(asm);
-                InterfaceFile.TryRegisterBeside(dll.FullName, asm);
-                Type t = asm.GetType(typeName, false);
-                if (t is not null) return t;
-            }
-        }
-        return null;
-    }
+    public static Type LoadAssemblyDefining(string typeName) =>
+        PackageIndex.FindType(typeName);
 
     // ---- 模块程序集 ----
 
@@ -260,14 +241,14 @@ public static class Loader
 
     // ---- RT.load ----
 
-    /// <summary>RT.load：按加载路径找 <c>rel.cljr/.cljc/.clj</c> 或 <c>rel(/→.).clj.dll</c>，找不到抛 FileNotFoundException。</summary>
+    /// <summary>RT.load：包程序集的索引，再按加载路径找 <c>rel.cljr/.cljc/.clj</c>，找不到抛 FileNotFoundException。</summary>
     public static void Load(string relativePath) => TryLoad(relativePath, true);
 
     /// <summary>
-    /// RT.load 的搜索：对加载路径上的每个目录，候选为源码 <c>rel + {.cljr,.cljc,.clj}</c> 与 AOT 程序集 <c>rel(/→.) + {.cljr,.cljc,.clj}.dll</c>；
-    /// 第一个有候选的目录胜出，其中 dll 不比源码旧时用 dll（<see cref="LoadModule"/>），否则用源码（<see cref="RuntimeHooks.LoadSource"/>，
-    /// <c>*compile-files*</c> 为真时 <see cref="RuntimeHooks.Compile"/>）。然后退到 <c>*ns-load-mappings*</c> 与嵌入资源。
-    /// <c>*loaded-libs*</c> 的登记留在 core.clj 的 load-lib 里，这里不碰。
+    /// RT.load 的搜索（designs/17 §2.3）：已登记的包程序集里有 <c>rel</c> 时跑它的入口（<see cref="PackageIndex"/>）；否则加载路径上
+    /// 第一个有源码 <c>rel + {.cljr,.cljc,.clj}</c> 的目录（<see cref="RuntimeHooks.LoadSource"/>，<c>*compile-files*</c> 为真时
+    /// <see cref="RuntimeHooks.Compile"/>）；然后 <c>*ns-load-mappings*</c> 与嵌入资源。<c>*compile-files*</c> 为真时不用包程序集
+    /// （编译要看到源码）。<c>*loaded-libs*</c> 的登记留在 core.clj 的 load-lib 里，这里不碰。
     /// </summary>
     public static bool TryLoad(string relativePath, bool failIfNotFound)
     {
@@ -278,39 +259,25 @@ public static class Loader
 
         string rel = relativePath.TrimStart('/');
         if (BootImageInitializing) return true;
+        if (!RT.booleanCast(RT.CompileFilesVar.deref()) && PackageIndex.Contains(rel))
+        {
+            WithLoadBindings(() => PackageIndex.TryRun(rel, out object r) ? r : null);
+            return true;
+        }
+
         if (!RuntimeBootstrapFlag.DisableFileLoad)
         {
-            FileInfo source = null, assembly = null;
-            string dllRel = rel.Replace('/', '.');
+            FileInfo source = null;
             foreach (string dir in LoadPath.ToArray())
             {
                 source = FirstExisting(dir, rel, SourceExtensions);
-                assembly = FirstExisting(dir, dllRel, AssemblyExtensions);
-                if (source is not null || assembly is not null)
+                if (source is not null)
                 {
                     break;
                 }
             }
 
-            if (source is null && assembly is null)
-            {
-                source = SourceExtensions.Select(ext => RT.FindRemappedFile(rel + ext)).FirstOrDefault(fi => fi is not null);
-            }
-
-            if (assembly is not null && (source is null || assembly.LastWriteTimeUtc >= source.LastWriteTimeUtc))
-            {
-                try
-                {
-                    LoadModule(assembly.FullName, false);
-                    return true;
-                }
-                catch (BootInterface.StaleModuleException e) when (source is not null)
-                {
-                    // cleat-022：对旧 boot 镜像编译的产物 → 回退源码（designs/04 §6）
-                    RT.errPrintWriter().WriteLine($"warning: {assembly.Name}: {e.Message}; loading {source.Name} instead");
-                }
-            }
-
+            source ??= SourceExtensions.Select(ext => RT.FindRemappedFile(rel + ext)).FirstOrDefault(fi => fi is not null);
             if (source is not null)
             {
                 LoadFile(source.FullName, rel + source.Extension);
@@ -326,7 +293,7 @@ public static class Loader
         if (failIfNotFound)
         {
             throw new FileNotFoundException(
-                $"Could not locate {rel} with extensions .cljr, .cljc, .clj, .cljr.dll, .cljc.dll, or .clj.dll on load path [{string.Join(Path.PathSeparator.ToString(), LoadPath)}]."
+                $"Could not locate {rel} in a package assembly or with extensions .cljr, .cljc, .clj on load path [{string.Join(Path.PathSeparator.ToString(), LoadPath)}]."
                 + (rel.Contains('_') ? " Please check that namespaces with dashes use underscores in the Clojure file name." : ""));
         }
 
@@ -344,11 +311,12 @@ public static class Loader
             throw new FileNotFoundException($"source file not found: {full}", full);
         }
 
-        return WithLoadBindings(() =>
+        Func<object> load = () => WithLoadBindings(() =>
         {
             using var rdr = new StreamReader(full);
             return LoadSource(rdr, full, sourceName ?? Path.GetFileName(full));
         });
+        return RuntimeHooks.OnLoaderThread is { } onLoader ? onLoader(load) : load();
     }
 
     /// <summary>把一段源码交给 LoadSource（或 <c>*compile-files*</c> 为真时的 Compile）钩子，绑定 <c>*file*</c> / <c>*source-path*</c>。</summary>
@@ -441,23 +409,6 @@ public static class Loader
     private static bool TryLoadEmbedded(string rel)
     {
         string dotted = rel.Replace('/', '.');
-        foreach (string ext in AssemblyExtensions)
-        {
-            var stream = RT.GetEmbeddedResourceStream(dotted + ext, out _);
-            if (stream is not null)
-            {
-                Assembly asm;
-                using (stream)
-                {
-                    asm = AssemblyLoadContext.Default.LoadFromStream(stream);
-                }
-
-                Register(asm);
-                WithLoadBindings(() => Run(asm));
-                return true;
-            }
-        }
-
         foreach (string ext in SourceExtensions)
         {
             string name = dotted + ext;

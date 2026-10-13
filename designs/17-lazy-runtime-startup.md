@@ -1,6 +1,6 @@
 # 17 包程序集、运行时 NuGet 包与惰性启动：让 C# / F# 直接引用 cleat 的包
 
-状态：**设计**（2026-10-13，任务 [cleat-067](../tasks/cleat-067-lazy-runtime-startup.md)；先于 tools.build 包 cleat-066）。
+状态：**实现**（2026-10-13，任务 [cleat-067](../tasks/cleat-067-lazy-runtime-startup.md)；先于 tools.build 包 cleat-066）。实现中的取舍见 §7。
 
 ## 1. 问题与目标
 
@@ -113,3 +113,24 @@ Clojure 的包（如 `Nrepl`）的 nupkg 依赖 `Cleat.Runtime`（版本区间�
   静态方法、`Main` 入口、defrecord 实例都能用，`CleatRuntime.Var` 能调普通函数；并发的首次调用只启动一次。
 - 本地打包：`dotnet pack` 出 `Cleat.Runtime` 与测试用 Clojure 包的 nupkg，经本地目录源（与 BaGetter 同一机制）被测试项目 restore。
 - 宿主与嵌入的现有行为、启动时间、基准不退化；镜像不动点与全量测试通过；ILVerify 通过。
+
+## 7. 实现记录（cleat-067）
+
+- **索引的键是加载路径**（`nrepl/server`，与 `Loader.TryLoad` 收到的相同），不是命名空间名：`load` 的非命名空间文件（如 `clojure/core_print`）
+  也能进包。特性写成 `CleatNamespace("nrepl/server", "#Module", "Load<i>")`。
+- **入口**：整个包一个单元（每个顶层形式一个 `Init<k>`），编译驱动改写 Lcil：`Initialize`（CleatModule 入口）只做镜像核对与预链接，
+  加载器对每个程序集跑一次；每个文件一个 `Load<i>` 依次调它的 `Init<k>`。Scheme 编译器的 `generate-unit` 不变（镜像不动点不受影响）。
+- **常量表整包共享**：解码 `(var ns name)` 会 intern Var。为了不让还没加载的命名空间提前出现（`requiring-resolve`、`find-ns` 会看错），
+  这些 Var 所在的命名空间建成**待定**的（`Namespace.findOrCreatePending`）：不在 `all-ns` / `find-ns` 里，`in-ns` / `ns` /
+  `create-ns`（`findOrCreate`）时同一个对象转正，Var 的身份不变。
+- **惰性启动的触发点**：Lcil 的程序集子句 `(lazy-start)` 让发射器在**每个**类型初始化器开头调 `RuntimeBootstrap.EnsureStarted()`，
+  没有类型初始化器的类型（接口除外）补一个——`$Constants`、gen-class、deftype / defrecord、fn 类一律覆盖，不必区分。
+- **接口文件**作为嵌入资源 `cleat.ifc` / `cleat.inl`（Lcil 的 `(resource "名字" "文件")`）；嵌入的不核对镜像 id。
+- **登记**：进程里已加载与之后加载的程序集（AssemblyLoad）、TPA（第一次查找时扫一次，跳过框架目录与 `Cleat.*` / `System.*` /
+  `Microsoft.*`）、`Loader.AddPath` 的目录里的 `*.dll`（按元数据读，不载入）。同一个键先登记者赢。`*compile-files*` 为真时不用包程序集。
+- **`compile`**：`(compile 'a.b)` 把这个文件与编译期间从源码加载到的文件编成包程序集 `a.b.dll`（`*compile-path*` 或源码根目录）；
+  宿主 `--compile-package out.dll [--package 名] [--root 目录]… ns…` 编一个包（只收 `--root` 下的文件，缺省全部 `-I`）。
+- **随附库**：`tools/build.cs compile-libs` 编出 `src/boot/Cleat.Clojure.Libs.dll`，宿主登记镜像旁的它；比 Clojure 镜像旧时不登记
+  （镜像重建后没有重编，这些命名空间从源码加载）——没有了"对旧镜像编译则回退源码"，这是唯一保留的新旧比较。
+- **源码嵌入**（§2.1 的"可选"）没有做：`:file` 元数据仍是构建时的路径。
+- **neorepl 的 jack-in** 经 `PackageIndex.Locate("nrepl/cmdline")` 找到 nREPL 的包程序集目录交给服务进程的 `-I`。

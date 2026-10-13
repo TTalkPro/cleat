@@ -68,9 +68,11 @@
       [path])))
 
 (defn- nrepl-source-dir
-  "The load path directory nREPL's sources are in, for the server's load path."
+  "The load path directory nREPL is in, for the server's load path: the one
+  with its package assembly (Nrepl.dll), or with its sources."
   []
-  (or (some (fn [^String dir]
+  (or (some-> (Cleat.Core.Runtime.PackageIndex/Locate "nrepl/cmdline") Path/GetDirectoryName)
+      (some (fn [^String dir]
               (when (File/Exists (Path/Combine dir "nrepl" "cmdline.clj"))
                 (Path/GetFullPath dir)))
             (seq Cleat.Core.Runtime.Loader/LoadPath))

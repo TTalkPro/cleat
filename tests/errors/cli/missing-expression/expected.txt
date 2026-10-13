@@ -1,4 +1,5 @@
 cleat: -e needs an expression
 usage: cleat [--scheme-boot dll] [--boot dll | --no-boot] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]
        cleat [--boot dll | --no-boot] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]
+       cleat -I src... --compile-package out/Name.dll [--package name] [--root dir]... ns...
 exit: 2
