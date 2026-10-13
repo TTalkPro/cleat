@@ -4,17 +4,20 @@ using System.Threading;
 namespace Cleat.Scheme;
 
 /// <summary>
-/// 参数对象的存储：每个参数一个 <see cref="AsyncLocal{T}"/>，值随 ExecutionContext 流动——parameterize 的值在
-/// Task.Run 的子任务里可见；子任务里的赋值不流回。没有设置过的上下文读到回退值：创建时的初始值，以及之后在
-/// **创建线程**上的赋值（启动时主线程上 <c>(p v)</c> 设置的库路径、库集合等，宿主的工作线程也要看到）。
-/// 其他线程上的赋值只影响自己的上下文。（IronScheme 的 async 帧已删，designs/15 §1。）
+/// 参数对象的存储：值随 ExecutionContext 流动——parameterize 的值在 Task.Run 的子任务里可见；子任务里的赋值不流回。
+/// 没有设置过的上下文读到回退值：创建时的初始值，以及之后在**创建线程**上的赋值（启动时主线程上 <c>(p v)</c> 设置的库路径、
+/// 库集合等，宿主的工作线程也要看到）。其他线程上的赋值只影响自己的上下文。（IronScheme 的 async 帧已删，designs/15 §1。）
+/// <para>
+/// 所有参数共用一个 <see cref="AsyncLocal{T}"/>，值是不可变的 (槽, 值) 对数组，写入时复制，值不变时不写（cleat-076，照 skeg iron-065）。
+/// 每个参数各用一个 AsyncLocal 时，ExecutionContext 里的项数随设置过的参数增多，每次写入都要复制整张表（20 项时约 300 ns）；
+/// 只有一项时写入约 45 ns。#nil 直接存 null（数组里的值，不是 AsyncLocal 的"未设置"）。
+/// </para>
 /// </summary>
 public sealed class ParamSlot
 {
-    /// <summary>#nil 是 null，而 AsyncLocal 的 null 表示"未设置"，所以 #nil 另用哨兵存放。</summary>
-    private static readonly object s_nil = new object();
+    /// <summary>当前上下文里设置过的参数：[槽0, 值0, 槽1, 值1, …]，不可变；null 表示一个也没有。</summary>
+    private static readonly AsyncLocal<object[]> s_env = new AsyncLocal<object[]>();
 
-    private readonly AsyncLocal<object> _local = new AsyncLocal<object>();
     private readonly int _ownerThread = Environment.CurrentManagedThreadId;
     private volatile object _fallback;
 
@@ -24,13 +27,37 @@ public sealed class ParamSlot
     {
         get
         {
-            var v = _local.Value;
-            return v == null ? _fallback : ReferenceEquals(v, s_nil) ? null : v;
+            var env = s_env.Value;
+            if (env != null)
+                for (int i = 0; i < env.Length; i += 2)
+                    if (ReferenceEquals(env[i], this)) return env[i + 1];
+            return _fallback;
         }
         set
         {
             if (Environment.CurrentManagedThreadId == _ownerThread) _fallback = value;
-            _local.Value = value ?? s_nil;
+            var env = s_env.Value;
+            object[] next;
+            if (env == null)
+                next = new object[] { this, value };
+            else
+            {
+                int i = 0;
+                while (i < env.Length && !ReferenceEquals(env[i], this)) i += 2;
+                if (i < env.Length)
+                {
+                    if (ReferenceEquals(env[i + 1], value)) return;
+                    next = (object[])env.Clone();
+                }
+                else
+                {
+                    next = new object[env.Length + 2];
+                    Array.Copy(env, next, env.Length);
+                    next[i] = this;
+                }
+                next[i + 1] = value;
+            }
+            s_env.Value = next;
         }
     }
 }

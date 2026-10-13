@@ -81,19 +81,25 @@ public partial class Builtins
     /// <summary>拼接（不可变结果，与原实现一致）。</summary>
     public static object StringAppend(object args)
     {
-        var parts = new List<object>();
+        // 两个宿主字符串（最常见）直接 Concat，不建中间表（iron-067）
+        if (args is Cons c1 && c1.car is string s1 && c1.cdr is Cons c2 && c2.car is string s2 && c2.cdr is EmptyList)
+            return string.Concat(s1, s2);
+        int n = 0;
         bool allPlain = true;
         for (object x = args; x is Cons c; x = c.cdr)
         {
-            parts.Add(c.car);
+            n++;
             if (!(c.car is string)) allPlain = false;
         }
         if (allPlain)
         {
-            var arr = new string[parts.Count];
-            for (int i = 0; i < arr.Length; i++) arr[i] = (string)parts[i];
+            var arr = new string[n];
+            int i = 0;
+            for (object x = args; x is Cons c; x = c.cdr) arr[i++] = (string)c.car;
             return string.Concat(arr);
         }
+        var parts = new List<object>(n);
+        for (object x = args; x is Cons c; x = c.cdr) parts.Add(c.car);
         var cps = new List<int>();
         foreach (var p in parts) cps.AddRange(SchemeString.Slice(p, 0, SchemeString.LengthOf(p)));
         return Immutable(cps);

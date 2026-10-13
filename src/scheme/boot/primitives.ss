@@ -237,7 +237,7 @@
   (primitive $fixnum->string
     (overload "Cleat.Scheme.HostPrimitives" "FixnumToString" 2 #f (pure unsafe) #f))
   (primitive $fixnum?
-    (overload "Cleat.Scheme.HostPrimitives" "IsFixnum" 1 #f (pure unsafe) #f))
+    (overload "Cleat.Scheme.HostPrimitives" "IsFixnum" 1 #f (pure unsafe) $fixnum?))
   (primitive $fl*
     (overload "Cleat.Scheme.Unsafe" "FlMul" 2 #f (pure unsafe) $fl*))
   (primitive $fl+
@@ -287,10 +287,12 @@
     (overload "Cleat.Scheme.HostPrimitives" "FlLog2" 2 #f (pure unsafe) #f))
   (primitive $flnan?
     (overload "Cleat.Scheme.HostPrimitives" "IsFlNan" 1 #f (pure unsafe) #f))
+  (primitive $flonum->exact
+    (overload "Cleat.Scheme.HostPrimitives" "FlonumToExact" 1 #f (pure unsafe) #f))
   (primitive $flonum->ratnum
     (overload "Cleat.Scheme.HostPrimitives" "FlonumToRatnum" 1 #f (pure unsafe) #f))
   (primitive $flonum?
-    (overload "Cleat.Scheme.HostPrimitives" "IsFlonum" 1 #f (pure unsafe) #f))
+    (overload "Cleat.Scheme.HostPrimitives" "IsFlonum" 1 #f (pure unsafe) $flonum?))
   (primitive $flround
     (overload "Cleat.Scheme.HostPrimitives" "FlRound" 1 #f (pure unsafe) #f))
   (primitive $flsin
@@ -744,6 +746,8 @@
     (overload "Cleat.Scheme.HostPrimitives" "VectorToList" 1 #f (unsafe) #f))
   (primitive $vector-clone
     (overload "Cleat.Scheme.HostPrimitives" "VectorClone" 1 #f (unsafe) #f))
+  (primitive $vector-fill!
+    (overload "Cleat.Scheme.HostPrimitives" "VectorFill" 2 #f (unsafe) #f))
   (primitive $vector-index-of
     (overload "Cleat.Scheme.HostPrimitives" "VectorIndexOf" 2 #f (unsafe) #f))
   (primitive $vector-length

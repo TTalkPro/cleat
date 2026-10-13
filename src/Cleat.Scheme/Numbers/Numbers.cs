@@ -724,66 +724,57 @@ public partial class Builtins
         }
     }
 
-    // todo: this can probably be easily ported to Scheme
-    //based on lsqrt()
+    /// <summary>
+    /// 整数平方根 (s, r)：s = ⌊√n⌋，r = n − s²（iron-062，参照 Chez s/5_3.ss 的 exact-integer-sqrt）。
+    /// Zimmermann 的 Karatsuba 平方根（INRIA RR-3805）：n &lt; 2^52 时用 Math.Sqrt 取整再修正；
+    /// 否则 b = ⌊(位长 + 1) / 4⌋，递归求高位 n >> 2b 的 (s', r')，一次除法 (r'·2^b + n 的 [b, 2b) 位) ÷ 2s' 得 (q, u)，
+    /// s = s'·2^b + q，r = u·2^b + n 的低 b 位 − q²；r &lt; 0 时 s 减 1、r 加 2s − 1。代价与一次乘法同阶。
+    /// 原来的牛顿迭代从 n/2 起步，2000 位的数要上千次大数除法（29ms 对 Chez 的 8µs）。
+    /// </summary>
+    internal static (BigInteger S, BigInteger R) SqrtRem(BigInteger n)
+    {
+        if (n < (BigInteger.One << 52))
+        {
+            long v = (long)n;
+            long q = (long)Math.Sqrt(v);
+            while (q * q > v) q--;
+            while ((q + 1) * (q + 1) <= v) q++;
+            return (q, v - q * q);
+        }
+        int b = (int)((n.GetBitLength() + 1) >> 2);
+        var (s1, r1) = SqrtRem(n >> (2 * b));
+        BigInteger mask = (BigInteger.One << b) - 1;
+        BigInteger mid = (n >> b) & mask;
+        var (q2, u) = BigInteger.DivRem((r1 << b) + mid, s1 << 1);
+        BigInteger s = (s1 << b) + q2;
+        BigInteger r = (u << b) + (n & mask) - q2 * q2;
+        if (r.Sign < 0)
+        {
+            r += (s << 1) - 1;
+            s -= 1;
+        }
+        return (s, r);
+    }
+
+    private static BigInteger ToBigIntegerForSqrt(object num) => num is BigInteger b ? b : new BigInteger((int)num);
+
+    /// <summary>(bignum-sqrt n)：n 是完全平方数时为精确的平方根，否则为 flonum。</summary>
     [Primitive("bignum-sqrt", Flags = PrimitiveFlags.Pure)]
     public static object SqrtBigInteger(object num)
     {
-        BigInteger x = (BigInteger)num;
-        BigInteger v0, q0, x1;
-
-        if (x <= 1)
-        {
-            return x;
-        }
-
-        v0 = x;
-        x = x / 2;
-        while (true)
-        {
-            q0 = v0 / x;
-            x1 = (x + q0) / 2;
-            if (q0 >= x)
-                break;
-            x = x1;
-        }
-        if (x1 * x1 != v0)
-        {
-            return Math.Sqrt(v0.ToFloat64());
-        }
-        return x1;
+        BigInteger x = ToBigIntegerForSqrt(num);
+        if (x <= 1) return ToIntegerIfPossible(x);
+        var (s, r) = SqrtRem(x);
+        return r.IsZero ? ToIntegerIfPossible(s) : Math.Sqrt(x.ToFloat64());
     }
 
-    // todo: this can probably be easily ported to Scheme
+    /// <summary>(bignum-sqrt-exact n) → (values s r)，n 为非负精确整数（fixnum 或 bignum）。</summary>
     [Primitive("bignum-sqrt-exact", Flags = PrimitiveFlags.Pure)]
     public static object ExactSqrtBigInteger(object num)
     {
-        BigInteger x = (BigInteger)num;
-        BigInteger v0, q0, x1;
-
-        if (x <= 1)
-        {
-            return x;
-        }
-
-        v0 = x;
-        x = x / 2;
-        while (true)
-        {
-            q0 = v0 / x;
-            x1 = (x + q0) / 2;
-            if (q0 >= x)
-                break;
-            x = x1;
-        }
-        q0 = x1 * x1;
-
-        if (q0 > v0)
-        {
-            x1 = x1 - 1;
-            q0 = x1 * x1;
-        }
-        return Values(ToIntegerIfPossible(x1), ToIntegerIfPossible(v0 - q0));
+        BigInteger x = ToBigIntegerForSqrt(num);
+        var (s, r) = SqrtRem(x);
+        return Values(ToIntegerIfPossible(s), ToIntegerIfPossible(r));
     }
 
     private static object DoubleIfPossible(object res)

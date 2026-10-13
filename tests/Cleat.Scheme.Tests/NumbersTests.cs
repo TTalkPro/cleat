@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using Cleat.Scheme;
 using NUnit.Framework;
 using BigInteger = System.Numerics.BigInteger;
@@ -159,6 +161,36 @@ public class NumbersTests
         Assert.That(BigIntegers.RationalToDouble((one << 53) + 3, one), Is.EqualTo(9007199254740996.0));
         Assert.That(BigIntegers.RationalToDouble(one << 2000, (one << 2000) * 3), Is.EqualTo(1.0 / 3));
     }
+
+    /// <summary>整数平方根（iron-062）：随机的 1 ~ 8000 位数与边界值，s² ≤ n &lt; (s+1)² 且 r = n − s²。</summary>
+    [Test]
+    public void ExactIntegerSqrtIsCorrect()
+    {
+        var rng = new Random(062);
+        var samples = new List<BigInteger> { 0, 1, 2, 3, 4, 15, 16, 17, (BigInteger.One << 52) - 1, BigInteger.One << 52,
+            (BigInteger.One << 52) + 1, (BigInteger.One << 104) - 1, BigInteger.Pow(10, 100), BigInteger.Pow(10, 100) - 1 };
+        for (int i = 0; i < 400; i++)
+        {
+            var bytes = new byte[1 + rng.Next(1000)];
+            rng.NextBytes(bytes);
+            bytes[^1] &= 0x7f;   // 非负
+            var n = new BigInteger(bytes);
+            samples.Add(n);
+            samples.Add(n * n);           // 完全平方
+            samples.Add(n * n - 1);       // 完全平方的前一个
+        }
+        foreach (var n in samples)
+        {
+            if (n.Sign < 0) continue;
+            var mv = (MultipleValues)Builtins.ExactSqrtBigInteger(n < int.MaxValue ? (object)(int)n : n);
+            var s = ToBig(mv[0]);
+            var r = ToBig(mv[1]);
+            Assert.That(s * s <= n && n < (s + 1) * (s + 1), $"s for {n}");
+            Assert.That(r, Is.EqualTo(n - s * s), $"r for {n}");
+        }
+    }
+
+    private static BigInteger ToBig(object o) => o is int i ? i : (BigInteger)o;
 
     [Test]
     public void BignumToDoubleOutsideRange()

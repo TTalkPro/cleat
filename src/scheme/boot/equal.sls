@@ -9,7 +9,7 @@
   (export equal?)
   (import 
     (except (cleat scheme) equal?)
-    (only (cleat scheme unsafe) $make-random $random-next))
+    (only (cleat scheme unsafe) $make-random $random-next $fixnum? $fx=?))
     
   (define k0 400)
   (define kb -40)    
@@ -163,5 +163,14 @@
     (let ([k (pre? x y k0)])
       (and k (or (> k 0) (interleave? x y 0)))))
 
+  ;; 只有序对、向量、字符串、字节向量要按结构比较（与 pre? 的分支相同），其余就是 eqv?（iron-067）：
+  ;; 原子不必走预算与随机化的完整算法
   (define (equal? x y)
-    (precheck/interleave-equal? x y)))
+    (cond
+      [(eq? x y) #t]
+      [(pair? x) (and (pair? y) (precheck/interleave-equal? x y))]
+      [($fixnum? x) (and ($fixnum? y) ($fx=? x y))]
+      [(vector? x) (precheck/interleave-equal? x y)]
+      [(string? x) (and (string? y) (string=? x y))]
+      [(bytevector? x) (and (bytevector? y) (bytevector=? x y))]
+      [else (eqv? x y)])))

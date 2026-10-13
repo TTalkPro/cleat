@@ -71,6 +71,12 @@ See docs/license.txt. |#
       ;; 局部循环（iron-034b，由 lower-loops 产生）：label 绑定 x 与形参 x*，jump 给形参赋值后跳回
       (label x (x* ...) body0 body1)
       (jump x e* ...)
+      ;; 局部逃逸的 call-with-return（cleat-076，照 skeg iron-068；由 lower-loops 产生）：x 绑定为逃逸续延，
+      ;; 只在 body 的空栈位置被单参数直接调用，codegen 编译为存值后跳到帧的出口
+      (escape-frame x body)
+      ;; 内联的 with-clr-exception-handler（cleat-076，照 skeg iron-067；由 lower-loops 产生）：body0 抛出 .NET 异常
+      ;; （续延逃逸除外）时 x 绑定为该异常，在 try 区域之外求值 body1
+      (try-handle x body0 body1)
       ;; 互操作（03 §7）：d 为类型说明（字符串或 #f）、成员说明（字符串或 ("名字" ("P" …))）
       (host-call d0 d1 st e* ...)       ; st 为真表示静态；否则 e* 的第一个是实例
       (host-field-get d0 d1 st e* ...)

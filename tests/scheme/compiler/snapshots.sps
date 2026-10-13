@@ -47,6 +47,32 @@
            loop)
          '0 '0.0 xs)
         ((case-lambda ((j) (case-lambda (() j)))) ($fx+ n '1)))))
+    ;; iron-066：通用算符的 flonum 路径与类型推断——x 与 acc 由 flonum 常量和通用 + * 定为 double，循环内没有类型检查；
+    ;; (< x n) 的 x 已知是 flonum，不生成 fixnum 路径，只检查 n；(/ n '2) 没有 fixnum 路径（结果是分数），只有 flonum 路径与慢路径
+    (generic-fl-loop
+     (case-lambda
+       ((n)
+        ((letrec ((loop (case-lambda
+                          ((x acc)
+                           (if (g$<$1$%b x n)
+                               (loop (g$+$2$%b x '1.0) (g$+$3$%b acc (g$*$4$%b x '0.5)))
+                               (cons acc (g$/$5$%b n '2)))))))
+           loop)
+         '0.0 '0.0))))
+    ;; iron-068：k 只在空栈位置被直接调用的 call-with-return 变成 escape-frame，(k v) 是"存值、br 到出口"，
+    ;; 不建逃逸续延对象、没有 try 区域；循环先降级为 label，k 的调用在 label 体的语句位置
+    (local-escape
+     (case-lambda
+       ((xs)
+        (call-with-return
+          (case-lambda
+            ((k)
+             ((letrec ((loop (case-lambda
+                               ((l) (if (pair? l)
+                                        (begin (if (null? (car l)) (k l) '#f) (loop (cdr l)))
+                                        '#f)))))
+                loop)
+              xs)))))))
     ;; iron-034（D6）：消费者是字面 lambda 的 call-with-values 内联；个数不符时走原来的形式报错
     (inline-values
      (case-lambda

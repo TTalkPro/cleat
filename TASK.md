@@ -80,6 +80,7 @@
 | [cleat-073](tasks/cleat-073-sqlite-console-example.md) | 控制台示例 SqlTable（Clojure 为主，SQLite NuGet，文件 + 一行 SQL 输出表格）与 NuGet 包的原生库（basis 的 native 资产、加载器找原生库）；Cleat.Runtime / Cleat.Cli 1.0.3、ToolsBuild 0.10.17、Neorepl 0.1.2 | 后续 | cleat-072 | 完成 |
 | [cleat-074](tasks/cleat-074-uber-launcher-name.md) | uber 的启动脚本以应用命名（`:launcher`，缺省为 `:uber-dir` 的目录名，代替写死的 `run`）；Cleat.ToolsBuild 0.10.18、Cleat.Runtime / Cleat.Cli 1.0.4 | 后续 | cleat-073 | 完成 |
 | [cleat-075](tasks/cleat-075-textual-port-eol-from-skeg.md) | 文本端口的行尾与缓冲模式（移植 skeg iron-074）：get-line 只认换行符、转码端口在字符层转换行尾、output-port-buffer-mode 返回打开时的模式；R6RS 套件 8971 项全过；tests/scheme/base/r6rs-edges.sps | 后续 | cleat-061 | 完成 |
+| [cleat-076](tasks/cleat-076-skeg-m10-runtime-and-control.md) | Scheme 元层的 M10 性能项（移植 skeg iron-061 ~ 068）：数值快路径、Karatsuba 平方根、guard / try 正常返回不逃逸、局部逃逸编成跳转、内联 with-clr-exception-handler、equal? / assoc / append / values 等热点；base-library.sps；顺带修 neorepl 会话缓存的并发读 | 后续 | cleat-075 | 完成 |
 
 ## 里程碑
 
@@ -96,7 +97,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、056、058 ~ 075（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、056、058 ~ 076（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径

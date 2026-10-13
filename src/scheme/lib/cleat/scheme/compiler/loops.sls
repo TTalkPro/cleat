@@ -10,6 +10,7 @@ See docs/license.txt. |#
 ;;;
 ;;;   D9  单绑定 letrec 的 lambda，全部引用都是参数个数相符的尾调用 ⇒ (label f (x …) body fbody)，调用 ⇒ (jump f e …)
 ;;;   let 绑定、只在尾位置调用的 lambda 也变成 label；消费者是字面 lambda 的 call-with-values 内联（D6）
+;;;   局部逃逸的 call-with-return ⇒ escape-frame、字面 lambda 的 with-clr-exception-handler ⇒ try-handle（cleat-076，照 skeg iron-067 / 068）
 (library (cleat scheme compiler loops)
   (export lower-loops reset-fresh-names! loops-made)
   (import (rnrs) (only (cleat scheme unsafe) $get-environment-variable) (nanopass) (cleat scheme compiler languages))
@@ -46,6 +47,8 @@ See docs/license.txt. |#
       [(try-catch ,e (,d* ,e*) ...) (cons e e*)]
       [(label ,x (,x* ...) ,body0 ,body1) (list body0 body1)]
       [(jump ,x ,e* ...) e*]
+      [(escape-frame ,x ,body) (list body)]
+      [(try-handle ,x ,body0 ,body1) (list body0 body1)]
       [(host-call ,d0 ,d1 ,st ,e* ...) e*]
       [(host-field-get ,d0 ,d1 ,st ,e* ...) e*]
       [(host-field-set ,d0 ,d1 ,st ,e* ...) e*]
@@ -119,6 +122,36 @@ See docs/license.txt. |#
       [(lambda ,nm ,cl* ...)
        (exists (lambda (cl) (check-refs v n (clause-body cl) #f #t)) cl*)]
       [else (r* (kids e))]))
+
+;; e 是否引用变量 v（含嵌套 lambda 内）
+  (define (refs? v e)
+    (nanopass-case (L0 Expr) e
+      [,x (eq? x v)]
+      [(set! ,x ,e) (or (eq? x v) (refs? v e))]
+      [else (exists (lambda (c) (refs? v c)) (kids e))]))
+
+  ;; 局部逃逸（cleat-076，照 skeg iron-068）：e 在空栈位置求值时，k 的每次出现是否都是空栈位置上的单参数直接调用——
+  ;; 尾位置、if 的三个部分、begin 的各项、let 的体、label 的两个体、try 区域的体（经 leave 出去）。
+  ;; 实参、let 的右边、jump 的实参、finally 体、try-catch 的处理器、嵌套 lambda 里一律不许出现 k。满足时调用 k 可以编译成
+  ;; "存值、跳到帧的出口"，不需要逃逸续延对象和异常。其余节点（含 clj-case）里出现 k 就不算
+  (define (local-escape? k e)
+    (define (none? e) (not (refs? k e)))
+    (let ok? ((e e))
+      (nanopass-case (L0 Expr) e
+        [,x (not (eq? x k))]
+        [(call ,e0 ,e* ...)
+         (if (var-ref? e0 k)
+             (and (= (length e*) 1) (none? (car e*)))
+             (and (none? e0) (for-all none? e*)))]
+        [(if ,e0 ,e1 ,e2) (and (ok? e0) (ok? e1) (ok? e2))]
+        [(begin ,e* ... ,e) (and (for-all ok? e*) (ok? e))]
+        [(let ([,x* ,e*] ...) ,body) (and (for-all none? e*) (ok? body))]
+        [(label ,x (,x* ...) ,body0 ,body1) (and (ok? body0) (ok? body1))]
+        [(try-finally ,e0 ,e1) (and (ok? e0) (none? e1))]
+        [(try-catch ,e (,d* ,e*) ...) (and (ok? e) (for-all none? e*))]
+        [(try-handle ,x ,body0 ,body1) (and (ok? body0) (ok? body1))]
+        [(escape-frame ,x ,body) (ok? body)]
+        [else (none? e)])))
 
   ;; 把 e 的尾位置上对 v 的调用改成 jump
   (define (jumpify v node)
@@ -224,6 +257,26 @@ See docs/license.txt. |#
                   (primcall call-with-values
                             (lambda #f (clause () #f ,t))
                             (lambda ,nm (clause (,(map (lambda (x) (fresh "arg")) x*) ...) ,(and rest (fresh "rest")) (quote #f))))))))]
+      ;; (call-with-return (lambda (k) body)) 且 k 只在空栈位置被直接调用（cleat-076，照 skeg iron-068）→ (escape-frame k body)：
+      ;; codegen 把 (k v) 编译成存值后 br / leave 到帧的出口。按降级后的体判断（命名 let 已是 label）。
+      ;; 其余情况保持原语调用（逃逸续延对象 + 异常）
+      [(primcall ,pr ,e* ...)
+       (guard (and (eq? pr 'call-with-return) (= (length e*) 1)
+                   (let-values (((x* body) (simple-lambda (car e*)))) (and x* (= (length x*) 1)))))
+       (let-values (((x* body) (simple-lambda (car e*))))
+         (let ((k (car x*)) (body (Expr body)))
+           (if (local-escape? k body)
+               `(escape-frame ,k ,body)
+               (let-values (((nm) (nanopass-case (L0 Expr) (car e*) [(lambda ,nm ,cl) nm])))
+                 `(primcall ,pr (lambda ,nm (clause (,k) #f ,body)))))))]
+      ;; (with-clr-exception-handler (lambda (ex) handler) (lambda () body)) → (try-handle ex body handler)（cleat-076，照 skeg iron-067）：
+      ;; 不再为处理器和体各分配一个闭包、经 C# 原语调用。端口操作的 host-guard 与 with-exception-handler 都是这个形状
+      [(primcall ,pr ,e* ...)
+       (guard (and (eq? pr 'with-clr-exception-handler) (= (length e*) 2)
+                   (thunk-literal? (cadr e*)) (consumer-literal? (car e*))
+                   (let-values (((nm x* rest hbody) (consumer-parts (car e*)))) (and (= (length x*) 1) (not rest)))))
+       (let-values (((nm x* rest hbody) (consumer-parts (car e*))))
+         `(try-handle ,(car x*) ,(Expr (thunk-literal? (cadr e*))) ,(Expr hbody)))]
       ;; let（也包括立即调用的 lambda，即展开器的 let）：见 definitions 中的 lower-let
       [(let ([,x* ,e*] ...) ,body) (lower-let x* e* body)]
       [(letrec ([,x* ,e*] ...) ,body)

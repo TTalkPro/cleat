@@ -39,11 +39,13 @@ See docs/license.txt. |#
       values))
       
       
-  (define (values . x)
-    (if (and (not (null? x))
-             (null? (cdr x)))
-        (car x)
-        ($make-multiple-values (list->vector x))))      
+  ;; 固定个数的子句不建剩余参数表（cleat-076，照 skeg iron-067）
+  (define values
+    (case-lambda
+      [(x) x]
+      [(a b) ($make-multiple-values (vector a b))]
+      [(a b c) ($make-multiple-values (vector a b c))]
+      [x ($make-multiple-values (list->vector x))]))      
     
   ;; dynamic-wind 已删除（cleat-058，skeg 13 §3）：用 try … (finally …) 或 $try/finally
 

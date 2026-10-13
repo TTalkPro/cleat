@@ -643,6 +643,8 @@
     ($fllog2                                     iu)
     ($flnan?                                     iu)
     ($flonum->ratnum                             iu)
+    ($flonum->exact                              iu)
+    ($vector-fill!                               iu)
     ($flonum?                                    iu)
     ($flround                                    iu)
     ($flsin                                      iu)

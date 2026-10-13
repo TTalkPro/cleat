@@ -15,7 +15,9 @@
 (defn- read-port [^String f]
   (when (File/Exists f)
     (try
-      (Int64/Parse (str/trim (slurp f)))
+      ;; File/ReadAllText reads shared: slurp opens with FileShare/None, and
+      ;; CLI calls running at the same time read the same port file.
+      (Int64/Parse (str/trim (File/ReadAllText f)))
       ;; Unreadable, or not a number: either way there's no port in it.
       (catch Exception _ nil))))
 

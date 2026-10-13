@@ -414,17 +414,38 @@ See docs/license.txt. |#
                (= (denominator (real-part obj)) 1)))]
       [else #f]))                
 
-  (define/contract (zero? num:number)
-    (= num 0))
-    
-  (define/contract (positive? num:number)
-    (> num 0))
-      
-  (define/contract (negative? num:number)
-    (< num 0))
+;; fixnum / flonum 快路径（iron-064，参照 Chez s/5_3.ss 的 type-case）：入口先按类型分派，
+  ;; 原来的通用实现（含契约检查）放在同名的内层定义里，报错信息不变。
+  (define zero?
+    (let ()
+      (define/contract (zero? num:number) (= num 0))
+      (lambda (num)
+        (cond
+          [($fixnum? num) ($fx=? num 0)]
+          [($flonum? num) ($fl=? num 0.0)]
+          [else (zero? num)]))))
+
+  (define positive?
+    (let ()
+      (define/contract (positive? num:number) (> num 0))
+      (lambda (num)
+        (cond
+          [($fixnum? num) ($fx>? num 0)]
+          [($flonum? num) ($fl>? num 0.0)]
+          [else (positive? num)]))))
+
+  (define negative?
+    (let ()
+      (define/contract (negative? num:number) (< num 0))
+      (lambda (num)
+        (cond
+          [($fixnum? num) ($fx<? num 0)]
+          [($flonum? num) ($fl<? num 0.0)]
+          [else (negative? num)]))))
     
   (define (inexact num)
     (cond
+      [($fixnum? num) ($fixnum->flonum num)]
       [(or (complexnum? num) 
            (flonum? num)) 
          num]
@@ -438,6 +459,8 @@ See docs/license.txt. |#
         
   (define (exact num)
     (cond
+      [($fixnum? num) num]
+      [(and ($flonum? num) (not (flnan? num)) (not (flinfinite? num))) ($flonum->exact num)]
       [(complexnum? num)
         (cond 
           [(zero? (complexnum-imag-part num))
@@ -839,12 +862,21 @@ See docs/license.txt. |#
       (assertion-violation 'div "cannot be nan or infinite" x1 x2))
     (generic-div x1 x2))
              
-  (define/contract (abs x1:real)
-    (if (negative? x1)
-        (- x1)
-        x1))
+  (define abs
+    (let ()
+      (define/contract (abs x1:real)
+        (if (negative? x1)
+            (- x1)
+            x1))
+      (lambda (x)
+        (cond
+          [(and ($fixnum? x) (not ($fx=? x -2147483648))) ($fxabs x)]
+          [($flonum? x) ($flabs x)]
+          [else (abs x)]))))
         
-  (define/contract (floor x:real)
+  (define floor
+    (let ()
+      (define/contract (floor x:real)
     (cond
       [(exact-integer? x) x]
       [(ratnum? x)
@@ -852,8 +884,15 @@ See docs/license.txt. |#
           (exact (if (negative? x) (- r 1) r)))]
       [else
         ($flfloor (inexact x))]))
+      (lambda (x)
+        (cond
+          [($fixnum? x) x]
+          [($flonum? x) ($flfloor x)]
+          [else (floor x)]))))
              
-  (define/contract (ceiling x:real)
+  (define ceiling
+    (let ()
+      (define/contract (ceiling x:real)
     (cond
       [(exact-integer? x) x]
       [(ratnum? x)
@@ -861,8 +900,15 @@ See docs/license.txt. |#
           (exact (if (positive? x) (+ r 1) r)))]
       [else
         ($flceiling (inexact x))]))
+      (lambda (x)
+        (cond
+          [($fixnum? x) x]
+          [($flonum? x) ($flceiling x)]
+          [else (ceiling x)]))))
 
-  (define/contract (truncate x:real)
+  (define truncate
+    (let ()
+      (define/contract (truncate x:real)
     (cond
       [(exact-integer? x) x]
       [(ratnum? x)
@@ -873,8 +919,15 @@ See docs/license.txt. |#
           (if (exact? x)
               (exact r)
               r))]))
+      (lambda (x)
+        (cond
+          [($fixnum? x) x]
+          [($flonum? x) ($fltruncate x)]
+          [else (truncate x)]))))
             
-  (define/contract (round x:real)
+  (define round
+    (let ()
+      (define/contract (round x:real)
     (cond
       [(exact-integer? x) x]
       [(ratnum? x)
@@ -897,8 +950,17 @@ See docs/license.txt. |#
                  n)))]
       [else
         ($flround (inexact x))]))
+      (lambda (x)
+        (cond
+          [($fixnum? x) x]
+          [($flonum? x) ($flround x)]
+          [else (round x)]))))
         
-  (define/contract (sqrt num:number)
+  ;; 非负 flonum 直接 $flsqrt；精确整数交给宿主（完全平方数得精确根，否则 flonum，iron-062）。
+  ;; 原来精确参数把 flonum 结果再 exact，(sqrt 2) 得到一个分数。
+  (define sqrt
+    (let ()
+      (define/contract (sqrt num:number)
     (cond
       [(rectnum? num)
         (sqrt (rectnum->complexnum num))]
@@ -909,19 +971,35 @@ See docs/license.txt. |#
       [(bignum? num)
         (bignum-sqrt num)]
       [(infinite? num) num]
-      [else
-        (let ((r ($flsqrt (inexact num))))
-          (if (exact? num)
-              (exact r)
-              r))]))
+      [(ratnum? num)
+        (let ((n (bignum-sqrt (ratnum-numerator num)))
+              (d (bignum-sqrt (ratnum-denominator num))))
+          (if (and (exact? n) (exact? d))
+              (/ n d)
+              ($flsqrt (inexact num))))]
+      [(fixnum? num) (bignum-sqrt num)]
+      [else ($flsqrt (inexact num))]))
+      (lambda (num)
+        (cond
+          [(and ($flonum? num) ($fl>=? num 0.0)) ($flsqrt num)]
+          [(and ($fixnum? num) ($fx>=? num 0)) (bignum-sqrt num)]
+          [else (sqrt num)]))))
               
-  (define/contract (even? n:integer)
-    (zero? (mod n 2)))
+  (define even?
+    (let ()
+      (define/contract (even? n:integer) (zero? (mod n 2)))
+      (lambda (n)
+        (if ($fixnum? n) ($fx=? ($fxand n 1) 0) (even? n)))))
 
-  (define/contract (odd? n:integer)
-    (not (zero? (mod n 2))))
+  (define odd?
+    (let ()
+      (define/contract (odd? n:integer) (not (zero? (mod n 2))))
+      (lambda (n)
+        (if ($fixnum? n) (not ($fx=? ($fxand n 1) 0)) (odd? n)))))
   
-  (define/contract (max a:real . rest:real)
+  (define max
+    (let ()
+      (define/contract (max a:real . rest:real)
     (fold-left 
       (lambda (a b)
         (cond
@@ -934,8 +1012,13 @@ See docs/license.txt. |#
                   r))]))
       a 
       rest))
+      (case-lambda
+        [(a b) (if (and ($fixnum? a) ($fixnum? b)) (if ($fx<? a b) b a) (max a b))]
+        [(a . rest) (apply max a rest)])))
     
-  (define/contract (min a:real . rest:real)
+  (define min
+    (let ()
+      (define/contract (min a:real . rest:real)
     (fold-left 
       (lambda (a b)
         (cond
@@ -947,7 +1030,10 @@ See docs/license.txt. |#
                   (inexact r)
                   r))]))
       a 
-      rest))   
+      rest))
+      (case-lambda
+        [(a b) (if (and ($fixnum? a) ($fixnum? b)) (if ($fx>? a b) b a) (min a b))]
+        [(a . rest) (apply min a rest)])))   
     
   (define/contract gcd
     (case-lambda
@@ -1000,15 +1086,26 @@ See docs/license.txt. |#
 	                     (list (- (car rat)) (cadr rat))))
       (else '(0 1))))              
                 
+;; (iron-062) fixnum 与 bignum 都交给宿主的 Karatsuba 平方根（Numbers.SqrtRem）；
+  ;; 原来 fixnum 经 sqrt / floor / exact，bignum 用从 n/2 起步的牛顿迭代
   (define (exact-integer-sqrt num)
-    (if (bignum? num)
+    (if (and (or (fixnum? num) (bignum? num)) (not (negative? num)))
         (bignum-sqrt-exact num)
-        (let* ((r (sqrt num))
-               (rf (exact (floor r)))
-               (rest (- num (* rf rf))))
-          (values rf rest))))
+        (assertion-violation 'exact-integer-sqrt "not a non-negative exact integer" num)))
   
+  ;; fixnum 的非负 fixnum 次幂、flonum 的 fixnum 次幂直接算（iron-064）；其余走通用实现。
+  ;; 通用实现每次调用要分配内部 define 的闭包，所以快路径放在它外面。
   (define (expt obj1 obj2)
+    (cond
+      [(and ($fixnum? obj2) ($fx>=? obj2 0))
+       (cond
+         [($fixnum? obj1) ($bignum-expt obj1 obj2)]
+         [($flonum? obj1) ($flexpt obj1 ($fixnum->flonum obj2))]
+         [else (generic-expt obj1 obj2)])]
+      [(and ($flonum? obj1) ($flonum? obj2) ($fl>=? obj1 0.0)) ($flexpt obj1 obj2)]
+      [else (generic-expt obj1 obj2)]))
+
+  (define (generic-expt obj1 obj2)
     (define (make-restriction-violation)
       (condition
         (make-implementation-restriction-violation)

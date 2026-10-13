@@ -46,6 +46,8 @@ See docs/license.txt. |#
           [(break) '()]
           [(try-finally ,e0 ,e1) (set-union (Expr e0) (Expr e1))]
           [(try-catch ,e (,d* ,e*) ...) (union* (cons (Expr e) (map Expr e*)))]
+          [(escape-frame ,x ,body) (set-minus (Expr body) (list x))]
+          [(try-handle ,x ,body0 ,body1) (set-union (Expr body0) (set-minus (Expr body1) (list x)))]
           [(host-call ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-get ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-set ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]

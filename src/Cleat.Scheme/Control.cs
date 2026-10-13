@@ -11,7 +11,8 @@ public static class Control
     /// <summary>以参数数组调用过程（统一入口）。</summary>
     public static object Call(object proc, object[] args) => Proc(proc, "apply").InvokeN(args);
 
-    /// <summary>(apply proc arg ... list)：最后一个参数必须是正规列表。</summary>
+    /// <summary>(apply proc arg ... list)：最后一个参数必须是正规列表。
+    /// 先数出实参个数，不超过 4 个时直接 Invoke0..4，不建中间表（iron-067）。</summary>
     [Primitive("apply", Flags = PrimitiveFlags.AllowTailCall)]
     public static object Apply(object proc, params object[] args)
     {
@@ -19,21 +20,43 @@ public static class Control
         if (args.Length == 0)
             return Errors.AssertionViolation("apply", "expected at least 2 arguments", proc);
 
-        var all = new List<object>(args.Length + 4);
-        for (int i = 0; i < args.Length - 1; i++) all.Add(args[i]);
-        object tail = args[args.Length - 1];
-        for (; tail is Cons c; tail = c.cdr) all.Add(c.car);
+        int fixedCount = args.Length - 1;
+        object list = args[fixedCount];
+        int count = fixedCount;
+        object tail = list;
+        for (; tail is Cons c; tail = c.cdr) count++;
         if (tail is not EmptyList)
-            return Errors.AssertionViolation("apply", "last argument is not a proper list", args[args.Length - 1]);
+            return Errors.AssertionViolation("apply", "last argument is not a proper list", list);
 
-        return all.Count switch
+        if (count > 4)
+        {
+            var all = new object[count];
+            Array.Copy(args, all, fixedCount);
+            int i = fixedCount;
+            for (var t = list; t is Cons c; t = c.cdr) all[i++] = c.car;
+            return p.InvokeN(all);
+        }
+        object a0 = null, a1 = null, a2 = null, a3 = null;
+        int k = 0;
+        void Put(object v)
+        {
+            switch (k++)
+            {
+                case 0: a0 = v; break;
+                case 1: a1 = v; break;
+                case 2: a2 = v; break;
+                default: a3 = v; break;
+            }
+        }
+        for (int i = 0; i < fixedCount; i++) Put(args[i]);
+        for (var t = list; t is Cons c; t = c.cdr) Put(c.car);
+        return count switch
         {
             0 => p.Invoke0(),
-            1 => p.Invoke1(all[0]),
-            2 => p.Invoke2(all[0], all[1]),
-            3 => p.Invoke3(all[0], all[1], all[2]),
-            4 => p.Invoke4(all[0], all[1], all[2], all[3]),
-            _ => p.InvokeN(all.ToArray()),
+            1 => p.Invoke1(a0),
+            2 => p.Invoke2(a0, a1),
+            3 => p.Invoke3(a0, a1, a2),
+            _ => p.Invoke4(a0, a1, a2, a3),
         };
     }
 
@@ -45,7 +68,14 @@ public static class Control
     {
         var c = Proc(consumer, "call-with-values");
         object r = Proc(producer, "call-with-values").Invoke0();
-        return r is MultipleValues mv ? c.InvokeN(mv.ToArray()) : c.Invoke1(r);
+        if (r is not MultipleValues mv) return c.Invoke1(r);
+        return mv.Length switch
+        {
+            0 => c.Invoke0(),
+            2 => c.Invoke2(mv[0], mv[1]),
+            3 => c.Invoke3(mv[0], mv[1], mv[2]),
+            _ => c.InvokeN(mv.ToArray()),
+        };
     }
 
     /// <summary>

@@ -152,10 +152,10 @@ public static class HostPrimitives
     [Primitive("$condition?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object IsCondition(object o) => RT.Bool(o is Condition);
 
-    [Primitive("$fixnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$fixnum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Inline = "$fixnum?")]
     public static object IsFixnum(object o) => RT.Bool(o is int);
 
-    [Primitive("$flonum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    [Primitive("$flonum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure, Inline = "$flonum?")]
     public static object IsFlonum(object o) => RT.Bool(o is double);
 
     [Primitive("$bignum?", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
@@ -398,6 +398,14 @@ public static class HostPrimitives
         return v;
     }
 
+    /// <summary>(vector-fill! v x) 的主体：Array.Fill（iron-067，原来是 Scheme 循环，每元素约 3 ns）。</summary>
+    [Primitive("$vector-fill!", Flags = PrimitiveFlags.Unsafe)]
+    public static object VectorFill(object v, object value)
+    {
+        Array.Fill((object[])v, value);
+        return Unspecified;
+    }
+
     /// <summary>任何宿主数组的长度（object[]、byte[]、int[]、double[] …）。</summary>
     [Primitive("$vector-length", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object VectorLength(object v) => RT.Box(((Array)v).Length);
@@ -409,7 +417,19 @@ public static class HostPrimitives
     public static object ListToVector(object list) => Builtins.ListToVector(list);
 
     [Primitive("$list-copy", Flags = PrimitiveFlags.Unsafe)]
-    public static object ListCopy(object list) => Cons.FromList((IEnumerable)list);
+    public static object ListCopy(object list)
+    {
+        if (list is not Cons) return Cons.FromList((IEnumerable)list);
+        // 直接沿 cdr 复制，不经 IEnumerable 枚举器（iron-067）；与 FromList 一样遇到非序对的 cdr 即停
+        Cons first = null, last = null;
+        for (var t = list; t is Cons c; t = c.cdr)
+        {
+            var n = new Cons(c.car);
+            if (last == null) first = n; else last.cdr = n;
+            last = n;
+        }
+        return first;
+    }
 
     private static Type ElementType(object typeName) => ((Symbol)typeName).Name switch
     {
@@ -749,6 +769,19 @@ public static class HostPrimitives
 
     [Primitive("$fixnum->bignum", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object FixnumToBignum(object n) => new BigInteger((int)n);
+
+    /// <summary>
+    /// 有限 flonum 的精确值（iron-064）：整数值时直接得 fixnum / bignum，否则为分数。
+    /// 原来经 <c>$flonum->ratnum</c> 构造分数再化简，整数值也要求最大公约数（一次 181ns）。
+    /// </summary>
+    [Primitive("$flonum->exact", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
+    public static object FlonumToExact(object d)
+    {
+        double x = (double)d;
+        if (Math.Floor(x) == x)
+            return x >= int.MinValue && x <= int.MaxValue ? RT.Box((int)x) : Builtins.ToIntegerIfPossible(new BigInteger(x));
+        return (Fraction)x;   // 非整数值：分母不为 1
+    }
 
     [Primitive("$flonum->ratnum", Flags = PrimitiveFlags.Unsafe | PrimitiveFlags.Pure)]
     public static object FlonumToRatnum(object d) => (Fraction)(double)d;

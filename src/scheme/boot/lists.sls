@@ -80,13 +80,24 @@ See docs/license.txt. |#
   
   (define (list . x) x)     
       
+  ;; 下标是非负 fixnum 时用 $fx 计数、$cdr 前进（iron-067，原来每步经通用的 zero? negative? - cdr）；
+  ;; 其他下标走原来的通用循环（报错与原来相同）
   (define (list-tail lst index)
+    (if (and (fixnum? index) ($fx>=? index 0))
+        (let loop ((l lst) (i index))
+          (cond
+            [($fx=? i 0) l]
+            [(pair? l) (loop ($cdr l) ($fx- i 1))]
+            [else (assertion-violation 'list-tail "index out of range" lst index)]))
+        (generic-list-tail lst index)))
+
+  (define (generic-list-tail lst index)
     (cond
       [(zero? index) lst]
       [(or (null? lst) (negative? index))
         (assertion-violation 'list-tail "index out of range" lst index)]
       [else
-        (list-tail (cdr lst) (- index 1))]))      
+        (generic-list-tail (cdr lst) (- index 1))]))
         
   (define (list-ref lst index)
     (car (list-tail lst index)))
@@ -162,7 +173,14 @@ See docs/license.txt. |#
               t
               (assv obj r)))))          
 
+  ;; 键是符号、fixnum、字符、布尔、空表时 equal? 就是 eqv?（参照 Chez 的 mem-eq?，iron-067）
+  (define (eqv-key? obj)
+    (or (symbol? obj) (fixnum? obj) (char? obj) (boolean? obj) (null? obj)))
+
   (define (assoc obj lst)
+    (if (eqv-key? obj) (assv obj lst) (assoc/equal obj lst)))
+
+  (define (assoc/equal obj lst)
     (if (null? lst) 
         #f
         (let ((obj obj)
@@ -170,7 +188,7 @@ See docs/license.txt. |#
               (r (cdr lst)))
           (if (equal? obj (car t)) 
               t
-              (assoc obj r)))))          
+              (assoc/equal obj r)))))          
             
   (define (assp p? lst)
     (if (null? lst) 
@@ -197,11 +215,14 @@ See docs/license.txt. |#
             (memv obj (cdr lst)))))
 
   (define (member obj lst)
+    (if (eqv-key? obj) (memv obj lst) (member/equal obj lst)))
+
+  (define (member/equal obj lst)
     (if (null? lst) 
         #f
         (if (equal? obj (car lst)) 
             lst
-            (member obj (cdr lst)))))
+            (member/equal obj (cdr lst)))))
 
   (define (memp p? lst)
     (if (null? lst) 
@@ -360,6 +381,19 @@ See docs/license.txt. |#
         (append-fast! a b)
         a]))
 
+  ;; 两个参数的 append：复制 a 时把尾接上 b，一遍完成（iron-067；原来是 list-copy 一遍、append! 找尾一遍）。
+  ;; a 已检查是正规列表
+  (define (append2 a b)
+    (if (null? a)
+        b
+        (let ((head (cons ($car a) '())))
+          (let loop ((tail head) (l ($cdr a)))
+            (if (null? l)
+                (begin ($set-cdr! tail b) head)
+                (let ((c (cons ($car l) '())))
+                  ($set-cdr! tail c)
+                  (loop c ($cdr l))))))))
+
   (define append
     (case-lambda
       [()   '()]
@@ -367,7 +401,7 @@ See docs/license.txt. |#
       [(obj1 obj2)
         (unless (list? obj1)
           (assertion-violation 'append "not a list" obj1))
-        (append! (list-copy obj1) obj2)]
+        (append2 obj1 obj2)]
       [(obj i1 . il)
         (unless (list? obj)
           (assertion-violation 'append "not a list" obj))

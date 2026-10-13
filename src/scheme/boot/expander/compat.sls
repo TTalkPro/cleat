@@ -112,11 +112,16 @@
   (define (read-library-source-file file-name)
 		(call-with-input-file file-name read-annotated))
 		
-  ;; 参数对象：每个参数一个 AsyncLocal 槽（designs/10-async.md §2 D7），值随 ExecutionContext 流动；
-  ;; 没有设置过的线程/任务读到回退值：创建时的初始值，以及之后创建线程上的赋值（$param-ref 回退，与旧实现相同）
+  ;; 参数对象：槽的值随 ExecutionContext 流动（designs/10-async.md §2 D7，Parameters.cs）；
+  ;; 没有设置过的线程/任务读到回退值：创建时的初始值，以及之后创建线程上的赋值（$param-ref 回退，与旧实现相同）。
+  ;; 没有 fender 时不经 values 调用（每次赋值省约 20 ns，iron-065）
   (define make-parameter
     (case-lambda
-      ((x) (make-parameter x values))
+      ((x)
+       (let ((slot ($make-param-slot x)))
+         (case-lambda
+           (() ($param-ref slot))
+           ((v) ($param-set! slot v)))))
       ((x fender)
        (assert (procedure? fender))
        (let ((slot ($make-param-slot (fender x))))

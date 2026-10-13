@@ -1529,11 +1529,13 @@
   ;; (raise-continuable con)——穿过 guard 的 raise-continuable 得到外层处理器的值。与 R6RS 的差别：子句测试在 raise 处的
   ;; 动态环境里求值（逃逸续延不能重入）。.NET 异常在 with-exception-handler 一级已包成 &clr-exception 条件，
   ;; guard 不需另外处理：(guard (e ((clr-condition? e) …)) (clr-call …))。
+  ;; 正常返回不逃逸（cleat-076，照 skeg iron-063，同 Chez 的 $guard）：body 的值（多值是一个对象）直接从 call-with-return 返回，
+  ;; 只有子句命中时才经 outerk 逃逸；逃逸是一次 .NET 异常，原来每次正常返回也付这笔开销。
   (define guard-macro
     (lambda (x)
-      (define (gen-clauses con outerk clause*)
+      (define (gen-clauses con outerk handler clause*)
         (define (deliver e*)
-          `(,outerk (lambda () ,@e*)))
+          `(begin (set! ,handler (lambda () ,@e*)) (,outerk #f)))
         (define (f x k)
           (syntax-match x (=>)
             ((e => p)
@@ -1560,17 +1562,17 @@
         ((_ (con clause* ...) b b* ...)
          (id? con)
          (let* ((outerk (gensym))
-                (code (gen-clauses con outerk clause*)))
+                (handler (gensym))
+                (r (gensym))
+                (code (gen-clauses con outerk handler clause*)))
            (bless
-             `((call-with-return
-                 (lambda (,outerk)
-                   (with-exception-handler
-                     (lambda (,con) ,code)
-                     (lambda ()
-                       (call-with-values
-                         (lambda () ,b ,@b*)
-                         (lambda args
-                           (,outerk (lambda () (apply values args))))))))))))))))
+             `(let ((,handler #f))
+                (let ((,r (call-with-return
+                            (lambda (,outerk)
+                              (with-exception-handler
+                                (lambda (,con) ,code)
+                                (lambda () ,b ,@b*))))))
+                  (if ,handler (,handler) ,r)))))))))
 
   ;; throw（cleat-058，skeg 13 §3a）：Clojure 式 (throw e)，直接映射为 .NET 的 throw（$throw 编译为 IL throw）；
   ;; e 必须是 Exception 对象。抛出的异常回卷到最近的 with-exception-handler 时包成 &clr-exception 条件（guard 能接住），
@@ -1615,18 +1617,14 @@
                                                    (set! ,caught (clr-condition-exception ,c))
                                                    (,k #f))
                                                  (raise-continuable ,c)))
-                                           (lambda ()
-                                             (call-with-values
-                                               (lambda () ,b)
-                                               (lambda args
-                                                 (,k (lambda () (apply values args)))))))))))
+                                           (lambda () ,b))))))
                              (if ,caught
                                  (cond
                                    ,@(map (lambda (p)
                                             `((clr-is-internal ',(car p) ,caught)
                                               (let ((,(cadr p) ,caught)) ,@(caddr p))))
                                           parts))
-                                 (,r))))))))
+                                 ,r)))))))
           (if fin
               (syntax-match fin ()
                 ((_) b)

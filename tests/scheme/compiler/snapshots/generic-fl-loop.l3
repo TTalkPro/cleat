@@ -1,0 +1,15 @@
+(lambda #f
+  ()
+  (clause
+    (n)
+    #f
+    (label
+      loop
+      (x acc)
+      (jump loop '0.0 '0.0)
+      (if (call (gref g$<$1$%b) x n)
+        (jump
+          loop
+          (call (gref g$+$2$%b) x '1.0)
+          (call (gref g$+$3$%b) acc (call (gref g$*$4$%b) x '0.5)))
+        (primcall cons acc (call (gref g$/$5$%b) n '2))))))

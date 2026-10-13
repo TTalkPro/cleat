@@ -400,18 +400,14 @@ See docs/license.txt. |#
         ($make-vector k)]
       [(k fill)
         (let ((vec (make-vector k)))
-          (vector-fill! vec fill)
+          ($vector-fill! vec fill)
           vec)]))
           
   (define/contract (vector-length vec:vector)
     ($vector-length vec))            
   
   (define/contract (vector-fill! vec:vector val)
-    (let: (((vec : Object[]) vec)
-           ((len : Int32) (vector-length vec)))
-      (do ((i 0 ($fx+ i 1)))
-          (($fx=? i len))
-        ($vector-set! vec i val))))
+    ($vector-fill! vec val))
         
   (define/contract (vector->list vec:vector)
     ($vector->list vec))   

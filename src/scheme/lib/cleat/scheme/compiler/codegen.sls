@@ -686,7 +686,12 @@ See docs/license.txt. |#
        (cond ((memq pr fx-result-prims) 'fx) ((memq pr fl-result-prims) 'fl) (else #f))]
       [(call ,e0 ,e* ...)
        (let ((op (inline-op e0 (length e*))))
-         (and op (memq (car op) '(add sub mul div)) (memq (cdr op) '(fx fl)) (cdr op)))]
+         (and op (memq (car op) '(add sub mul div))
+              (case (cdr op)
+                ((fx fl) (cdr op))
+                ;; 通用算符（iron-066）：操作数都是 flonum 时结果是 flonum；fixnum 的和可能溢出成 bignum，不算 fx
+                (else (fold-left (lambda (t a) (and t (meet-type t (let ((ta (expr-type a env))) (and (memq ta '(fl top)) ta)))))
+                                 'top e*)))))]
       [(if ,e0 ,e1 ,e2) (meet-type (expr-type e1 env) (expr-type e2 env))]
       [(begin ,e* ... ,e) (expr-type e env)]
       [(let ([,x* ,e*] ...) ,body) (expr-type body env)]
@@ -756,6 +761,8 @@ See docs/license.txt. |#
       [(break) (void)]
       [(try-finally ,e0 ,e1) (Expr e0) (Expr e1)]
       [(try-catch ,e (,d* ,e*) ...) (Expr e) (for-each Expr e*)]
+      [(escape-frame ,x ,body) (Expr body)]
+      [(try-handle ,x ,body0 ,body1) (Expr body0) (Expr body1)]
       [(label ,x (,x* ...) ,body0 ,body1)
        (hashtable-set! labels x x*)
        (for-each (lambda (p) (add-def! p #f)) x*)
@@ -829,6 +836,8 @@ See docs/license.txt. |#
       [(throw ,e) (when (more?) (Expr e))]
       [(try-finally ,e0 ,e1) (when (more?) (Expr e0) (Expr e1))]
       [(try-catch ,e (,d* ,e*) ...) (when (more?) (Expr e) (for-each Expr e*))]
+      [(escape-frame ,x ,body) (when (more?) (Expr body))]
+      [(try-handle ,x ,body0 ,body1) (when (more?) (Expr body0) (Expr body1))]
       [(label ,x (,x* ...) ,body0 ,body1) (when (more?) (Expr body0) (Expr body1))]
       [(jump ,x ,e* ...) (when (more?) (for-each Expr e*))]
       [(host-call ,d0 ,d1 ,st ,e* ...) (when (more?) (for-each Expr e*))]
@@ -866,6 +875,9 @@ See docs/license.txt. |#
             [(if ,e0 ,e1 ,e2) (append (deps e1) (deps e2))]
             [(begin ,e* ... ,e) (deps e)]
             [(let ([,x* ,e*] ...) ,body) (deps body)]
+            [(call ,e0 ,e* ...)              ; 通用算符的类型取决于操作数
+             (let ((op (inline-op e0 (length e*))))
+               (if (and op (eq? (cdr op) 'generic)) (apply append (map deps e*)) '()))]
             [else '()]))
         (let-values (((ks vs) (hashtable-entries fixed-types)))
           (vector-for-each (lambda (k v) (hashtable-set! env k v) (hashtable-set! var-types k v) (hashtable-set! sound-types k v)) ks vs))
@@ -977,7 +989,7 @@ See docs/license.txt. |#
            (fallback))]
       [(call ,e0 ,e* ...)
        (let ((op (inline-op e0 (length e*))))
-         (if (and op (eq? (cdr op) 'fl) (eq? t 'fl) (memq (car op) '(add sub mul div))
+         (if (and op (memq (cdr op) '(fl generic)) (eq? t 'fl) (memq (car op) '(add sub mul div))
                   (for-all (lambda (a) (eq? (expr-type a var-types) 'fl)) e*))
              (begin
                (for-each (lambda (a) (cg-raw a mc 'fl)) e*)
@@ -1238,6 +1250,8 @@ See docs/license.txt. |#
         [(throw ,e) (walk e)]
         [(try-finally ,e0 ,e1) (walk e0) (walk e1)]
         [(try-catch ,e (,d* ,e*) ...) (walk e) (for-each walk e*)]
+        [(escape-frame ,x ,body) (on-bind x) (walk body)]
+        [(try-handle ,x ,body0 ,body1) (walk body0) (on-bind x) (walk body1)]
         [(label ,x (,x* ...) ,body0 ,body1) (for-each on-bind x*) (walk body0) (walk body1)]
         [(jump ,x ,e* ...) (for-each walk e*)]
         [(host-call ,d0 ,d1 ,st ,e* ...) (for-each walk e*)]
@@ -1277,6 +1291,7 @@ See docs/license.txt. |#
         ((tlocal) (emit! mc `(ldloc ,(cadr loc))) (box-raw! mc (cddr loc)))
         ((targ) (emit! mc `(ldarg ,(cadr loc))) (box-raw! mc (cddr loc)))
         ((field dfield) (emit! mc '(ldarg 0) `(ldfld ,(mctx-class mc) ,(cdr loc))))
+        ((escape) (error 'codegen "local escape continuation used as a value" x))
         ((self) (cond
                   ((pair? (cdr loc)) (emit! mc `(ldsfld ,(cadr loc) ,(cddr loc))))   ; 034d：共享持有类中的过程
                   ((mctx-static? mc) (emit! mc `(ldsfld ,(mctx-class mc) "Instance")))
@@ -1330,6 +1345,23 @@ See docs/license.txt. |#
 
   ;; ———————————————— 表达式 ————————————————
 
+;; 局部逃逸（cleat-076，照 skeg iron-068）：k 不是对象，只是"结果变量 + 出口标签"。体在值上下文里求值后存入结果变量；
+  ;; (k v) 在 cg-call 里编译成"v 存入结果变量，br 到出口"，中间隔着 try 区域时用 leave（运行 finally）。
+  ;; lower-loops 保证 k 只出现在空栈位置（或体内有 try 时整个帧从空栈开始），所以出口处的栈深度一致
+  (define (cg-local-escape! x body mc ctx)
+    (let ((tmp (new-local! mc obj)) (after (new-label! mc)))
+      (hashtable-set! (mctx-vars mc) x (list 'escape tmp after (mctx-try-depth mc)))
+      (cg body mc 'value)
+      (emit! mc `(stloc ,tmp) `(label ,after) `(ldloc ,tmp))
+      (finish-value! mc ctx)))
+
+  ;; (k v) 的 k 是局部逃逸时返回它的 (escape 结果变量 出口 try 深度)
+  (define (local-escape-target e0 mc argc)
+    (and (= argc 1)
+         (nanopass-case (L3 Expr) e0
+           [,x (let ((loc (hashtable-ref (mctx-vars mc) x #f))) (and loc (eq? (car loc) 'escape) loc))]
+           [else #f])))
+
   ;; 原始签名的方法里尾位置的叶子表达式（不是 if / let / label … 这类把上下文传给子表达式的）类型已经是返回的原始类型时
   ;; 直接以原始值返回（cleat-042）；其余照常，finish-value! 在尾位置转换
   (define (cg e mc ctx)
@@ -1382,6 +1414,8 @@ See docs/license.txt. |#
       [(throw ,e) #f]
       [(try-finally ,e0 ,e1) #f]
       [(try-catch ,e (,d* ,e*) ...) #f]
+      [(escape-frame ,x ,body) #f]
+      [(try-handle ,x ,body0 ,body1) #f]
       [else #t]))
 
   (define (cg* e mc ctx)
@@ -1420,6 +1454,35 @@ See docs/license.txt. |#
            ((value) (emit! mc '(ldnull)))
            ((test) (emit! mc '(ldc.i4 0)))
            (else (void))))]
+      [(escape-frame ,x ,body)
+       ;; 局部逃逸的 call-with-return（cleat-076，照 skeg iron-068；lower-loops 产生）：k 只在空栈位置被直接调用，
+       ;; 不创建 EscapeContinuation，(k v) 是存值后 br / leave 到帧的出口，见 cg-local-escape!
+       (cg-local-escape! x body mc ctx)]
+      [(try-handle ,x ,body0 ,body1)
+       ;; 内联的 with-clr-exception-handler（cleat-076，照 skeg iron-067；lower-loops 产生，处理器与体都是字面 lambda）：
+       ;; try { 值 = body0 } catch (Exception e) { e 是 ContinuationException ? rethrow : x = e; leave CAUGHT }；
+       ;; CAUGHT: 值 = body1（在 try 区域之外求值，与原语的结果相同）。不为处理器和体分配闭包
+        (bind-local! mc x)
+        (let* ((tmp (new-local! mc obj))
+               (exc (new-local! mc obj))
+               (after (new-label! mc)) (caught (new-label! mc)) (own (new-label! mc)))
+          (let ((b (in-try mc (lambda () (cg body0 mc 'value) (emit! mc `(stloc ,tmp) `(leave ,after)))))
+                (handler
+                  (with-buffer mc
+                    (lambda ()
+                      (emit! mc `(stloc ,exc)
+                                `(ldloc ,exc) `(isinst ,continuation-exn-type) `(brfalse ,own)
+                                '(rethrow)
+                                `(label ,own)
+                                `(ldloc ,exc))
+                      (store-var! mc x)
+                      (emit! mc `(leave ,caught))))))
+            (emit! mc `(try (body ,@b)
+                            (catch ,exception-type ,@handler))
+                   `(label ,caught))
+            (cg body1 mc 'value)
+            (emit! mc `(stloc ,tmp) `(label ,after) `(ldloc ,tmp))
+            (finish-value! mc ctx)))]
       [(quote ,d)
        (case ctx
          ((effect) (void))
@@ -1845,7 +1908,8 @@ See docs/license.txt. |#
   ;; 05 §7；用户库自己定义的 + 的位置带进程戳，不会被误认）。两个参数时生成"都是 fixnum（或 flonum）→ 直接算，
   ;; 否则调原过程"，原过程负责其余类型与报错。
   (define inline-ops
-    '(("+" add . generic) ("-" sub . generic) ("*" mul . generic)
+    '(("+" add . generic) ("-" sub . generic) ("*" mul . generic) ("/" div . generic)
+      ("quotient" quot . generic) ("remainder" rem . generic)
       ("=" eq . generic) ("<" lt . generic) ("<=" le . generic) (">" gt . generic) (">=" ge . generic)
       ("fx+" add . fx) ("fx-" sub . fx) ("fx*" mul . fx)
       ("fx=?" eq . fx) ("fx<?" lt . fx) ("fx<=?" le . fx) ("fx>?" gt . fx) ("fx>=?" ge . fx)
@@ -1884,75 +1948,171 @@ See docs/license.txt. |#
       [(quote ,d) (and (flonum? d) (not (nan? d)) (not (infinite? d)) d)]
       [else #f]))
 
+;; 操作数的静态类型：fx / fl（常量或类型推断得出），否则 #f
+  (define (static-type e)
+    (cond ((fixnum-constant e) 'fx)
+          ((flonum-constant e) 'fl)
+          (else (let ((t (expr-type e var-types))) (and (memq t '(fx fl)) t)))))
+
+  ;; 要生成的快路径（按顺序尝试）：fx 算符只有 fx 路径、fl 算符只有 fl 路径；通用算符（iron-066）视操作数而定——
+  ;; 有 flonum 操作数就不可能走 fx 路径；fl 路径要求至少一个操作数可能是 flonum（全是 fixnum 时 (/ 3 4) 是 3/4，
+  ;; 不能按 double 算），其中的 fixnum 常量与已知 fixnum 转成 double（与通用算术的浮点传染相同：(* 1.5 0) 为 0.0）。
+  ;; / 没有 fx 路径（结果是分数），quotient / remainder 没有 fl 路径。
+  (define (inline-paths op kind types)
+    (case kind
+      ((fx) '(fx))
+      ((fl) '(fl))
+      (else
+       (let ((fx? (and (not (eq? op 'div)) (not (memq 'fl types))))
+             (fl? (and (not (memq op '(quot rem))) (or (memq 'fl types) (memq #f types)) #t)))
+         (append (if fx? '(fx) '()) (if fl? '(fl) '()))))))
+
+  ;; 两个参数的算术与比较。每条快路径检查类型未知的操作数（isinst），都符合就直接算，否则试下一条，最后是慢路径：
+  ;; 与一般调用相同（经值槽、callvirt Invoke2），由原过程处理其余类型并报错。操作数都已知类型时没有检查，也没有慢路径。
   (define (cg-inline-op op kind e0 e* mc ctx)
-    (let* ((fl? (eq? kind 'fl))
-           (clr-type (if fl? double-type int32-type))
-           (const (lambda (e) (if fl? (flonum-constant e) (fixnum-constant e))))
+    (let* ((types (map static-type e*))
+           (paths (inline-paths op kind types))
            (slow (new-label! mc))
            (end (new-label! mc))
-           (raw-t (if fl? 'fl 'fx))
+           (slow-used? #f)
            ;; 操作数从左到右求值：常量留在原处；已知类型的（iron-034c）存入原始值的临时变量，不再检查；其余存入 object 临时变量
-           (slots (map (lambda (e)
+           (slots (map (lambda (e t)
                          (cond
-                           ((const e) (cons 'const e))
-                           ((eq? (expr-type e var-types) raw-t)
-                            (cg-raw e mc raw-t)
-                            (let ((t (new-local! mc clr-type))) (emit! mc `(stloc ,t)) (cons 'raw t)))
+                           ((or (fixnum-constant e) (flonum-constant e)) (list 'const e))
+                           (t (cg-raw e mc t)
+                              (let ((l (new-local! mc (type-clr t)))) (emit! mc `(stloc ,l)) (list 'raw l t)))
                            (else
                             (cg e mc 'value)
-                            (let ((t (new-local! mc obj))) (emit! mc `(stloc ,t)) (cons 'local t)))))
-                       e*)))
+                            (let ((l (new-local! mc obj))) (emit! mc `(stloc ,l)) (list 'local l)))))
+                       e* types)))
       (define (load-boxed s)
         (case (car s)
-          ((local) (emit! mc `(ldloc ,(cdr s))))
-          ((raw) (emit! mc `(ldloc ,(cdr s))) (box-raw! mc raw-t))
-          (else (cg (cdr s) mc 'value))))
-      (define (load-raw s)
+          ((local) (emit! mc `(ldloc ,(cadr s))))
+          ((raw) (emit! mc `(ldloc ,(cadr s))) (box-raw! mc (caddr s)))
+          (else (cg (cadr s) mc 'value))))
+      ;; 以路径 p 的原始类型压栈
+      (define (load-raw s p)
         (case (car s)
-          ((local) (emit! mc `(ldloc ,(cdr s)) `(unbox.any ,clr-type)))
-          ((raw) (emit! mc `(ldloc ,(cdr s))))
-          (else (let ((k (const (cdr s)))) (emit! mc (if fl? `(ldc.r8 ,k) `(ldc.i4 ,k)))))))
-      ;; 类型检查
-      (for-each (lambda (s)
-                  (when (eq? (car s) 'local)
-                    (emit! mc `(ldloc ,(cdr s)) `(isinst ,clr-type) `(brfalse ,slow))))
-                slots)
-      (for-each load-raw slots)
-      (case op
-        ((eq lt le gt ge)
-         (emit-compare! mc (if fl?
-                               (case op ((eq) '$fl=?) ((lt) '$fl<?) ((le) '$fl<=?) ((gt) '$fl>?) (else '$fl>=?))
-                               (case op ((eq) '$fx=?) ((lt) '$fx<?) ((le) '$fx<=?) ((gt) '$fx>?) (else '$fx>=?)))
-                        fl?)
-         (finish-bool! mc ctx))
-        (else
-         (cond
-           (fl?
-            (emit! mc (case op ((add) '(add)) ((sub) '(sub)) ((mul) '(mul)) (else '(div))) `(box ,double-type))
-            (finish-value! mc ctx))
-           ((eq? kind 'generic)
-            (emit! mc `(call ,arith-type ,(case op ((add) "Add") ((sub) "Subtract") (else "Multiply")) (,int32-type ,int32-type) ,obj))
-            (finish-value! mc ctx))
-           (else
-            ;; fx+ fx- fx*：溢出时助手返回 null，转去慢路径由原过程报错
-            (let ((r (new-local! mc obj)))
-              (emit! mc `(call ,arith-type ,(case op ((add) "FxAdd") ((sub) "FxSubtract") (else "FxMultiply")) (,int32-type ,int32-type) ,obj)
-                     `(stloc ,r) `(ldloc ,r) `(brfalse ,slow) `(ldloc ,r))
-              (finish-value! mc ctx))))))
-      (unless (eq? ctx 'tail) (emit! mc `(br ,end)))
+          ((local) (emit! mc `(ldloc ,(cadr s)) `(unbox.any ,(type-clr p))))
+          ((raw) (emit! mc `(ldloc ,(cadr s))) (when (and (eq? p 'fl) (eq? (caddr s) 'fx)) (emit! mc '(conv.r8))))
+          (else (let ((e (cadr s)))
+                  (if (eq? p 'fl)
+                      (emit! mc `(ldc.r8 ,(or (flonum-constant e) (inexact (fixnum-constant e)))))
+                      (emit! mc `(ldc.i4 ,(fixnum-constant e))))))))
+      (define (to! l) (set! slow-used? (or slow-used? (eq? l slow))) l)
+      (define (emit-path! p next)
+        (let ((fl? (eq? p 'fl)))
+          (for-each (lambda (s)
+                      (when (eq? (car s) 'local)
+                        (emit! mc `(ldloc ,(cadr s)) `(isinst ,(type-clr p)) `(brfalse ,(to! next)))))
+                    slots)
+          ;; quotient / remainder（iron-061）：除数为 0 或 -1 时转慢路径（报错；最小 fixnum ÷ -1 溢出），由原过程处理
+          (when (memq op '(quot rem))
+            (let ((d (cadr slots)))
+              (unless (and (eq? (car d) 'const) (not (memv (fixnum-constant (cadr d)) '(0 -1))))
+                (load-raw d p) (emit! mc '(ldc.i4 0) `(beq ,(to! slow)))
+                (load-raw d p) (emit! mc '(ldc.i4 -1) `(beq ,(to! slow))))))
+          (for-each (lambda (s) (load-raw s p)) slots)
+          (case op
+            ((eq lt le gt ge)
+             (emit-compare! mc (if fl?
+                                   (case op ((eq) '$fl=?) ((lt) '$fl<?) ((le) '$fl<=?) ((gt) '$fl>?) (else '$fl>=?))
+                                   (case op ((eq) '$fx=?) ((lt) '$fx<?) ((le) '$fx<=?) ((gt) '$fx>?) (else '$fx>=?)))
+                            fl?)
+             (finish-bool! mc ctx))
+            (else
+             (cond
+               (fl?
+                (emit! mc (case op ((add) '(add)) ((sub) '(sub)) ((mul) '(mul)) (else '(div))) `(box ,double-type))
+                (finish-value! mc ctx))
+               ((memq op '(quot rem))
+                (emit! mc (if (eq? op 'quot) '(div) '(rem)) `(call ,rt-type "Box" (,int32-type) ,obj))
+                (finish-value! mc ctx))
+               ((eq? kind 'generic)
+                (emit! mc `(call ,arith-type ,(case op ((add) "Add") ((sub) "Subtract") (else "Multiply")) (,int32-type ,int32-type) ,obj))
+                (finish-value! mc ctx))
+               (else
+                ;; fx+ fx- fx*：溢出时助手返回 null，转去慢路径由原过程报错
+                (let ((r (new-local! mc obj)))
+                  (emit! mc `(call ,arith-type ,(case op ((add) "FxAdd") ((sub) "FxSubtract") (else "FxMultiply")) (,int32-type ,int32-type) ,obj)
+                         `(stloc ,r) `(ldloc ,r) `(brfalse ,(to! slow)) `(ldloc ,r))
+                  (finish-value! mc ctx))))))
+          (unless (eq? ctx 'tail) (emit! mc `(br ,end)))))
+      (let loop ((ps paths))
+        (unless (null? ps)
+          (let ((next (if (null? (cdr ps)) slow (new-label! mc))))
+            (emit-path! (car ps) next)
+            (unless (eq? next slow) (emit! mc `(label ,next)))
+            (loop (cdr ps)))))
       ;; 慢路径：与一般调用相同（经值槽、callvirt Invoke2），错误信息与 who 由原过程给出
-      (emit! mc `(label ,slow))
-      (cg e0 mc 'value)
-      (emit! mc `(call ,calls-type "Proc" (,obj) ,proc-type))
-      (for-each load-boxed slots)
-      (when (tail-ok? mc ctx) (emit! mc '(tail)))
-      (emit! mc (invoke-method 2))
-      (finish-value! mc ctx)
+      (when (or slow-used? (null? paths))
+        (emit! mc `(label ,slow))
+        (cg e0 mc 'value)
+        (emit! mc `(call ,calls-type "Proc" (,obj) ,proc-type))
+        (for-each load-boxed slots)
+        (when (tail-ok? mc ctx) (emit! mc '(tail)))
+        (emit! mc (invoke-method 2))
+        (finish-value! mc ctx))
       (unless (eq? ctx 'tail) (emit! mc `(label ,end)))))
+
+  ;; 一元数值谓词在调用处内联（iron-064，参照 Chez cpprim.ss 的 zero? / even? 等）：参数是 fixnum 时
+  ;; 一条比较，否则调原过程（其余类型与报错由它处理）。fixnum? / flonum? 直接是类型检查。
+  (define unary-inline-ops
+    '(("zero?" . zero) ("positive?" . pos) ("negative?" . neg) ("even?" . even) ("odd?" . odd)
+      ("fixnum?" . fixnum?) ("flonum?" . flonum?)))
+  (define unary-op-cache (make-eq-hashtable))
+  (define (unary-op-lookup s)
+    (let ((r (hashtable-ref unary-op-cache s 'unknown)))
+      (if (eq? r 'unknown)
+          (let ((r (and (boot-location? s)
+                        (let ((r (assoc (pretty s) unary-inline-ops))) (and r (cdr r))))))
+            (hashtable-set! unary-op-cache s r)
+            r)
+          r)))
+  (define (unary-inline-op e0 argc)
+    (and (= argc 1)
+         (nanopass-case (L3 Expr) e0
+           [(gref ,s) (unary-op-lookup s)]
+           [else #f])))
+
+  (define (cg-unary-op op e0 e mc ctx)
+    (case op
+      ((fixnum? flonum?)
+       (cg e mc 'value)
+       (emit! mc `(isinst ,(if (eq? op 'fixnum?) int32-type double-type)) '(ldnull) '(cgt.un))
+       (finish-bool! mc ctx))
+      (else
+       (let ((slow (new-label! mc)) (end (new-label! mc)) (t (new-local! mc obj)))
+         (cg e mc 'value)
+         (emit! mc `(stloc ,t) `(ldloc ,t) `(isinst ,int32-type) `(brfalse ,slow) `(ldloc ,t) `(unbox.any ,int32-type))
+         (case op
+           ((zero) (emit! mc '(ldc.i4 0) '(ceq)))
+           ((pos) (emit! mc '(ldc.i4 0) '(cgt)))
+           ((neg) (emit! mc '(ldc.i4 0) '(clt)))
+           ((even) (emit! mc '(ldc.i4 1) '(and) '(ldc.i4 0) '(ceq)))
+           (else (emit! mc '(ldc.i4 1) '(and))))
+         (finish-bool! mc ctx)
+         (unless (eq? ctx 'tail) (emit! mc `(br ,end)))
+         (emit! mc `(label ,slow))
+         (cg e0 mc 'value)
+         (emit! mc `(call ,calls-type "Proc" (,obj) ,proc-type) `(ldloc ,t))
+         (when (tail-ok? mc ctx) (emit! mc '(tail)))
+         (emit! mc (invoke-method 1))
+         (finish-value! mc ctx)
+         (unless (eq? ctx 'tail) (emit! mc `(label ,end)))))))
 
   (define (cg-call e0 e* mc ctx)
     (let ((argc (length e*)))
       (cond
+        ((local-escape-target e0 mc argc)
+         => (lambda (loc)
+              (cg (car e*) mc 'value)
+              (emit! mc `(stloc ,(cadr loc))
+                     (if (> (mctx-try-depth mc) (cadddr loc)) `(leave ,(caddr loc)) `(br ,(caddr loc))))
+              ;; 之后的代码不可达；按上下文补一个占位值，让后续指令的栈形状照常
+              (case ctx ((value) (emit! mc '(ldnull))) ((test) (emit! mc '(ldc.i4 0))) (else (void)))))
+        ((and opt-inline? (not (top-level-mc? mc)) (unary-inline-op e0 argc))
+         => (lambda (op) (cg-unary-op op e0 (car e*) mc ctx)))
         ;; 顶层初始化代码（Init 方法）只执行一次，内联的代码量换不回时间（发射与 JIT 更贵），只在过程体里内联
         ((and opt-inline? (not (top-level-mc? mc)) (inline-op e0 argc))
          => (lambda (op.kind) (cg-inline-op (car op.kind) (cdr op.kind) e0 e* mc ctx)))
@@ -2021,6 +2181,8 @@ See docs/license.txt. |#
            ((null?) (args!) (emit! mc `(ldsfld ,empty-list-type "Instance") '(ceq)) (finish-bool! mc ctx))
            ((nil?) (args!) (emit! mc '(ldnull) '(ceq)) (finish-bool! mc ctx))
            ((pair?) (args!) (emit! mc `(isinst ,cons-type) '(ldnull) '(cgt.un)) (finish-bool! mc ctx))
+           (($fixnum?) (args!) (emit! mc `(isinst ,int32-type) '(ldnull) '(cgt.un)) (finish-bool! mc ctx))
+           (($flonum?) (args!) (emit! mc `(isinst ,double-type) '(ldnull) '(cgt.un)) (finish-bool! mc ctx))
            (($fx+ $fx* $fxand $fxior $fxxor)
             (unbox-args! int32-type)
             (emit! mc (case pr (($fx+) '(add)) (($fx*) '(mul)) (($fxand) '(and)) (($fxior) '(or)) (else '(xor))))

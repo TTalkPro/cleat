@@ -9,6 +9,9 @@
 ;; cleat: ported to the CLR. The cache file is a path string; the lock is the
 ;; lock file opened with FileShare/None (FileChannel.lock on the JVM), which
 ;; another process gets by retrying, and the cache is replaced with File/Move.
+;; The cache is read with File/ReadAllText (shared reading): slurp opens files
+;; with FileShare/None (clojure.clr.io), so a reader outside the lock made the
+;; locked one fail, see an empty cache and drop others' sessions.
 
 (defn- make-parents [^String file]
   (Directory/CreateDirectory (Path/GetDirectoryName (Path/GetFullPath file))))
@@ -16,7 +19,7 @@
 (defn- read-cache [^String file]
   (let [cache (when (File/Exists file)
                 ;; It's only a cache, so a broken one counts as empty.
-                (try (edn/read-string (slurp file)) (catch Exception _ nil)))]
+                (try (edn/read-string (File/ReadAllText file)) (catch Exception _ nil)))]
     (if (map? cache) cache {})))
 
 (defn- write-cache!

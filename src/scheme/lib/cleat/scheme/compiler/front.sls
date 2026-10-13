@@ -80,6 +80,9 @@ See docs/license.txt. |#
           [(break) '()]
           [(try-finally ,e0 ,e1) (set-union (Expr e0) (Expr e1))]
           [(try-catch ,e (,d* ,e*) ...) (union* (cons (Expr e) (map Expr e*)))]
+          ;; escape-frame 绑定 x；try-handle 在 body1 中绑定 x（cleat-076）
+          [(escape-frame ,x ,body) (set-minus (Expr body) (list x))]
+          [(try-handle ,x ,body0 ,body1) (set-union (Expr body0) (set-minus (Expr body1) (list x)))]
           [(host-call ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-get ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
           [(host-field-set ,d0 ,d1 ,st ,e* ...) (union* (map Expr e*))]
@@ -252,7 +255,12 @@ See docs/license.txt. |#
          `(label ,x (,x* ...) ,b0 ,b1))]
       [(jump ,x ,[e*] ...)
        (let ((p* (hashtable-ref label-params x '())))
-         `(jump ,x ,(map (lambda (p e) (if (boxed? p) `(box ,e) e)) p* e*) ...))])
+         `(jump ,x ,(map (lambda (p e) (if (boxed? p) `(box ,e) e)) p* e*) ...))]
+      ;; try-handle 的异常变量被闭包捕获又赋值时，进入处理体先换成 Box（escape-frame 的 k 只被直接调用，不会装箱）
+      [(try-handle ,x ,[body0] ,[body1])
+       (if (boxed? x)
+           `(try-handle ,x ,body0 (begin (set! ,x (box ,x)) ,body1))
+           `(try-handle ,x ,body0 ,body1))])
     (Clause : Clause (ir) -> Clause ()
       [(clause (,x* ...) ,x ,[body])
        ;; 被装箱的形参：进入时把形参换成 Box

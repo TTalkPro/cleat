@@ -28,6 +28,7 @@ See docs/license.txt. |#
     (rnrs mutable-pairs)
     (cleat scheme contracts)
     (cleat scheme records printer)
+    (only (cleat scheme unsafe) $fx=? $fx<? $fx+ $fxdiv $fxmod $bignum? $bignum-quotient $bignum-remainder)
     (only (rnrs r5rs) 
       delay    
       null-environment
@@ -42,15 +43,66 @@ See docs/license.txt. |#
       [(< n 0) -1]
       (else 0)))
  
-  (define/contract (quotient n1:integer n2:integer)
+  ;; quotient / remainder / modulo（iron-061，参照 Chez s/5_3.ss）：按类型分派，类型检查就是分派本身。
+  ;; 两个 fixnum：截断除法原语（$fxdiv / $fxmod 即 C# 的 / 与 %）；除数为 -1 时单独处理（最小 fixnum 取反溢出）。
+  ;; 两个精确整数（含 bignum）：BigInteger 一次除法。其余（如 7.0 这样的非精确整数）走原来的通用实现与契约检查。
+  (define (exact-integer*? x) (or (fixnum? x) ($bignum? x)))
+
+  (define (divide-by-zero who n1 n2)
+    (assertion-violation who "divide by zero" n1 n2))
+
+  (define/contract (generic-quotient n1:integer n2:integer)
     (* (sign n1) (sign n2) (div (abs n1) (abs n2))))
-  
-  (define/contract (remainder n1:integer n2:integer)
+
+  (define/contract (generic-remainder n1:integer n2:integer)
     (* (sign n1) (mod (abs n1) (abs n2))))
-  
-  (define/contract (modulo n1:integer n2:integer)
+
+  (define/contract (generic-modulo n1:integer n2:integer)
     (let ((s (sign n2)))
       (* s (mod (* s n1) (abs n2)))))
+
+  (define (quotient n1 n2)
+    (cond
+      [(and (fixnum? n1) (fixnum? n2))
+       (cond
+         [($fx=? n2 0) (divide-by-zero 'quotient n1 n2)]
+         [($fx=? n2 -1) (- n1)]
+         [else ($fxdiv n1 n2)])]
+      [(and (exact-integer*? n1) (exact-integer*? n2))
+       (if (eqv? n2 0) (divide-by-zero 'quotient n1 n2) ($bignum-quotient n1 n2))]
+      [else (generic-quotient n1 n2)]))
+
+  (define (remainder n1 n2)
+    (cond
+      [(and (fixnum? n1) (fixnum? n2))
+       (cond
+         [($fx=? n2 0) (divide-by-zero 'remainder n1 n2)]
+         [($fx=? n2 -1) 0]
+         [else ($fxmod n1 n2)])]
+      [(and (exact-integer*? n1) (exact-integer*? n2))
+       (if (eqv? n2 0) (divide-by-zero 'remainder n1 n2) ($bignum-remainder n1 n2))]
+      [else (generic-remainder n1 n2)]))
+
+  ;; 余数不为 0 且与除数异号时加上除数（|r| < |n2|，fixnum 情形不会溢出）
+  (define (modulo n1 n2)
+    (cond
+      [(and (fixnum? n1) (fixnum? n2))
+       (cond
+         [($fx=? n2 0) (divide-by-zero 'modulo n1 n2)]
+         [($fx=? n2 -1) 0]
+         [else
+          (let ((r ($fxmod n1 n2)))
+            (if (and (not ($fx=? r 0)) (not (eq? ($fx<? r 0) ($fx<? n2 0))))
+                ($fx+ r n2)
+                r))])]
+      [(and (exact-integer*? n1) (exact-integer*? n2))
+       (if (eqv? n2 0)
+           (divide-by-zero 'modulo n1 n2)
+           (let ((r ($bignum-remainder n1 n2)))
+             (if (and (not (eqv? r 0)) (not (eq? (negative? r) (negative? n2))))
+                 (+ r n2)
+                 r)))]
+      [else (generic-modulo n1 n2)]))
     
   ;; promise（iron-041，designs/08-std-library.md D7）：SRFI-45 / R7RS 的迭代强制，长的 lazy 链不增长栈。
   ;; box 是可变序对 (完成? . 值或 thunk)；未完成时 thunk 返回另一个 promise。强制时把它的 box 内容搬过来，
