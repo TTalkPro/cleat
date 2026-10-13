@@ -386,7 +386,8 @@
   cleat host and runtime (assemblies, both images, driver libraries, bundled
   libs) at its root, and the project contents (:class-dir) and all dependency
   package assemblies from the basis under lib/. With :main, writes launchers
-  run / run.cmd (dotnet cleat.dll -I lib -m main args...).
+  NAME / NAME.cmd (dotnet cleat.dll -I lib -m main args...), NAME being
+  :launcher or the uber dir's name (target/app -> app/app).
 
   Use :exclude to exclude specific paths from the deps. Use conflict-handlers
   to handle conflicts that may occur if two sources include a file at the same
@@ -399,6 +400,8 @@
     :class-dir - required, local class dir to include
     :basis - used to pull dep package dirs
     :main - main namespace symbol
+    :launcher - the launchers' name, default: the uber dir's name; it may not
+                be the name of a runtime file at the root (cleat, cleat.dll ...)
     :exclude - coll of string patterns (regex) to exclude from deps
     :conflict-handlers - map of string pattern (regex) to built-in handlers,
                          symbols to eval, or function instances
@@ -441,7 +444,8 @@
   (assert-required "uber" params [:class-dir :uber-dir])
   (assert-specs "uber" params
     :class-dir specs/path?
-    :uber-dir specs/path?)
+    :uber-dir specs/path?
+    :launcher string?)
   ((requiring-resolve 'clojure.tools.build.tasks.uber/uber) params))
 
 (defn zip

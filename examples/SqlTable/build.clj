@@ -3,8 +3,8 @@
 ;;   test     the clojure.test suite
 ;;   compile  the Clojure code into one assembly, target/classes/SqlTable.dll
 ;;   uber     a self-contained directory target/sqltable: cleat, the app and its
-;;            NuGet packages (SQLite's native library included) and a launcher:
-;;              target/sqltable/run data/people.csv "select * from people"
+;;            NuGet packages (SQLite's native library included) and a launcher named after the directory:
+;;              target/sqltable/sqltable data/people.csv "select * from people"
 ;;   clean
 (ns build
   (:refer-clojure :exclude [compile test])

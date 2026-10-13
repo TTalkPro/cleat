@@ -48,14 +48,30 @@
                  :main 'foo.bar}))
     (let [uber-dir (project-path "target/uber")]
       (is (set/subset? #{"P1.dll" "Demo.dll"} (lib-files uber-dir)))
-      (doseq [f ["cleat.dll" "Cleat.Core.dll" "cleat.scheme.boot.dll" "cleat.boot.dll" "cleat.scheme.clojure" "run" "run.cmd"]]
+      ;; the launchers are named after the uber dir (cleat-074)
+      (doseq [f ["cleat.dll" "Cleat.Core.dll" "cleat.scheme.boot.dll" "cleat.boot.dll" "cleat.scheme.clojure" "uber" "uber.cmd"]]
         (is (exists? (Path/Combine uber-dir f)) f))
-      (is (str/includes? (slurp (Path/Combine uber-dir "run")) "-m foo.bar"))
+      (is (str/includes? (slurp (Path/Combine uber-dir "uber")) "-m foo.bar"))
       ;; the directory runs on its own (only dotnet needed)
       (when-not windows?
-        (let [{:keys [exit out]} (api/process {:command-args [(Path/Combine uber-dir "run")] :out :capture})]
+        (let [{:keys [exit out]} (api/process {:command-args [(Path/Combine uber-dir "uber")] :out :capture})]
           (is (= 0 exit))
-          (is (= "hello\n" out)))))))
+          (is (= "hello\n" out)))))
+    (let [basis (api/create-basis nil)]
+      ;; :launcher names them; a trailing slash on :uber-dir does not change the default
+      (api/uber {:class-dir "target/classes" :basis basis :uber-dir "target/app/" :main 'foo.bar :launcher "hello"})
+      (is (= [true true false] (map #(exists? (project-path "target/app" %)) ["hello" "hello.cmd" "app"])))
+      (api/uber {:class-dir "target/classes" :basis basis :uber-dir "target/app/" :main 'foo.bar})
+      (is (exists? (project-path "target/app" "app")))
+      ;; without :main, no launchers
+      (api/uber {:class-dir "target/classes" :basis basis :uber-dir "target/plain"})
+      (is (not (exists? (project-path "target/plain" "plain"))))
+      ;; a name that would replace a file of the runtime (or lib/), whether by default or given
+      (doseq [[dir launcher] [["target/cleat" nil] ["target/x" "Cleat.Core.dll"] ["target/lib" nil] ["target/x" "a/b"]]]
+        (is (thrown? ExceptionInfo
+                     (api/uber (cond-> {:class-dir "target/classes" :basis basis :uber-dir dir :main 'foo.bar}
+                                 launcher (assoc :launcher launcher))))
+            (str dir " " launcher))))))
 
 (deftest test-conflicts-but-files
   (with-test-dir "test-data/uber-conflict"

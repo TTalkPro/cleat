@@ -17,7 +17,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Cleat.Runtime" Version="1.0.3" />
+    <PackageReference Include="Cleat.Runtime" Version="1.0.4" />
     <PackageReference Include="Cleat.Nrepl" Version="1.8.1" />
     <ProjectReference Include="../csharp/WebCore/WebCore.csproj" />
     <Reference Include="Web.Handlers">

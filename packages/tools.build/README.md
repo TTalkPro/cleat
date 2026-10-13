@@ -77,7 +77,7 @@ tools.build 自己也是包：`Cleat.ToolsBuild`（依赖 `Cleat.ToolsNamespace`
 | `write-pom` `pom-path` `jar` | `pack`：直接写 nupkg（`lib/net10.0/` 是 `:class-dir` 的内容），依赖 `Cleat.Runtime`（缺省为运行着的版本起）与 `:deps` 里的 NuGet 包；`:local/root` 依赖报错 |
 | `install` | nupkg 放进本地源（缺省 `~/.cleat/local-feed`，或 `CLEAT_LOCAL_FEED`、`:local-feed`），并删掉 NuGet 全局包目录里同 id 同版本的缓存 |
 | — | `push`：`dotnet nuget push`，`:source`（nuget.config 里的名字或 URL；BaGetter 是 `http://主机/v3/index.json`）、`:api-key`（缺省 `NUGET_API_KEY`） |
-| `uber` | 可部署**目录** `:uber-dir`：宿主与运行时在根目录，`:class-dir` 与依赖包在 `lib/`（上游的排除与冲突处理器照旧），`:main` 时写 `run` / `run.cmd` |
+| `uber` | 可部署**目录** `:uber-dir`：宿主与运行时在根目录，`:class-dir` 与依赖包在 `lib/`（上游的排除与冲突处理器照旧），`:main` 时写启动脚本，名字是 `:launcher`，缺省为目录名（`target/app/app`、`app.cmd`） |
 
 没有 clojure.spec：参数检查是谓词。cleat 不报告反射，上游的 `test-capture-reflection` 不移植；jar 相关的测试按目录改写。
 

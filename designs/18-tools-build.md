@@ -51,7 +51,7 @@
 | `write-pom` `pom-path` `jar` | **`pack`** | 直接写 nupkg（OPC zip：`<id>.nuspec`、`[Content_Types].xml`、`_rels/.rels`、`lib/net10.0/`）。依赖：`Cleat.Runtime`（缺省为运行着的版本，`[版本, )`）与 basis 的 NuGet 依赖；`:local/root` 依赖不能进 nupkg，报错 |
 | `install` | 改写 | nupkg 放进本地源（§6），并删掉 NuGet 全局包目录里同 id 同版本的缓存（否则重装同一版本 restore 仍取旧包） |
 | — | **`push`** | `dotnet nuget push`：`:source`（nuget.config 里的名字或 URL，BaGetter 是 `…/v3/index.json`）、`:api-key`（缺省环境变量 `NUGET_API_KEY`） |
-| `uber` | 改写 | 可部署**目录** `:uber-dir`：宿主与运行时（程序集、两个镜像、驱动库、随附库）在根目录，`:class-dir` 与依赖包的程序集在 `lib/`（上游的冲突处理器照旧作用于同路径文件），`:main` 时写启动脚本 `run` / `run.cmd`（`dotnet cleat.dll -I lib -m main`） |
+| `uber` | 改写 | 可部署**目录** `:uber-dir`：宿主与运行时（程序集、两个镜像、驱动库、随附库）在根目录，`:class-dir` 与依赖包的程序集在 `lib/`（上游的冲突处理器照旧作用于同路径文件），`:main` 时写启动脚本 `名字` / `名字.cmd`（`dotnet cleat.dll -I lib -m main`；名字是 `:launcher`，缺省为 `:uber-dir` 的目录名，`target/app` → `app`；与根目录的运行时文件或 `lib` 同名时报错，cleat-074） |
 
 参数检查照上游的 `assert-required` / `assert-specs`，但 cleat 没有 clojure.spec：`assert-specs` 用谓词（路径是字符串、路径集合、lib 是符号、basis 是 map）。
 

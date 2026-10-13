@@ -83,8 +83,8 @@ user=> (with-open [c (db/open "data/people.csv")]
 
 ```sh
 dotnet cleat -T:build uber
-target/sqltable/run data/people.csv "select count(*) from people"
+target/sqltable/sqltable data/people.csv "select count(*) from people"
 ```
 
 `uber` 把 Clojure 代码编成程序集 `SqlTable.dll`，和 cleat 运行时、NuGet 依赖（含原生库）一起放进目录 `target/sqltable/`，
-写一个启动脚本 `run`（Windows 是 `run.cmd`）。目标机器只需要 .NET 10 运行时，不需要 cleat 与 SDK。
+写一个启动脚本，名字取目录名：`sqltable`（Windows 是 `sqltable.cmd`；要别的名字，`uber` 加 `:launcher`）。目标机器只需要 .NET 10 运行时，不需要 cleat 与 SDK。

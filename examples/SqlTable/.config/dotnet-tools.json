@@ -3,7 +3,7 @@
   "isRoot": true,
   "tools": {
     "cleat.cli": {
-      "version": "1.0.3",
+      "version": "1.0.4",
       "commands": ["cleat"],
       "rollForward": false
     }

@@ -17,9 +17,9 @@ namespace Cleat.Host.Tests;
 [Category("Bootstrap"), NonParallelizable]
 public class NuGetColdLoadTests
 {
-    // at least the running version (CoreInfo.Version, 1.0.3): packages built with the default :runtime-version depend on
+    // at least the running version (CoreInfo.Version, 1.0.4): packages built with the default :runtime-version depend on
     // Cleat.Runtime >= it (and in SemVer 1.0.2-anything sorts below 1.0.2); the fixture's NuGet caches are isolated
-    private const string Version = "1.0.3";
+    private const string Version = "1.0.4";
 
     private const string GreeterSource = @"(ns demo.greeter
   (:require [clojure.string :as str])
@@ -184,7 +184,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
     private void BuildClojurePackages()
     {
         if (_clojurePackagesBuilt) return;
-        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.2"), ("tools.build", "cleat.toolsbuild.0.10.17"),
+        foreach (var (package, id) in new[] { ("tools.namespace", "cleat.toolsnamespace.1.5.2"), ("tools.build", "cleat.toolsbuild.0.10.18"),
                                              ("nrepl", "cleat.nrepl.1.8.1"), ("neorepl", "cleat.neorepl.0.1.2") })
         {
             string dir = Path.Combine(_root, "sources", package);
@@ -362,7 +362,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         Cleat("-T:build", "uber");
         string dist = Path.Combine(app, "target", "sqltable");
         Assert.That(Directory.GetFiles(Path.Combine(dist, "lib"), "*e_sqlite3*").Any(f => !f.EndsWith(".dll") || OperatingSystem.IsWindows()), Is.True);
-        Assert.That(Run(_dir, env, Path.Combine(dist, OperatingSystem.IsWindows() ? "run.cmd" : "run"), Path.Combine(app, "data", "people.csv"),
+        Assert.That(Run(_dir, env, Path.Combine(dist, OperatingSystem.IsWindows() ? "sqltable.cmd" : "sqltable"), Path.Combine(app, "data", "people.csv"),
                 "select name from people where score is null"),
             Is.EqualTo("+------+\n| name |\n+------+\n| 王芳 |\n+------+\n1 row\n"));
     }
