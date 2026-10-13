@@ -43,5 +43,5 @@ Clojure 在 System.Console 上重写（不用 JLine，也不复用 Cleat.Host �
   （`,source` / `,where` 对宏定义的 Var 依赖它）。
 - **CLR 上的处理**（README 有完整清单）：SIGTERM 不触发 `ProcessExit`，登记清理时让 SIGTERM 经 `Environment/Exit` 退出；
   `System.Uri` 不收 `file:/路径`；CLR 异常只在抛出时才有栈；`TextWriter/Synchronized` 的包装不转发 `ToString`（测试里读内层的 StringWriter）。
-- **另记**：讨论中确定的后续任务——gen-class 类型惰性启动运行时（[cleat-067](cleat-067-lazy-runtime-startup.md)，设计见
-  [designs/17](../designs/17-lazy-runtime-startup.md)），排在 tools.build 之后。
+- **另记**：讨论中确定的后续任务——包程序集、运行时 NuGet 包与生成类型惰性启动（[cleat-067](cleat-067-lazy-runtime-startup.md)，
+  设计见 [designs/17](../designs/17-lazy-runtime-startup.md)），排在 tools.build（cleat-066）之前。

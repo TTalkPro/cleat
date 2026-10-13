@@ -70,8 +70,8 @@
 | [cleat-063](tasks/cleat-063-neorepl-package.md) | neorepl 包（packages/neorepl）：终端 REPL 与 CLI，System.Console 上的行编辑器，jack-in 只认 cleat 项目 | 后续 | cleat-062、cleat-064 | 完成 |
 | [cleat-064](tasks/cleat-064-port-found-runtime-fixes.md) | 移植 nREPL / neorepl 时发现的缺陷：宏展开出的 def 的源位置、以 - 开头的协议方法、带超时的 deref、ReaderException 的消息、spit 不截断 | 后续 | cleat-053 | 完成 |
 | [cleat-065](tasks/cleat-065-literal-metadata-evaluation.md) | 集合字面量上的非常量元数据求值 | 后续 | cleat-064 | 未开始 |
-| [cleat-066](tasks/cleat-066-tools-build-package.md) | tools.build 包（packages/tools.build）：照官方构建方案，按依赖逐命名空间预编译、basis、打包 | 后续 | cleat-062、cleat-063 | 未开始 |
-| [cleat-067](tasks/cleat-067-lazy-runtime-startup.md) | 运行时惰性启动：gen-class 等生成类型第一次被 .NET 使用时自动启动 CleatRuntime | 后续 | cleat-043、cleat-066 | 未开始 |
+| [cleat-066](tasks/cleat-066-tools-build-package.md) | tools.build 包（packages/tools.build）：照官方构建方案，NuGet 依赖（兼容 BaGetter）、编包程序集、dotnet build C# / F#、pack / push | 后续 | cleat-067 | 未开始 |
+| [cleat-067](tasks/cleat-067-lazy-runtime-startup.md) | 包程序集（每包一个，去掉源码旁 .clj.dll）、运行时 NuGet 包、生成类型惰性启动 CleatRuntime（C# / F# 冷加载） | 后续 | cleat-043、cleat-063 | 未开始 |
 
 ## 里程碑
 

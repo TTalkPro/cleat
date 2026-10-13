@@ -1,30 +1,33 @@
 # cleat-066 tools.build 包（packages/tools.build）
 
-- 里程碑：后续　依赖：cleat-062、cleat-063　状态：未开始
-- 设计依据：上游 [tools.build](https://github.com/clojure/tools.build)（`~/workspace/tools.build`，提交 `aef6def`）。
+- 里程碑：后续　依赖：cleat-067　状态：未开始
+- 设计依据：上游 [tools.build](https://github.com/clojure/tools.build)（`~/workspace/tools.build`，提交 `aef6def`）；
+  [designs/17](../designs/17-lazy-runtime-startup.md) 的包程序集与 NuGet 形状。
 
 ## 背景
 
-移植 neorepl 时（cleat-063）发现包的预编译必须按依赖顺序、每个命名空间一个进程地 `compile`（同一进程里连着编译时，后编的
-会引用前面那个求值时生成的内存类型）。用户决定（2026-10-13）照 Clojure 官方的构建方案，把 tools.build 移植成一个包来做这件事，
-不往 `tools/build.cs` 里加命令。
+移植 neorepl 时（cleat-063）发现包的预编译需要专门的构建步骤。用户决定（2026-10-13）照 Clojure 官方的构建方案，把 tools.build
+移植成一个包来做，不往 `tools/build.cs` 里加命令；依赖与发布用 NuGet（兼容 BaGetter 等自建仓库），并能用 `dotnet build` 直接构建
+C# / F# 项目。包程序集与运行时 NuGet 包由 cleat-067 先做好，本任务在其上提供构建 API。
 
-## 工作内容（初步，开工时与用户确认）
+## 工作内容
 
-上游的 API（`clojure.tools.build.api`）分三类，按 cleat 的情形取舍：
+上游的 API（`clojure.tools.build.api`）按 cleat 的情形取舍：
 
-1. **原样可移植**：`delete` `copy-file` `copy-dir` `write-file` `process` `git-process` `git-count-revs` `zip` `unzip`
+1. **原样移植**：`delete` `copy-file` `copy-dir` `write-file` `process` `git-process` `git-count-revs` `zip` `unzip`
    `resolve-path` `set-project-root!`——文件与进程操作换成 System.IO / System.Diagnostics。
 2. **按 cleat 改写**：
-   - `compile-clj`：上游用 tools.namespace 按 ns 依赖排序后在一个子进程里依次 `compile`；cleat 要每个命名空间一个子进程（理由见上），
-     产物是源码旁边（或 `:class-dir`）的 `.clj.dll` / `.ifc` / `.inl`。排序用移植过来的 tools.namespace 的 find / parse / dependency 部分。
-   - `create-basis`：上游经 tools.deps 解析 deps.edn 与 Maven；cleat 没有依赖解析，basis 来自项目的 `cleat.edn`（`:paths`，以及
-     本地包目录这样的依赖），给出加载路径。
-   - `java-command` → 运行 cleat 宿主的命令行（`cleat-command`）。
-   - `jar` / `uber`：产出可部署的目录或 zip：应用的 `.clj.dll`、源码（可选）、加载路径上的依赖包；`uber` 另带 cleat 运行时程序集、
-     两个镜像与驱动库（designs/17 §3.4 的部署形状，cleat-067 要用）。
-3. **待定**：`javac`（对应 C#：`dotnet build` 一个 csproj？）、`write-pom` / `install`（Maven 本地仓库；对应 NuGet 包？还是不做）。
+   - `create-basis`：项目的 `cleat.edn`（`:paths`、`:deps`）；`:deps` 里的 NuGet 依赖（如 `{Nrepl {:nuget/version "1.8.0"}}`）经
+     NuGet 解析与下载（生成临时项目交给 `dotnet restore`，源与凭据按 `nuget.config`，因此兼容 BaGetter 与私有源），本地包目录依赖照用；
+     basis 给出加载路径与要登记的包程序集。
+   - `compile-clj`：编出包程序集（cleat-067 的编译驱动），命名空间顺序用移植过来的 tools.namespace 的 find / parse / dependency 部分。
+   - `java-command` → `cleat-command`：运行 cleat 宿主的命令行。
+   - `javac` → **`dotnet-build`**：对 C# / F# 项目（`.csproj` / `.fsproj`）运行 `dotnet build`，产物进 basis（Clojure 代码可以调用）。
+   - `jar` → **`pack`**：把包程序集（与可选的源码）打成 nupkg，依赖写 `Cleat.Runtime` 与 `:deps` 里的 NuGet 包（相当于 `write-pom` + `jar`）。
+   - `install` → 推到本地 NuGet 源目录；新增 **`push`**：`dotnet nuget push` 到 nuget.org 或 BaGetter（源与 API key 按参数 / `nuget.config`）。
+   - `uber`：可部署目录（应用的包程序集、依赖包、运行时程序集与镜像），对应 designs/17 §3 的形状。
+3. **测试**：移植上游测试；nrepl、neorepl 用它编包程序集、打 nupkg；一个 C# 与一个 F# 项目经本地源 restore 这些包并冷加载。
 
 ## 验收标准
 
-- 移植的上游测试通过；`packages/nrepl`、`packages/neorepl` 能用它预编译（neorepl 的 CLI 启动从约 7 秒降到约 1.4 秒）；全量测试通过。
+- 移植的上游测试通过；`packages/nrepl`、`packages/neorepl` 用它构建与打包；推送到本地 BaGetter（或本地目录源）后能被 restore；全量测试通过。
