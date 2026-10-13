@@ -66,6 +66,8 @@
 | [cleat-059](tasks/cleat-059-ironscheme-name-cleanup.md) | 清理 IronScheme 名字残留：原语、格式头、清单、环境变量、nanopass 覆盖库扩展名 | 后续 | cleat-054、cleat-058 | 完成 |
 | [cleat-060](tasks/cleat-060-library-fasl-extension.md) | 预编译库的扩展名统一为 .fasl（照 skeg 481f319） | 后续 | cleat-059 | 完成 |
 | [cleat-061](tasks/cleat-061-r6rs-test-suite.md) | 纳入 R6RS 测试套件（照 skeg）、`bytevector-uint-set!` 修复、R6RS 门禁 | 后续 | cleat-059 | 完成 |
+| [cleat-064](tasks/cleat-064-port-found-runtime-fixes.md) | 移植 nREPL / neorepl 时发现的缺陷：宏展开出的 def 的源位置、以 - 开头的协议方法、带超时的 deref、ReaderException 的消息、spit 不截断 | 后续 | cleat-053 | 完成 |
+| [cleat-065](tasks/cleat-065-literal-metadata-evaluation.md) | 集合字面量上的非常量元数据求值 | 后续 | cleat-064 | 未开始 |
 
 ## 里程碑
 
@@ -82,7 +84,7 @@
 | M5′ Clojure 自举 | cleat-053 | `cleat.boot.dll` 与镜像不动点 |
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
-| 后续 | cleat-042、043、054、056、058 ~ 061（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
+| 后续 | cleat-042、043、054、056、058 ~ 061、064、065（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径

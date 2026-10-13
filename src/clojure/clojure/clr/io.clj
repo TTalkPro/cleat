@@ -86,6 +86,8 @@
      :file-mode     A value from the System.IO.FileMode enumeration.
      :file-access   A value from the System.IO.FileAccess enumeration.
      :file-options  A value from the System.IO.FileOptions enumeration.
+     :append    true to open a file for writing at its end rather than
+                truncating it.
      :encoding  The encoding to use, either as a string, e.g. \"UTF-8\",
                 a keyword, e.g. :utf-8, or a an System.Text.Encoding instance,
                 e.g., (System.Text.UTF8Encoding.)
@@ -227,11 +229,14 @@
 (defn- buffer-size [opts]
   (or (:buffer-size opts) 1024))
   
+;; CLEAT-064: writing truncates (FileMode/Create) unless :append is true (FileMode/Append), as clojure.java.io
+;; does; ClojureCLR used FileMode/OpenOrCreate and ignored :append, so (spit f "ab") over "hello" left "abllo".
 (defn- ^FileMode file-mode [mode opts]
   (or (:file-mode opts)
-      (if (= mode :read)
-          FileMode/Open
-          FileMode/OpenOrCreate)))
+      (cond
+        (= mode :read) FileMode/Open
+        (:append opts) FileMode/Append
+        :else FileMode/Create)))
   
 (defn- ^FileShare file-share [opts]
   (or (:file-share opts) FileShare/None))

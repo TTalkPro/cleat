@@ -110,8 +110,15 @@
              (and (string=? (sym-ns x) "clojure.core") (string=? (sym-name x) "import*")))
          (hashtable-ref special-keys (sym-name x) #f)))
 
-  (define (clj->scheme x)
-    (let convert ((x x) (pos #f))
+;;; pos0：外层形式的源位置，没有自己 :line 的子形式沿用（宏展开结果取宏调用处的位置，cleat-062；
+  ;;; 相当于 JVM 编译器分析时绑定的 LINE / COLUMN：defn 展开出的 def 记下 defn 所在的行）
+  (define clj->scheme
+    (case-lambda
+      ((x) (clj->scheme x #f))
+      ((x pos0) (clj->scheme/at x pos0))))
+
+  (define (clj->scheme/at x pos0)
+    (let convert ((x x) (pos pos0))
       (cond
         ((clj-symbol? x) (make-annotation (clj-symbol->scheme x) pos x))
         ((clj-kind x) =>
@@ -149,7 +156,11 @@
   (define (syntax->clj stx) (scheme->clj (syntax->datum stx)))
 
   ;;; Clojure 数据 → 语法对象，取 id 的上下文（defmacro 垫片的"使用处上下文"）
-  (define (clj-datum->syntax* id x) (datum->syntax id (clj->scheme x)))
+  (define clj-datum->syntax*
+    (case-lambda
+      ((id x) (datum->syntax id (clj->scheme x)))
+      ;; at：宏调用的语法对象，展开结果里没有源位置的形式取它的位置
+      ((id x at) (datum->syntax id (clj->scheme x (syntax-source at))))))
 
   ;;; —— 二、解析（照 C# Expander.Resolve / Compiler.maybeResolveIn）——
   ;;; (resolve-in ns csym) → (values 对象 #f #f) 或 (values #f 错误文本 private?)
@@ -418,7 +429,7 @@
     (lambda (stx)
       (syntax-case stx ()
         ((head . _)
-         (clj-datum->syntax* #'head (call-macro v (syntax->clj stx) (syntax-position stx)))))))
+         (clj-datum->syntax* #'head (call-macro v (syntax->clj stx) (syntax-position stx)) stx)))))
 
   ;;; —— 当前命名空间与运行时的命名空间操作（Clojure 的 in-ns / refer / alias / import 的最小形式）——
 
@@ -465,11 +476,15 @@
   (define (source-path)
     (->string (clr-call clojure.lang.Var deref (clr-static-field-get clojure.lang.RT SourcePathVar))))
 
+  ;;; 语法对象的注解源位置 (文件 . "(行,列) - (结束行,结束列)")，或 #f
+  (define (syntax-source x)
+    (and (stx? x)
+         (let ((e (stx-expr x)))
+           (and (annotation? e) (annotation-source e)))))
+
   ;;; 语法对象的源位置 → (行 列 文件或#f)，或 #f
   (define (syntax-position x)
-    (let ((src (and (stx? x)
-                    (let ((e (stx-expr x)))
-                      (and (annotation? e) (annotation-source e))))))
+    (let ((src (syntax-source x)))
       (and (pair? src) (string? (cdr src))
            (let* ((s (cdr src))
                   (comma (string-index s #\,))

@@ -75,14 +75,17 @@
     ((compile-core-of-image (list '$clj-call (list 'quote "HoldResult") (list 'quote #f) core)))
     (take-result #f))
 
+  ;;; 顶层的宏展开结果带上原形式的源位置（:line :column，自己有的不动；cleat-062）：JVM 的 Compiler.eval 分析展开结果时
+  ;;; LINE / COLUMN 仍是原形式的，(defn f …) 展开出的 def 记下 defn 所在的行
   (define (clojure-eval-toplevel form)
     (let* ((form (if (macroexpand-top? form)
-                     (run-form (lambda () (clojure-macroexpand form)) form)
+                     (transfer-source (run-form (lambda () (clojure-macroexpand form)) form) form)
                      form))
            (body (top-level-do-body form)))
       (if body
           (let loop ((xs body) (last #nil))
-            (if (null? xs) last (loop (cdr xs) (clojure-eval-toplevel (car xs)))))
+            ;; 顶层 (do …) 的子形式也带上它的源位置（(defmacro m …) 展开成 (do (defn m …) …)）
+            (if (null? xs) last (loop (cdr xs) (clojure-eval-toplevel (transfer-source (car xs) form)))))
           (eval-form form))))
 
   ;;; eval 钩子（REPL、-e、clojure.core/eval）：不记入正在编译的单元（Clojure 的 eval 也不写类文件）

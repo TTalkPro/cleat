@@ -199,8 +199,10 @@ namespace clojure.lang
 
         public object deref(long ms, object timeoutValue)
         {
-            if (_t.Join((int)ms))
-                return _value;
+            // CLEAT-062: like deref() once the thread is done (an error or a cancel throws; ClojureCLR returned
+            // the value regardless), and a timeout past Int32.MaxValue ms no longer wraps around.
+            if (_t.Join((int)Math.Clamp(ms, 0, int.MaxValue)))
+                return deref();
             return timeoutValue;
         }
 

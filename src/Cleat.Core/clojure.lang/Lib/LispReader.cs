@@ -2257,8 +2257,10 @@ namespace clojure.lang
 
             readonly IPersistentMap _data;
 
+            // CLEAT-064: the message is the cause's "Type: message", as the JVM's super(cause) makes it from cause.toString()
+            // (ClojureCLR passed null, which leaves .NET's "Exception of type ... was thrown.").
             public ReaderException(int line, int column, Exception e)
-                : base(null, e)
+                : base(e == null ? null : e.GetType().FullName + ": " + e.Message, e)
             {
                 _line = line;
                 _column = column;

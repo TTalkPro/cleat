@@ -26,7 +26,7 @@
 
 (library (clojure syntax)
   (export clojure-eval clojure-expand clojure-macroexpand-1 clojure-macroexpand
-          current-ctx clojure-locals-env special-form-names inline-calls?)
+          current-ctx clojure-locals-env special-form-names inline-calls? transfer-source)
   (import
     (rnrs)
     (only (cleat scheme) parameterize make-parameter with-clr-exception-handler format gensym)
@@ -762,7 +762,9 @@
                                        (cdr (seq->list first-arg)))))
                   (args (if type-args (cdr args) args))
                   (name (sym-name msym))
-                  (prop? (and (> (string-length name) 1) (char=? (string-ref name 0) #\-)))
+                  ;; -name 是字段只在成员是单独的符号时；(. x (-m …)) 是名为 munge("-m") = _m 的方法（JVM 的 HostExpr；
+                  ;; 协议方法 -m 的接口方法就叫 _m，cleat-064）
+                  (prop? (and (not method?) (> (string-length name) 1) (char=? (string-ref name 0) #\-)))
                   (member (munge (if prop? (substring name 1 (string-length name)) name)))
                   (type (or static (expr-type td))))
              (values static (and (not static) #'target) member prop? args type-args method? type)))))
@@ -1125,7 +1127,7 @@
            ;; 以宏 Var 对象开头（宏构造的 (#'m …)，cleat-052）：展开该宏，结果挂使用处上下文再展开
            ((macro-var-head (syntax->clj e) (lambda (msg) (err e msg)))
             => (lambda (v)
-                 (expand (clj-datum->syntax* #'f (call-macro v (syntax->clj e) (syntax-position e))))))
+                 (expand (clj-datum->syntax* #'f (call-macro v (syntax->clj e) (syntax-position e)) e))))
            ((and (keyword? fd) (<= 1 (length args) 2))
              ;; KeywordInvokeExpr：(:k x) / (:k x 缺省)（cleat-051：ILookup.valAt 快速路径，否则 RT.get）
              (cons* '$clj-keyword-invoke (list 'quote fd) (map (lambda (a) (expand-in nt a expand)) args)))
@@ -1235,7 +1237,7 @@
               (err e (string-append "var: " (->string v) " is not public")))
             (let* ((form (syntax->clj e))
                    (out (op-apply-to inline (clr-static-call clojure.lang.RT (next System.Object) form))))
-              (expand (clj-datum->syntax* #'head (transfer-source out form)))))
+              (expand (clj-datum->syntax* #'head (transfer-source out form) e))))
            ((and (= n 2) (string=? (->string v) "#'clojure.core/instance?") (maybe-type (syntax->clj (car args))))
             => (lambda (t)
                  (clj-call "IsInstanceOf" #f (list 'quote t) (expand-in nt (cadr args) expand))))
@@ -1322,7 +1324,7 @@
       ((head . _)
        (let* ((form (syntax->clj stx))
               (out (rewrite-to-dot form stx)))
-         (clj-datum->syntax* #'head (or out form))))))
+         (clj-datum->syntax* #'head (or out form) stx)))))
 
   ;;; 每种糖一个标签，值为改写转换器（经 do-macro-call，macroexpand-1 也展开它）
   (define static-member-label #f)
