@@ -122,7 +122,7 @@ public static class Program
         try
         {
             Start(o);
-            Cleat.Scheme.Clojure.Driver.ReportToStdOut = ReportToStdOut = o.Report == "stdio";
+            Cleat.Core.Compiler.Diagnostics.ReportToStdOut = ReportToStdOut = o.Report == "stdio";
             return RunActions(o);
         }
         catch (Exception e)
@@ -283,7 +283,7 @@ public static class Program
 
     /// <summary>
     /// clojure.main/with-bindings 的绑定（cleat-032）：脚本、-e、-m 与 REPL 都在其中运行，*1 *2 *3 *e 为 nil、
-    /// *print-namespace-maps* 为 true、其余可 set! 的 Var 绑定为当前值（*compile-path* 不绑：compile 的包程序集输出位置见 Driver.CompileOutputPath）。clojure.core 未加载（--no-boot）时只绑 *ns* 与 *command-line-args*。
+    /// *print-namespace-maps* 为 true、其余可 set! 的 Var 绑定为当前值（*compile-path* 不绑：compile 的包程序集输出位置见 AotPaths.CompileOutputPath）。clojure.core 未加载（--no-boot）时只绑 *ns* 与 *command-line-args*。
     /// </summary>
     private static IPersistentMap MainBindings(Namespace ns, Options o)
     {

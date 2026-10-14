@@ -7,8 +7,9 @@ namespace Cleat.Scheme;
 /// <summary>布尔单例、真值判断与小整数装箱缓存。设计：designs/02-runtime.md §2。</summary>
 public static class RT
 {
-    public static readonly object True = true;
-    public static readonly object False = false;
+    // 与生成代码共用同一对布尔对象（cleat-082：eq? 比较 #t / #f 靠对象标识）
+    public static readonly object True = Cleat.Core.Runtime.Truth.True;
+    public static readonly object False = Cleat.Core.Runtime.Truth.False;
 
     /// <summary>真值：#f 与 #nil（.NET null）为假，其余（包括 '()）为真（designs/13-exceptions.md §7）。</summary>
     public static bool IsTrue(object o) => o != null && (o is not bool b || b);

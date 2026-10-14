@@ -5,7 +5,7 @@ using System.Reflection.Emit;
 using System.Threading.Tasks;
 using clojure.lang;
 
-namespace Cleat.Scheme.Clojure;
+namespace Cleat.Core.Runtime;
 
 /// <summary>
 /// ^:async fn 与 await*（cleat-043，ClojureCLR 的 clojure.clr.async.task.alpha 的表面）。两种实现，编译期按运行时选定：

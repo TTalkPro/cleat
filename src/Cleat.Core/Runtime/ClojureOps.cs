@@ -1,70 +1,19 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
-using Cleat.Core.Runtime;
+using Cleat.Core.Compiler;
 using clojure.lang;
 
-namespace Cleat.Scheme.Clojure;
+namespace Cleat.Core.Runtime;
 
 /// <summary>
-/// Clojure 代码的运行时操作。cleat-050 里它们都是 Scheme 过程（<see cref="Procedure"/>），展开结果以常量 <c>((quote 过程) 实参 …)</c>
-/// 调用；cleat-051 起编译后的代码经编译器的 Clojure 节点直接调用下面的静态方法（<c>$clj-call</c>）或 clojure.lang 的方法，
-/// 这里的过程只剩展开期用的（宏调用、:const 的值、元数据与集合的遍历）。
-/// <para>为什么不用 Scheme 的 <c>clr-call</c>：它对返回值（含声明为 object 的）做 <c>Interop.ConvertFrom</c>——long → fixnum（Int32）、
-/// 枚举 → 符号、字符串规范化，Clojure 的值经过它就变了（designs/13 §7 的值边界）。过程调用的实参与返回值不经转换。</para>
-/// 规则与 C# 展开器（cleat-013/014）给编译器的 Lcore 节点相同：调用 = IFn.invoke，Var 读 = getRawRoot / get，宿主互操作 = Reflector。
-/// cleat-051 的编译器节点取代这些过程。
+/// 编译后的 Clojure 代码直接调用的运行时操作（编译器的 <c>clj-call</c> 节点：参数与返回都是 object，尾部实参可打包成 object[]），
+/// 以及 deftype* / proxy / gen-class / async 生成代码的辅助方法。规则与 C# 展开器（cleat-013/014）给编译器的 Lcore 节点相同：
+/// 调用 = IFn.invoke，Var 读 = getRawRoot / get，宿主互操作 = Reflector。cleat-082 从 Cleat.Scheme 搬来；展开期用的 Scheme 过程
+/// 留在 Cleat.Scheme.Clojure.ExpandOps。
 /// </summary>
 public static class ClojureOps
 {
-    // —— 过程的外壳 ——
-
-    private sealed class Op1 : Procedure
-    {
-        private readonly string _name;
-        private readonly Func<object, object> _f;
-        public Op1(string name, Func<object, object> f) { _name = name; _f = f; }
-        public override string Name => _name;
-        public override object Invoke1(object a) => _f(a);
-    }
-
-    private sealed class Op2 : Procedure
-    {
-        private readonly string _name;
-        private readonly Func<object, object, object> _f;
-        public Op2(string name, Func<object, object, object> f) { _name = name; _f = f; }
-        public override string Name => _name;
-        public override object Invoke2(object a, object b) => _f(a, b);
-    }
-
-    private sealed class OpN : VariadicProcedure
-    {
-        private readonly string _name;
-        private readonly Func<object[], object> _f;
-        public OpN(string name, Func<object[], object> f) { _name = name; _f = f; }
-        public override string Name => _name;
-        public override object InvokeN(object[] args) => _f(args);
-    }
-
-    /// <summary>(invoke f a …)：f 当作 IFn 调用（不是 IFn 时与 ClojureCLR 一样抛 InvalidCastException）。</summary>
-    private sealed class InvokeProc : Procedure
-    {
-        public override string Name => "clojure-invoke";
-        public override object Invoke1(object f) => ((IFn)f).invoke();
-        public override object Invoke2(object f, object a) => ((IFn)f).invoke(a);
-        public override object Invoke3(object f, object a, object b) => ((IFn)f).invoke(a, b);
-        public override object Invoke4(object f, object a, object b, object c) => ((IFn)f).invoke(a, b, c);
-        public override object InvokeN(object[] args)
-        {
-            if (args.Length == 0) return ArityErrorPublic(0);
-            var f = (IFn)args[0];
-            var a = new object[args.Length - 1];
-            Array.Copy(args, 1, a, 0, a.Length);
-            return InvokeIFn(f, a);
-        }
-    }
-
     /// <summary>IFn 按实参个数分派（超过 20 个经 applyTo）。</summary>
     public static object InvokeIFn(IFn f, object[] a) => a.Length switch
     {
@@ -80,17 +29,6 @@ public static class ClojureOps
         _ => f.applyTo(ArraySeq.create(a)),
     };
 
-    // —— 调用 ——
-
-    public static readonly Procedure Invoke = new InvokeProc();
-    public static readonly Procedure ApplyTo = new Op2("clojure-apply-to", (f, s) => ((IFn)f).applyTo(clojure.lang.RT.seq(s)));
-
-    // —— Var（展开期：:const 的值）——
-
-    public static readonly Procedure VarGet = new Op1("clojure-var-get", v => ((Var)v).get());
-
-    // —— 宿主互操作（Reflector 的规则；类型为 nil 时按实例的运行时类型）——
-
     private static Type[] Types(object o)
     {
         if (o is not object[] a) return null;
@@ -99,91 +37,8 @@ public static class ClojureOps
         return r;
     }
 
-    internal static object NotNil(object instance, object name) =>
+    public static object NotNil(object instance, object name) =>
       instance ?? throw new NullReferenceException($"Cannot invoke member {name} on nil");
-
-    // —— 展开期使用（Clojure 数据的遍历，不经 Scheme 互操作的转换）——
-
-    /// <summary>(seq->list x)：clojure.lang.RT.seq(x) 的元素组成的 Scheme 列表。</summary>
-    public static readonly Procedure SeqToList = new Op1("clojure-seq->list", x =>
-    {
-        var items = new System.Collections.Generic.List<object>();
-        for (ISeq s = clojure.lang.RT.seq(x); s != null; s = s.next()) items.Add(s.first());
-        object r = EmptyList.Instance;
-        for (int i = items.Count - 1; i >= 0; i--) r = new Cleat.Scheme.Cons(items[i], r);
-        return r;
-    });
-
-    /// <summary>(map->list m)：k v k v … 的 Scheme 列表（seq 顺序）。</summary>
-    public static readonly Procedure MapToList = new Op1("clojure-map->list", m =>
-    {
-        var items = new System.Collections.Generic.List<object>();
-        for (ISeq s = clojure.lang.RT.seq(m); s != null; s = s.next())
-        {
-            var e = (IMapEntry)s.first();
-            items.Add(e.key());
-            items.Add(e.val());
-        }
-        object r = EmptyList.Instance;
-        for (int i = items.Count - 1; i >= 0; i--) r = new Cleat.Scheme.Cons(items[i], r);
-        return r;
-    });
-
-    public static readonly Procedure Get = new Op2("clojure-get", (m, k) => clojure.lang.RT.get(m, k));
-    public static readonly Procedure Meta = new Op1("clojure-meta", x => x is IMeta m ? m.meta() : null);
-    public static readonly Procedure ToLong = new Op1("clojure-long", x => Convert.ToInt64(x));
-    /// <summary>
-    /// 语法对象里的 map / set（子项是注解或语法对象，哈希按对象标识，每个进程不同）重建时保持给定的顺序（cleat-053：否则
-    /// 集合字面量展开出的构造参数顺序随进程变化，镜像不是不动点）。map 用 PersistentArrayMap（不查重：子项是不同的语法对象）；
-    /// set 用按原位置比较的 PersistentTreeSet。
-    /// </summary>
-    /// 子项都是 Clojure 数据时（syntax->clj 转回数据）照常建 map / set。
-    public static readonly Procedure OrderedMap = new Op1("clojure-ordered-map", kvs =>
-    {
-        var a = SchemeListToArray(kvs);
-        if (!a.Any(IsSchemeObject))
-            return a.Length <= 16 ? PersistentArrayMap.createAsIfByAssoc(a) : PersistentHashMap.create(a);
-        return new PersistentArrayMap(a);
-    });
-
-    public static readonly Procedure OrderedSet = new Op1("clojure-ordered-set", items =>
-    {
-        var a = SchemeListToArray(items);
-        return a.Any(IsSchemeObject) ? OrderedSetOf(a) : PersistentHashSet.create(a);
-    });
-
-    private static bool IsSchemeObject(object x) => x != null && x.GetType().Assembly == typeof(Procedure).Assembly;
-
-    private static object[] SchemeListToArray(object list)
-    {
-        var items = new List<object>();
-        for (object p = list; p is Cleat.Scheme.Cons c; p = c.cdr) items.Add(c.car);
-        return items.ToArray();
-    }
-
-    private static object OrderedSetOf(object[] items)
-    {
-        var index = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
-        for (int i = 0; i < items.Length; i++) index.TryAdd(items[i] ?? s_nullItem, i);
-        // 不是这些子项本身的对象（按值查找成员时）：取与它相等的子项的位置，都不相等的排在最后
-        int Pos(object x)
-        {
-            if (index.TryGetValue(x ?? s_nullItem, out int i)) return i;
-            for (int j = 0; j < items.Length; j++)
-                if (Util.equiv(items[j], x)) return j;
-            return int.MaxValue;
-        }
-        var cmp = Comparer<object>.Create((a, b) =>
-        {
-            int c = Pos(a).CompareTo(Pos(b));
-            return c != 0 || Util.equiv(a, b) ? c : Util.hasheq(a).CompareTo(Util.hasheq(b));
-        });
-        return PersistentTreeSet.create(cmp, clojure.lang.RT.seq(items));
-    }
-
-    private static readonly object s_nullItem = new object();
-
-    public static readonly Procedure NextId = new Op1("clojure-next-id", _ => clojure.lang.RT.nextID().ToString(System.Globalization.CultureInfo.InvariantCulture));
 
     // —— 编译后代码直接调用的静态方法（cleat-051 的 $clj-call 节点：参数与返回都是 object，尾部实参可打包成 object[]）——
     // 与上面同名操作的过程语义相同；编译器生成 call ClojureOps::方法，不经 Scheme 过程，也不经 Scheme 互操作的转换。
@@ -230,11 +85,11 @@ public static class ClojureOps
 
     /// <summary>
     /// AOT 产物（包程序集）入口的第一个形式（cleat-052）：编译时运行的 Clojure boot 镜像 id 与现在的不同则抛
-    /// <see cref="Cleat.Core.Runtime.BootInterface.StaleModuleException"/>（要求重编，designs/17 §7）。
+    /// <see cref="BootInterface.StaleModuleException"/>（要求重编，designs/17 §7）。
     /// </summary>
     public static object CheckBootImage(object imageId)
     {
-        Cleat.Core.Runtime.BootInterface.Check(imageId?.ToString());
+        BootInterface.Check(imageId?.ToString());
         return null;
     }
 
@@ -251,12 +106,13 @@ public static class ClojureOps
         return null;
     }
 
-    public static readonly Procedure TakeResult = new Op1("clojure-take-result", _ =>
+    /// <summary>取出并清空 HoldResult 存的值（Scheme 侧的过程 TakeResult 调它）。</summary>
+    public static object TakeHeldResult()
     {
         object r = t_result;
         t_result = null;
         return r;
-    });
+    }
 
     /// <summary>Namespace 对象作为表达式（RT 的引导 ns 宏展开为它）：按名字取，AOT 产物里不存 Namespace 常量（cleat-052）。</summary>
     public static object FindNamespaceOf(object name) => Namespace.findOrCreate((clojure.lang.Symbol)name);
@@ -266,16 +122,16 @@ public static class ClojureOps
         // 按名字取最新的定义（cleat-032）：defrecord 展开里的 (import user.R) 在 deftype* 求值之前就解析了类型名，
         // 重定义同名类型时展开期拿到的是旧定义
         var real = HostSyntax.Real((Type)t);
-        ((Namespace)clojure.lang.RT.CurrentNSVar.deref()).importClass(Cleat.Core.Runtime.Loader.FindType(real.FullName) ?? real);
+        ((Namespace)clojure.lang.RT.CurrentNSVar.deref()).importClass(Loader.FindType(real.FullName) ?? real);
         return null;
     }
 
     /// <summary>deftype* 求值时登记生成的类型（classForName 取最新定义的，cleat-051）；值为该类型。</summary>
     public static object DefineType(object t)
     {
-        // 两个类型名解析器都要看到最新的定义：Clojure 侧（classForName → Loader）与展开期的 HostSyntax（Scheme 的 TypeResolver）
-        Cleat.Core.Runtime.Loader.RegisterType((Type)t);
-        Cleat.Scheme.TypeResolver.AddCompileTimeType((Type)t);
+        // 两处类型名决议都要看到最新的定义：Clojure 侧（classForName → Loader）与展开期的 HostSyntax（编译期类型登记表）
+        Loader.RegisterType((Type)t);
+        CompileTimeTypes.Add((Type)t);
         HostSyntax.ClearPendingStub(((Type)t).FullName);
         return t;
     }

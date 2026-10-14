@@ -1,7 +1,7 @@
 ;;; Clojure 的特殊形式与表达式语法（cleat-050，designs/13 §3、03 §1 ~ §4）。按需加载，不进 Scheme boot 镜像。
 ;;;
 ;;; 规格是 C# 展开器（src/Cleat.Core/Expander/Expander.cs 与 ExpanderTests）：规则与错误文本逐条照搬；产物不同——
-;;; 这里展开为 Scheme 核心形式 + 运行时过程（Cleat.Scheme.Clojure.ClojureOps），今天就能编译运行：
+;;; 这里展开为 Scheme 核心形式 + 运行时过程（Cleat.Scheme.Clojure.ExpandOps）与 Cleat.Core.Runtime.ClojureOps 的静态方法，今天就能编译运行：
 ;;;
 ;;;   （cleat-051 起：运行时操作全部是编译器的 Clojure 节点 $clj-…，不再是 Scheme 过程常量，见各形式与 designs/04 §6）
 ;;;   def        Var 在展开期 intern（Namespace.intern 的语义），运行时 $clj-def（setDynamic / bindRoot / setMeta），值为 Var
@@ -66,7 +66,7 @@
   (define (with-meta* x m) (clr-call clojure.lang.IObj withMeta x m))
   (define (print-str x) (clr-static-call clojure.lang.RT (printString System.Object) x))
   (define (sym-is? x name) (and (clj-symbol? x) (not (sym-ns x)) (string=? (sym-name x) name)))
-  (define (munge s) (clr-static-call Cleat.Scheme.Clojure.HostSyntax Munge s))
+  (define (munge s) (clr-static-call Cleat.Core.Compiler.HostSyntax Munge s))
   (define (string-prefix? p s) (and (>= (string-length s) (string-length p)) (string=? (substring s 0 (string-length p)) p)))
   (define (string-suffix? p s)
     (let ((n (string-length s)) (k (string-length p)))
@@ -106,14 +106,14 @@
 
   ;;; —— 宿主类型（规则在 C# 的 HostSyntax）——
 
-  (define (tag-of x) (nil->f (clr-static-call Cleat.Scheme.Clojure.HostSyntax TagOf x)))
-  (define (tag-type tag) (and tag (nil->f (clr-static-call Cleat.Scheme.Clojure.HostSyntax TagType tag))))
-  (define (type-name t) (clr-static-call Cleat.Scheme.Clojure.HostSyntax TypeName t))
+  (define (tag-of x) (nil->f (clr-static-call Cleat.Core.Compiler.HostSyntax TagOf x)))
+  (define (tag-type tag) (and tag (nil->f (clr-static-call Cleat.Core.Compiler.HostSyntax TagType tag))))
+  (define (type-name t) (clr-static-call Cleat.Core.Compiler.HostSyntax TypeName t))
   (define (maybe-type form)
-    (nil->f (clr-static-call Cleat.Scheme.Clojure.HostSyntax MaybeType form
+    (nil->f (clr-static-call Cleat.Core.Compiler.HostSyntax MaybeType form
               (and (clj-symbol? form) (not (sym-ns form)) (find-local form) #t))))
-  (define (maybe-array-type form) (nil->f (clr-static-call Cleat.Scheme.Clojure.HostSyntax MaybeArrayType form)))
-  (define (pos-digit? s) (clr-static-call Cleat.Scheme.Clojure.HostSyntax IsPosDigit s))
+  (define (maybe-array-type form) (nil->f (clr-static-call Cleat.Core.Compiler.HostSyntax MaybeArrayType form)))
+  (define (pos-digit? s) (clr-static-call Cleat.Core.Compiler.HostSyntax IsPosDigit s))
   (define (class-for-name name)
     (with-clr-exception-handler (lambda (e) #f)
       (lambda () (nil->f (clr-static-call clojure.lang.RT (classForName System.String) name)))))
@@ -540,7 +540,7 @@
   ;;; 挂起），子句返回 thunk 的 Task；否则同步运行 thunk、值包成已完成的 Task（await* 同步等待）。recur 不能跨过这层 thunk。
   (define kw-async (clj-keyword "async"))
   (define (async-body head bc forms)
-    (let* ((runtime? (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_RuntimeAsync))
+    (let* ((runtime? (clr-static-call Cleat.Core.Runtime.AsyncSupport get_RuntimeAsync))
            (thunk (with-syntax ((h head) (v (const-stx (clj-vector))) ((b ...) forms)) #'(h v b ...)))
            (node (parameterize ((current-ctx bc)) (expand-fn* thunk #t))))
       (with-syntax ((k (node-id head)) (data (const-stx (list (if runtime? "AsyncStart" "AsyncRunSync") #f))) (node node))
@@ -553,7 +553,7 @@
          (cond ((not m) (err e "(await* ...) can only be used inside a ^:async function or (async ...) block"))
                ((eq? (local-kind m) 'no-await) (err e "(await* ...) cannot appear inside a catch or finally clause")))
          (with-syntax ((k (node-id #'head))
-                       (data (const-stx (list (if (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_RuntimeAsync) "AwaitAsync" "AwaitBlocking") #f)))
+                       (data (const-stx (list (if (clr-static-call Cleat.Core.Runtime.AsyncSupport get_RuntimeAsync) "AwaitAsync" "AwaitBlocking") #f)))
                        (x (in-ctx #'head (ctx-nontail (ctx-clear (cur))) #'x)))
            #'(k $clj-call data x))))
       (_ (err e "Wrong number of arguments to await*, expected: (await* expr)"))))
@@ -622,7 +622,7 @@
                              (if (nil? m) m (let ((m (dissoc* m kw-rettag))) (if (= (count* m) 0) #nil m))))))
                    (with-syntax ((k (node-id head))
                                  (data (const-stx (append (list name (and variadic (car variadic)) (reverse prims))
-                                                          (if (and thunk? (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_RuntimeAsync))
+                                                          (if (and thunk? (clr-static-call Cleat.Core.Runtime.AsyncSupport get_RuntimeAsync))
                                                               '(#t)
                                                               '()))))
                                  ((cl ...) (append (reverse fixed) (if variadic (list (cdr variadic)) '()))))
@@ -879,14 +879,14 @@
   (define (host-check e r) (if (string? r) (err e r) r))
 
   ;;; 类型名 → 编译器的类型描述 ("名字" . 值类型?)
-  (define (type-desc name) (cons name (and (clr-static-call Cleat.Scheme.Clojure.HostSyntax IsValueType name) #t)))
+  (define (type-desc name) (cons name (and (clr-static-call Cleat.Core.Compiler.HostSyntax IsValueType name) #t)))
 
   ;;; ($clj-deftype '描述 (lambda (字段 …) ($clj-methods 方法 …)))：字段是 lambda 绑定的变量（方法体里可读、可变字段可 set!），
   ;;; 方法是 (lambda (this 参数 …) 体)（recur 回到方法开头）。描述的格式见编译器 codegen 的 deftype-class!：
   ;;; 接口方法按 C# 展开器的规则在展开期用反射选定（TypeMethod），接口全集与没有直接实现的接口方法（桥接或抛错的桩）
   ;;; 由 HostSyntax.InterfaceLayout 算出——编译器不反射
   (define (build-type e head tagname class-name field-syms ifaces method-forms opts reify?)
-    (let* ((ifaces (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax ResolveInterfaces ifaces)))
+    (let* ((ifaces (host-check e (clr-static-call Cleat.Core.Compiler.HostSyntax ResolveInterfaces ifaces)))
            (fields (map (lambda (f)
                           (let* ((s (syntax->clj f))
                                  (m (meta-of s))
@@ -905,7 +905,7 @@
           (check (cdr fs))))
       ;; 方法体可以引用正在定义的类型（(new Foo …)、^Foo）：先登记同名的桩类型（HostSyntax.DefineStub，运行时换成真正的类型）
       (unless reify?
-        (clr-static-call Cleat.Scheme.Clojure.HostSyntax (DefineStub System.String System.Object System.String System.Object) class-name
+        (clr-static-call Cleat.Core.Compiler.HostSyntax (DefineStub System.String System.Object System.String System.Object) class-name
           (list->vector (map (lambda (f) (munge (sym-name (cadr f)))) fields))
           tagname ifaces))
       (let loop ((ms method-forms) (specs '()) (rs '()) (lambdas '()))
@@ -913,7 +913,7 @@
             (syntax-case (car ms) ()
               ((mname params mbody ...)
                (let* ((pd (syntax->clj #'params))
-                      (r (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax TypeMethod ifaces (syntax->clj #'mname) pd)))
+                      (r (host-check e (clr-static-call Cleat.Core.Compiler.HostSyntax TypeMethod ifaces (syntax->clj #'mname) pd)))
                       (iface (nil->f (vector-ref r 0))) (name (vector-ref r 1)) (ret (vector-ref r 2)) (ptypes (vector->list (vector-ref r 3)))
                       (pitems (vector-items #'params))
                       (this (car pitems)) (args (cdr pitems))
@@ -929,7 +929,7 @@
                      (loop (cdr ms) (cons spec specs) (cons r rs)
                            (cons #'(lambda (this a ...) (let lp ((a a) ...) body)) lambdas))))))
               (_ (err e (string-append "Method name must be a symbol: " (->string (syntax->clj (car ms)))))))
-            (let* ((layout (clr-static-call Cleat.Scheme.Clojure.HostSyntax InterfaceLayout ifaces (list->vector (reverse rs)) reify?))
+            (let* ((layout (clr-static-call Cleat.Core.Compiler.HostSyntax InterfaceLayout ifaces (list->vector (reverse rs)) reify?))
                    (stubs (map (lambda (st)
                                  (list (vector-ref st 0) (vector-ref st 1) (type-desc (vector-ref st 2))
                                        (map type-desc (vector->list (vector-ref st 3)))
@@ -977,7 +977,7 @@
       (let ((t (if (clr-is System.Type x) x (maybe-type x))))
         (unless t (err e (string-append "Unable to resolve classname: " (->string x))))
         (type-desc (type-name t))))
-    (let* ((ifaces (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax ResolveInterfaces extends)))
+    (let* ((ifaces (host-check e (clr-static-call Cleat.Core.Compiler.HostSyntax ResolveInterfaces extends)))
            (specs (map (lambda (sig)
                          (let ((items (seq->list sig)))
                            (unless (>= (length items) 3) (err e "Malformed gen-interface method signature"))
@@ -1014,7 +1014,7 @@
     (syntax-case e ()
       ((head base ...)
        (let* ((bases (apply clj-vector (map syntax->clj #'(base ...))))
-              (layout (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax ProxyLayout (ns-name* (current-ns)) bases)))
+              (layout (host-check e (clr-static-call Cleat.Core.Compiler.HostSyntax ProxyLayout (ns-name* (current-ns)) bases)))
               (info (list (vector-ref layout 0) 'proxy (vector-ref layout 1)
                           (vector->list (vector-ref layout 2))
                           (map (lambda (ps) (map type-desc (vector->list ps))) (vector->list (vector-ref layout 3)))
@@ -1031,7 +1031,7 @@
   (define-special gen-class* (e)
     (syntax-case e ()
       ((head opts)
-       (let* ((layout (host-check e (clr-static-call Cleat.Scheme.Clojure.HostSyntax GenClassLayout
+       (let* ((layout (host-check e (clr-static-call Cleat.Core.Compiler.HostSyntax GenClassLayout
                                       (ns-name* (current-ns)) (syntax->clj #'opts))))
               (v->l (lambda (x) (if (vector? x) (vector->list x) '())))
               (descs (lambda (x) (map type-desc (v->l x))))

@@ -52,7 +52,8 @@ See docs/license.txt. |#
         (cons . "Cleat.Scheme.Cons")
         (box . "Cleat.Scheme.Box")
         (symbol . "Cleat.Scheme.Symbol")
-        (rt . "Cleat.Scheme.RT")
+        (rt . "Cleat.Scheme.RT")                  ; fixnum 装箱缓存 Box
+        (truth . "Cleat.Core.Runtime.Truth")      ; 真值判断与布尔单例 IsTrue / Bool / True / False（cleat-082）
         (calls . "Cleat.Scheme.Calls")
         (inline-arith . "Cleat.Scheme.InlineArith")
         (boot-interface . "Cleat.Scheme.BootInterface")
@@ -69,7 +70,7 @@ See docs/license.txt. |#
         (restfn . "clojure.lang.RestFn")
         (persistent-map . "clojure.lang.IPersistentMap")
         (iobj . "clojure.lang.IObj")
-        (clojure-ops . "Cleat.Scheme.Clojure.ClojureOps")
+        (clojure-ops . "Cleat.Core.Runtime.ClojureOps")
         (type . "System.Type")
         (type-handle . "System.RuntimeTypeHandle"))
       '((call . clr-call) (field-get . clr-field-get) (field-set . clr-field-set) (new . clr-new)

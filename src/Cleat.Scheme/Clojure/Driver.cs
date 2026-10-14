@@ -8,6 +8,7 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Runtime.ExceptionServices;
 using Cleat.Core.Expand;
+using Cleat.Core.Compiler;
 using Cleat.Core.Runtime;
 using clojure.lang;
 using CoreHooks = Cleat.Core.Runtime.RuntimeHooks;
@@ -19,7 +20,7 @@ namespace Cleat.Scheme.Clojure;
 /// 编译驱动 <c>(clojure driver)</c> 的 C# 一侧（cleat-052，designs/04 §9）：Scheme 侧决定流程（顶层 do 拆分、展开、简单形式 / 编译、
 /// 收集 AOT 单元、登记钩子），这里给出不经 Scheme 互操作值转换的过程（读形式、简单形式的解释、带位置执行）、钩子的委托包装、
 /// Clojure 风格的错误报告与接口文件。
-/// <para>与 <see cref="ClojureOps"/> 相同，Scheme 侧拿到的都是 <see cref="Procedure"/> 对象（实参与返回值不转换）。</para>
+/// <para>与 <see cref="ExpandOps"/> 相同，Scheme 侧拿到的都是 <see cref="Procedure"/> 对象（实参与返回值不转换）。</para>
 /// </summary>
 public static class Driver
 {
@@ -291,118 +292,22 @@ public static class Driver
 
     // ———————————————— 二、读形式与带位置的执行 ————————————————
 
-    private static readonly IPersistentMap s_readOpts = clojure.lang.RT.map(Keyword.intern("read-cond"), Keyword.intern("allow"));
-
     /// <summary>(make-reader TextReader) → LineNumberingTextReader（已是则原样）。</summary>
     public static readonly Procedure MakeReader = new P1("clojure-make-reader", r =>
         r is LineNumberingTextReader ? r : new LineNumberingTextReader((TextReader)r));
 
-    [ThreadStatic] private static int t_lastLine, t_lastColumn;
-    [ThreadStatic] private static string t_lastSource;
-
-    /// <summary>CLEAT_TRACE_LOAD：加载时把每个顶层形式的 文件:行 写到标准错误（找出没有位置的错误出在哪个形式，cleat-053）。</summary>
-    private static readonly bool s_traceLoad = Environment.GetEnvironmentVariable("CLEAT_TRACE_LOAD") != null;
-
-    /// <summary>(read-form reader eof) → 下一个形式，或 eof。记下形式开始的行列（形式本身没有 :line 元数据时用）。</summary>
-    public static readonly Procedure ReadForm = new P2("clojure-read-form", (r, eof) =>
-    {
-        var rdr = (LineNumberingTextReader)r;
-        SkipWhitespace(rdr);
-        t_lastLine = rdr.LineNumber;
-        t_lastColumn = rdr.ColumnNumber;
-        t_lastSource = SourceLabel();
-        if (s_traceLoad) Console.Error.WriteLine($"cleat: load {SourceLabel()}:{t_lastLine}");
-        try { return LispReader.read(rdr, false, eof, false, s_readOpts); }
-        catch (Exception e) when (StampSource(e)) { throw; }
-    });
-
-    /// <summary>
-    /// 读错误报告时 <c>*file*</c> 的绑定已经弹出（错误在 load 之外报告）：读的时候把源的名字记进 <see cref="Exception.Data"/>
-    /// （cleat-055；原来文件里的读错误报成 REPL）。
-    /// </summary>
-    private static bool StampSource(Exception e)
-    {
-        try
-        {
-            if (!e.Data.Contains(SourceKey)) e.Data[SourceKey] = SourceLabel();
-        }
-        catch (Exception)
-        {
-            // 只是诊断信息
-        }
-        return false;
-    }
-
-    public const string SourceKey = "cleat.error/source";
-
-    private static void SkipWhitespace(LineNumberingTextReader r)
-    {
-        while (true)
-        {
-            int ch = r.Read();
-            if (ch == -1) return;
-            if (!char.IsWhiteSpace((char)ch) && ch != ',')
-            {
-                r.Unread(ch);
-                return;
-            }
-        }
-    }
-
-    public const string LocationKey = "cleat.error/location";
+    /// <summary>(read-form reader eof) → 下一个形式，或 eof（Diagnostics.ReadForm）。</summary>
+    public static readonly Procedure ReadForm = new P2("clojure-read-form", (r, eof) => Diagnostics.ReadForm((LineNumberingTextReader)r, eof));
 
     /// <summary>
     /// (run-form thunk form) → thunk 的值。异常不包装、原样传出（Clojure 代码的 catch 不受影响）；第一次经过（最内层的形式）时
-    /// 在 <see cref="Exception.Data"/> 记下 文件:行:列，report-error 据此报告位置。
+    /// 在 <see cref="Exception.Data"/> 记下 文件:行（Diagnostics.Stamp），report-error 据此报告位置。
     /// </summary>
     public static readonly Procedure RunForm = new P2("clojure-run-form", (thunk, form) =>
     {
         try { return ((Procedure)thunk).Invoke0(); }
-        catch (Exception e) when (Stamp(e, form)) { throw; }
+        catch (Exception e) when (Diagnostics.Stamp(e, form)) { throw; }
     });
-
-    private static bool Stamp(Exception e, object form)
-    {
-        try
-        {
-            if (e is ExpanderException || e.Data.Contains(LocationKey)) return false;
-            var m = (form as IMeta)?.meta();
-            object line = m?.valAt(Keyword.intern("line"));
-            // 执行错误的位置只有 文件:行（Clojure 的 ex-str 对 :execution 不带列）
-            e.Data[LocationKey] = $"{SourceLabel()}:{line ?? t_lastLine}";
-        }
-        catch (Exception)
-        {
-            // 位置只是诊断信息
-        }
-        return false;
-    }
-
-    /// <summary>当前源的名字：*file*（全路径，与语法错误相同）；REPL / -e 为 REPL。</summary>
-    private static string SourceLabel() => DisplayPath(clojure.lang.RT.SourcePathVar.deref() as string);
-
-    /// <summary>
-    /// 错误文本里的源路径（clojure.main/ex-triage 的规则）：没有源文件为 REPL；当前目录之下的文件相对于当前目录
-    /// （<c>cleat input.clj</c> 与 <c>cleat /全路径/input.clj</c> 都报 <c>input.clj</c>），其余原样。
-    /// </summary>
-    public static string DisplayPath(string file)
-    {
-        if (string.IsNullOrEmpty(file) || file == "NO_SOURCE_PATH" || file == "NO_SOURCE_FILE") return "REPL";
-        try
-        {
-            if (Path.IsPathRooted(file))
-            {
-                string cwd = Path.GetFullPath(Directory.GetCurrentDirectory()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                string full = Path.GetFullPath(file);
-                if (full.StartsWith(cwd, StringComparison.Ordinal)) return full.Substring(cwd.Length).Replace('\\', '/');
-            }
-        }
-        catch (Exception)
-        {
-            // 路径只是诊断信息
-        }
-        return file;
-    }
 
     /// <summary>(top-level-do-body form) → (do a b …) 的 Scheme 列表 (a b …)，否则 #f。</summary>
     public static readonly Procedure TopLevelDoBody = new P1("clojure-top-level-do-body", form =>
@@ -477,142 +382,17 @@ public static class Driver
         hook(package, list, rs, Path.GetFullPath(dllPath));
     }
 
-    /// <summary>--report stdio（cleat-034，clojure.main 的语义）：错误报告写到 *out* 而不是 *err*。宿主按命令行设置。</summary>
-    public static bool ReportToStdOut;
-
-    /// <summary>登记 Clojure 风格的错误报告（写到 *err*，或 --report stdio 时的 *out*）。</summary>
-    public static void InstallReportError() => CoreHooks.ReportError = ReportError;
-
     /// <summary>
-    /// 报告错误（写到 *err*）：Clojure 的 REPL / clojure.main 只打印 ex-str 的两行，不打印栈（cleat-055 诊断边界）。
-    /// 环境变量 CLEAT_TRACE_ERRORS：<c>clojure</c> 时加上过滤过的栈（<see cref="ClojureStackTrace"/>：没有 Cleat.Scheme.* 与
-    /// Scheme 生成的代码的帧，与 Clojure 过滤 clojure.lang 帧同理）；其他非空值（如 1）时加上完整的 CLR 异常与栈。
+    /// 登记 Clojure 风格的错误报告（<see cref="Diagnostics.ReportError"/>），并让诊断能取出 Scheme 条件对象的文本
+    /// （raise 抛出的 SchemeException）。
     /// </summary>
-    public static void ReportError(Exception e)
+    public static void InstallReportError()
     {
-        TextWriter w = ReportToStdOut
-            ? (TextWriter)(clojure.lang.RT.OutVar.deref() as TextWriter ?? Console.Out)
-            : clojure.lang.RT.errPrintWriter();
-        w.Write(FormatError(e));
-        w.WriteLine();
-        string trace = Environment.GetEnvironmentVariable("CLEAT_TRACE_ERRORS");
-        if (!string.IsNullOrEmpty(trace))
-            w.WriteLine(trace == "clojure" ? ClojureStackTrace(e) : e.ToString());
-        w.Flush();
+        Diagnostics.MessageHook = SchemeMessage;
+        CoreHooks.ReportError = Diagnostics.ReportError;
     }
 
-    private static string NL => Environment.NewLine;
-
-    /// <summary>
-    /// Clojure 1.12（clojure.main/ex-str，与 JVM 的输出逐条对照，cleat-055）的错误文本，两行：
-    /// <list type="bullet">
-    /// <item>读错误：<c>Syntax error reading source at (文件:行:列).</c></item>
-    /// <item>展开错误（ExpanderException，按 phase）：<c>Syntax error[ (类型)] compiling [符号 ]at (文件:行:列).</c>、
-    ///   <c>Syntax error macroexpanding [符号 ]at (…).</c>、<c>Unexpected error[ (类型)] macroexpanding [符号 ]at (…).</c></item>
-    /// <item>其余：<c>Execution error[ (类型)] at (文件:行).</c></item>
-    /// </list>
-    /// 第二行是原因。类型为 System.Exception 时省略（Clojure 省略 Exception / RuntimeException）；没有源文件时为 REPL。
-    /// </summary>
-    public static string FormatError(Exception e)
-    {
-        while (e is TargetInvocationException && e.InnerException != null) e = e.InnerException;
-        switch (e)
-        {
-            case ExpanderException x:
-                return FormatSyntaxError(x);
-            case LispReader.ReaderException re:
-                string src = re.Data.Contains(SourceKey) ? (string)re.Data[SourceKey] : SourceLabel();
-                return $"Syntax error reading source at ({src}:{re.Line}:{re.Column}).{NL}{(re.InnerException ?? re).Message}";
-        }
-        string loc = e.Data.Contains(LocationKey) ? (string)e.Data[LocationKey] : SourceLabel() + ":1";
-        return $"Execution error{CauseType(e)} at ({loc}).{NL}{Message(e)}";
-    }
-
-    private static string CauseType(Exception e) =>
-      e == null || e.GetType() == typeof(Exception) ? "" : " (" + e.GetType().Name + ")";
-
-    private static string FormatSyntaxError(ExpanderException x)
-    {
-        // 宏展开出的形式没有位置（0:0）：报最内层顶层形式的位置（Clojure 的编译器同样报外层形式的 LINE / COLUMN）
-        string loc = x.Line == 0 && t_lastLine > 0 && DisplayPath(x.SourcePath) == t_lastSource && t_lastSource != "REPL"
-            ? $"{DisplayPath(x.SourcePath)}:{t_lastLine}:{t_lastColumn}"
-            : $"{DisplayPath(x.SourcePath)}:{x.Line}:{x.Column}";
-        string sym = x.Symbol != null ? x.Symbol + " " : "";
-        string reason = x.Reason ?? x.Message;
-        if (x.Phase == ExpanderException.PhaseSyntax) return $"Syntax error macroexpanding {sym}at ({loc}).{NL}{reason}";
-        if (x.Phase == ExpanderException.PhaseMacroexpand)
-            return $"Unexpected error{CauseType(x.InnerException)} macroexpanding {sym}at ({loc}).{NL}{reason}";
-        string type = x.InnerException != null ? CauseType(x.InnerException) : CompileCauseType(reason);
-        return $"Syntax error{type} compiling {sym}at ({loc}).{NL}{reason}";
-    }
-
-    /// <summary>
-    /// 展开器自己报的编译错误没有原因异常；JVM 的 Clojure 对其中一部分用 IllegalArgumentException / UnsupportedOperationException /
-    /// IllegalStateException（ex-str 会打印类型），其余是 RuntimeException（不打印）。按原因文本对应到 CLR 的同类异常名。
-    /// </summary>
-    private static string CompileCauseType(string reason)
-    {
-        foreach (var (prefix, type) in s_compileCauseTypes)
-            if (reason.StartsWith(prefix, StringComparison.Ordinal)) return " (" + type + ")";
-        return "";
-    }
-
-    private static readonly (string, string)[] s_compileCauseTypes =
-    {
-        ("Bad binding form", "ArgumentException"),
-        ("Unable to resolve classname", "ArgumentException"),
-        ("fn params must be Symbols", "ArgumentException"),
-        ("Malformed member expression", "ArgumentException"),
-        ("Malformed assignment", "ArgumentException"),
-        ("Invalid assignment target", "ArgumentException"),
-        ("Cannot assign to non-mutable", "ArgumentException"),
-        ("Mismatched argument count to recur", "ArgumentException"),
-        ("Can't call nil", "ArgumentException"),
-        ("Can only recur from tail position", "NotSupportedException"),
-        ("Cannot recur across try", "NotSupportedException"),
-        ("var: ", "InvalidOperationException"),
-        ("Var: ", "InvalidOperationException"),
-    };
-
-    /// <summary>
-    /// 过滤过的栈（CLEAT_TRACE_ERRORS=clojure）：去掉 Cleat.Scheme 程序集的帧（驱动、过程外壳、模块加载）、Scheme 编译器生成的
-    /// 顶层代码（<c>_Module$…</c> / <c>#Module$…</c>）、动态方法与反射调用的帧；留下 Clojure 的函数类 / deftype、clojure.lang 与宿主的帧。
-    /// 内层异常以 Caused by 接上。
-    /// </summary>
-    public static string ClojureStackTrace(Exception e)
-    {
-        var sb = new System.Text.StringBuilder();
-        for (var x = e; x != null; x = x.InnerException)
-        {
-            if (x != e) sb.Append("Caused by: ");
-            sb.Append(x.GetType().FullName).Append(": ").Append(x.Message).Append(NL);
-            foreach (var f in new System.Diagnostics.StackTrace(x, true).GetFrames())
-            {
-                var m = f.GetMethod();
-                var t = m?.DeclaringType;
-                if (!IsClojureFrame(t)) continue;
-                sb.Append("   at ").Append(t.FullName).Append('.').Append(m.Name);
-                if (f.GetFileName() is string file && f.GetFileLineNumber() > 0) sb.Append(" (").Append(Path.GetFileName(file)).Append(':').Append(f.GetFileLineNumber()).Append(')');
-                sb.Append(NL);
-            }
-        }
-        return sb.ToString().TrimEnd();
-    }
-
-    private static readonly Assembly s_schemeAssembly = typeof(Procedure).Assembly;
-
-    public static bool IsClojureFrame(Type t)
-    {
-        if (t == null || t.Assembly == s_schemeAssembly) return false;
-        string n = t.FullName ?? t.Name;
-        if (n.StartsWith("_Module$", StringComparison.Ordinal) || n.StartsWith("#Module$", StringComparison.Ordinal)) return false;
-        if (n.StartsWith("Cleat.Scheme.", StringComparison.Ordinal) || n.StartsWith("System.Reflection.", StringComparison.Ordinal)
-            || n.StartsWith("System.RuntimeMethodHandle", StringComparison.Ordinal) || n.StartsWith("System.Runtime.ExceptionServices.", StringComparison.Ordinal))
-            return false;
-        return true;
-    }
-
-    private static string Message(Exception e)
+    private static string SchemeMessage(Exception e)
     {
         if (e is SchemeException se)
         {
@@ -622,66 +402,10 @@ public static class Driver
                     parts.Add(string.Join(" ", r.Fields.Select(f => f is Cons l ? string.Join(" ", l) : f?.ToString() ?? "()")));
             if (parts.Count > 0) return string.Join(": ", parts);
         }
-        return e.Message;
+        return null;
     }
 
     // ———————————————— 四、AOT：输出路径、镜像核对、接口文件 ————————————————
-
-    /// <summary>
-    /// (compile-output-path 源路径 源名字) → clojure.core/compile 的包程序集路径（designs/17 §2.3）：a/b.clj → a.b.dll。目录：*compile-path*
-    /// 是字符串时用它，否则用找到源码的那个加载路径目录（源路径去掉源名字）。
-    /// </summary>
-    public static string CompileOutputPath(object sourcePath, object sourceName)
-    {
-        string path = sourcePath?.ToString() ?? "", name = (sourceName?.ToString() ?? Path.GetFileName(path)).Replace('\\', '/');
-        string file = LoadKeyNamespace(LoadKey(sourcePath, sourceName)) + ".dll";
-        if (clojure.lang.RT.CompilePathVar.deref() is string dir && dir.Length > 0) return Path.GetFullPath(Path.Combine(dir, file));
-        string full = Path.GetFullPath(path).Replace('\\', '/');
-        string root = full.EndsWith("/" + name, StringComparison.Ordinal) ? full.Substring(0, full.Length - name.Length) : Path.GetDirectoryName(full);
-        return Path.GetFullPath(Path.Combine(root, file));
-    }
-
-    /// <summary>(load-key 源路径 源名字) → 加载器查包索引用的键：去掉扩展名的加载路径（<c>nrepl/server.clj</c> → <c>nrepl/server</c>）。</summary>
-    public static string LoadKey(object sourcePath, object sourceName)
-    {
-        string name = (sourceName as string ?? Path.GetFileName(sourcePath?.ToString() ?? "")).Replace('\\', '/').TrimStart('/');
-        foreach (string ext in new[] { ".cljr", ".cljc", ".clj" })
-            if (name.EndsWith(ext, StringComparison.Ordinal)) return name.Substring(0, name.Length - ext.Length);
-        return name;
-    }
-
-    /// <summary>加载键 → 包程序集名（<c>a/b</c> → <c>a.b</c>）。</summary>
-    public static string LoadKeyNamespace(object key) => (key?.ToString() ?? "").Replace('/', '.');
-
-    public static string PackageFullPath(object path) => Path.GetFullPath(path?.ToString() ?? "");
-
-    /// <summary>(under-directory? 全路径 根)：文件在目录根（递归）下，或就是文件根（tools.build 的 :filter-nses 给出单个文件）。</summary>
-    public static bool UnderDirectory(object full, object dir)
-    {
-        string d = Path.GetFullPath(dir?.ToString() ?? "");
-        if (File.Exists(d)) return string.Equals(full?.ToString(), d, StringComparison.Ordinal);
-        if (!d.EndsWith(Path.DirectorySeparatorChar)) d += Path.DirectorySeparatorChar;
-        return (full?.ToString() ?? "").StartsWith(d, StringComparison.Ordinal);
-    }
-
-    /// <summary>编译时正在运行的 Clojure boot 镜像（cleat.boot.dll）的 id；没有时 #f。产物入口据此生成 BootInterface.Check。</summary>
-    public static object ClojureImageId() => CoreBoot.CurrentImageId?.ToString() ?? s_false;
-
-    /// <summary>
-    /// (direct-link-target var argc)：Var 在接口文件里的条目有静态 <c>invokeStatic</c>（:static）且 arity 恰为 argc 时
-    /// 返回类名（"类, 程序集"），否则 #f。展开器对 Var 调用据此生成 <c>$clj-static-call</c>（跨单元直接链接，cleat-033，
-    /// designs/04 §6）；其余调用照常走 IFn.invoke。
-    /// </summary>
-    public static object DirectLinkTarget(object var, object argc)
-    {
-        if (var is not Var v) return s_false;
-        int n;
-        try { n = Convert.ToInt32(argc); }
-        catch (Exception) { return s_false; }   // Scheme 的 fixnum 是 Int64，其余不是参数个数的直接放弃直连
-        // IFn.invoke 只有 1 ~ 20 个固定参数的签名：更多参数的调用不做直连
-        var e = InterfaceFile.FindKnown(clojure.lang.Symbol.intern(v.Namespace.Name.Name, v.Symbol.Name));
-        return e is { HasStatic: true } && n is >= 1 and <= 20 && Array.IndexOf(e.Arities, n) >= 0 ? e.ClassName : s_false;
-    }
 
     private static readonly Symbol s_type = Symbol.Intern("type");
     private static readonly Symbol s_cljFn = Symbol.Intern("$clj-fn");

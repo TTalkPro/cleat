@@ -314,7 +314,7 @@
       (clr-namespaces)
       (body
         (label start)
-        (ldsfld "Cleat.Scheme.RT" "False")
+        (ldsfld "Cleat.Core.Runtime.Truth" "False")
         (ret)))
     (method "P1$N"
       (attrs static)

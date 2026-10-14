@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace Cleat.Scheme;
+namespace Cleat.Core.Runtime;
 
 /// <summary>
 /// 局部变量清除（cleat-042 第 5 项）。生成的代码在变量的最后一次引用处经 <c>ldloca</c> / <c>ldarga</c> 调用 <see cref="Take"/>：

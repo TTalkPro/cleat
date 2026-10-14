@@ -28,6 +28,7 @@
 //                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为一个包程序集
 //                         src/boot/Cleat.Clojure.Libs.dll（designs/17）；宿主登记 Clojure 镜像旁的它，require 走包程序集
 //                         （从源码加载不了的命名空间跳过）                                  [cleat-033、cleat-067]
+//   compile-tools         tools.namespace 与 tools.build 编成包程序集 src/boot/tools/（pack 也做；镜像变了之后单独重编用）  [cleat-082]
 //   pack [-o 目录] [--version 版本]
 //                         运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）与 dotnet tool 包 Cleat.Cli（cleat-071）：
 //                         Release 构建、compile-libs、tools.build 的包程序集，再 dotnet pack；默认输出 artifacts/nuget/。推到本地目录源或 BaGetter 后 C# / F#
@@ -80,6 +81,10 @@ try
         case "compile-libs":
             BuildCSharp();
             CompileLibs(rest);
+            break;
+        case "compile-tools":
+            BuildCSharp();
+            CompileToolLibs();
             break;
         case "publish":
             Publish(rest);

@@ -4,7 +4,7 @@ using System.Linq;
 using System.Reflection;
 using clojure.lang;
 
-namespace Cleat.Scheme.Clojure;
+namespace Cleat.Core.Compiler;
 
 /// <summary>
 /// proxy 与 gen-class 的类型布局（cleat-043）：在展开期用反射算出要生成的 CLR 类型的成员，编译器（codegen）据此生成 Lcil，
@@ -137,7 +137,7 @@ public static partial class HostSyntax
                 t = MaybeType(s, false) ?? (s.Name.Contains('.') ? null : ClassForName("System." + s.Name));
                 break;
             case string str:
-                t = s_specialTags.TryGetValue(str, out var p2) ? p2 : ClassForName(str) ?? TypeResolver.Resolve(str, Array.Empty<string>());
+                t = s_specialTags.TryGetValue(str, out var p2) ? p2 : ClassForName(str) ?? CompileTimeTypes.Resolve(str);
                 break;
             case ISeq or IPersistentList:
                 error = "by-ref parameters are not supported in gen-class: " + x;
@@ -153,7 +153,7 @@ public static partial class HostSyntax
         return ps.Count == 0 ? name + "-void" : name + "-" + string.Join("-", ps);
     }
 
-    private static Type ResolveTypeName(string n) => ClassForName(n) ?? TypeResolver.Resolve(n, Array.Empty<string>());
+    private static Type ResolveTypeName(string n) => ClassForName(n) ?? CompileTimeTypes.Resolve(n);
 
     private static string VarField(string name) => Munge(name + "__var");
 

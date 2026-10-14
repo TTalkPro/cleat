@@ -26,9 +26,9 @@
 
   (clr-reference cleat-emit)
 
-  (define seq->list* (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps SeqToList))
-  (define map->list* (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps MapToList))
-  (define meta* (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps Meta))
+  (define seq->list* (clr-static-field-get Cleat.Scheme.Clojure.ExpandOps SeqToList))
+  (define map->list* (clr-static-field-get Cleat.Scheme.Clojure.ExpandOps MapToList))
+  (define meta* (clr-static-field-get Cleat.Scheme.Clojure.ExpandOps Meta))
 
   (define (->string x) (clr-call System.Object ToString x))
   (define (named ns name) (if (nil? ns) (list name) (list ns name)))

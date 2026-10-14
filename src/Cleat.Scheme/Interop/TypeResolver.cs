@@ -44,17 +44,16 @@ public static class TypeResolver
         ["hashtable[]"] = "System.Collections.Hashtable[]",
     };
 
-    private static readonly ConcurrentDictionary<string, Type> s_compileTimeTypes = new ConcurrentDictionary<string, Type>();
     private static readonly ConcurrentDictionary<string, Type> s_cache = new ConcurrentDictionary<string, Type>();
 
-    /// <summary>登记尚未保存的程序集中的类型（编译期生成的类型；旧 AddCompileTimeType）。</summary>
-    public static void AddCompileTimeType(Type t) { s_compileTimeTypes[t.FullName] = t; s_cache.Clear(); }
-    public static void RemoveCompileTimeType(Type t) { s_compileTimeTypes.TryRemove(t.FullName, out _); s_cache.Clear(); }
+    /// <summary>登记尚未保存的程序集中的类型（编译期生成的类型；旧 AddCompileTimeType）。登记表在 Cleat.Core（cleat-082），Clojure 前端共用。</summary>
+    public static void AddCompileTimeType(Type t) { Cleat.Core.Compiler.CompileTimeTypes.Add(t); s_cache.Clear(); }
+    public static void RemoveCompileTimeType(Type t) { Cleat.Core.Compiler.CompileTimeTypes.Remove(t); s_cache.Clear(); }
 
     /// <summary>按全名在登记表与已加载程序集中查公开类型；找不到返回 null。</summary>
     public static Type GetTypeFast(string name)
     {
-        if (s_compileTimeTypes.TryGetValue(name, out var ct)) return ct;
+        if (Cleat.Core.Compiler.CompileTimeTypes.Get(name) is Type ct) return ct;
         if (s_cache.TryGetValue(name, out var cached)) return cached;
         Type found = null;
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())

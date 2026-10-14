@@ -6,7 +6,7 @@
 
 ;; CLEAT-043: ClojureCLR 的 clojure.clr.async.task.alpha（同名同 API）。^:async fn 与 await* 由 cleat 的编译器实现：
 ;; 运行时 async 可用时（.NET 11 起缺省；.NET 10 要 DOTNET_RuntimeAsync=1）是真正的挂起 / 恢复，否则 await 同步等待、
-;; async 体返回已完成的 Task（见 Cleat.Scheme.Clojure.AsyncSupport）。取值走 AsyncSupport/ResultOf（任意 Task<T>，
+;; async 体返回已完成的 Task（见 Cleat.Core.Runtime.AsyncSupport）。取值走 AsyncSupport/ResultOf（任意 Task<T>，
 ;; 失败时抛出原来的异常），不经反射的 GetAwaiter。
 
 ;;  ── Extracting a Task result ──────────────────────
@@ -21,7 +21,7 @@
      (t/result (t/completed-task))   ;=> nil
      (t/result (t/async (t/await (t/delay-task 100)) \"done\"))  ;=> \"done\""
   [task]
-  (Cleat.Scheme.Clojure.AsyncSupport/ResultOf (Cleat.Scheme.Clojure.AsyncSupport/ToTask task)))
+  (Cleat.Core.Runtime.AsyncSupport/ResultOf (Cleat.Core.Runtime.AsyncSupport/ToTask task)))
 
 ;; ── Macros (only these two require macro status) ──────────────────────
 
@@ -58,7 +58,7 @@
     :else (int (.TotalMilliseconds ^TimeSpan timeout))))
 
 (defn- task-array [tasks]
-  (into-array Task (map #(Cleat.Scheme.Clojure.AsyncSupport/ToTask %) tasks)))
+  (into-array Task (map #(Cleat.Core.Runtime.AsyncSupport/ToTask %) tasks)))
 
 (defn wait-all
   "Waits for all of the provided Tasks to complete execution.  Returns nil.

@@ -50,7 +50,7 @@
 (define (compiled-count) (clr-static-field-get Cleat.Scheme.Clojure.Driver CompiledCount))
 (define (format-error thunk)
   (with-clr-exception-handler
-    (lambda (e) (clr-static-call Cleat.Scheme.Clojure.Driver FormatError e))
+    (lambda (e) (clr-static-call Cleat.Core.Compiler.Diagnostics FormatError e))
     thunk))
 (define (set-simple! on?) (clr-static-field-set! Cleat.Scheme.Clojure.Driver SimpleEvalEnabled on?))
 

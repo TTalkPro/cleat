@@ -296,7 +296,7 @@
         (box "System.Double")
         (ldloc 5)
         (callvirt "Cleat.Scheme.Procedure" "Invoke2" ("System.Object" "System.Object") "System.Object")
-        (call "Cleat.Scheme.RT" "IsTrue" ("System.Object") "System.Boolean")
+        (call "Cleat.Core.Runtime.Truth" "IsTrue" ("System.Object") "System.Boolean")
         (label L5)
         (brfalse L2)
         (ldloc 0)

@@ -69,9 +69,9 @@
     (set! form-ordinal (+ form-ordinal 1))
     (clr-static-call clojure.lang.RT setNextID (* form-ordinal 100000)))
 
-  ;;; 编译执行：值经 ClojureOps.HoldResult 存放、TakeResult 取出——compile-core 的 thunk 经 Scheme 互操作返回，
+  ;;; 编译执行：值经 Cleat.Core.Runtime.ClojureOps.HoldResult 存放、ExpandOps.TakeResult 取出——compile-core 的 thunk 经 Scheme 互操作返回，
   ;;; 会把 long 规范成 Int32（cleat-055 值边界）。AOT 单元收集的是未包装的 core
-  (define take-result (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps TakeResult))
+  (define take-result (clr-static-field-get Cleat.Scheme.Clojure.ExpandOps TakeResult))
   (define (run-compiled core)
     ((compile-core-of-image (list '$clj-call (list 'quote "HoldResult") (list 'quote #f) core)))
     (take-result #f))
@@ -123,15 +123,15 @@
   (define (package-file? pkg path)
     (let ((roots (vector-ref pkg 0)))
       (or (boolean? roots)
-          (let ((full (clr-static-call Cleat.Scheme.Clojure.Driver PackageFullPath path)))
-            (exists (lambda (root) (clr-static-call Cleat.Scheme.Clojure.Driver UnderDirectory full root)) roots)))))
+          (let ((full (clr-static-call Cleat.Core.Compiler.AotPaths PackageFullPath path)))
+            (exists (lambda (root) (clr-static-call Cleat.Core.Compiler.AotPaths UnderDirectory full root)) roots)))))
 
   (define (load-hook reader path name)
     (let ((pkg (package-build)))
       (if (and pkg (not (boot-build)) (package-file? pkg path))
           (let* ((unit (vector '()))
                  (v (parameterize ((current-unit unit)) (clojure-load-reader reader path name)))
-                 (key (clr-static-call Cleat.Scheme.Clojure.Driver LoadKey path name)))
+                 (key (clr-static-call Cleat.Core.Compiler.AotPaths LoadKey path name)))
             (unless (assoc key (vector-ref pkg 1))
               (vector-set! pkg 1 (cons (cons key (reverse (vector-ref unit 0))) (vector-ref pkg 1))))
             v)
@@ -160,7 +160,7 @@
           (pkg (vector roots '())))
       (parameterize ((package-build pkg) (current-unit #f))
         (for-each clojure-eval-toplevel forms))
-      (compile! (reverse (vector-ref pkg 1)) package dll-path (clr-static-call Cleat.Scheme.Clojure.Driver ClojureImageId))))
+      (compile! (reverse (vector-ref pkg 1)) package dll-path (clr-static-call Cleat.Core.Compiler.AotPaths ClojureImageId))))
 
   ;;; *compile-files* 为真时加载文件（clojure.core/compile）：这个文件与它加载到的、还没加载过的文件编成一个包程序集
   ;;; （*compile-path*/a.b.dll，designs/17 §2.3；JVM 的 compile 也连带编译被加载的库）。已在编包时只是加载
@@ -172,9 +172,9 @@
           (let ((v (parameterize ((package-build pkg) (current-unit #f))
                      (load-hook reader path name))))
             (compile! (reverse (vector-ref pkg 1))
-                      (clr-static-call Cleat.Scheme.Clojure.Driver LoadKeyNamespace (clr-static-call Cleat.Scheme.Clojure.Driver LoadKey path name))
-                      (clr-static-call Cleat.Scheme.Clojure.Driver CompileOutputPath path name)
-                      (clr-static-call Cleat.Scheme.Clojure.Driver ClojureImageId))
+                      (clr-static-call Cleat.Core.Compiler.AotPaths LoadKeyNamespace (clr-static-call Cleat.Core.Compiler.AotPaths LoadKey path name))
+                      (clr-static-call Cleat.Core.Compiler.AotPaths CompileOutputPath path name)
+                      (clr-static-call Cleat.Core.Compiler.AotPaths ClojureImageId))
             v))))
 
   ;;; (clojure-compile-boot 形式列表 dll路径)：在 user 命名空间里依次求值形式（boot-order 的 load / require），全部加载到的文件的

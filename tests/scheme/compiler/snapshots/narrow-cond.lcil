@@ -271,7 +271,7 @@
         (call "Cleat.Scheme.Calls" "Proc" ("System.Object") "Cleat.Scheme.Procedure")
         (ldarg 0)
         (callvirt "Cleat.Scheme.Procedure" "Invoke1" ("System.Object") "System.Object")
-        (call "Cleat.Scheme.RT" "IsTrue" ("System.Object") "System.Boolean")
+        (call "Cleat.Core.Runtime.Truth" "IsTrue" ("System.Object") "System.Boolean")
         (brfalse L0)
         (ldarg 0)
         (ldsfld "Cleat.Scheme.EmptyList" "Instance")
@@ -339,7 +339,7 @@
         (label L11)
         (ret)
         (label L6)
-        (ldsfld "Cleat.Scheme.RT" "False")
+        (ldsfld "Cleat.Core.Runtime.Truth" "False")
         (ret)))
     (method ".cctor"
       (attrs cctor)

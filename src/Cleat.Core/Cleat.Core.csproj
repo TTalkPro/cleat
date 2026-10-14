@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- 运行时（无 DLR）。设计：designs/02-runtime.md。clojure.lang/ 下是从 ClojureCLR 改写的 EPL 代码（designs/00 D11），
-       不按 .editorconfig 的样式检查；新写的代码在 Runtime/ 与 Expander/ -->
+       不按 .editorconfig 的样式检查；新写的代码在 Runtime/、Compiler/ 与 Expander/ -->
   <PropertyGroup>
     <RootNamespace>Cleat.Core</RootNamespace>
     <AssemblyName>Cleat.Core</AssemblyName>

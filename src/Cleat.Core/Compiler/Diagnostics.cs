@@ -1,0 +1,255 @@
+using System;
+using System.IO;
+using System.Reflection;
+using Cleat.Core.Expand;
+using clojure.lang;
+using CoreHooks = Cleat.Core.Runtime.RuntimeHooks;
+
+namespace Cleat.Core.Compiler;
+
+/// <summary>
+/// Clojure 风格的诊断（cleat-055 的诊断边界）：读 / 执行错误的源位置记录、错误文本（clojure.main/ex-str）、过滤过的栈。
+/// cleat-082 从 Cleat.Scheme 的 Driver 搬来，编译驱动（Scheme 版与将来的 Clojure 版）共用。
+/// </summary>
+public static class Diagnostics
+{
+    [ThreadStatic] private static int t_lastLine, t_lastColumn;
+    [ThreadStatic] private static string t_lastSource;
+
+    /// <summary>CLEAT_TRACE_LOAD：加载时把每个顶层形式的 文件:行 写到标准错误（找出没有位置的错误出在哪个形式，cleat-053）。</summary>
+    private static readonly bool s_traceLoad = Environment.GetEnvironmentVariable("CLEAT_TRACE_LOAD") != null;
+
+    private static readonly IPersistentMap s_readOpts = clojure.lang.RT.map(Keyword.intern("read-cond"), Keyword.intern("allow"));
+
+    /// <summary>读下一个顶层形式（或 eof）。记下形式开始的行列（形式本身没有 :line 元数据时用）。</summary>
+    public static object ReadForm(LineNumberingTextReader rdr, object eof)
+    {
+        SkipWhitespace(rdr);
+        t_lastLine = rdr.LineNumber;
+        t_lastColumn = rdr.ColumnNumber;
+        t_lastSource = SourceLabel();
+        if (s_traceLoad) Console.Error.WriteLine($"cleat: load {SourceLabel()}:{t_lastLine}");
+        try { return LispReader.read(rdr, false, eof, false, s_readOpts); }
+        catch (Exception e) when (StampSource(e)) { throw; }
+    }
+
+    private static void SkipWhitespace(LineNumberingTextReader r)
+    {
+        while (true)
+        {
+            int ch = r.Read();
+            if (ch == -1) return;
+            if (!char.IsWhiteSpace((char)ch) && ch != ',')
+            {
+                r.Unread(ch);
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 读错误报告时 <c>*file*</c> 的绑定已经弹出（错误在 load 之外报告）：读的时候把源的名字记进 <see cref="Exception.Data"/>
+    /// （cleat-055；原来文件里的读错误报成 REPL）。
+    /// </summary>
+    private static bool StampSource(Exception e)
+    {
+        try
+        {
+            if (!e.Data.Contains(SourceKey)) e.Data[SourceKey] = SourceLabel();
+        }
+        catch (Exception)
+        {
+            // 只是诊断信息
+        }
+        return false;
+    }
+
+    public const string SourceKey = "cleat.error/source";
+
+    public const string LocationKey = "cleat.error/location";
+
+    /// <summary>
+    /// 执行顶层形式时的异常过滤器：异常不包装、原样传出（Clojure 代码的 catch 不受影响）；第一次经过（最内层的形式）时
+    /// 在 <see cref="Exception.Data"/> 记下 文件:行，<see cref="ReportError"/> 据此报告位置。总是返回 false。
+    /// </summary>
+    public static bool Stamp(Exception e, object form)
+    {
+        try
+        {
+            if (e is ExpanderException || e.Data.Contains(LocationKey)) return false;
+            var m = (form as IMeta)?.meta();
+            object line = m?.valAt(Keyword.intern("line"));
+            // 执行错误的位置只有 文件:行（Clojure 的 ex-str 对 :execution 不带列）
+            e.Data[LocationKey] = $"{SourceLabel()}:{line ?? t_lastLine}";
+        }
+        catch (Exception)
+        {
+            // 位置只是诊断信息
+        }
+        return false;
+    }
+
+    /// <summary>当前源的名字：*file*（全路径，与语法错误相同）；REPL / -e 为 REPL。</summary>
+    private static string SourceLabel() => DisplayPath(clojure.lang.RT.SourcePathVar.deref() as string);
+
+    /// <summary>
+    /// 错误文本里的源路径（clojure.main/ex-triage 的规则）：没有源文件为 REPL；当前目录之下的文件相对于当前目录
+    /// （<c>cleat input.clj</c> 与 <c>cleat /全路径/input.clj</c> 都报 <c>input.clj</c>），其余原样。
+    /// </summary>
+    public static string DisplayPath(string file)
+    {
+        if (string.IsNullOrEmpty(file) || file == "NO_SOURCE_PATH" || file == "NO_SOURCE_FILE") return "REPL";
+        try
+        {
+            if (Path.IsPathRooted(file))
+            {
+                string cwd = Path.GetFullPath(Directory.GetCurrentDirectory()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                string full = Path.GetFullPath(file);
+                if (full.StartsWith(cwd, StringComparison.Ordinal)) return full.Substring(cwd.Length).Replace('\\', '/');
+            }
+        }
+        catch (Exception)
+        {
+            // 路径只是诊断信息
+        }
+        return file;
+    }
+
+    /// <summary>--report stdio（cleat-034，clojure.main 的语义）：错误报告写到 *out* 而不是 *err*。宿主按命令行设置。</summary>
+    public static bool ReportToStdOut;
+
+    /// <summary>登记 Clojure 风格的错误报告（写到 *err*，或 --report stdio 时的 *out*）。</summary>
+    public static void InstallReportError() => CoreHooks.ReportError = ReportError;
+
+    /// <summary>
+    /// 报告错误（写到 *err*）：Clojure 的 REPL / clojure.main 只打印 ex-str 的两行，不打印栈（cleat-055 诊断边界）。
+    /// 环境变量 CLEAT_TRACE_ERRORS：<c>clojure</c> 时加上过滤过的栈（<see cref="ClojureStackTrace"/>：没有 Cleat.Scheme.* 与
+    /// Scheme 生成的代码的帧，与 Clojure 过滤 clojure.lang 帧同理）；其他非空值（如 1）时加上完整的 CLR 异常与栈。
+    /// </summary>
+    public static void ReportError(Exception e)
+    {
+        TextWriter w = ReportToStdOut
+            ? (TextWriter)(clojure.lang.RT.OutVar.deref() as TextWriter ?? Console.Out)
+            : clojure.lang.RT.errPrintWriter();
+        w.Write(FormatError(e));
+        w.WriteLine();
+        string trace = Environment.GetEnvironmentVariable("CLEAT_TRACE_ERRORS");
+        if (!string.IsNullOrEmpty(trace))
+            w.WriteLine(trace == "clojure" ? ClojureStackTrace(e) : e.ToString());
+        w.Flush();
+    }
+
+    private static string NL => Environment.NewLine;
+
+    /// <summary>
+    /// Clojure 1.12（clojure.main/ex-str，与 JVM 的输出逐条对照，cleat-055）的错误文本，两行：
+    /// <list type="bullet">
+    /// <item>读错误：<c>Syntax error reading source at (文件:行:列).</c></item>
+    /// <item>展开错误（ExpanderException，按 phase）：<c>Syntax error[ (类型)] compiling [符号 ]at (文件:行:列).</c>、
+    ///   <c>Syntax error macroexpanding [符号 ]at (…).</c>、<c>Unexpected error[ (类型)] macroexpanding [符号 ]at (…).</c></item>
+    /// <item>其余：<c>Execution error[ (类型)] at (文件:行).</c></item>
+    /// </list>
+    /// 第二行是原因。类型为 System.Exception 时省略（Clojure 省略 Exception / RuntimeException）；没有源文件时为 REPL。
+    /// </summary>
+    public static string FormatError(Exception e)
+    {
+        while (e is TargetInvocationException && e.InnerException != null) e = e.InnerException;
+        switch (e)
+        {
+            case ExpanderException x:
+                return FormatSyntaxError(x);
+            case LispReader.ReaderException re:
+                string src = re.Data.Contains(SourceKey) ? (string)re.Data[SourceKey] : SourceLabel();
+                return $"Syntax error reading source at ({src}:{re.Line}:{re.Column}).{NL}{(re.InnerException ?? re).Message}";
+        }
+        string loc = e.Data.Contains(LocationKey) ? (string)e.Data[LocationKey] : SourceLabel() + ":1";
+        return $"Execution error{CauseType(e)} at ({loc}).{NL}{Message(e)}";
+    }
+
+    private static string CauseType(Exception e) =>
+      e == null || e.GetType() == typeof(Exception) ? "" : " (" + e.GetType().Name + ")";
+
+    private static string FormatSyntaxError(ExpanderException x)
+    {
+        // 宏展开出的形式没有位置（0:0）：报最内层顶层形式的位置（Clojure 的编译器同样报外层形式的 LINE / COLUMN）
+        string loc = x.Line == 0 && t_lastLine > 0 && DisplayPath(x.SourcePath) == t_lastSource && t_lastSource != "REPL"
+            ? $"{DisplayPath(x.SourcePath)}:{t_lastLine}:{t_lastColumn}"
+            : $"{DisplayPath(x.SourcePath)}:{x.Line}:{x.Column}";
+        string sym = x.Symbol != null ? x.Symbol + " " : "";
+        string reason = x.Reason ?? x.Message;
+        if (x.Phase == ExpanderException.PhaseSyntax) return $"Syntax error macroexpanding {sym}at ({loc}).{NL}{reason}";
+        if (x.Phase == ExpanderException.PhaseMacroexpand)
+            return $"Unexpected error{CauseType(x.InnerException)} macroexpanding {sym}at ({loc}).{NL}{reason}";
+        string type = x.InnerException != null ? CauseType(x.InnerException) : CompileCauseType(reason);
+        return $"Syntax error{type} compiling {sym}at ({loc}).{NL}{reason}";
+    }
+
+    /// <summary>
+    /// 展开器自己报的编译错误没有原因异常；JVM 的 Clojure 对其中一部分用 IllegalArgumentException / UnsupportedOperationException /
+    /// IllegalStateException（ex-str 会打印类型），其余是 RuntimeException（不打印）。按原因文本对应到 CLR 的同类异常名。
+    /// </summary>
+    private static string CompileCauseType(string reason)
+    {
+        foreach (var (prefix, type) in s_compileCauseTypes)
+            if (reason.StartsWith(prefix, StringComparison.Ordinal)) return " (" + type + ")";
+        return "";
+    }
+
+    private static readonly (string, string)[] s_compileCauseTypes =
+    {
+        ("Bad binding form", "ArgumentException"),
+        ("Unable to resolve classname", "ArgumentException"),
+        ("fn params must be Symbols", "ArgumentException"),
+        ("Malformed member expression", "ArgumentException"),
+        ("Malformed assignment", "ArgumentException"),
+        ("Invalid assignment target", "ArgumentException"),
+        ("Cannot assign to non-mutable", "ArgumentException"),
+        ("Mismatched argument count to recur", "ArgumentException"),
+        ("Can't call nil", "ArgumentException"),
+        ("Can only recur from tail position", "NotSupportedException"),
+        ("Cannot recur across try", "NotSupportedException"),
+        ("var: ", "InvalidOperationException"),
+        ("Var: ", "InvalidOperationException"),
+    };
+
+    /// <summary>
+    /// 过滤过的栈（CLEAT_TRACE_ERRORS=clojure）：去掉 Cleat.Scheme 程序集的帧（驱动、过程外壳、模块加载）、Scheme 编译器生成的
+    /// 顶层代码（<c>_Module$…</c> / <c>#Module$…</c>）、动态方法与反射调用的帧；留下 Clojure 的函数类 / deftype、clojure.lang 与宿主的帧。
+    /// 内层异常以 Caused by 接上。
+    /// </summary>
+    public static string ClojureStackTrace(Exception e)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var x = e; x != null; x = x.InnerException)
+        {
+            if (x != e) sb.Append("Caused by: ");
+            sb.Append(x.GetType().FullName).Append(": ").Append(x.Message).Append(NL);
+            foreach (var f in new System.Diagnostics.StackTrace(x, true).GetFrames())
+            {
+                var m = f.GetMethod();
+                var t = m?.DeclaringType;
+                if (!IsClojureFrame(t)) continue;
+                sb.Append("   at ").Append(t.FullName).Append('.').Append(m.Name);
+                if (f.GetFileName() is string file && f.GetFileLineNumber() > 0) sb.Append(" (").Append(Path.GetFileName(file)).Append(':').Append(f.GetFileLineNumber()).Append(')');
+                sb.Append(NL);
+            }
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    public static bool IsClojureFrame(Type t)
+    {
+        if (t == null || t.Assembly.GetName().Name == "Cleat.Scheme") return false;
+        string n = t.FullName ?? t.Name;
+        if (n.StartsWith("_Module$", StringComparison.Ordinal) || n.StartsWith("#Module$", StringComparison.Ordinal)) return false;
+        if (n.StartsWith("Cleat.Scheme.", StringComparison.Ordinal) || n.StartsWith("System.Reflection.", StringComparison.Ordinal)
+            || n.StartsWith("System.RuntimeMethodHandle", StringComparison.Ordinal) || n.StartsWith("System.Runtime.ExceptionServices.", StringComparison.Ordinal))
+            return false;
+        return true;
+    }
+
+    /// <summary>异常的原因文本；Scheme 侧登记 <see cref="MessageHook"/> 给 Scheme 条件对象取文本（cleat-082），返回 null 时用 Message。</summary>
+    public static Func<Exception, string> MessageHook;
+
+    private static string Message(Exception e) => MessageHook?.Invoke(e) ?? e.Message;
+}

@@ -62,10 +62,10 @@
 
   ;;; —— 互操作小工具 ——
 
-  ;;; Clojure 值的运行时操作：C# 过程（Cleat.Scheme.Clojure.ClojureOps），实参与返回值不经 Scheme 互操作的转换（cleat-050）
+  ;;; Clojure 值的运行时操作：C# 过程（Cleat.Scheme.Clojure.ExpandOps），实参与返回值不经 Scheme 互操作的转换（cleat-050）
   (define-syntax clj-op
     (syntax-rules ()
-      ((_ name) (clr-static-field-get Cleat.Scheme.Clojure.ClojureOps name))))
+      ((_ name) (clr-static-field-get Cleat.Scheme.Clojure.ExpandOps name))))
 
   (define (clj-symbol name) (clr-static-call clojure.lang.Symbol (intern System.String) name))
   (define (clj-symbol? x) (clr-is clojure.lang.Symbol x))
@@ -300,7 +300,7 @@
 
   ;;; 接口文件里的已知函数类（cleat-033）：Var 的条目有 invokeStatic 且 arity 相符时返回 "类, 程序集"，否则 #f
   (define (direct-link-target v argc)
-    (clr-static-call Cleat.Scheme.Clojure.Driver DirectLinkTarget v argc))
+    (clr-static-call Cleat.Core.Compiler.AotPaths DirectLinkTarget v argc))
 
   ;;; Var 的读（核心形式）：:const 的 Var 为常量，否则编译器的 Var 节点（cleat-051）：动态 Var 为 Var.get，否则 getRawRoot
   ;;; （与 C# 展开器的 var-ref 相同）。Var 在 Lcore 里是常量：进程内求值为对象本身，保存到 dll 时编码为 (var ns name)，加载时 intern
@@ -349,7 +349,7 @@
       (make-binding-extension 'clj-type
         ;; deftype* 方法体里的桩类型（cleat-051）：运行时换成真正的类型
         (lambda (e t expand)
-          (if (clr-static-call Cleat.Scheme.Clojure.HostSyntax IsStub t)
+          (if (clr-static-call Cleat.Core.Compiler.HostSyntax IsStub t)
               (list '$clj-call (list 'quote "RealType") (list 'quote #f) (list 'quote t))
               (list 'quote t)))
         #f #f #f))

@@ -5,7 +5,7 @@ using System.Reflection;
 using Cleat.Core.Runtime;
 using clojure.lang;
 
-namespace Cleat.Scheme.Clojure;
+namespace Cleat.Core.Compiler;
 
 /// <summary>
 /// 展开期的宿主类型规则（cleat-050），供 <c>(clojure syntax)</c> 调用：类型名 / 类型提示的决议与 deftype* / reify* 的接口方法匹配。
@@ -44,8 +44,8 @@ public static partial class HostSyntax
         if (form is not clojure.lang.Symbol sym || sym.Namespace != null) return null;
         string n = sym.Name;
         if (n.IndexOf('.') > 0 || n[^1] == ']' || n.IndexOfAny(s_triggerTypeChars) >= 0)
-            // Scheme 的解析器认得桩与本进程生成的类型；ClojureCLR 的泛型语法（BlockingCollection`1[System.Object]）由 Cleat.Core 的解析（cleat-053）
-            return PendingStub(n) ?? TypeResolver.Resolve(n, Array.Empty<string>()) ?? Cleat.Core.Runtime.TypeResolver.Resolve(n, Array.Empty<string>());
+            // 登记表认得桩与本进程生成的类型；ClojureCLR 的泛型语法（BlockingCollection`1[System.Object]）由 Cleat.Core 的解析（cleat-053）
+            return PendingStub(n) ?? CompileTimeTypes.Resolve(n);
         if (isLocal) return null;
         if (CurrentNs.GetMapping(sym) is Type t) return PendingStub(t.FullName) ?? t;
         return StubForTag(n) ?? ClassForName(n);
@@ -210,7 +210,7 @@ public static partial class HostSyntax
         il.Emit(System.Reflection.Emit.OpCodes.Ret);
         var t = tb.CreateType();
         s_stubs.AddOrUpdate(t, null);
-        Cleat.Scheme.TypeResolver.AddCompileTimeType(t);
+        CompileTimeTypes.Add(t);
         return t;
     }
 
@@ -223,7 +223,7 @@ public static partial class HostSyntax
     /// <summary>类型名（TypeName 的结果）是否值类型（cleat-051：deftype 方法的参数装箱、返回值转换；void 也算）。</summary>
     public static bool IsValueType(string name)
     {
-        var t = TypeResolver.Resolve(name, Array.Empty<string>());
+        var t = CompileTimeTypes.Resolve(name);
         return t != null && t.IsValueType;
     }
 

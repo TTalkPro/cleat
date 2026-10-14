@@ -1,9 +1,9 @@
 using System;
 using System.Linq;
 using System.Reflection;
-using Cleat.Core.Runtime;
+using Cleat.Core.Compiler;
 
-namespace Cleat.Scheme.Clojure;
+namespace Cleat.Core.Runtime;
 
 /// <summary>
 /// 宿主方法调用的编译期静态决议（cleat-042 第 3 项）。<c>(. T (m a …))</c> 原先一律经 <see cref="ClojureOps.CallStatic"/> 走运行时的

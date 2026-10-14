@@ -300,7 +300,7 @@
         (ldc.i4 0)
         (call "Cleat.Scheme.RT" "Box" ("System.Int32") "System.Object")
         (callvirt "Cleat.Scheme.Procedure" "Invoke2" ("System.Object" "System.Object") "System.Object")
-        (call "Cleat.Scheme.RT" "IsTrue" ("System.Object") "System.Boolean")
+        (call "Cleat.Core.Runtime.Truth" "IsTrue" ("System.Object") "System.Boolean")
         (label L3)
         (brfalse L0)
         (ldc.i4 1)

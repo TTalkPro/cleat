@@ -157,7 +157,7 @@ public class ClassGenerationTests
     {
         Write("src/t043/as.clj", Async);
         var r = RunEnv(new[] { ("CLEAT_RUNTIME_ASYNC", "0") }, "-I", "src", "-e", "(require 't043.as)",
-                       "-e", "(Cleat.Scheme.Clojure.AsyncSupport/RuntimeAsync)", "-e", "(t043.as/check)");
+                       "-e", "(Cleat.Core.Runtime.AsyncSupport/RuntimeAsync)", "-e", "(t043.as/check)");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         Assert.That(Lines(r), Is.EqualTo(new[] { "false", "[30 \"caught boom\" :rethrown true 5]" }), r.ToString());
     }
@@ -167,7 +167,7 @@ public class ClassGenerationTests
     {
         Write("src/t043/as.clj", Async);
         var r = RunEnv(new[] { ("DOTNET_RuntimeAsync", "1") }, "-I", "src", "-e", "(require 't043.as)",
-                       "-e", "(Cleat.Scheme.Clojure.AsyncSupport/RuntimeAsync)", "-e", "(t043.as/check)", "-e", "(t043.as/concurrent-ms)");
+                       "-e", "(Cleat.Core.Runtime.AsyncSupport/RuntimeAsync)", "-e", "(t043.as/check)", "-e", "(t043.as/concurrent-ms)");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         var lines = Lines(r);
         if (lines[0] != "true") Assert.Ignore("runtime async is not available on this runtime");

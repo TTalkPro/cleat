@@ -105,6 +105,7 @@ See docs/license.txt. |#
   (define-target-type box-type box)
   (define-target-type symbol-type symbol)
   (define-target-type rt-type rt)
+  (define-target-type truth-type truth)
   (define-target-type calls-type calls)
   (define-target-type arith-type inline-arith)
   (define-target-type scheme-exn-type scheme-exception)
@@ -426,7 +427,7 @@ See docs/license.txt. |#
     (case ctx
       ((value) (void))
       ((effect) (emit! mc '(pop)))
-      ((test) (emit! mc `(call ,rt-type "IsTrue" (,obj) ,bool-type)))
+      ((test) (emit! mc `(call ,truth-type "IsTrue" (,obj) ,bool-type)))
       ((tail)
        ;; 原始签名的方法：object 结果按 JVM 的规则转换（Number.longValue / doubleValue，ClojureStaticCalls.PrimRet…）
        (case (mctx-ret-type mc)
@@ -440,8 +441,8 @@ See docs/license.txt. |#
     (case ctx
       ((test) (void))
       ((effect) (emit! mc '(pop)))
-      ((value) (emit! mc `(call ,rt-type "Bool" (,bool-type) ,obj)))
-      ((tail) (emit! mc `(call ,rt-type "Bool" (,bool-type) ,obj)) (finish-value! mc 'tail))))
+      ((value) (emit! mc `(call ,truth-type "Bool" (,bool-type) ,obj)))
+      ((tail) (emit! mc `(call ,truth-type "Bool" (,bool-type) ,obj)) (finish-value! mc 'tail))))
 
   ;; 没有值（赋值等）
   (define (finish-none! mc ctx)
@@ -471,8 +472,8 @@ See docs/license.txt. |#
   (define (load-constant! mc d)
     (cond
       ((and (fixnum? d) (exact? d)) (emit! mc `(ldc.i4 ,d) `(call ,rt-type "Box" (,int32-type) ,obj)))
-      ((eq? d #t) (emit! mc `(ldsfld ,rt-type "True")))
-      ((eq? d #f) (emit! mc `(ldsfld ,rt-type "False")))
+      ((eq? d #t) (emit! mc `(ldsfld ,truth-type "True")))
+      ((eq? d #f) (emit! mc `(ldsfld ,truth-type "False")))
       ((null? d) (emit! mc `(ldsfld ,empty-list-type "Instance")))   ; '()
       ((nil? d) (emit! mc '(ldnull)))                                   ; #nil
       ((unspecified? d) (emit! mc `(ldsfld ,unspecified-type "Instance")))
@@ -1522,7 +1523,7 @@ See docs/license.txt. |#
   ;; 宿主方法调用的编译期静态决议（cleat-042 第 3 项）：CallStatic / CallInstance 的类型在 Cleat.Core 中、重载能静态选定
   ;; （ClojureStaticCalls.Resolve，JVM Clojure 的规则）时直接 call / callvirt，不经运行时的 Reflector。
   ;; 返回 #(声明类型 成员名 #(形参类型 …) 返回类型 虚调用? 种类) 或 #f；种类 "method" / "field" / "volatile-field"（无实参的字段读）
-  (define static-calls-type "Cleat.Scheme.Clojure.ClojureStaticCalls")
+  (define static-calls-type "Cleat.Core.Runtime.ClojureStaticCalls")
   ;; e* 的布局：CallStatic (t 名 gen 实参 …)、CallInstance (t 名 实例 gen 实参 …)、GetStaticField (t 名)、
   ;; GetInstanceField (t 名 实例)。返回 (static? 实例或 #f 实参列表)，不是这四种时 #f
   (define (host-call-layout d0 d1 e*)
@@ -1545,9 +1546,9 @@ See docs/license.txt. |#
                     (if (memq 'pending ats)
                         'pending
                         (let ((sig (if (member d0 '("CallStatic" "CallInstance"))
-                                       (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls Resolve
+                                       (clr-static-call Cleat.Core.Runtime.ClojureStaticCalls Resolve
                                                         t name (list->vector ats) (car layout))
-                                       (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls ResolveField t name (car layout)))))
+                                       (clr-static-call Cleat.Core.Runtime.ClojureStaticCalls ResolveField t name (car layout)))))
                           (and (> (vector-length sig) 0) (cons sig layout))))))))))
 
   ;; 静态决议的宿主调用的结果类型：l64 / fl / top（实参类型未定）/ #f
@@ -1700,7 +1701,7 @@ See docs/license.txt. |#
   (define (clearing? mc) (> (hashtable-size (mctx-uses mc)) 0))
 
   (define (take-slot! mc)
-    (emit! mc `(call "Cleat.Scheme.Locals" "Take" (,(string-append obj "&")) ,obj)))
+    (emit! mc `(call "Cleat.Core.Runtime.Locals" "Take" (,(string-append obj "&")) ,obj)))
 
   (define (clear-var! mc x)
     (let ((loc (hashtable-ref (mctx-vars mc) x #f)))
@@ -1916,7 +1917,7 @@ See docs/license.txt. |#
            (and (equal? d0 "IsInstanceOf") (= (length e*) 2)
                 (let ((t (quoted-datum (car e*))))
                   (and (clr-is System.Type t)
-                       (> (string-length (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls IsinstName t)) 0)))))]
+                       (> (string-length (clr-static-call Cleat.Core.Runtime.ClojureStaticCalls IsinstName t)) 0)))))]
       [else #f]))
 
   (define (raw-tail-leaf? e)
@@ -2280,7 +2281,7 @@ See docs/license.txt. |#
          ((equal? d0 "PrimInvoke") (cg-prim-invoke! e* mc ctx))
          ;; (await* t) 在运行时 async 的方法里（cleat-043）：任意 Task / ValueTask → Task，AsyncHelpers.Await 挂起到它完成，再取结果
          ((and (equal? d0 "AwaitAsync") (= (length e*) 1))
-          (let ((task "System.Threading.Tasks.Task") (support "Cleat.Scheme.Clojure.AsyncSupport"))
+          (let ((task "System.Threading.Tasks.Task") (support "Cleat.Core.Runtime.AsyncSupport"))
             (cg (car e*) mc 'value)
             (emit! mc `(call ,support "ToTask" (,obj) ,task) '(dup)
                    `(call "System.Runtime.CompilerServices.AsyncHelpers" "Await" (,task) ,void-type)
@@ -2290,7 +2291,7 @@ See docs/license.txt. |#
          ((and (equal? d0 "IsInstanceOf") (= (length e*) 2)
                (let ((t (quoted-datum (car e*))))
                  (and (clr-is System.Type t)
-                      (let ((n (clr-static-call Cleat.Scheme.Clojure.ClojureStaticCalls IsinstName t)))
+                      (let ((n (clr-static-call Cleat.Core.Runtime.ClojureStaticCalls IsinstName t)))
                         (and (> (string-length n) 0) n)))))
           => (lambda (n)
                (cg (cadr e*) mc 'value)
@@ -2837,7 +2838,7 @@ See docs/license.txt. |#
            ((eq?) (args!) (emit! mc '(ceq)) (finish-bool! mc ctx))
            ((not)
             (args!)
-            (emit! mc `(call ,rt-type "IsTrue" (,obj) ,bool-type) '(ldc.i4 0) '(ceq))
+            (emit! mc `(call ,truth-type "IsTrue" (,obj) ,bool-type) '(ldc.i4 0) '(ceq))
             (finish-bool! mc ctx))
            ((null?) (args!) (emit! mc `(ldsfld ,empty-list-type "Instance") '(ceq)) (finish-bool! mc ctx))
            ((nil?) (args!) (emit! mc '(ldnull) '(ceq)) (finish-bool! mc ctx))
@@ -3261,7 +3262,7 @@ See docs/license.txt. |#
   ;; ^:async fn 的体 thunk（无参数，cleat-043）：运行时 async（.NET 11 起缺省；.NET 10 要 DOTNET_RuntimeAsync=1）——方法声明返回
   ;; Task<object> 并带 async 实现标志，体照常返回 object，由运行时包成 Task；await* 在方法里直接调 AsyncHelpers.Await，
   ;; 挂起与恢复由运行时完成（ClojureCLR 的做法）。方法内不发 tail.（try-depth 从 1 起），不做局部变量清除（取地址）
-  (define (task-of-object-type) (clr-static-call Cleat.Scheme.Clojure.AsyncSupport get_TaskOfObjectName))
+  (define (task-of-object-type) (clr-static-call Cleat.Core.Runtime.AsyncSupport get_TaskOfObjectName))
   (define (clj-async-clause-method u class cl fields field-names self)
     (nanopass-case (L3 Clause) cl
       [(clause (,x* ...) ,x ,body)
@@ -3362,7 +3363,7 @@ See docs/license.txt. |#
        `(method "invoke" (attrs override optimize) (params ,@(objs (length x*))) (ret ,obj)
           ;; 实参读出后把参数槽置 null（局部变量清除）：tier-0 的转发帧在被调用者运行期间不再抓着它们
           (body (ldarg 0)
-                ,@(let loop ((j 1)) (if (> j (length x*)) '() (cons* `(ldarga ,j) `(call "Cleat.Scheme.Locals" "Take" (,(string-append obj "&")) ,obj) (loop (+ j 1)))))
+                ,@(let loop ((j 1)) (if (> j (length x*)) '() (cons* `(ldarga ,j) `(call "Cleat.Core.Runtime.Locals" "Take" (,(string-append obj "&")) ,obj) (loop (+ j 1)))))
                 (call ,class "invokeStatic" ,(objs (+ (length x*) 1)) ,obj)
                 (ret)))]))
 
