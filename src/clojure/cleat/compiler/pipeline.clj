@@ -58,32 +58,57 @@
 
 (def ^:private eval-counter (atom 0))
 
+(defn- front-ends
+  "各形式走前中端：[[L3 含循环?] …]。"
+  [l0s dump]
+  (loops/reset-fresh-names!)
+  (mapv (fn [[ix l0]]
+          (let [n0 (loops/loops-made)
+                typed (typed-clauses l0)
+                [l3 _] (front-end l0 (fn [stage node] (dump ix stage node)))]
+            [l3 (or (> (loops/loops-made) n0) (pos? typed))]))
+        l0s))
+
 (defn compile-unit
   "一个编译单元：L0 形式 → [Lcil 常量]（Scheme 版 compile-forms->lcil*）。dump：(dump 序号 阶段 节点)。"
   [l0s assembly-name module-name live? dump]
-  (loops/reset-fresh-names!)
-  (let [results (mapv (fn [[ix l0]]
-                        (let [n0 (loops/loops-made)
-                              typed (typed-clauses l0)
-                              [l3 _] (front-end l0 (fn [stage node] (dump ix stage node)))]
-                          [l3 (or (> (loops/loops-made) n0) (pos? typed))]))
-                      l0s)]
+  (let [results (front-ends l0s dump)]
     (codegen/generate-unit (mapv first results) assembly-name module-name (mapv second results) live?)))
 
 (defn shadow-stages
   "影子模式：形式 form（序号 ix）走已实现的阶段并转储。eval 的单元每个形式一个，lower-loops 的临时名从头编号。"
   [form ix]
-  (let [nm (str "eval$" (swap! eval-counter inc))
-        [lcil _] (compile-unit [[ix (eval-unit-l0 form)]] nm "#Module" true
-                               (fn [ix stage node] (dump/dump! "eval" ix stage node)))]
-    (when dump/enabled? (dump/write! "eval" ix "lcil" (codegen/lcil->string lcil)))))
+  (let [nm (str "eval$s" (swap! eval-counter inc))   ; 与 Scheme 侧的 eval$N（可能被引用）区分
+        results (front-ends [[ix (eval-unit-l0 form)]] (fn [ix stage node] (dump/dump! "eval" ix stage node)))
+        gen (fn [live?] (first (codegen/generate-unit (mapv first results) nm "#Module" (mapv second results) live?)))]
+    (when dump/enabled?
+      (dump/write! "eval" ix "lcil" (codegen/lcil->string (gen true)))
+      ;; 同一个单元以 AOT 模式（常量编码）再生成一次，与 Scheme 编译器的 aot 阶段比较（cleat-089）
+      ;; 编不了的常量记为 aot-error，文本同 Scheme 版（消息与对象的类型名）
+      (let [aot (try (codegen/lcil->string (gen false))
+                     (catch clojure.lang.ExceptionInfo e
+                       (if (contains? (ex-data e) :object)
+                         (do (dump/write! "eval" ix "aot-error"
+                                          (str "cannot encode object " (let [o (:object (ex-data e))] (if (nil? o) "()" (.FullName (class o))))))
+                             nil)
+                         (throw e))))]
+        (when aot (dump/write! "eval" ix "aot" aot))))))
 
 (def ^:private run-counter (atom 0))
 
+(declare eval-form-1)
+
 (defn eval-form
   "用 Clojure 编译器编译并运行一个顶层形式（内存模式：常量对象直接交给发射器），返回它的值。程序集名 ceval$N，
-  与 Scheme 编译器的 eval$N 分开。cleat-090 的驱动之前用于测试。"
+  与 Scheme 编译器的 eval$N 分开。顶层的 do 照 Clojure 的 eval 逐个形式编译运行（后面的形式能看到前面定义的类，如 definterface）。
+  cleat-090 的驱动之前用于测试。"
   [form]
+  (let [f (loop [f form] (let [g (an/macroexpand-1 f)] (if (identical? g f) f (recur g))))]
+    (if (and (seq? f) (= 'do (first f)))
+      (reduce (fn [_ x] (eval-form x)) nil (rest f))
+      (eval-form-1 f))))
+
+(defn- eval-form-1 [form]
   (let [nm (str "ceval$" (swap! run-counter inc))
         [lcil cs] (compile-unit [[0 (eval-unit-l0 form)]] nm "#Module" true (fn [_ _ _]))
         asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil nm (object-array cs))]

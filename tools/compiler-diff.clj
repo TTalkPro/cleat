@@ -38,7 +38,7 @@
 ;; —— 规范化 ——
 
 (def temp-pattern
-  #"eval\$\d+|g\$[^\s()\[\]\"]+|[A-Za-z0-9_*+!?<>=$&.\-]*__\d+(?:__auto__)?|[A-Za-z0-9_*+!?<>=$&.\-]+%\d+")
+  #"eval\$s?\d+|g\$[^\s()\[\]\"]+|[A-Za-z0-9_*+!?<>=$&.\-]*__\d+(?:__auto__)?|[A-Za-z0-9_*+!?<>=$&.\-]+%\d+")
 
 (defn- temp-base
   "psyntax：g$名字$N$作用域 与 g$genN$作用域，内联副本再带 $inl；gensym：名字__N；fresh：名字%N。"
@@ -65,9 +65,29 @@
                          (vswap! m assoc t r)
                          r))))))
 
+;; 常量（cleat-089）：两个编译器合并相同常量的情况取决于对象身份（Scheme 版经语法对象重建 Clojure 的符号与集合，宏里重复出现的
+;; 同一个对象在那边可能是几个对象），常量下标因此可以不同而语义相同。aot 阶段把 (ldconst k) 换成第 k 个常量的编码再比较
+;; （常量表本身去掉）；内存模式的 lcil 阶段看不到常量内容，抹掉下标与个数（内容由 aot 阶段比较）。
+(defn- inline-constants [text]
+  (let [lines (str/split-lines text)
+        start (first (keep-indexed (fn [k ln] (when (re-matches #"\s*\(constants" ln) k)) lines))]
+    (if-not start
+      (-> text (str/replace #"\(ldconst \d+\)" "(ldconst)") (str/replace #"\(live-constants \d+\)" "(live-constants)"))
+      (let [indent (count (re-find #"^\s*" (nth lines start)))
+            entries (take-while #(> (count (re-find #"^\s*" %)) indent) (drop (inc start) lines))
+            table (into {} (for [e entries :let [[_ k enc] (re-matches #"\s*\((\d+) (.*)\)" e)]] [k enc]))
+            ;; 常量表的最后一行带着块的右括号
+            n (count entries)
+            rest-lines (concat (take start lines) (drop (+ start 1 n) lines))
+            body (str/join "\n" rest-lines)]
+        (str/replace body #"\(ldconst (\d+)\)" (fn [[_ k]] (str "(ldconst= " (table k) ")")))))))
+
+(defn- prepare [stage text]
+  (if (#{"lcil" "aot"} stage) (inline-constants text) text))
+
 ;; —— diff ——
 
-(def stage-order ["src" "p0" "l0" "sl" "cf" "c1" "in" "l1" "l2" "l3" "lcil"])
+(def stage-order ["src" "p0" "l0" "sl" "cf" "c1" "in" "l1" "l2" "l3" "lcil" "aot" "aot-error"])
 
 (defn- first-difference [a b]
   (let [n (min (count a) (count b))
@@ -98,7 +118,7 @@
             (doseq [k (sort-by (comp stage-rank second) ks)]
               (if-let [y (mb k)]
                 (let [x (ma k)
-                      ta (normalize (:text x)) tb (normalize (:text y))]
+                      ta (normalize (prepare (second k) (:text x))) tb (normalize (prepare (second k) (:text y)))]
                   (swap! stats update :compared inc)
                   (if (= ta tb)
                     (swap! stats update :same inc)

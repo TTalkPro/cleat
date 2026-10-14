@@ -15,5 +15,9 @@
 - 小函数内联（`.inl`）：Clojure 编译器写自己的 `.inl`（L0 的数据），调用点照 Scheme 版 `inline-call` 的形状展开（守卫 `IsInstanceOf`、子句改名、`$inl` 后缀）。
 - 错误黄金文件 `tests/errors` 在 `CLEAT_COMPILER=clojure` 下通过。
 
+## 从 cleat-089 移来的
+- Clojure 单元的接口文件 `.ifc`（HasStatic 与 arity，现由 `Driver.WriteInterfaceFile` / `WritePackageInterface` 读 Lcore 与 Lcil 写出）随驱动改为 Clojure 编译器提供。
+- 整单元的 G2：boot 镜像、随附包、tools 包按单元比较 Lcil（打包、镜像核对、预链接之后），cleat-089 只逐个形式比较了 lcil 与 aot。
+
 ## 验收标准
 - 两种模式下全量测试都通过，基线不退化；编译耗时达到 19 D5 的目标或在结论里给出差距与计划。

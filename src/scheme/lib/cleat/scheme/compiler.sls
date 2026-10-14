@@ -25,6 +25,7 @@ See docs/license.txt. |#
     current-compile-target)
   (import
     (rnrs)
+    (only (rnrs eval) eval environment)
     (only (cleat scheme) make-parameter parameterize gensym)
     (cleat scheme clr)
     (cleat scheme compiler primitives)
@@ -37,6 +38,7 @@ See docs/license.txt. |#
     (cleat scheme compiler codegen)
     (cleat scheme compiler targets)
     (cleat scheme compiler lcil)
+    (only (cleat scheme compiler constants) set-foreign-constant-encoder!)
     (only (cleat scheme unsafe) $set-compile-target! $try/catch $throw))
 
   (clr-reference cleat-emit)
@@ -128,8 +130,36 @@ See docs/license.txt. |#
                            (loop-forms (reverse loops)))
               (let-values (((lcil consts) (generate-unit (reverse l3s) assembly-name module-name massigned live?)))
                 (when dump-ir?
-                  (clr-static-call Cleat.Scheme.Clojure.IrDump Write "scheme" assembly-name (if (= (length forms) 1) last-dump-index -1) "lcil" (lcil->string lcil)))
+                  (clr-static-call Cleat.Scheme.Clojure.IrDump Write "scheme" assembly-name (if (= (length forms) 1) last-dump-index -1) "lcil" (lcil->string lcil))
+                  ;; 内存模式的单元另以 AOT 模式（常量编码）再生成一次，记为 aot 阶段，与 Clojure 编译器的常量编码比较（cleat-089）；
+                  ;; 编不了的常量（DateTime、函数对象等）记为 aot-error（消息与对象的类型）
+                  (when (and live? (= (length forms) 1))
+                    (let ((ix last-dump-index))
+                      (ensure-aot-encoder!)          ; 第一次时装入 (clojure compile)，其间的 eval 会改 last-dump-index
+                      (let ((aot (guard (e (#t (clr-static-call Cleat.Scheme.Clojure.IrDump Write "scheme" assembly-name ix "aot-error" (aot-error-text e))
+                                               #f))
+                                   (let-values (((lcil2 consts2) (generate-unit (reverse l3s) assembly-name module-name massigned #f)))
+                                     lcil2))))
+                        (when aot
+                          (clr-static-call Cleat.Scheme.Clojure.IrDump Write "scheme" assembly-name ix "aot" (lcil->string aot)))))))
                 (values lcil consts)))))))
+
+  (define (aot-error-text e)
+    (call-with-string-output-port
+      (lambda (p)
+        (display (if (message-condition? e) (condition-message e) "?") p)
+        (when (irritants-condition? e)
+          (for-each (lambda (x) (display " " p) (display (if (null? x) "()" (clr-call System.Object ToString (clr-call System.Object GetType x))) p))
+                    (condition-irritants e))))))
+
+  ;; aot 阶段的常量编码要 (clojure compile) 登记的外来常量编码器（Clojure 的值）：转储时按需装入（宿主的延后库或源码）
+  (define aot-encoder-ready #f)
+  (define (ensure-aot-encoder!)
+    (unless aot-encoder-ready
+      (set! aot-encoder-ready #t)
+      (clr-static-call Cleat.Scheme.Clojure.ClojureHost EnsureCompileLibraries)
+      ;; 延后库里的 (clojure compile) 登记在它自己那份 constants 库上；eval 走的编译器可能是另一份，这里给本库用的那份也登记
+      (set-foreign-constant-encoder! (eval 'encode-clojure-constant (environment '(clojure compile))))))
 
   (define (compile->lcil-text forms assembly-name module-name)
     (lcil->string (compile-forms->lcil forms assembly-name module-name)))

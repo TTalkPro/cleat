@@ -204,11 +204,13 @@ public static class Program
             // 随附库的包程序集（tools/build.cs compile-libs，cleat-067）在镜像旁；比镜像旧时（镜像重建后没有重编）不用，
             // 这些命名空间从源码加载
             string libs = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "Cleat.Clojure.Libs.dll");
-            if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot)) PackageIndex.RegisterFile(libs);
+            // 正在编的那个包不登记（cleat-089）：否则 require 从旧包加载，编出的新包没有形式
+            bool writing(string f) => o.CompilePackage != null && string.Equals(Path.GetFullPath(o.CompilePackage), Path.GetFullPath(f), StringComparison.Ordinal);
+            if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot) && !writing(libs)) PackageIndex.RegisterFile(libs);
             // Clojure 编译器的包程序集（cleat-085，designs/19 D6）：第一次 require 时才加载。比镜像旧时不用；开发布局下比编译器源码旧时也不用
             // （从源码加载，改了编译器不必先重编包）
             string compiler = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "cleat.compiler.dll");
-            if (File.Exists(compiler) && File.GetLastWriteTimeUtc(compiler) >= File.GetLastWriteTimeUtc(boot)
+            if (File.Exists(compiler) && File.GetLastWriteTimeUtc(compiler) >= File.GetLastWriteTimeUtc(boot) && !writing(compiler)
                 && !CompilerSourcesNewer(compiler, Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure", "cleat"))))
                 PackageIndex.RegisterFile(compiler);
             // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用；

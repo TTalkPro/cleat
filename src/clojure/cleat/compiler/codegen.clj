@@ -1836,9 +1836,533 @@
                                    @methods))))
     [static? cname "Instance"]))
 
-;; deftype* / reify* / proxy-class* / gen-class* / gen-interface 的类型生成在 cleat-089
-(defn- deftype-node! [mc d x* le* ctx]
-  (throw (ex-info "codegen: deftype* / reify* / proxy-class* / gen-class* come with cleat-089" {})))
+;; —— deftype* / reify* / gen-interface / proxy-class* / gen-class* → CLR 类型（cleat-089，Scheme 版 cleat-051 / 043 / 053）——
+;; 描述 d 是展开期算好的 Scheme 数据（列表、("类型名" . 值类型?) 对、字符串、布尔），见 Scheme 版各 deftype-info-* 的注释。
+
+(defn- sl "Scheme 列表 → 向量（#f / 空表为空）" [x] (if (scheme-list? x) (slist->seq x) []))
+(defn- tname [t] (.-car ^Cleat.Scheme.Cons t))
+(defn- value-type? [t] (true? (.-cdr ^Cleat.Scheme.Cons t)))
+(defn- spec-iface [sp] (let [x (nth (sl sp) 0)] (when (string? x) x)))
+(defn- spec-name [sp] (nth (sl sp) 1))
+(defn- spec-ret [sp] (nth (sl sp) 2))
+(defn- spec-params [sp] (sl (nth (sl sp) 3)))
+(defn- dinfo-class [d] (dinfo d 0))
+(defn- dinfo-fields [d] (mapv sl (sl (dinfo d 2))))   ; [名字 可变? volatile?]
+(defn- dinfo-ifaces [d] (sl (dinfo d 3)))
+(defn- dinfo-methods [d] (sl (dinfo d 4)))
+(defn- dinfo-stubs [d] (mapv sl (sl (dinfo d 5))))
+(defn- dinfo-basis [d] (dinfo d 6))
+(defn- dinfo-record-keys [d] (let [v (slist->seq d)] (if (> (count v) 7) (sl (nth v 7)) [])))
+(defn- dinfo-drops [d] (let [v (slist->seq d)] (if (> (count v) 8) (nth v 8) 0)))
+(defn- truthy? [x] (and (some? x) (not (false? x))))
+
+(defn- ldargs [n] (map #(i 'ldarg %) (range 1 (inc n))))
+(def ^:private box-zero [(i 'ldc.i4 0) (i 'box int32-type)])
+
+(defn- record-members
+  "defrecord 的另外两个构造函数与静态 create（Scheme 版 record-members）。"
+  [name d]
+  (let [n (count (dinfo-fields d)) drops (dinfo-drops d) ks (dinfo-record-keys d) nb (- n drops)
+        alt-ctor (fn [k tail]
+                   (i 'method ".ctor" (i 'attrs 'ctor) (apply i 'params (objs k))
+                      (apply i 'body (concat [(i 'ldarg 0)] (ldargs k) tail [(i 'call name ".ctor" (apply i (objs n)) void-type) (i 'ret)]))))]
+    (if (zero? drops)
+      []
+      (concat
+        (when (= drops 4) [(alt-ctor nb (concat [(i 'ldnull) (i 'ldnull)] box-zero box-zero))])
+        (when (and (pos? (- n 2)) (= drops 4)) [(alt-ctor (- n 2) (concat box-zero box-zero))])
+        [(i 'method "create" (i 'attrs 'static) (i 'params "clojure.lang.IPersistentMap") (i 'ret name)
+            (apply i 'locals "clojure.lang.Keyword" (objs nb))
+            (apply i 'body
+                   (concat
+                     (mapcat (fn [k j]
+                               [(i 'ldarg 0) (i 'ldstr k) (i 'call "clojure.lang.Keyword" "intern" (i string-type) "clojure.lang.Keyword")
+                                (i 'dup) (i 'stloc 0) (i 'ldnull)
+                                (i 'callvirt "clojure.lang.ILookup" "valAt" (i obj obj) obj) (i 'stloc j)
+                                (i 'ldarg 0) (i 'ldloc 0) (i 'callvirt "clojure.lang.IPersistentMap" "without" (i obj) "clojure.lang.IPersistentMap")
+                                (i 'starg 0)])
+                             ks (iterate inc 1))
+                     (map #(i 'ldloc %) (range 1 (inc nb)))
+                     [(i 'ldnull) (i 'ldarg 0) (i 'call "clojure.lang.RT" "seqOrElse" (i obj) obj)]
+                     box-zero box-zero
+                     [(i 'newobj name (apply i (objs n))) (i 'ret)])))]))))
+
+(defn- interface-class! [mc d]
+  (let [u (:unit mc) name (dinfo-class d)]
+    (hput! (:type-names u) name true)
+    (add-class! u (apply i 'type name (i 'attrs 'interface 'abstract) (apply i 'interfaces (dinfo-ifaces d))
+                         (map (fn [sp] (i 'method (spec-name sp) (i 'attrs 'abstract 'virtual)
+                                          (apply i 'params (map tname (spec-params sp))) (i 'ret (tname (spec-ret sp)))))
+                              (dinfo-methods d))))
+    [name]))
+
+(defn- convert-object-code
+  "栈上的 object → 声明类型 t 的代码（void 时丢弃）"
+  [t]
+  (cond
+    (= (tname t) void-type) [(i 'pop)]
+    (= (tname t) obj) []
+    (value-type? t) [(i 'ldtoken (tname t)) (i 'call type-type "GetTypeFromHandle" (i type-handle-type) type-type)
+                     (i 'call clojure-ops-type "ConvertReturn" (i obj type-type) obj) (i 'unbox.any (tname t))]
+    :else [(i 'castclass (tname t))]))
+
+(defn- boxed-arg-code
+  "第 j 个实参装成 Clojure 的值：值类型装箱并按 Clojure 的规则转换（int → long）"
+  [j t]
+  (if (value-type? t)
+    [(i 'ldarg j) (i 'box (tname t)) (i 'call clojure-ops-type "BoxArg" (i obj) obj)]
+    [(i 'ldarg j)]))
+
+(defn- throw-not-implemented [msg]
+  [(i 'ldstr msg) (i 'newobj "System.NotImplementedException" (i string-type)) (i 'throw)])
+
+(defn- proxy-class! [mc d]
+  (let [u (:unit mc) v (slist->seq d)
+        name (nth v 0) super (nth v 2) ifaces (sl (nth v 3)) ctors (mapv sl (sl (nth v 4))) methods (mapv sl (sl (nth v 5)))
+        fmap "__clojureFnMap" iproxy "clojure.lang.IProxy"
+        method-def
+        (fn [[mname ret ptypes access kind target fallback key ok?]]
+          (let [ptypes (sl ptypes) target (sl target) n (count ptypes)
+                call-base (concat [(i 'ldarg 0)] (ldargs n)
+                                  [(i 'call (first target) (second target) (apply i (map tname ptypes)) (tname ret)) (i 'ret)])
+                default (if (= fallback "base") call-base
+                            (throw-not-implemented (str (second target) " is not implemented by proxy " name)))
+                dispatch (if (truthy? ok?)
+                           (concat
+                             [(i 'ldarg 0) (i 'ldfld name fmap) (i 'ldstr key)
+                              (i 'call clojure-ops-type "ProxyFn" (i pmap-type string-type) ifn-type)
+                              (i 'dup) (i 'brfalse 'NOFN)]
+                             (if (< n 20)
+                               (concat [(i 'ldarg 0)]
+                                       (mapcat (fn [t j] (boxed-arg-code j t)) ptypes (iterate inc 1))
+                                       [(i 'callvirt ifn-type "invoke" (apply i (objs (inc n))) obj)])
+                               (concat [(i 'ldc.i4 (inc n)) (i 'newarr obj) (i 'dup) (i 'ldc.i4 0) (i 'ldarg 0) (i 'stelem.ref)]
+                                       (mapcat (fn [t j] (concat [(i 'dup) (i 'ldc.i4 j)] (boxed-arg-code j t) [(i 'stelem.ref)]))
+                                               ptypes (iterate inc 1))
+                                       [(i 'call clojure-ops-type "InvokeIFn" (i ifn-type obj-array) obj)]))
+                             (convert-object-code ret)
+                             [(i 'ret) (i 'label 'NOFN) (i 'pop)])
+                           [])]
+            (apply i 'method mname
+                   (apply i 'attrs (cond (= kind "override") (cons 'override (when (= access "protected") ['protected]))
+                                         (= mname (second target)) []
+                                         :else ['private]))
+                   (apply i 'params (map tname ptypes)) (i 'ret (tname ret))
+                   (concat (when (= kind "implement") [(i 'implements (first target) (second target))])
+                           [(apply i 'body (concat dispatch default))]))))
+        super-def
+        (fn [[_ ret ptypes _ _ target]]
+          (let [ptypes (sl ptypes) target (sl target)]
+            (i 'method (str "proxy$super$" (second target)) (apply i 'params (map tname ptypes)) (i 'ret (tname ret))
+               (apply i 'body (concat [(i 'ldarg 0)] (ldargs (count ptypes))
+                                      [(i 'call (first target) (second target) (apply i (map tname ptypes)) (tname ret)) (i 'ret)])))))]
+    (when-not (hhas? (:type-names u) name)
+      (hput! (:type-names u) name true)
+      (add-class! u
+        (apply i 'type name (i 'base super) (apply i 'interfaces ifaces)
+               (i 'field fmap pmap-type)
+               (concat
+                 (map (fn [ps]
+                        (i 'method ".ctor" (i 'attrs 'ctor) (apply i 'params (map tname ps))
+                           (apply i 'body (concat [(i 'ldarg 0)] (ldargs (count ps))
+                                                  [(i 'call super ".ctor" (apply i (map tname ps)) void-type) (i 'ret)]))))
+                      ctors)
+                 [(i 'method "__initClojureFnMappings" (i 'params pmap-type) (i 'ret void-type) (i 'implements iproxy "__initClojureFnMappings")
+                     (i 'body (i 'ldarg 0) (i 'ldarg 1) (i 'stfld name fmap) (i 'ret)))
+                  (i 'method "__updateClojureFnMappings" (i 'params pmap-type) (i 'ret void-type) (i 'implements iproxy "__updateClojureFnMappings")
+                     (i 'body (i 'ldarg 0) (i 'ldarg 0) (i 'ldfld name fmap) (i 'ldarg 1)
+                        (i 'call clojure-ops-type "ProxyUpdate" (i pmap-type pmap-type) pmap-type) (i 'stfld name fmap) (i 'ret)))
+                  (i 'method "__getClojureFnMappings" (i 'params) (i 'ret pmap-type) (i 'implements iproxy "__getClojureFnMappings")
+                     (i 'body (i 'ldarg 0) (i 'ldfld name fmap) (i 'ret)))]
+                 (map method-def methods)
+                 (map super-def (filter #(= (nth % 6) "base") methods))))))
+    [name]))
+
+(defn- genclass-class! [mc d]
+  (let [u (:unit mc) v (slist->seq d)
+        [name _ super ifaces impl-ns load-impl? var-fields ctors init post-init state methods factory main exposes exposes-methods] v
+        ifaces (sl ifaces) var-fields (mapv sl (sl var-fields)) ctors (mapv sl (sl ctors)) methods (mapv sl (sl methods))
+        exposes (mapv sl (sl exposes)) exposes-methods (mapv sl (sl exposes-methods))
+        init (when (truthy? init) init) post-init (when (truthy? post-init) post-init) state (when (truthy? state) state)
+        factory (when (truthy? factory) factory) main (when (truthy? main) main)
+        get-fn (fn [f] [(i 'ldsfld name f) (i 'call clojure-ops-type "GenClassFn" (i clj-var-type) ifn-type)])
+        not-defined (fn [what] (throw-not-implemented (str what " is not defined for " name)))
+        invoke-code (fn [this? first-arg ptypes]
+                      (let [n (count ptypes) k (+ n (if this? 1 0)) idx (range first-arg (+ first-arg n))]
+                        (if (< k 20)
+                          (concat (when this? [(i 'ldarg 0)])
+                                  (mapcat (fn [t j] (boxed-arg-code j t)) ptypes idx)
+                                  [(i 'callvirt ifn-type "invoke" (apply i (objs k)) obj)])
+                          (concat [(i 'ldc.i4 k) (i 'newarr obj)]
+                                  (when this? [(i 'dup) (i 'ldc.i4 0) (i 'ldarg 0) (i 'stelem.ref)])
+                                  (mapcat (fn [t j s] (concat [(i 'dup) (i 'ldc.i4 s)] (boxed-arg-code j t) [(i 'stelem.ref)]))
+                                          ptypes idx (iterate inc (if this? 1 0)))
+                                  [(i 'call clojure-ops-type "InvokeIFn" (i ifn-type obj-array) obj)]))))
+        method-def
+        (fn [[mname ret ptypes access kind target fallback vf ovf ok?]]
+          (let [ptypes (sl ptypes) target (sl target) static? (= kind "static") n (count ptypes)
+                ovf (when (truthy? ovf) ovf)]
+            (apply i 'method mname
+                   (apply i 'attrs (cond (= kind "override") (cons 'override (when (= access "protected") ['protected]))
+                                         (= kind "implement") (if (= mname (second target)) [] ['private])
+                                         (= kind "new") ['virtual]
+                                         :else ['static]))
+                   (apply i 'params (map tname ptypes)) (i 'ret (tname ret))
+                   (concat
+                     (when (= kind "implement") [(i 'implements (first target) (second target))])
+                     [(apply i 'body
+                             (concat
+                               (when (truthy? ok?)
+                                 (concat (when ovf (concat (get-fn ovf) [(i 'dup) (i 'brtrue 'FOUND) (i 'pop)]))
+                                         (get-fn vf) [(i 'dup) (i 'brfalse 'NOFN) (i 'label 'FOUND)]
+                                         (invoke-code (not static?) (if static? 0 1) ptypes)
+                                         (convert-object-code ret)
+                                         [(i 'ret) (i 'label 'NOFN) (i 'pop)]))
+                               (if (= fallback "base")
+                                 (concat [(i 'ldarg 0)] (ldargs n)
+                                         [(i 'call (first target) (second target) (apply i (map tname ptypes)) (tname ret)) (i 'ret)])
+                                 (not-defined mname))))]))))
+        ctor-def
+        (fn [[ps sps]]
+          (let [ps (sl ps) sps (sl sps) n (count ps)
+                same? (= (map tname ps) (map tname sps))
+                pass-through (concat [(i 'ldarg 0)] (ldargs n) [(i 'call super ".ctor" (apply i (map tname sps)) void-type)])
+                nth-ins (i 'call "clojure.lang.RT" "nth" (i "System.Object" "System.Int32") "System.Object")]
+            (i 'method ".ctor" (i 'attrs 'ctor) (apply i 'params (map tname ps)) (i 'locals obj)
+               (apply i 'body
+                      (concat
+                        (if init
+                          (concat (get-fn init) [(i 'dup) (i 'brfalse 'NOINIT)]
+                                  (invoke-code false 1 ps) [(i 'stloc 0) (i 'ldarg 0)]
+                                  (mapcat (fn [t j] (concat [(i 'ldloc 0) (i 'ldc.i4 0) nth-ins (i 'ldc.i4 j) nth-ins] (convert-object-code t)))
+                                          sps (range))
+                                  [(i 'call super ".ctor" (apply i (map tname sps)) void-type)]
+                                  (when state [(i 'ldarg 0) (i 'ldloc 0) (i 'ldc.i4 1) nth-ins (i 'stfld name state)])
+                                  [(i 'br 'AFTERINIT) (i 'label 'NOINIT) (i 'pop)]
+                                  (if same? pass-through (not-defined "init"))
+                                  [(i 'label 'AFTERINIT)])
+                          (if same? pass-through (not-defined "init")))
+                        (when post-init
+                          (concat (get-fn post-init) [(i 'dup) (i 'brfalse 'NOPOST)]
+                                  (invoke-code true 1 ps) [(i 'pop) (i 'br 'ENDPOST) (i 'label 'NOPOST) (i 'pop)]
+                                  (not-defined "post-init") [(i 'label 'ENDPOST)]))
+                        [(i 'ret)])))))]
+    (hput! (:type-names u) name true)
+    (add-class! u
+      (apply i 'type name (i 'base super) (apply i 'interfaces ifaces)
+             (concat
+               (map (fn [[f]] (i 'field f clj-var-type 'static)) var-fields)
+               (when state [(i 'field state obj 'readonly)])
+               [(i 'method ".cctor" (i 'attrs 'cctor) (i 'params)
+                   (apply i 'body (concat (mapcat (fn [[f vn]]
+                                                    [(i 'ldstr impl-ns) (i 'ldstr vn)
+                                                     (i 'call clj-var-type "internPrivate" (i string-type string-type) clj-var-type)
+                                                     (i 'stsfld name f)])
+                                                  var-fields)
+                                          (when (truthy? load-impl?)
+                                            [(i 'ldstr impl-ns) (i 'call clojure-ops-type "GenClassLoadImpl" (i string-type) void-type)])
+                                          [(i 'ret)])))]
+               (map ctor-def ctors)
+               (map method-def methods)
+               (when factory
+                 (map (fn [[ps]]
+                        (let [ps (sl ps)]
+                          (i 'method factory (i 'attrs 'static) (apply i 'params (map tname ps)) (i 'ret name)
+                             (apply i 'body (concat (map #(i 'ldarg %) (range (count ps)))
+                                                    [(i 'newobj name (apply i (map tname ps))) (i 'ret)])))))
+                      ctors))
+               (when main
+                 [(i 'method "Main" (i 'attrs 'static) (i 'params "System.String[]") (i 'ret void-type)
+                     (i 'body (i 'ldsfld name main) (i 'ldarg 0)
+                        (i 'call clojure-ops-type "GenClassMain" (i clj-var-type "System.String[]") void-type) (i 'ret)))])
+               (mapcat (fn [[decl f ft static? get set]]
+                         (let [static? (truthy? static?)]
+                           (concat
+                             (when (truthy? get)
+                               [(apply i 'method get (concat (when static? [(i 'attrs 'static)])
+                                                             [(i 'params) (i 'ret ft)
+                                                              (apply i 'body (concat (if static? [(i 'ldsfld decl f)] [(i 'ldarg 0) (i 'ldfld decl f)])
+                                                                                     [(i 'ret)]))]))])
+                             (when (truthy? set)
+                               [(apply i 'method set (concat (when static? [(i 'attrs 'static)])
+                                                             [(i 'params ft) (i 'ret void-type)
+                                                              (apply i 'body (concat (if static? [(i 'ldarg 0) (i 'stsfld decl f)]
+                                                                                         [(i 'ldarg 0) (i 'ldarg 1) (i 'stfld decl f)])
+                                                                                     [(i 'ret)]))]))]))))
+                       exposes)
+               (map (fn [[pub ret ptypes decl sname]]
+                      (let [ptypes (sl ptypes)]
+                        (i 'method pub (apply i 'params ptypes) (i 'ret ret)
+                           (apply i 'body (concat [(i 'ldarg 0)] (ldargs (count ptypes)) [(i 'call decl sname (apply i ptypes) ret) (i 'ret)])))))
+                    exposes-methods))))
+    [name]))
+
+(defn- convert-return!
+  "栈上的 object → 声明类型 t"
+  [mc t]
+  (cond
+    (= (tname t) obj) nil
+    (value-type? t) (emit! mc (i 'ldtoken (tname t)) (i 'call type-type "GetTypeFromHandle" (i type-handle-type) type-type)
+                           (i 'call clojure-ops-type "ConvertReturn" (i obj type-type) obj) (i 'unbox.any (tname t)))
+    :else (emit! mc (i 'castclass (tname t)))))
+
+(defn- deftype-method
+  "方法体：this 为 ldarg 0；原始类型的参数在入口装箱进局部变量；字段读写 this 的字段；返回值转换为声明类型"
+  [u class le spec mname fvars fnames caps cnames]
+  (nanopass-case [L3 LambdaExpr] le
+    [(lambda ~nm (~x1* ...) ~cl* ...)
+     (nanopass-case [L3 Clause] (first cl*)
+       [(clause (~x2* ...) ~x ~body)
+        (let [mc (make-method-ctx u class false nil nil nil)
+              iface (spec-iface spec) ret (spec-ret spec) ptypes (spec-params spec)
+              entry (with-buffer mc
+                      (fn []
+                        (hput! (:vars mc) (first x2*) [:self])
+                        (doseq [[p t j] (map vector (rest x2*) ptypes (iterate inc 1))]
+                          (if (value-type? t)
+                            (let [l (new-local! mc obj)]
+                              (emit! mc (i 'ldarg j) (i 'box (tname t)) (i 'call clojure-ops-type "BoxArg" (i obj) obj) (i 'stloc l))
+                              (hput! (:vars mc) p [:local l]))
+                            (hput! (:vars mc) p [:arg j])))
+                        (doseq [[f n] (map vector fvars fnames)] (hput! (:vars mc) f [:dfield n]))
+                        (doseq [[c n] (map vector caps cnames)] (hput! (:vars mc) c [:field n]))))]
+          (emit-code! mc entry)
+          (reset! (:big? mc) (bigger-than? body big-body-nodes))
+          (init-clearing! mc body)
+          (binding [*clear-args-by-ref* false]
+            (cond
+              (= (tname ret) void-type) (do (cg body mc :effect) (emit! mc (i 'ret)))
+              (= (tname ret) obj) (cg body mc :tail)
+              :else (do (cg body mc :value) (convert-return! mc ret) (emit! mc (i 'ret)))))
+          (apply i 'method mname (apply i 'attrs (if iface [] ['override])) (apply i 'params (map tname ptypes)) (i 'ret (tname ret))
+                 (apply i 'locals @(:locals mc))
+                 (i 'clr-namespaces)
+                 (concat (when iface [(i 'implements iface (spec-name spec))])
+                         [(apply i 'body @(:buffer mc))])))])]))
+
+(defn- deftype-stub
+  "接口中没有直接实现的方法：转调同名同参的方法，或抛 NotImplementedException"
+  [class [iface name ret ptypes target] specs mnames]
+  (let [ptypes (sl ptypes) target (when (truthy? target) target)]
+    (i 'method (str iface "." name) (i 'attrs 'private) (apply i 'params (map tname ptypes)) (i 'ret (tname ret))
+       (i 'implements iface name)
+       (apply i 'body
+              (if target
+                (let [sp (nth specs target) tret (spec-ret sp)]
+                  (concat [(i 'ldarg 0)] (ldargs (count ptypes))
+                          [(i 'call class (nth mnames target) (apply i (map tname (spec-params sp))) (tname tret))]
+                          (cond
+                            (= (tname ret) void-type) (if (= (tname tret) void-type) [] [(i 'pop)])
+                            (= (tname tret) (tname ret)) []
+                            :else (concat
+                                    (cond (= (tname tret) void-type) [(i 'ldnull)]
+                                          (value-type? tret) [(i 'box (tname tret))]
+                                          :else [])
+                                    (cond (= (tname ret) obj) []
+                                          (value-type? ret) [(i 'ldtoken (tname ret)) (i 'call type-type "GetTypeFromHandle" (i type-handle-type) type-type)
+                                                             (i 'call clojure-ops-type "ConvertReturn" (i obj type-type) obj) (i 'unbox.any (tname ret))]
+                                          :else [(i 'castclass (tname ret))])))
+                          [(i 'ret)]))
+                (throw-not-implemented (str iface "." name " is not implemented by " class)))))))
+
+(defn- deftype-class!
+  "deftype* / reify* 的类（Scheme 版 deftype-class!）。返回 [类名 自由变量…]。"
+  [mc d x* le*]
+  (let [u (:unit mc)
+        name (dinfo-class d)
+        reify? (deftype-reify? d)
+        fields (dinfo-fields d)
+        fnames (map first fields)
+        caps (deftype-caps x* le*)
+        cnames (map #(str "c" %) (range (count caps)))
+        specs (dinfo-methods d)
+        mnames (loop [ss specs used [] acc []]
+                 (if (empty? ss)
+                   acc
+                   (let [sp (first ss)
+                         k (cons (spec-name sp) (map tname (spec-params sp)))
+                         n (if (or (nil? (spec-iface sp)) (not (some #(= k %) used))) (spec-name sp) (str (spec-iface sp) "." (spec-name sp)))]
+                     (recur (rest ss) (conj used k) (conj acc n)))))
+        ctor-fields (if reify? (concat cnames ["__meta"]) fnames)]
+    (when (and (not reify?) (seq caps))
+      (throw (ex-info (str "deftype*: deftype* methods cannot close over locals " (vec caps)) {:caps caps})))
+    (hput! (:type-names u) name true)
+    (add-class! u
+      (apply i 'type name (i 'attrs 'sealed) (apply i 'interfaces (dinfo-ifaces d))
+             (concat
+               (if reify?
+                 (map #(i 'field % obj) ctor-fields)
+                 (map (fn [[f _ vol?]] (apply i 'field f obj (when (truthy? vol?) ['volatile]))) fields))
+               [(i 'method ".ctor" (i 'attrs 'ctor) (apply i 'params (objs (count ctor-fields)))
+                   (apply i 'body (concat [(i 'ldarg 0) (i 'call obj ".ctor" () void-type)]
+                                          (mapcat (fn [f j] [(i 'ldarg 0) (i 'ldarg j) (i 'stfld name f)]) ctor-fields (iterate inc 1))
+                                          [(i 'ret)])))]
+               (map (fn [le sp mn] (deftype-method u name le sp mn x* fnames caps cnames)) le* specs mnames)
+               (map (fn [st] (deftype-stub name st specs mnames)) (dinfo-stubs d))
+               (if reify?
+                 [(i 'method "meta" (i 'params) (i 'ret pmap-type) (i 'implements "clojure.lang.IMeta" "meta")
+                     (i 'body (i 'ldarg 0) (i 'ldfld name "__meta") (i 'castclass pmap-type) (i 'ret)))
+                  (i 'method "withMeta" (i 'params pmap-type) (i 'ret iobj-type) (i 'implements "clojure.lang.IObj" "withMeta")
+                     (apply i 'body (concat (mapcat (fn [c] [(i 'ldarg 0) (i 'ldfld name c)]) cnames)
+                                            [(i 'ldarg 1) (i 'newobj name (apply i (objs (count ctor-fields)))) (i 'ret)])))]
+                 (concat
+                   [(i 'method "getBasis" (i 'attrs 'static) (i 'params) (i 'ret "clojure.lang.IPersistentVector")
+                       (i 'body (i 'ldconst (constant-index! u (dinfo-basis d))) (i 'castclass "clojure.lang.IPersistentVector") (i 'ret)))]
+                   (record-members name d))))))
+    (cons name caps)))
+
+(defn- deftype-node!
+  "deftype*：值为生成的类型（运行时登记，classForName 取最新的）；reify*：值为新实例（自由变量与 nil 元数据作构造参数）"
+  [mc d x* le* ctx]
+  (let [c (cond (deftype-interface? d) (interface-class! mc d)
+                (deftype-proxy? d) (proxy-class! mc d)
+                (deftype-genclass? d) (genclass-class! mc d)
+                :else (deftype-class! mc d x* le*))]
+    (if (deftype-reify? d)
+      (do (doseq [v (rest c)] (ref-var! mc v true))
+          (emit! mc (i 'ldnull) (i 'newobj (first c) (apply i (concat (objs (count (rest c))) [obj])))))
+      (emit! mc (i 'ldtoken (first c)) (i 'call type-type "GetTypeFromHandle" (i type-handle-type) type-type)
+             (i 'call clojure-ops-type "DefineType" (i obj) obj)))
+    (finish-value! mc ctx)))
+
+;; —— 常量的编码（AOT 单元，cleat-089；Scheme 版 constants.sls encode-constants 与 (clojure compile) 的 encode-clojure-constant）——
+;; 元素经 Cleat.Core.Compiler.RawData 原样取出（宿主调用会把 Int32 换成 long，而 Scheme 的 fixnum 编码为 (fix n)、long 为 (long n)）。
+;; 只处理 Clojure 输入的常量里出现的种类：Clojure 的值、Scheme 的表 / 向量 / 符号 / 数 / 字符 / 字符串；记录、条件、哈希表等报错。
+
+(def ^:private raw-items Cleat.Core.Compiler.RawData/Items)
+(def ^:private raw-field Cleat.Core.Compiler.RawData/Field)
+
+(defn- map-raw
+  "对 x 的每个元素（原样）调 f，结果组成向量。"
+  [f x]
+  (let [v (raw-items x) n (count v)]
+    (loop [k 0 acc []] (if (< k n) (recur (inc k) (conj acc (f (v k)))) acc))))
+
+(defn- ref-table [] (Hashtable. System.Collections.Generic.ReferenceEqualityComparer/Instance))
+
+(defn- shareable? [x]
+  (or (instance? Cleat.Scheme.Cons x) (instance? |System.Object[]| x) (instance? |System.Byte[]| x)
+      (and (instance? Cleat.Scheme.SchemeString x) (.-IsMutable ^Cleat.Scheme.SchemeString x))))
+
+(defn- count-objects!
+  "第一遍：可共享对象出现的次数（已见过的不再深入，环也能结束）。"
+  [counts x]
+  (when (shareable? x)
+    (let [n (or (hget counts x) 0)]
+      (hput! counts x (inc n))
+      (when (zero? n)
+        (cond
+          (instance? Cleat.Scheme.Cons x) (do (count-objects! counts (raw-field x "car")) (count-objects! counts (raw-field x "cdr")))
+          (instance? |System.Object[]| x) (map-raw #(count-objects! counts %) x)
+          :else nil)))))
+
+(defn- bytes->hex [^bytes bs] (.Replace (BitConverter/ToString bs) "-" ""))
+
+(defn- flonum->hex
+  "flonum → IEEE 位模式（大端十六进制 16 位）"
+  [x]
+  (let [bs (BitConverter/GetBytes (double x))]
+    (when BitConverter/IsLittleEndian (Array/Reverse bs))
+    (bytes->hex bs)))
+
+(defn- encode-number [x]
+  (cond
+    (instance? Int32 x) (i 'fix x)
+    (instance? System.Numerics.BigInteger x) (i 'big (str x))
+    (instance? Cleat.Scheme.Fraction x) (i 'rat (str x))
+    (instance? Double x) (i 'flo (flonum->hex x))
+    :else (throw (ex-info (str "encode-constant: cannot encode number " x) {}))))
+
+(defn- encoded-text
+  "Scheme 的 write 写出的编码文本（哈希 map / set 的项按它排序）。"
+  [enc]
+  (let [sb (System.Text.StringBuilder.)]
+    (letfn [(w [x]
+              (cond
+                (seq? x) (do (.Append sb \() (loop [xs x first? true]
+                                                (when (seq xs)
+                                                  (when-not first? (.Append sb \space))
+                                                  (w (first xs)) (recur (rest xs) false)))
+                             (.Append sb \)))
+                (string? x) (do (.Append sb \") (.Append sb (-> ^String x (.Replace "\\" "\\\\") (.Replace "\"" "\\\""))) (.Append sb \"))
+                (true? x) (.Append sb "#t")
+                (false? x) (.Append sb "#f")
+                :else (.Append sb (str x))))]
+      (w enc)
+      (str sb))))
+
+(defn- sorted-items [encs] (sort-by encoded-text compare encs))
+(defn- sorted-pairs [kvs]
+  (mapcat identity (sort-by #(encoded-text (first %)) compare (partition 2 kvs))))
+
+(defn- encode-clojure-constant
+  "x 是 Clojure 的值时返回它的编码（designs/05 §3、LCIL.md §8），否则 nil。带元数据的符号、集合写成 (meta 元数据 对象)。"
+  [x encode]
+  (let [with-meta (fn [enc] (let [m (when (instance? clojure.lang.IMeta x) (.meta ^clojure.lang.IMeta x))]
+                              (if (nil? m) enc (i 'meta (encode m) enc))))
+        named (fn [ns nm] (if (nil? ns) [nm] [ns nm]))]
+    (cond
+      (nil? x) nil
+      (instance? clojure.lang.Var x) (i 'var (str (.Name (.Namespace ^clojure.lang.Var x))) (.Name (.Symbol ^clojure.lang.Var x)))
+      (instance? Int64 x) (i 'long x)
+      (instance? Boolean x) (if (true? x) (i (symbol "true")) (i (symbol "false")))
+      (instance? clojure.lang.Keyword x) (apply i 'kw (named (.Namespace ^clojure.lang.Keyword x) (.Name ^clojure.lang.Keyword x)))
+      (instance? clojure.lang.Symbol x) (with-meta (apply i 'csym (named (.Namespace ^clojure.lang.Symbol x) (.Name ^clojure.lang.Symbol x))))
+      (instance? clojure.lang.IPersistentVector x) (with-meta (apply i 'cvec (map-raw encode x)))
+      (instance? clojure.lang.PersistentTreeMap x) (with-meta (apply i 'sorted-map (map-raw encode x)))
+      (instance? clojure.lang.IPersistentMap x) (with-meta (apply i 'map (sorted-pairs (map-raw encode x))))
+      (instance? clojure.lang.PersistentTreeSet x) (with-meta (apply i 'sorted-set (map-raw encode x)))
+      (instance? clojure.lang.IPersistentSet x) (with-meta (apply i 'set (sorted-items (map-raw encode x))))
+      (or (instance? clojure.lang.IPersistentList x) (instance? clojure.lang.ISeq x)) (with-meta (apply i 'clist (map-raw encode x)))
+      (instance? clojure.lang.BigInt x) (i 'bigint (str x))
+      (instance? clojure.lang.BigDecimal x) (i 'bigdec (str x))
+      (instance? clojure.lang.Ratio x) (i 'ratio (str x))
+      (instance? System.Text.RegularExpressions.Regex x) (i 'regex (str x))
+      (instance? Type x) (i 'type (.FullName ^Type x))
+      :else nil)))
+
+(defn- make-encoder [counts]
+  (let [ids (ref-table) next-id (atom 0)]
+    (letfn [(shared? [x] (> (or (hget counts x) 0) 1))
+            (encode [x]
+              (cond
+                (and (shareable? x) (hhas? ids x)) (i 'ref (hget ids x))
+                (and (shareable? x) (shared? x))
+                (let [id @next-id]
+                  (swap! next-id inc)
+                  (hput! ids x id)
+                  (i 'def id (encode-object x)))
+                :else (encode-object x)))
+            (encode-object [x]
+              (or (encode-clojure-constant x encode)
+                  (cond
+                    (instance? Cleat.Scheme.EmptyList x) (i 'empty)
+                    (nil? x) (i (symbol "nil"))
+                    (instance? Cleat.Scheme.Unspecified x) (i 'unspecified)
+                    (scheme-number? x) (encode-number x)
+                    (char? x) (i 'chr (int x))
+                    (and (instance? Cleat.Scheme.SchemeString x) (.-IsMutable ^Cleat.Scheme.SchemeString x)) (i 'mstr (str x))
+                    (or (string? x) (instance? Cleat.Scheme.SchemeString x)) (i 'str (str x))
+                    (instance? Cleat.Scheme.Symbol x) (i 'sym (str x))
+                    (instance? Cleat.Scheme.Cons x) (encode-list x)
+                    (instance? |System.Object[]| x) (apply i 'vec (map-raw encode x))
+                    (instance? |System.Byte[]| x) (i 'bv (bytes->hex x))
+                    :else (throw (ex-info (str "encode-constant: cannot encode object " (pr-str x)) {:object x})))))
+            ;; 表尾中未被共享的序对连成一段：(list e …) 或 (dlist e … 表尾)
+            (encode-list [x]
+              (loop [p (raw-field x "cdr") acc [(encode (raw-field x "car"))]]
+                (cond
+                  (instance? Cleat.Scheme.EmptyList p) (apply i 'list acc)
+                  (and (instance? Cleat.Scheme.Cons p) (not (shared? p))) (recur (raw-field p "cdr") (conj acc (encode (raw-field p "car"))))
+                  :else (apply i 'dlist (conj acc (encode p))))))]
+      encode)))
+
+(defn- encode-constants
+  "常量表 → 编码的列表；共享与环用 (def n x) / (ref n) 表示，编号在整张表内统一。cs 的元素原样取（见 RawData）。"
+  [cs]
+  (let [counts (ref-table)]
+    (map-raw #(count-objects! counts %) cs)
+    (map-raw (make-encoder counts) cs)))
 
 ;; —— 编译单元（Scheme 版 generate-unit，Clojure 子集：没有 library、已知过程的预链接与 boot 接口）——
 
@@ -1879,6 +2403,7 @@
                         (cond
                           (empty? cs) []
                           live? [(i 'live-constants (count cs))]
-                          :else (throw (ex-info "codegen: encoded constants (AOT units) come with cleat-089" {})))
+                          ;; Scheme 版在 canonical-gensyms 时（boot 镜像）把编码里的 Scheme gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
+                          :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
                         (cons module @(:classes u))))]
       [lcil cs])))
