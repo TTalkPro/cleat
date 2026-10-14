@@ -334,12 +334,6 @@
 (defn- coll-items [d]
   (if (instance? IPersistentMap d) (mapcat (fn [e] [(key e) (val e)]) d) (seq d)))
 
-(defn- has-symbol? [x]
-  (cond (symbol? x) true
-        (or (clj-list? x) (instance? IPersistentVector x) (instance? IPersistentSet x)) (some has-symbol? x)
-        (instance? IPersistentMap x) (some has-symbol? (coll-items x))
-        :else false))
-
 (defn- analyze-datum [d ctx]
   (cond
     (nil? d) (q nil)
@@ -352,15 +346,14 @@
           node (if (identical? v no-const)
                  (apply clj-call (coll-kind d) 0 (mapv #(analyze % sub) (coll-items d)))
                  (q (if (instance? IObj v) (with-meta v nil) v)))]
+      ;; 元数据：常量就连同集合一起作常量；否则（cleat-065，JVM 的 MetaExpr）在字面量的词法上下文里求值再 withMeta
       (cond
         (nil? m) node
-        (not (identical? v no-const)) (q (with-meta (if (instance? IObj v) (with-meta v nil) v) m))
         :else (let [mv (const-value m)]
-                (clj-call "WithMetaOf" false node
-                          (if (identical? mv no-const)
-                            (do (when-not (has-symbol? d) (err d ctx "Unsupported non-constant metadata on a literal without symbols"))
-                                (analyze m sub))
-                            (q mv))))))
+                (cond
+                  (and (not (identical? v no-const)) (not (identical? mv no-const))) (q (with-meta (if (instance? IObj v) (with-meta v nil) v) mv))
+                  (identical? mv no-const) (clj-call "WithMetaOf" false node (analyze m sub))
+                  :else (clj-call "WithMetaOf" false node (q mv))))))
     :else (q d)))
 
 ;; —— 体（syntax.sls body-stx）——

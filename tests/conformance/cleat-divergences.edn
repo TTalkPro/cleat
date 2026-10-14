@@ -136,7 +136,6 @@
   {:suite "map / find's accepted types" :label "nor a string, keyword or list" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
   {:suite "map / find's accepted types" :label "a transient map and vector are, a transient set is not" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
   {:suite "map / find's accepted types" :label "select-keys inherits find's type check" :category :host/jvm-api :reason "reads the message with Java's .getMessage (and the message names CLR types: System.String …)"}
-  {:suite "metadata / coll literal in code keeps meta" :label "map literal meta with expr" :category :not-yet :reason "metadata on a constant collection literal is kept as data, not evaluated ((meta ^{:a (+ 1 2)} [1]) → {:a (+ 1 2)}); target cleat-033"}
   {:suite "metadata / collection ops preserve meta" :label "vec of a map entry is a plain vector" :category :host/class-name :reason "class name / Class printing: CLR type names (System.String, Outer+Inner), not java.lang.* / Outer$Inner"}
   {:suite "core / Inst protocol" :label "inst-ms on a non-inst is the protocol's miss" :category :host/jvm-api :reason "Java member ArgumentException.getMessage (no CLR counterpart under that name)"}
   {:suite "core / with-open" :label "body result" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
