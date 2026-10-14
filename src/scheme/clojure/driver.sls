@@ -19,6 +19,7 @@
     (rnrs)
     (rnrs eval)
     (only (cleat scheme) symbol-value parameterize make-parameter)
+    (only (cleat scheme unsafe) $try/catch $throw)
     (cleat scheme clr)
     (clojure syntax-kinds)
     (clojure namespaces)
@@ -56,7 +57,14 @@
       (lambda ()
         (let* ((ix (and dump-ir? (clr-static-call Cleat.Scheme.Clojure.IrDump NextIndex "both" "eval")))
                (_ (when shadow? (clr-static-call Cleat.Scheme.Clojure.IrDump Shadow form ix)))
-               (core (clojure-expand form))
+               ;; 影子模式下展开出错也记一条（与 Clojure 一侧的诊断文本比较），异常照常抛出
+               (core (if shadow?
+                         ($try/catch (clojure-expand form)
+                           '"System.Exception"
+                           (lambda (e)
+                             (clr-static-call Cleat.Scheme.Clojure.IrDump WriteError "scheme" "eval" ix e)
+                             ($throw e)))
+                         (clojure-expand form)))
                (unit (current-unit))
                (v (let ((v (try-eval-simple core)))
                     (if (eq? v not-simple)

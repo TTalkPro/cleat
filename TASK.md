@@ -92,7 +92,7 @@
 | [cleat-083](tasks/cleat-083-nanopass-languages.md) | cleat.nanopass 语言层：define-language、extends、deftype 记录、unparse、注册表；L0 ~ L3 的 Clojure 拼写 | M8 | cleat-081 | 完成 |
 | [cleat-084](tasks/cleat-084-nanopass-passes.md) | cleat.nanopass pass 层：define-pass、nanopass-case、(out …) 模板、catamorphism、自动补全；第一层；第二层拆到 cleat-095 | M8 | cleat-083 | 完成 |
 | [cleat-085](tasks/cleat-085-compiler-skeleton-and-diff.md) | cleat.compiler.dll 骨架、CLEAT_COMPILER 开关、逐 pass 导出与差分工具、L0 普查 | M8 | cleat-082、cleat-084 | 完成 |
-| [cleat-086](tasks/cleat-086-clojure-analyzer.md) | Clojure 前端（分析器）直接产出 L0，取代 psyntax 与 (clojure syntax)；G1@L0 | M8 | cleat-085 | 未开始 |
+| [cleat-086](tasks/cleat-086-clojure-analyzer.md) | Clojure 前端（分析器）直接产出 L0，取代 psyntax 与 (clojure syntax)；G1@L0 | M8 | cleat-085 | 完成 |
 | [cleat-087](tasks/cleat-087-middle-passes.md) | 前中端 pass 用 cleat.nanopass 重写；G1@la/l1/l2/l3 | M8 | cleat-086 | 未开始 |
 | [cleat-088](tasks/cleat-088-codegen-core.md) | codegen 一：单元、常量、Var 与调用、控制流、try、fn* 类、局部变量清除、接口文件；G2（无类型推断） | M8 | cleat-087 | 未开始 |
 | [cleat-089](tasks/cleat-089-codegen-types-and-classes.md) | codegen 二：类型格与收窄、原始签名、deftype / reify / proxy / gen-class、case、直接链接、async；G2 全部单元 | M8 | cleat-088 | 未开始 |

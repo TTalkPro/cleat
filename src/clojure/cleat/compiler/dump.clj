@@ -9,7 +9,7 @@
 (def enabled? (Cleat.Scheme.Clojure.IrDump/Enabled))
 
 (defn- datum [x] (Cleat.Scheme.Clojure.IrDump/PrintDatum x))
-(defn- ident [x] (Cleat.Scheme.Clojure.IrDump/IdentifierText (name x)))
+(defn- ident [x] (Cleat.Scheme.Clojure.IrDump/IdentifierText (str x)))
 
 (defn- name-text
   "过程名（name 终结符）：与 Scheme 版的值打印相同——无名为 false，符号是 Scheme 符号，CljFnName 是 clj-fn-name 记录。"

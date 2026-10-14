@@ -10,4 +10,6 @@
             [cleat.compiler.front]
             [cleat.compiler.closures]
             [cleat.compiler.dump]
+            [cleat.compiler.analyzer]
+            [cleat.compiler.pipeline]
             [cleat.compiler.shadow]))

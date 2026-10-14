@@ -87,8 +87,15 @@ public static class IrDump
         }
         catch (Exception e)
         {
-            Write("clojure", "eval", ix, "error", PrintDatum(e.GetType().Name + ": " + e.Message));
+            WriteError("clojure", "eval", ix, e);
         }
+    }
+
+    /// <summary>形式在展开 / 分析时出错：记成 error 阶段（异常类型与消息），两侧的诊断文本一起比较（cleat-086）。</summary>
+    public static void WriteError(string side, string unit, int ix, Exception e)
+    {
+        while (e is System.Reflection.TargetInvocationException && e.InnerException != null) e = e.InnerException;
+        Write(side, unit, ix, "error", PrintDatum(e.GetType().Name + ": " + e.Message));
     }
 
     /// <summary>单元名的前缀（CLEAT_DUMP_IR_TAG）：同一个目录收集几个进程的转储时区分各进程的 eval 单元。</summary>

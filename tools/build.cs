@@ -237,7 +237,7 @@ void IrDumpCommand(string[] a)
         RunTagged(name, [host, "-I", tmp, "-I", src, "--compile-package", Path.Combine(tmp, assembly + ".dll"), "--package", name, "--root", src, .. nses]);
     }
     if (corpus)
-        RunTagged("corpus", [host, "-I", clj, Path.Combine(root, "tools", "conformance.clj"), "--run", "--portability", "common"]);
+        RunTagged("corpus", [host, "-I", clj, Path.Combine(root, "tools", "conformance.clj"), Path.Combine(root, "tests", "conformance", "corpus.edn"), "--portability", "common"]);
     Console.WriteLine($"ir-dump: {dir} ({sw.Elapsed.TotalSeconds:F0} s)");
 }
 

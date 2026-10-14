@@ -45,7 +45,8 @@
   [t]
   (cond
     (str/starts-with? t "g$") (let [parts (str/split t #"\$")
-                                    nm (str/replace (nth parts 1 "") #"^gen\d+$" "gen")]
+                                    ;; 名字里 gensym 的序号（seq_123、p__45、G__6、x__7__auto__）也去掉
+                                    nm (str/replace (nth parts 1 "") #"\d+" "")]
                                 (str "g$" nm (when (= "inl" (last parts)) "$inl")))
     (str/includes? t "%") (str (first (str/split t #"%")) "%")
     :else (str/replace t #"__\d+" "__")))

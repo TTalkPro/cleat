@@ -11,5 +11,9 @@
 2. 宿主接入：钩子登记不再经 `ClojureHost` 的 Scheme 程序；Scheme 镜像在此模式下不加载。
 3. G3：全量测试、语料 / cts / test_clojure 基线、错误黄金文件、`SchemeInvisibilityTests`、包测试、示例、基准（`tools/build.cs bench`）；记录编 boot 镜像、REPL 单次 eval 的耗时并与 Scheme 编译器对比。
 
+## 从 cleat-086 移来的
+- 小函数内联（`.inl`）：Clojure 编译器写自己的 `.inl`（L0 的数据），调用点照 Scheme 版 `inline-call` 的形状展开（守卫 `IsInstanceOf`、子句改名、`$inl` 后缀）。
+- 错误黄金文件 `tests/errors` 在 `CLEAT_COMPILER=clojure` 下通过。
+
 ## 验收标准
 - 两种模式下全量测试都通过，基线不退化；编译耗时达到 19 D5 的目标或在结论里给出差距与计划。
