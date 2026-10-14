@@ -87,7 +87,7 @@
 | [cleat-080](tasks/cleat-080-republish-after-skeg-port.md) | 移植 skeg 之后的新版本：Cleat.Runtime / Cleat.Cli 1.0.5、ToolsNamespace 1.5.3、ToolsBuild 0.10.19、Nrepl 1.8.2、Neorepl 0.1.3，验证后重推 BaGetter | 后续 | cleat-079 | 完成 |
 | [cleat-081](tasks/cleat-081-self-hosting-plan.md) | Clojure 自寄宿：设计与任务拆分（designs/19） | M8 | cleat-080 | 完成 |
 | [cleat-082](tasks/cleat-082-move-clojure-runtime-helpers.md) | Clojure 运行时辅助类（Locals、ClojureOps、ClojureStaticCalls、HostSyntax、RT.IsTrue、Driver 的非 Scheme 部分）搬进 Cleat.Core | M8 | cleat-081 | 完成 |
-| [cleat-083](tasks/cleat-083-nanopass-languages.md) | cleat.nanopass 语言层：define-language、extends、deftype 记录、unparse、注册表；L0 ~ L3 的 Clojure 拼写 | M8 | cleat-081 | 未开始 |
+| [cleat-083](tasks/cleat-083-nanopass-languages.md) | cleat.nanopass 语言层：define-language、extends、deftype 记录、unparse、注册表；L0 ~ L3 的 Clojure 拼写 | M8 | cleat-081 | 完成 |
 | [cleat-084](tasks/cleat-084-nanopass-passes.md) | cleat.nanopass pass 层：define-pass、nanopass-case、(out …) 模板、catamorphism、自动补全；第二层特性与上游测试（取代 cleat-056） | M8 | cleat-083 | 未开始 |
 | [cleat-085](tasks/cleat-085-compiler-skeleton-and-diff.md) | cleat.compiler.dll 骨架、CLEAT_COMPILER 开关、逐 pass 导出与差分工具、L0 普查 | M8 | cleat-082、cleat-084 | 未开始 |
 | [cleat-086](tasks/cleat-086-clojure-analyzer.md) | Clojure 前端（分析器）直接产出 L0，取代 psyntax 与 (clojure syntax)；G1@L0 | M8 | cleat-085 | 未开始 |

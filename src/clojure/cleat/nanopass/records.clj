@@ -1,0 +1,49 @@
+;; cleat.nanopass 的运行时部分（cleat-083，designs/19 D2、07 D6）：节点接口、语言的运行时对象与注册表、构造检查的辅助函数。
+;; 每个产生式是一个 deftype（引用相等，字段按元变量名），实现 INode；每个语言另有一个标记接口（L0$Node），
+;; 非终结符谓词靠它区分同标签、不同语言的节点。
+(ns cleat.nanopass.records)
+
+(definterface INode
+  (^long nanoTag [])          ; 产生式在本语言里的序号（按定义顺序，0 起）
+  (nanoFields [])             ; 字段值的向量，顺序同产生式里元变量出现的顺序
+  (nanoLang []))              ; 语言的限定名（符号）
+
+(defn node? [x] (instance? INode x))
+
+;; —— 语言的运行时对象 ——
+;; desc：语言描述（cleat.nanopass.language 生成的纯数据）；preds：终结符名 → 谓词函数；ctors：标签 → 带检查的构造函数；
+;; by-tag：标签 → 产生式描述；nts：非终结符名 → 描述
+(defrecord Language [name desc preds ctors by-tag nts])
+
+;; 限定名 → Language（加载期登记；宏展开期另有描述的注册表，见 cleat.nanopass.language）
+(defonce ^:private languages (atom {}))
+
+(defn register-runtime! [^Language lang]
+  (swap! languages assoc (:name lang) lang)
+  lang)
+
+(defn runtime-language
+  "语言的运行时对象：参数为限定名或 Language；没有登记时报错。"
+  [x]
+  (cond
+    (instance? Language x) x
+    :else (or (get @languages x)
+              (throw (ex-info (str "nanopass: unknown language " x) {:language x})))))
+
+(defn node-language [^INode n] (runtime-language (.nanoLang n)))
+
+;; —— 构造函数的检查 ——
+
+(defn bad-field [lang prod field v]
+  (throw (ex-info (str "nanopass: " lang " " prod ": expected " field ", got " (pr-str v))
+                  {:language lang :production prod :field field :value v})))
+
+(defn absent? [v] (or (nil? v) (false? v)))
+
+(defn check-seq
+  "depth 层嵌套序列的每个元素都满足 ok?（depth ≥ 1）。"
+  [ok? v depth]
+  (and (or (nil? v) (sequential? v))
+       (if (== depth 1)
+         (every? ok? v)
+         (every? #(check-seq ok? % (dec depth)) v))))
