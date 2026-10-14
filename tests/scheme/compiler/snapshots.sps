@@ -304,14 +304,18 @@
 (for-each
   (lambda (c)
     (let* ((name (car c)) (lcore (cadr c))
-           (l0 (begin (reset-fresh-names!) (lower-loops (parse-core lcore))))
+           (p0 (begin (reset-fresh-names!) (parse-core lcore)))
+           (l0 (lower-loops p0))
            (an (analyze l0))
            (l1 (cp0-lite (check-forward (simplify-letrec l0 an) an)))
            (l1 (if inline-enabled? (cp0-lite (simplify-lets (cp0-inline l1 an) an)) l1))   ; 与驱动相同（iron-070）
            (l1 (simplify-if l1))                                                              ; iron-073
            (l2 (convert-assignments l1 an))
            (l3 (uncover-free l2)))
+      ;; p0（parse-core 的输出）与 l1（convert-assignments 的输入）：Clojure 编译器逐 pass 对照用（cleat-084）
+      (check! name "p0" (pp->string (unparse-L0 p0)))
       (check! name "l0" (pp->string (unparse-L0 l0)))
+      (check! name "l1" (pp->string (unparse-L1 l1)))
       (check! name "l2" (pp->string (unparse-L2 l2)))
       (check! name "l3" (pp->string (unparse-L3 l3)))
       (check! name "lcil" (compile->lcil-text (list lcore) (symbol->string name) "#Module"))))
@@ -325,6 +329,6 @@
       (display "NONDETERMINISTIC: ") (display (car c)) (newline)))
   cases)
 
-(display "snapshots: ") (display (* 4 (length cases))) (display " compared, ")
+(display "snapshots: ") (display (* 6 (length cases))) (display " compared, ")
 (display created) (display " created, ") (display failures) (display " failed") (newline)
 (unless (= failures 0) (exit 1))

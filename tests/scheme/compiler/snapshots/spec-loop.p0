@@ -1,0 +1,21 @@
+(lambda #f
+  (clause
+    (n xs)
+    #f
+    (call
+      (letrec ((loop
+                 (lambda "loop"
+                   (clause
+                     (i s ys)
+                     #f
+                     (if (call (gref g$<$1$%b) i '0)
+                       (primcall cons s ys)
+                       (call
+                         loop
+                         (call (gref g$-$2$%b) i '1)
+                         (call (gref g$+$3$%b) i s)
+                         (call (gref g$cdr$4$%b) ys)))))))
+        loop)
+      n
+      '0
+      xs)))

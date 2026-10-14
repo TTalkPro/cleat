@@ -1,0 +1,21 @@
+(lambda #f
+  (clause
+    (n)
+    #f
+    (let ((total (primcall $uninitialized)))
+      (letrec ((f (lambda "f"
+                    (clause
+                      (x)
+                      #f
+                      (if (primcall null? x)
+                        (primcall $check-initialized total 'total)
+                        (call f (primcall cdr x)))))))
+        (begin
+          (set! total (primcall $fx+ n '1))
+          (letrec ((bump
+                     (lambda "bump"
+                       (clause
+                         ()
+                         #f
+                         (begin (set! n (primcall $fx+ n '1)) n)))))
+            (begin (call bump) (call f '(1 2)))))))))

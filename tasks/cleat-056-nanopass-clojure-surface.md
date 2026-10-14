@@ -1,6 +1,6 @@
 # cleat-056 Clojure 表面的 nanopass
 
-- 里程碑：后续　依赖：cleat-053　状态：由 cleat-084 取代
+- 里程碑：后续　依赖：cleat-053　状态：由 cleat-084 / 095 取代
 - 设计依据：[07 D2 ~ D4](../designs/07-nanopass-port.md)（表面设计）、[15 §4](../designs/15-scheme-core-vendoring.md)
 
 ## 目标

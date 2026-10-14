@@ -1,5 +1,6 @@
 ;; cleat.nanopass：Clojure 写的 nanopass（cleat-083 起，designs/19 D2、07）。
-;; 本文件是对外的入口：define-language（cleat-083）；define-pass / nanopass-case / with-output-language 在 cleat-084 加入。
+;; 本文件是对外的入口：define-language（cleat-083）；define-pass、nanopass-case、with-output-language、out、in-context（cleat-084，
+;; 展开在 cleat.nanopass.pass）。
 ;;
 ;; (define-language L0
 ;;   (terminals (symbol (x)) (datum (d)))     ; 终结符：名字 + 元变量，谓词为 名字?（在当前命名空间决议）
@@ -16,7 +17,8 @@
 ;; 带检查的构造函数 make-L0:Expr:if、谓词 L0:Expr:if? 与 L0:Expr?、语言的运行时对象 L0（cleat.nanopass.records.Language）、unparse-L0。
 (ns cleat.nanopass
   (:require [cleat.nanopass.records :as r]
-            [cleat.nanopass.language :as lang]))
+            [cleat.nanopass.language :as lang]
+            [cleat.nanopass.pass :as pass]))
 
 (def ^:dynamic *check-constructors*
   "为真时（缺省）define-language 生成的构造函数检查字段（宏展开期读取）。"
@@ -74,9 +76,11 @@
   (let [v (:name field)
         y 'nanopass-elem
         fail `(r/bad-field '~(:name desc) '~(symbol (str nt ":" (:keyword prod))) '~v ~v)]
-    (if (zero? (:depth field))
-      `(when-not ~(field-test desc field v) ~fail)
-      `(when-not (r/check-seq (fn [~y] ~(field-test desc field y)) ~v ~(:depth field)) ~fail))))
+    (cond
+      (zero? (:depth field)) `(when-not ~(field-test desc field v) ~fail)
+      ;; 一层、非 maybe：谓词直接交给 check-all
+      (and (= 1 (:depth field)) (not (:maybe field))) `(when-not (r/check-all ~(first (field-test desc field y)) ~v) ~fail)
+      :else `(when-not (r/check-seq (fn [~y] ~(field-test desc field y)) ~v ~(:depth field)) ~fail))))
 
 (defn- emit-language [desc]
   (let [qname (:name desc)
@@ -159,3 +163,46 @@
   (.Write w (str "#<" (name (.nanoLang ^cleat.nanopass.records.INode n)) " "))
   (print-method (unparse n) w)
   (.Write w ">"))
+
+;; —— pass（cleat-084）——
+;;
+;; (define-pass simplify-letrec L0 [ir an] -> L1 []
+;;   (definitions (def assigned (assigned-of an)) (defn assigned? [x] (contains? assigned x)))
+;;   (Expr [ir] -> Expr []
+;;     [(call ~e ~[e*] ...) (out (call ~(Expr e) ~e* ...))]
+;;     [(set! ~x ~[e]) (guard (assigned? x)) (out (set-box! ~x ~e))])
+;;   (LambdaOf LambdaExpr [ir] -> LambdaExpr [])
+;;   (Expr ir))
+;;
+;; 输入 / 输出：语言、[语言 非终结符]，输出还可以是 *（处理器返回任意值）。处理器 (名字 输入非终结符 [ir 额外形参 …] -> 输出非终结符 [] 子句 …)，
+;; 名字与输入非终结符相同时可省略后者；输出非终结符为 * 时返回任意值。处理器在 pass 里互相可见（letfn），也可以在体里直接调用。
+;; 没有声明、却被 catamorphism 或复制子句用到的处理器自动生成（输入输出同名，形参只有 ir）；处理器缺的产生式按输出语言同样模式的
+;; 产生式自动复制（字段经对应的处理器），经非终结符交替到达的产生式交给该非终结符的处理器。
+;; definitions 段：(def x e) 与 (defn f [a] …)；def 的值先于所有函数求值（只能引用前面的 def 与 pass 的形参），函数与处理器互相可见。
+;; pass 的体缺省为调用入口非终结符的处理器。
+
+(defmacro out
+  "模板（只在 define-pass、with-output-language 的输出上下文里有意义）。"
+  [& _]
+  (throw (ex-info "nanopass: out used outside an output context (define-pass with an output language, or with-output-language)" {})))
+
+(defmacro in-context
+  "在模板上下文里把当前非终结符换成 nt。"
+  [nt & _]
+  (throw (ex-info "nanopass: in-context used outside an output context" {})))
+
+(defmacro define-pass
+  [pname in-lang formals arrow out-lang rets & body]
+  (when-not (and (symbol? pname) (vector? formals) (seq formals) (= '-> arrow) (vector? rets))
+    (throw (ex-info (str "nanopass: (define-pass name Lin [ir …] -> Lout [] …) expected, got " (pr-str (list* 'define-pass pname in-lang formals arrow out-lang rets))) {})))
+  (pass/expand-define-pass pname in-lang formals out-lang rets body))
+
+(defmacro nanopass-case
+  "(nanopass-case [L NT] e [模式 body …] … [else …])：按 L 的 NT 分派 e；~[x] 对同一 nanopass-case 递归。展开期生成内联代码，不建闭包。"
+  [spec e & clauses]
+  (pass/expand-nanopass-case spec e clauses))
+
+(defmacro with-output-language
+  "(with-output-language [L NT] body …)：body 里的 (out …) 构造 L 的 NT。"
+  [spec & body]
+  (pass/expand-with-output-language spec body))

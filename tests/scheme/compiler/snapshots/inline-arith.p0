@@ -1,0 +1,11 @@
+(lambda #f
+  (clause
+    (a b)
+    #f
+    (if (call (gref g$<$1$%b) a '10)
+      (call (gref g$+$2$%b) a b)
+      (begin
+        (call (gref g$fx+$3$%b) a '1)
+        (call (gref g$fl*$4$%b) b '2.5)
+        (call (gref g$+$5$Cuser) a b)
+        (call (gref g$-$6$%b) a b '1)))))

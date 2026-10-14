@@ -1,0 +1,15 @@
+(lambda #f
+  (clause
+    (x)
+    #f
+    (label
+      rhs
+      (d)
+      (label
+        else-th
+        ()
+        (if (primcall pair? x)
+          (jump rhs (primcall car x))
+          (jump else-th))
+        '#f)
+      (primcall cons d d))))

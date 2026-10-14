@@ -1,0 +1,26 @@
+(lambda #f
+  (clause
+    (v)
+    #f
+    (call
+      (letrec ((loop
+                 (lambda "loop"
+                   (clause
+                     (i n acc)
+                     #f
+                     (if (call (gref g$fx<?$1$%b) i n)
+                       (call
+                         loop
+                         (call (gref g$fx+$2$%b) i '1)
+                         n
+                         (call
+                           (gref g$+$3$%b)
+                           acc
+                           (call
+                             (gref g$char->integer$4$%b)
+                             (call (gref g$string-ref$5$%b) v i))))
+                       acc)))))
+        loop)
+      '0
+      (call (gref g$string-length$6$%b) v)
+      '0)))

@@ -1,0 +1,14 @@
+(lambda #f
+  (clause
+    (x)
+    #f
+    (call
+      (lambda #f
+        (clause
+          (rhs else-th)
+          #f
+          (if (primcall pair? x)
+            (call rhs (primcall car x))
+            (call else-th))))
+      (lambda #f (clause (d) #f (primcall cons d d)))
+      (lambda #f (clause () #f '#f)))))

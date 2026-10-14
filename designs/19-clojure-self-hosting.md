@@ -135,7 +135,8 @@ L0 形状与现行 parse-core 的输出相同（D5 的 G1 在 L0 上比较）。
 | [cleat-081](../tasks/cleat-081-self-hosting-plan.md) | — | 本设计与任务拆分 |
 | [cleat-082](../tasks/cleat-082-move-clojure-runtime-helpers.md) | A | 纯辅助类从 Cleat.Scheme 搬进 Cleat.Core（D8 第一条），Scheme 编译器改引用，重生成镜像 |
 | [cleat-083](../tasks/cleat-083-nanopass-languages.md) | A | `cleat.nanopass` 语言层：`define-language`、`extends`、记录、`unparse`、注册表 |
-| [cleat-084](../tasks/cleat-084-nanopass-passes.md) | A | `cleat.nanopass` pass 层：`define-pass`、`nanopass-case`、`(out …)` 模板、catamorphism、自动补全；第二层特性与上游测试 |
+| [cleat-084](../tasks/cleat-084-nanopass-passes.md) | A | `cleat.nanopass` pass 层（第一层）：`define-pass`、`nanopass-case`、`(out …)` 模板、catamorphism、自动补全 |
+| [cleat-095](../tasks/cleat-095-nanopass-user-layer.md) | — | `cleat.nanopass` 第二层：给用户的特性与上游测试（不阻塞阶段 B / C） |
 | [cleat-085](../tasks/cleat-085-compiler-skeleton-and-diff.md) | A | `cleat.compiler.dll` 的构建、`CLEAT_COMPILER` 开关骨架、逐 pass 导出与差分工具、L0 普查（D4） |
 | [cleat-086](../tasks/cleat-086-clojure-analyzer.md) | A | Clojure 前端（分析器）直接产出 L0；G1@L0 |
 | [cleat-087](../tasks/cleat-087-middle-passes.md) | A | 前中端 pass：lower-loops、analyze、simplify-letrec、check-forward、cp0-lite、simplify-if、convert-assignments、uncover-free；G1@la/l1/l2/l3 |
@@ -148,4 +149,4 @@ L0 形状与现行 parse-core 的输出相同（D5 的 G1 在 L0 上比较）。
 | [cleat-094](../tasks/cleat-094-republish-self-hosted.md) | E | 新版本（Cleat.Runtime / Cli 1.1.0 等）重推 BaGetter，`cleat.nanopass` 作为用户库的文档 |
 
 关键路径：081 → 082 → 083 → 084（第一层）→ 085 → 086 → 087 → 088 → 089 → 090 → 091 → 092 → 093 → 094。
-084 的第二层与 088 之后的工作可以并行。
+095（nanopass 第二层）与 088 之后的工作可以并行。

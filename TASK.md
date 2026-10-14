@@ -60,7 +60,7 @@
 | [cleat-053](tasks/cleat-053-clojure-boot-image.md) | Clojure 自举：Scheme 镜像编译 core.clj → cleat.boot.dll，镜像不动点 | M5′ | cleat-052 | 完成 |
 | [cleat-054](tasks/cleat-054-rename-scheme-libraries.md) | Scheme 库名 `(ironscheme …)` → `(cleat scheme …)`，同步重生成种子 | 后续 | cleat-053 | 完成 |
 | [cleat-055](tasks/cleat-055-scheme-invisibility-boundaries.md) | "看不到 Scheme"的三道边界：macroexpand 停止点、值边界、诊断边界的测试与黄金文件 | M4′ | cleat-052 | 完成 |
-| [cleat-056](tasks/cleat-056-nanopass-clojure-surface.md) | Clojure 表面的 nanopass：在 Scheme 侧给原版 nanopass 套 Clojure 语法 | 后续 | cleat-053 | 由 cleat-084 取代 |
+| [cleat-056](tasks/cleat-056-nanopass-clojure-surface.md) | Clojure 表面的 nanopass：在 Scheme 侧给原版 nanopass 套 Clojure 语法 | 后续 | cleat-053 | 由 cleat-084 / 095 取代 |
 | [cleat-057](tasks/cleat-057-clojure-defsyntax.md) | Clojure 的用户级卫生宏（defsyntax / syntax-rules） | 后续 | cleat-053 | 搁置 |
 | [cleat-058](tasks/cleat-058-scheme-layer-skeg-alignment.md) | Scheme 元层按 skeg 对齐：guard / call-with-return / try·catch·finally·throw / #nil / EmptyList | 后续 | cleat-047、cleat-054 | 完成 |
 | [cleat-059](tasks/cleat-059-ironscheme-name-cleanup.md) | 清理 IronScheme 名字残留：原语、格式头、清单、环境变量、nanopass 覆盖库扩展名 | 后续 | cleat-054、cleat-058 | 完成 |
@@ -88,7 +88,7 @@
 | [cleat-081](tasks/cleat-081-self-hosting-plan.md) | Clojure 自寄宿：设计与任务拆分（designs/19） | M8 | cleat-080 | 完成 |
 | [cleat-082](tasks/cleat-082-move-clojure-runtime-helpers.md) | Clojure 运行时辅助类（Locals、ClojureOps、ClojureStaticCalls、HostSyntax、RT.IsTrue、Driver 的非 Scheme 部分）搬进 Cleat.Core | M8 | cleat-081 | 完成 |
 | [cleat-083](tasks/cleat-083-nanopass-languages.md) | cleat.nanopass 语言层：define-language、extends、deftype 记录、unparse、注册表；L0 ~ L3 的 Clojure 拼写 | M8 | cleat-081 | 完成 |
-| [cleat-084](tasks/cleat-084-nanopass-passes.md) | cleat.nanopass pass 层：define-pass、nanopass-case、(out …) 模板、catamorphism、自动补全；第二层特性与上游测试（取代 cleat-056） | M8 | cleat-083 | 未开始 |
+| [cleat-084](tasks/cleat-084-nanopass-passes.md) | cleat.nanopass pass 层：define-pass、nanopass-case、(out …) 模板、catamorphism、自动补全；第一层；第二层拆到 cleat-095 | M8 | cleat-083 | 完成 |
 | [cleat-085](tasks/cleat-085-compiler-skeleton-and-diff.md) | cleat.compiler.dll 骨架、CLEAT_COMPILER 开关、逐 pass 导出与差分工具、L0 普查 | M8 | cleat-082、cleat-084 | 未开始 |
 | [cleat-086](tasks/cleat-086-clojure-analyzer.md) | Clojure 前端（分析器）直接产出 L0，取代 psyntax 与 (clojure syntax)；G1@L0 | M8 | cleat-085 | 未开始 |
 | [cleat-087](tasks/cleat-087-middle-passes.md) | 前中端 pass 用 cleat.nanopass 重写；G1@la/l1/l2/l3 | M8 | cleat-086 | 未开始 |
@@ -99,6 +99,7 @@
 | [cleat-092](tasks/cleat-092-de-scheme-codegen.md) | 生成代码去 Scheme：catch 不用 Procedure、去 EmptyList 占位、Clojure 数据常量表与 .inl、(runtime clojure) | M8 | cleat-091 | 未开始 |
 | [cleat-093](tasks/cleat-093-remove-scheme.md) | 删除 Scheme：src/scheme、Cleat.Scheme、Cleat.Stage0、Scheme 测试、构建目标、NOTICE、文档归档 | M8 | cleat-092 | 未开始 |
 | [cleat-094](tasks/cleat-094-republish-self-hosted.md) | 自寄宿后的新版本（Cleat.Runtime / Cli 1.1.0 等）重推 BaGetter，cleat.nanopass 用户文档 | M8 | cleat-093 | 未开始 |
+| [cleat-095](tasks/cleat-095-nanopass-user-layer.md) | cleat.nanopass 第二层：显式 catamorphism、多层省略号的单项、define-parser、trace、上游测试（取代 cleat-056；不阻塞阶段 B / C） | M8 | cleat-084 | 未开始 |
 
 ## 里程碑
 
@@ -116,12 +117,12 @@
 | M6 符合性 | cleat-032（031 并入 053） | 三个基线 |
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
 | 后续 | cleat-042、043、054、056、058 ~ 080（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
-| M8 Clojure 自寄宿 | cleat-081 ~ cleat-094 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
+| M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-**M8（2026-10-14 起，现行）**：081 → 082 → 083 → 084 → 085 → 086 → 087 → 088 → 089 → 090 → 091 → 092 → 093 → 094（[19 §5](designs/19-clojure-self-hosting.md)）。
+**M8（2026-10-14 起，现行）**：081 → 082 → 083 → 084 → 085 → 086 → 087 → 088 → 089 → 090 → 091 → 092 → 093 → 094；095 不在关键路径上（[19 §5](designs/19-clojure-self-hosting.md)）。
 双轨纪律（19 D9）：从 cleat-085 起到 cleat-091 默认切换为止，Scheme 编译器只修缺陷、不加功能，修的缺陷同时在 Clojure 编译器里修并补差分用例。
 
 此前：cleat-045 → 046 → 047 → 048 → 049 → 050 → 051 → 052 → 055 → 053 → 032（原路径 013 → 015 → … → 029 → 031 已由此取代）。LLVM 相关任务搁置，不在当前计划内。

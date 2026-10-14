@@ -1,0 +1,25 @@
+(lambda #f
+  (clause
+    (xs)
+    #f
+    (primcall
+      call-with-return
+      (lambda #f
+        (clause
+          (k)
+          #f
+          (call
+            (letrec ((loop
+                       (lambda "loop"
+                         (clause
+                           (l)
+                           #f
+                           (if (primcall pair? l)
+                             (begin
+                               (if (primcall null? (primcall car l))
+                                 (call k l)
+                                 '#f)
+                               (call loop (primcall cdr l)))
+                             '#f)))))
+              loop)
+            xs))))))

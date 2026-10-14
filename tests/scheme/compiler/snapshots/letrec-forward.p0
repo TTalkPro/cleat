@@ -1,0 +1,20 @@
+(lambda #f
+  (clause
+    (n)
+    #f
+    (letrec ((f (lambda "f" (clause (x) #f (call g x))))
+             (g (lambda "g"
+                  (clause
+                    (y)
+                    #f
+                    (if (primcall null? y)
+                      total
+                      (call f (primcall cdr y))))))
+             (total (primcall $fx+ n '1))
+             (bump
+               (lambda "bump"
+                 (clause
+                   ()
+                   #f
+                   (begin (set! n (primcall $fx+ n '1)) n)))))
+      (begin (call bump) (call f '(1 2))))))

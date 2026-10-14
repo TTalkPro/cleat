@@ -40,6 +40,21 @@
 
 (defn absent? [v] (or (nil? v) (false? v)))
 
+(defn ->vec
+  "省略号字段的值：已是向量原样，其余（惰性序列等）实现成向量。"
+  [x]
+  (if (vector? x) x (vec x)))
+
+(defn check-all
+  "一层序列的每个元素都满足 ok?（构造检查的快路径，不为每次调用建闭包）。"
+  [ok? v]
+  (or (nil? v)
+      (and (sequential? v)
+           (loop [s (seq v)]
+             (cond (nil? s) true
+                   (ok? (first s)) (recur (next s))
+                   :else false)))))
+
 (defn check-seq
   "depth 层嵌套序列的每个元素都满足 ok?（depth ≥ 1）。"
   [ok? v depth]
@@ -47,3 +62,11 @@
        (if (== depth 1)
          (every? ok? v)
          (every? #(check-seq ok? % (dec depth)) v))))
+
+;; 子句不匹配（模式测试或 guard 失败）时子句代码的值；处理器据此试下一个子句（cleat-084）
+(defonce no-match (Object.))
+
+(defn brief
+  "错误信息里的节点：限制打印的深度与长度（整棵树可能有几百万个节点）。"
+  [x]
+  (binding [*print-level* 6 *print-length* 8] (pr-str x)))
