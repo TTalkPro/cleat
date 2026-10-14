@@ -5257,8 +5257,8 @@ Note that read can execute code (controlled by *read-eval*),
   {:added "1.0"
    :static true}
   [s]
-    ;; CLEAT-017: Compiler/specials → Expander.IsSpecial（展开器的特殊形式表）
-    (Cleat.Core.Expand.Expander/IsSpecial s))
+    ;; CLEAT-017: Compiler/specials → Cleat.Core.Expand.SpecialForms（特殊形式表）
+    (Cleat.Core.Expand.SpecialForms/IsSpecial s))
 
 (defn var?
   "Returns true if v is of type clojure.lang.Var"

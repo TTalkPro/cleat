@@ -1,8 +1,8 @@
-;; lower-loops：L0 → L0，接在前端之后（cleat-084 试点，移植 src/scheme/lib/cleat/scheme/compiler/loops.sls，IronScheme iron-034b）。
+;; lower-loops：L0 → L0，接在前端之后（cleat-084 试点，移植原版 loops.sls（"原版"指 cleat-093 前仓库里的 Scheme 实现 src/scheme，已删除，见 git 历史），IronScheme iron-034b）。
 ;;
 ;;   D9  单绑定 letrec 的 lambda，全部引用都是参数个数相符的尾调用 ⇒ (label f (x …) body fbody)，调用 ⇒ (jump f e …)
 ;;   let 绑定、只在尾位置调用的 lambda 也变成 label
-;; 各函数与 Scheme 版一一对应，注释见 Scheme 版；Scheme 专有的部分（call-with-values 内联、escape-frame、try-handle）cleat-092 删去。
+;; 原版专有的部分（call-with-values 内联、escape-frame、try-handle）cleat-092 删去。
 (ns cleat.compiler.loops
   (:require [cleat.nanopass :refer [define-pass nanopass-case with-output-language out]]
             [cleat.compiler.languages :refer [L0]]))
@@ -120,19 +120,14 @@
 (def ^:private loops-count (atom 0))
 (defn loops-made [] @loops-count)
 
-;; 测量开关：CLEAT_SCHEME_NO_034 含 letlab 时不做 let 的降级
-(def ^:private let-labels?
-  (let [v (System.Environment/GetEnvironmentVariable "CLEAT_SCHEME_NO_034")]
-    (not (and (string? v) (.Contains ^String v "letlab")))))
-
 (define-pass lower-loops L0 [ir] -> L0 []
   (definitions
-    ;; let 绑定的单子句 lambda，体里只在尾位置按相符的参数个数调用：变成 label（见 Scheme 版）
+    ;; let 绑定的单子句 lambda，体里只在尾位置按相符的参数个数调用：变成 label（见 原版）
     (defn lower-let [x* e* body]
       (loop [xs (seq x*) es (seq e*) keep-x () keep-e () labels ()]
         (if xs
           (let [[p* fbody] (simple-lambda (first es))]
-            (if (and let-labels? p* (not (check-refs (first xs) (count p*) body true false)))
+            (if (and p* (not (check-refs (first xs) (count p*) body true false)))
               (recur (next xs) (next es) keep-x keep-e (cons [(first xs) p* fbody] labels))
               (recur (next xs) (next es) (cons (first xs) keep-x) (cons (first es) keep-e) labels)))
           (if (empty? labels)

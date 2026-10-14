@@ -1,7 +1,0 @@
-(label
-  loop
-  (i acc)
-  (jump loop '0 '())
-  (if (primcall $fx=? i '10)
-    acc
-    (jump loop (primcall $fx+ i '1) (primcall cons i acc))))

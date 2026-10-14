@@ -1,9 +1,0 @@
-(lambda #f
-  (clause
-    (p)
-    #f
-    (primcall
-      call-with-values
-      (lambda #f (clause () #f (call p)))
-      (lambda #f
-        (clause (a b) r (primcall cons a (primcall cons b r)))))))

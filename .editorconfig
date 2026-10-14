@@ -9,8 +9,8 @@ trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
 
-# Clojure / Scheme 源码、Lcil、EDN、文本种子：Lisp 惯例 2 空格
-[*.{clj,cljc,cljr,edn,lcil,sls,ss,sps,scm,core}]
+# Clojure 源码、Lcil、EDN：Lisp 惯例 2 空格
+[*.{clj,cljc,cljr,edn,lcil}]
 indent_size = 2
 
 # 项目文件与数据文件

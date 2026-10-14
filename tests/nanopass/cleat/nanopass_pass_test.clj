@@ -158,7 +158,7 @@
         (with-output-language [Lp Expr] (out (if ~1 a b)))) "构造检查")
   (is (thrown? Exception (macroexpand '(cleat.nanopass/with-output-language [cleat.nanopass-pass-test/Lp Expr] (out (nosuch a)))))))
 
-;; 模板里的求值顺序：从左到右，序列立即实现（处理器的副作用顺序与 Scheme 版相同）
+;; 模板里的求值顺序：从左到右，序列立即实现（处理器的副作用顺序与原版 nanopass 相同）
 (define-pass order Lp [ir log] -> Lp []
   (Expr [ir] -> Expr []
     [~x (swap! log conj x) x]))

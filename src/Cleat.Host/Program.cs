@@ -10,23 +10,22 @@ namespace Cleat.Host;
 /// <summary>
 /// 命令行宿主（designs/02-runtime.md §9、cleat-030、cleat-052）。
 ///
-///   cleat [--scheme-boot dll] [--boot dll] [-I dir]… [-e expr]… [-i file]… [-m ns | script args… | -r | -]
+///   cleat [--boot dll] [-I dir]… [-e expr]… [-i file]… [-m ns | script args… | -r | -]
 ///
-/// 启动顺序（两个镜像）：
-///   1. 登记原语（Scheme 元层的与 cleat.kernel 的）→ RT.Init；
-///   2. 加载 Scheme 镜像 cleat.scheme.boot.dll（--scheme-boot，或 CLEAT_SCHEME_BOOT，或自动找 src/boot/）；
-///   3. 装入 Clojure 驱动的 Scheme 库（镜像旁 cleat.scheme.clojure/ 的预编译 fasl，没有则从 src/scheme 源码）并运行宿主程序
-///      clojure/host.sps：由 Scheme 登记运行时钩子 eval / load-source / compile / macroexpand-1 / report-error（cleat-052）；
-///   4. 加载 Clojure 镜像 cleat.boot.dll（--boot，或 CLEAT_BOOT，或自动找；cleat-053 之前没有）并设置 BootInterface.CurrentImageId；
-///   5. 按 clojure.main 的语义执行 -e / -i / -m / 脚本，否则 REPL。
-/// 主体在 512 MB 栈的线程上运行（展开器与编译器递归深，与 stage0 相同）。
+/// 启动顺序：
+///   1. 登记 cleat.kernel 的原语 → RT.Init；
+///   2. 加载 Clojure 镜像 cleat.boot.dll（--boot，或 CLEAT_BOOT，或自动找 src/boot/）并设置 BootInterface.CurrentImageId，登记镜像旁的
+///      包程序集（编译器 cleat.compiler.dll、随附库、tools）；
+///   3. require 编译器的驱动 cleat.compiler.driver（镜像旁的包；自举时 CLEAT_COMPILER_NS 指定改名的工具编译器，从 -I 的源码加载），
+///      由它登记运行时钩子 eval / load-source / compile / macroexpand-1 与镜像、包的编译入口（cleat-090）；
+///   4. 按 clojure.main 的语义执行 -e / -i / -m / 脚本，否则 REPL。
+/// 主体在 512 MB 栈的线程上运行（分析器与编译器递归深）。
 /// </summary>
 public static class Program
 {
     public sealed class Options
     {
         public string Boot;
-        public string SchemeBoot;
         public readonly List<string> IncludeDirs = new List<string>();
         public readonly List<(string Kind, string Value)> Inits = new List<(string, string)>();   // -e / -i
         public string MainNs;          // -m
@@ -34,7 +33,6 @@ public static class Program
         public bool Repl;              // -r 或无其他动作
         public string[] ScriptArgs = Array.Empty<string>();
         public bool Help, Version;
-        public bool NoBoot;            // --no-boot：不加载 Clojure 镜像（从源码构建镜像时）
         public string CompileBoot;     // --compile-boot out.dll：编译 Clojure 镜像（cleat-053）
         public string BootOrder;       // --boot-order edn（缺省 out.dll 旁的 boot-order.edn）
         public string CompilePackage;  // --compile-package out.dll：编包程序集（cleat-067），其余参数是命名空间
@@ -59,9 +57,7 @@ public static class Program
             switch (a)
             {
                 case "--boot" when i + 1 < args.Length: o.Boot = args[++i]; break;
-                case "--scheme-boot" when i + 1 < args.Length: o.SchemeBoot = args[++i]; break;
                 case "-I" when i + 1 < args.Length: o.IncludeDirs.Add(args[++i]); break;
-                case "--no-boot": o.NoBoot = true; break;
                 case "--compile-boot" when i + 1 < args.Length: o.CompileBoot = args[++i]; break;
                 case "--boot-order" when i + 1 < args.Length: o.BootOrder = args[++i]; break;
                 case "--compile-package" when i + 1 < args.Length: o.CompilePackage = args[++i]; break;
@@ -146,8 +142,8 @@ public static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: cleat [--scheme-boot dll] [--boot dll | --no-boot] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
-        Console.Error.WriteLine("       cleat [--boot dll | --no-boot] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]");
+        Console.Error.WriteLine("usage: cleat [--boot dll] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
+        Console.Error.WriteLine("       cleat [--boot dll] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]");
         Console.Error.WriteLine("       cleat -I src... --compile-package out/Name.dll [--package name] [--root dir]... [--target-image boot.dll] ns...");
         Console.Error.WriteLine("       cleat [-Sdeps EDN] [-Spath | -P] -M[:alias...] [options and args...]   run the project (cleat.edn), as clj -M");
         Console.Error.WriteLine("       cleat [-Sdeps EDN] -X[:alias...] [ns/fn] [:key value]...   call a function with a map, as clj -X");
@@ -155,98 +151,49 @@ public static class Program
         return 2;
     }
 
-    /// <summary>开发布局下编译器源码（src/clojure/cleat/nanopass*、compiler/）有比包程序集新的（cleat-085）。</summary>
-    private static bool CompilerSourcesNewer(string dll, string cleatSrc)
-    {
-        if (!Directory.Exists(cleatSrc)) return false;
-        var t = File.GetLastWriteTimeUtc(dll);
-        foreach (string f in Directory.EnumerateFiles(cleatSrc, "*.clj", SearchOption.AllDirectories))
-        {
-            string rel = Path.GetRelativePath(cleatSrc, f).Replace('\\', '/');
-            if ((rel.StartsWith("nanopass", StringComparison.Ordinal) || rel.StartsWith("compiler/", StringComparison.Ordinal))
-                && File.GetLastWriteTimeUtc(f) > t)
-                return true;
-        }
-        return false;
-    }
+    /// <summary>运行着的镜像（Start 之后；没有 Clojure 镜像时为 null）。tools.build 的 uber 据此复制运行时（cleat-066）。</summary>
+    public static string ClojureBootPath;
 
-    /// <summary>运行着的镜像与驱动库目录（Start 之后；没有 Clojure 镜像时 ClojureBootPath 为 null）。tools.build 的 uber 据此复制运行时（cleat-066）。</summary>
-    public static string SchemeBootPath, ClojureBootPath, DriverLibraryDir;
+    /// <summary>启动耗时（毫秒）：Clojure 镜像、编译器（加载驱动并登记钩子）；CLEAT_TIME 设置时写到标准错误。</summary>
+    public static long ClojureImageMs, CompilerMs;
 
-    /// <summary>启动耗时（毫秒）：Scheme 镜像、驱动库（含登记钩子）、Clojure 镜像；CLEAT_TIME 设置时写到标准错误。</summary>
-    public static long SchemeImageMs, DriverMs, ClojureImageMs;
-
-    /// <summary>
-    /// 编译器（CLEAT_COMPILER，designs/19 D5）：clojure（缺省，cleat-091）——加载镜像之后 eval / load / compile / --compile-boot /
-    /// --compile-package 全部走 Clojure 编译器；scheme——Scheme 编译器（对照用，cleat-093 删）；shadow——影子模式（Scheme 编译执行，
-    /// Clojure 编译器并行处理并转储，需 CLEAT_DUMP_IR）。
-    /// </summary>
-    public static string CompilerMode => Environment.GetEnvironmentVariable("CLEAT_COMPILER") is string c && c != "" ? c : "clojure";
-
-    /// <summary>这次运行实际用 Clojure 编译器（没有 Scheme 镜像）：见 <see cref="Start"/>。</summary>
-    public static bool UsingClojureCompiler;
+    /// <summary>编译器从镜像旁的包程序集加载（否则从 -I 的源码加载：自举时的改名工具编译器）。</summary>
+    public static bool CompilerFromPackage;
 
     /// <summary>Clojure 编译器的命名空间前缀（CLEAT_COMPILER_NS，缺省 cleat.compiler；驱动是 前缀.driver）。</summary>
     private static string CompilerNs => Environment.GetEnvironmentVariable("CLEAT_COMPILER_NS") is string ns && ns != "" ? ns : "cleat.compiler";
 
-    /// <summary>初始化运行时、加载两个镜像并登记钩子；返回 Clojure 镜像路径（没有时 null）。</summary>
+    /// <summary>初始化运行时、加载镜像、加载编译器并登记钩子；返回 Clojure 镜像路径（没有时 null）。</summary>
     public static string Start(Options o)
     {
-        string mode = CompilerMode;
-        if (mode != "scheme" && mode != "shadow" && mode != "clojure")
-            throw new NotSupportedException("CLEAT_COMPILER=" + mode + " is not supported (clojure, scheme, shadow)");
         RuntimeBootstrap.MarkStarting();      // 启动期间这条线程上的惰性启动检查直接返回（cleat-067）
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        string boot = o.NoBoot ? null : o.Boot ?? Environment.GetEnvironmentVariable("CLEAT_BOOT") ?? FindBoot("cleat.boot.dll");
+        string boot = o.Boot ?? Environment.GetEnvironmentVariable("CLEAT_BOOT") ?? FindBoot("cleat.boot.dll");
         if (boot != null) boot = Path.GetFullPath(boot);
         // 正在编的那个包不登记（cleat-089）：否则 require 从旧包加载，编出的新包没有形式
         bool writing(string f) => o.CompilePackage != null && string.Equals(Path.GetFullPath(o.CompilePackage), Path.GetFullPath(f), StringComparison.Ordinal);
-        // Clojure 编译器的包程序集（cleat-085，designs/19 D6）在镜像旁：比镜像旧、正在编它、开发布局下比编译器源码旧时不用。
-        // CLEAT_COMPILER_NS 指定别的编译器（自举时改名的工具编译器 cleat.compiler0，在 -I 的目录里，cleat-091）时不登记——要编的正是
-        // cleat.compiler 的源码
+        // 编译器的包程序集（cleat-085，designs/19 D6）在镜像旁。CLEAT_COMPILER_NS 指定别的编译器（自举时改名的工具编译器 cleat.compiler0，
+        // 在 -I 的目录里，cleat-091）时不登记——要编的正是 cleat.compiler 的源码。包与镜像不配（镜像重建后没有重编包）时加载包报镜像核对错误：
+        // dotnet build 的 GenerateCompilerPackage 按输入增量重编它
         string compiler = boot == null ? null : Path.Combine(Path.GetDirectoryName(boot) ?? ".", "cleat.compiler.dll");
-        bool compilerPackage = compiler != null && CompilerNs == "cleat.compiler" && File.Exists(compiler)
-            && File.GetLastWriteTimeUtc(compiler) >= File.GetLastWriteTimeUtc(boot) && !writing(compiler)
-            && !CompilerSourcesNewer(compiler, Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure", "cleat")));
-        // Clojure 编译器能直接用（有镜像、编译器有包程序集可加载）时不装 Scheme 镜像与 Scheme 驱动（cleat-091）；否则（--no-boot、
-        // 镜像旁没有编译器、编译器源码比包新）照旧装 Scheme 镜像：Scheme 驱动先跑，Clojure 编译器从源码加载后再接手
-        UsingClojureCompiler = mode == "clojure" && boot != null && (compilerPackage || CompilerNs != "cleat.compiler");
-        string schemeBoot = UsingClojureCompiler ? null : o.SchemeBoot ?? Environment.GetEnvironmentVariable("CLEAT_SCHEME_BOOT") ?? FindBoot("cleat.scheme.boot.dll");
-        if (!UsingClojureCompiler && schemeBoot == null)
-            throw new FileNotFoundException("Scheme boot image cleat.scheme.boot.dll not found (use --scheme-boot or CLEAT_SCHEME_BOOT; it is built by dotnet build into src/boot/)");
-        if (schemeBoot != null) schemeBoot = Path.GetFullPath(schemeBoot);
-        Cleat.Scheme.Builtins.CommandLineArgs = new[] { "cleat" };
-        if (schemeBoot != null) Cleat.Scheme.Clojure.ClojureHost.AddSourcePaths(SchemeSourceDir(schemeBoot));
-        Cleat.Scheme.PrimitiveRegistry.RegisterAll();
+        CompilerFromPackage = compiler != null && CompilerNs == "cleat.compiler" && File.Exists(compiler) && !writing(compiler);
         PrimitiveRegistry.RegisterAll();
         RT.Init();
         // *out* / *err* 的根是不自动刷新的 StreamWriter：换成控制台的（自动刷新，与 REPL 的提示与结果按顺序交错）
         RT.OutVar.bindRoot(Console.Out);
         RT.ErrVar.bindRoot(Console.Error);
         foreach (var d in o.IncludeDirs) Loader.AddPath(Path.GetFullPath(d));
-        if (UsingClojureCompiler)
-        {
-            // 钩子由加载镜像之后的 Clojure 驱动登记
-            Cleat.Core.Compiler.Diagnostics.InstallReportError();
-        }
-        else
-        {
-            Cleat.Scheme.ModuleLoader.LoadModule(schemeBoot);
-            SchemeImageMs = sw.ElapsedMilliseconds;
-            SchemeBootPath = schemeBoot;
-            DriverLibraryDir = Cleat.Scheme.Clojure.ClojureHost.LibraryDirFor(schemeBoot);
-            Cleat.Scheme.Clojure.ClojureHost.Start(DriverLibraryDir);
-        }
-        DriverMs = sw.ElapsedMilliseconds - SchemeImageMs;
+        Cleat.Core.Compiler.Diagnostics.InstallReportError();
         if (boot != null)
         {
             ClojureBootPath = boot;
             Loader.LoadBootImage(boot);
+            ClojureImageMs = sw.ElapsedMilliseconds;
             // 随附库的包程序集（tools/build.cs compile-libs，cleat-067）在镜像旁；比镜像旧时（镜像重建后没有重编）不用，
             // 这些命名空间从源码加载
             string libs = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "Cleat.Clojure.Libs.dll");
             if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot) && !writing(libs)) PackageIndex.RegisterFile(libs);
-            if (compilerPackage) PackageIndex.RegisterFile(compiler);
+            if (CompilerFromPackage) PackageIndex.RegisterFile(compiler);
             // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用；
             // 开发布局（镜像在仓库的 src/boot，旁边有 packages/tools.build/src）下不用：那是 pack 留下的构建产物，会落后于源码
             string tools = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "tools");
@@ -258,21 +205,16 @@ public static class Program
             // clojure.core.reducers 等由此可 require）
             string src = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure"));
             if (File.Exists(Path.Combine(src, "clojure", "core.clj"))) Loader.AddPath(src);
-            // 影子模式（CLEAT_COMPILER=shadow，cleat-085）：在执行任何形式之前加载 Clojure 编译器的影子命名空间
-            Cleat.Scheme.Clojure.IrDump.InitShadow();
-            // Clojure 编译器（cleat-090 / 091）：Clojure 写的驱动登记钩子（有 Scheme 驱动时取代它）。--boot 的模块不是带 clojure.core 的
-            // 镜像、或编译器不在加载路径上（发布布局还不带 cleat.compiler）时用不了，仍走 Scheme 驱动
-            if (mode == "clojure" && RT.var("clojure.core", "require").isBound)
+            // 编译器（cleat-090 / 091）：Clojure 写的驱动登记钩子。--boot 的模块不是带 clojure.core 的镜像时没有编译器（只能跑镜像自己的代码）
+            if (RT.var("clojure.core", "require").isBound)
             {
-                bool found;
-                try { RT.var("clojure.core", "require").invoke(Symbol.intern(CompilerNs + ".driver")); found = true; }
-                catch (FileNotFoundException) when (!UsingClojureCompiler) { found = false; }
-                if (found) RT.var(CompilerNs + ".driver", "install-hooks!").invoke();
+                RT.var("clojure.core", "require").invoke(Symbol.intern(CompilerNs + ".driver"));
+                RT.var(CompilerNs + ".driver", "install-hooks!").invoke();
             }
+            CompilerMs = sw.ElapsedMilliseconds - ClojureImageMs;
         }
-        ClojureImageMs = sw.ElapsedMilliseconds - SchemeImageMs - DriverMs;
         if (Environment.GetEnvironmentVariable("CLEAT_TIME") != null)
-            Console.Error.WriteLine($"cleat: Scheme image {SchemeImageMs} ms, driver libraries ({(UsingClojureCompiler ? "clojure" : Cleat.Scheme.Clojure.ClojureHost.Mode)}) {DriverMs} ms, Clojure image {ClojureImageMs} ms");
+            Console.Error.WriteLine($"cleat: Clojure image {ClojureImageMs} ms, compiler ({(CompilerFromPackage ? "package" : "source")}) {CompilerMs} ms");
         RuntimeBootstrap.MarkStarted();
         return boot;
     }
@@ -287,15 +229,6 @@ public static class Program
             for (var d = new DirectoryInfo(start); d != null; d = d.Parent)
                 candidates.Add(Path.Combine(d.FullName, "src", "boot", name));
         return candidates.FirstOrDefault(File.Exists);
-    }
-
-    /// <summary>Scheme 源码目录（预编译库不可用时的后备）：CLEAT_SCHEME_SOURCE，或镜像目录旁的 ../scheme（开发布局 src/boot 与 src/scheme）。</summary>
-    private static string SchemeSourceDir(string schemeBoot)
-    {
-        string env = Environment.GetEnvironmentVariable("CLEAT_SCHEME_SOURCE");
-        if (!string.IsNullOrEmpty(env)) return env;
-        string dir = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(schemeBoot) ?? ".", "..", "scheme"));
-        return File.Exists(Path.Combine(dir, "clojure", "driver.sls")) ? dir : null;
     }
 
     /// <summary>
@@ -388,7 +321,7 @@ public static class Program
         if (loadedLibs != null) Var.pushThreadBindings(RT.map(loadedLibs, new Ref(PersistentTreeSet.EMPTY)));
         try
         {
-            Cleat.Scheme.Clojure.Driver.CompileBoot(forms, dll);   // CLEAT_COMPILER=clojure 时交给 Clojure 驱动（cleat-090）
+            CompileHook(Cleat.Core.Compiler.DriverOps.CompileBootHook).invoke(forms, dll);
         }
         finally
         {
@@ -397,6 +330,10 @@ public static class Program
         Console.Error.WriteLine($"cleat: compiled the Clojure boot image ({forms.Count} entries) in {sw.ElapsedMilliseconds} ms -> {dll}");
         return 0;
     }
+
+    /// <summary>编译器驱动登记的编译入口（install-hooks!）；没有镜像或编译器时报错。</summary>
+    private static IFn CompileHook(IFn hook) =>
+      hook ?? throw new InvalidOperationException("the compiler is not loaded (no Clojure boot image with cleat.compiler.dll beside it, or the driver is not on the load path)");
 
     /// <summary>
     /// 编包程序集（cleat-067，designs/17 §2.2）：依次 require 命令行上的命名空间，--root（缺省全部 -I）下被加载到的源码文件编成一个
@@ -413,7 +350,7 @@ public static class Program
         var roots = (o.PackageRoots.Count > 0 ? o.PackageRoots : o.IncludeDirs).Select(Path.GetFullPath).ToList();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         string imageId = o.TargetImage == null ? null : Cleat.Core.Compiler.DriverOps.Mvid(Path.GetFullPath(o.TargetImage)).ToString();
-        Cleat.Scheme.Clojure.Driver.CompilePackage(o.PackageName ?? Path.GetFileNameWithoutExtension(dll), forms, roots, dll, imageId);   // 同上
+        CompileHook(Cleat.Core.Compiler.DriverOps.CompilePackageHook).invoke(o.PackageName ?? Path.GetFileNameWithoutExtension(dll), forms, roots, dll, imageId);
         Console.Error.WriteLine($"cleat: compiled package {Path.GetFileNameWithoutExtension(dll)} in {sw.ElapsedMilliseconds} ms -> {dll}");
         return 0;
     }

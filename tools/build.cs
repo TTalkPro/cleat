@@ -6,12 +6,6 @@
 //   dotnet run tools/build.cs -- <命令> [参数]
 //
 // 命令：
-//   scheme-stage1 [输出目录]
-//                         编译 C# 项目后，stage0 执行文本种子 src/scheme/boot/boot-seed.core、运行
-//                         boot/buildscript-nano.sps，把 cleat.scheme.boot.{lcil,dll,ifc} 输出到指定目录
-//                         （默认 src/boot/，此时等同 dotnet build 的 GenerateSchemeBootImage，但总是重新生成）  [cleat-046]
-//   seed [--stage0]       重新生成 Scheme 文本种子 src/scheme/boot/boot-seed.core（IronScheme 05 §5）：默认在新系统上运行
-//                         （stage0 --boot src/boot/cleat.scheme.boot.dll），--stage0 由 stage0 执行现有种子来运行；产物相同 [cleat-046]
 //   stage1 [输出目录] [--boot 镜像]
 //                         编译 C# 项目后，宿主按 src/boot/boot-order.edn 从 src/clojure 源码编译 Clojure 镜像 cleat.boot.{dll,lcil,ifc}
 //                         （默认 src/boot/，等同 dotnet build 的 GenerateBootImage 但总是重新生成；--boot 时在该镜像上编译，
@@ -28,10 +22,6 @@
 //                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为一个包程序集
 //                         src/boot/Cleat.Clojure.Libs.dll（designs/17）；宿主登记 Clojure 镜像旁的它，require 走包程序集
 //                         （从源码加载不了的命名空间跳过）                                  [cleat-033、cleat-067]
-//   ir-dump <目录> [--shadow] [--corpus]
-//                         逐形式转储的输入集（cleat-085，designs/19 D5）：CLEAT_DUMP_IR=<目录> 下在现有镜像上从源码编 boot 镜像、
-//                         随附库与 tools 包（产物写到临时目录，不动 src/boot），--corpus 再跑语料；--shadow 同时让 Clojure 编译器
-//                         处理每个形式（CLEAT_COMPILER=shadow）。比较与普查用 tools/compiler-diff.clj
 //   compile-compiler      Clojure 编译器（src/clojure/cleat/nanopass*、compiler/）编成包程序集 src/boot/cleat.compiler.dll
 //                         （dotnet build 的 GenerateCompilerPackage 也做，按输入增量）                                   [cleat-085]
 //   compile-tools         tools.namespace 与 tools.build 编成包程序集 src/boot/tools/（pack 也做；镜像变了之后单独重编用）  [cleat-082]
@@ -45,8 +35,8 @@
 //                         运行 bench/ 下的基准（每个一次宿主进程，逐个打印 BENCH <名字> <毫秒>），聚合最小/中位；
 //                         --write 把结果写到 bench/baseline.edn（优化前后对照，cleat-042）
 //   publish [-r RID] [-o 目录]
-//                         自包含发布（cleat-034）：.NET 运行时随发布，目标机器不需要 SDK 或 .NET；Scheme 镜像、
-//                         驱动库（cleat.scheme.clojure/）、Clojure 镜像与 AOT 库随发布。默认 RID 为当前平台，
+//                         自包含发布（cleat-034）：.NET 运行时随发布，目标机器不需要 SDK 或 .NET；Clojure 镜像、
+//                         编译器包与 AOT 库随发布。默认 RID 为当前平台，
 //                         默认输出 artifacts/publish/cleat-<RID>/。REPL 与脚本直接可用
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -55,10 +45,7 @@ string root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName((string)AppCon
 string srcDir = Path.Combine(root, "src");
 string solution = Path.Combine(root, "Cleat.slnx");
 string Bin(string project, string dll) => Path.Combine(srcDir, project, "bin", "Release", "net10.0", dll);
-string schemeDir = Path.Combine(srcDir, "scheme");                       // Scheme 元层源码（boot/、lib/、nanopass/），脚本的工作目录
 string bootDir = Path.Combine(srcDir, "boot");                           // 镜像输出目录
-string schemeBoot = Path.Combine(bootDir, "cleat.scheme.boot.dll");
-string stage0 = Bin("Cleat.Stage0", "stage0.dll");
 
 try
 {
@@ -66,13 +53,6 @@ try
     string[] rest = args.Skip(1).ToArray();
     switch (command)
     {
-        case "scheme-stage1":
-            BuildCSharp();
-            SchemeStage1(rest);
-            break;
-        case "seed":
-            Seed(rest.Contains("--stage0"));
-            break;
         case "stage1":
             BuildCSharp();
             Stage1(rest);
@@ -90,10 +70,6 @@ try
         case "compile-libs":
             BuildCSharp();
             CompileLibs(rest);
-            break;
-        case "ir-dump":
-            BuildCSharp();
-            IrDumpCommand(rest);
             break;
         case "clojure-seed":
             BuildCSharp();
@@ -133,7 +109,7 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- scheme-stage1 [outdir] | seed [--stage0] | stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] | pack [-o dir] [--version v] | bench [-r n] [--write] [--only re]");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] | pack [-o dir] [--version v] | bench [-r n] [--write] [--only re]");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }
@@ -150,7 +126,7 @@ void CompileLibs(string[] a)
     Console.WriteLine($"compile-libs: {nses.Length} namespace(s) -> {dll}");
 }
 
-// 自包含发布（cleat-034，做法沿用 IronScheme designs/07 §3）：宿主与其 .NET 运行时 + 两个 boot 镜像 + 驱动库 fasl
+// 自包含发布（cleat-034，做法沿用 IronScheme designs/07 §3）：宿主与其 .NET 运行时 + Clojure 镜像 + 编译器包
 // + 随附库的包程序集。发布目录本身在加载路径上（AppContext.BaseDirectory），宿主自动找到镜像与库；不裁剪（互操作靠反射元数据）。
 void Publish(string[] a)
 {
@@ -170,9 +146,7 @@ void Publish(string[] a)
     if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
     Run("dotnet", ["publish", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-r", rid,
                    "--self-contained", "-o", outDir, "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-nodeReuse:false"]);
-    File.Copy(schemeBoot, Path.Combine(outDir, "cleat.scheme.boot.dll"));
-    CopyDir(Path.Combine(bootDir, "cleat.scheme.clojure"), Path.Combine(outDir, "cleat.scheme.clojure"));
-    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "cleat.boot.inl", "boot-order.edn", "Cleat.Clojure.Libs.dll" })
+    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "cleat.boot.inl", "cleat.compiler.dll", "boot-order.edn", "Cleat.Clojure.Libs.dll" })
         if (File.Exists(Path.Combine(bootDir, f))) File.Copy(Path.Combine(bootDir, f), Path.Combine(outDir, f));
     foreach (var f in Directory.GetFiles(outDir, "*.pdb")) File.Delete(f);
     Console.WriteLine("published " + Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat"));
@@ -213,44 +187,6 @@ void Pack(string[] a)
 string CoreVersion() =>
     System.Text.RegularExpressions.Regex.Match(File.ReadAllText(Path.Combine(srcDir, "Cleat.Core", "Runtime", "CoreInfo.cs")),
         "Version = \"([^\"]+)\"").Groups[1].Value;
-
-// 逐形式转储（cleat-085）：每个宿主进程一个 CLEAT_DUMP_IR_TAG，eval 单元互不覆盖；简单形式也走编译器（CLEAT_NO_SIMPLE_EVAL）
-void IrDumpCommand(string[] a)
-{
-    if (a.Length == 0) throw new CommandFailed("ir-dump: needs an output directory");
-    string dir = Path.GetFullPath(a[0]);
-    bool shadow = a.Contains("--shadow"), corpus = a.Contains("--corpus");
-    if (Directory.Exists(dir)) Directory.Delete(dir, true);
-    string tmp = Path.Combine(dir, "build");
-    Directory.CreateDirectory(tmp);
-    string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure");
-    var env = new List<(string, string)> { ("CLEAT_DUMP_IR", dir), ("CLEAT_NO_SIMPLE_EVAL", "1") };
-    if (shadow) env.Add(("CLEAT_COMPILER", "shadow"));
-    void RunTagged(string tag, string[] args)
-    {
-        var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = root, UseShellExecute = false };
-        foreach (var x in args) psi.ArgumentList.Add(x);
-        foreach (var (k, v) in env) psi.Environment[k] = v;
-        psi.Environment["CLEAT_DUMP_IR_TAG"] = tag;
-        using var p = Process.Start(psi) ?? throw new CommandFailed("cannot start dotnet");
-        p.WaitForExit();
-        if (p.ExitCode != 0) throw new CommandFailed($"ir-dump: {tag} failed with exit code {p.ExitCode}");
-    }
-    var sw = Stopwatch.StartNew();
-    RunTagged("boot", [host, "--boot", Path.Combine(bootDir, "cleat.boot.dll"), "-I", clj, "--compile-boot", Path.Combine(tmp, "cleat.boot.dll"), "--boot-order", Path.Combine(bootDir, "boot-order.edn")]);
-    RunTagged("libs", [host, "-I", clj, "--compile-package", Path.Combine(tmp, "Cleat.Clojure.Libs.dll"), "--package", "clojure", "--root", clj, .. LoadableLibNamespaces([])]);
-    foreach (var (package, assembly, name) in new[] { ("tools.namespace", "Cleat.ToolsNamespace", "tools.namespace"), ("tools.build", "Cleat.ToolsBuild", "tools.build") })
-    {
-        string src = Path.Combine(root, "packages", package, "src");
-        var nses = Directory.GetFiles(src, "*.clj*", SearchOption.AllDirectories)
-            .Select(f => Path.ChangeExtension(Path.GetRelativePath(src, f), null).Replace(Path.DirectorySeparatorChar, '.').Replace('_', '-'))
-            .OrderBy(n => n, StringComparer.Ordinal);
-        RunTagged(name, [host, "-I", tmp, "-I", src, "--compile-package", Path.Combine(tmp, assembly + ".dll"), "--package", name, "--root", src, .. nses]);
-    }
-    if (corpus)
-        RunTagged("corpus", [host, "-I", clj, Path.Combine(root, "tools", "conformance.clj"), Path.Combine(root, "tests", "conformance", "corpus.edn"), "--portability", "common"]);
-    Console.WriteLine($"ir-dump: {dir} ({sw.Elapsed.TotalSeconds:F0} s)");
-}
 
 // 随附库（boot-order.edn 里 :boot false 且没有 :loaded-by 的命名空间，或命令行点名的）中能从源码加载的：
 // 先在一个宿主进程里逐个试 require，加载不了的（clojure.repl.deps 需要未内置的 clojure/clr/basis）跳过
@@ -299,8 +235,8 @@ void CompileCompiler()
 // cleat.nanopass0.*，由它编真正的 cleat.compiler。每一级：
 //   镜像 N+1 = 编译器 N 在镜像 N 上 --compile-boot；工具 N = 编译器 N 在镜像 N 上编改名的源码（--target-image 镜像 N+1）；
 //   编译器 N+1 = 工具 N 在镜像 N+1 上编源码。
-// stage1 是 src/boot 的镜像与编译器包；stage2 与 stage3 的镜像与编译器包都要逐字节相同（不动点；工具 1 编在 Scheme 编的镜像上，
-// 没有内联，与工具 2 不同，不比较）。
+// stage1 是 src/boot 的镜像与编译器包；stage2 与 stage3 的镜像与编译器包都要逐字节相同（不动点；工具 1 编在 stage1 镜像上，
+// 工具 2 编在 stage2 上，两者不比较）。
 void SelfHost(string[] a)
 {
     string dir = Path.GetFullPath(a.Length > 0 ? a[0] : Path.Combine(Path.GetTempPath(), "cleat-selfhost"));
@@ -309,7 +245,7 @@ void SelfHost(string[] a)
     string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure"), order = Path.Combine(bootDir, "boot-order.edn");
     string renamed = Path.Combine(dir, "renamed");
     Run("dotnet", [host, "--rename-compiler-sources", Path.Combine(clj, "cleat"), Path.Combine(renamed, "cleat")], root);
-    (string, string)[] env = [("CLEAT_COMPILER", "clojure"), ("CLEAT_DUMP_LCIL", "1")];
+    (string, string)[] env = [("CLEAT_DUMP_LCIL", "1")];
     (string, string)[] toolEnv = [.. env, ("CLEAT_COMPILER_NS", "cleat.compiler0")];
     string[] Roots(string top, string suffix) =>
       ["--root", Path.Combine(top, "nanopass" + suffix + ".clj"), "--root", Path.Combine(top, "nanopass" + suffix), "--root", Path.Combine(top, "compiler" + suffix)];
@@ -356,7 +292,7 @@ void SelfHost(string[] a)
 }
 
 // Clojure 编译器的种子（cleat-091，designs/19 D7）：自举到不动点后，把 stage3 的镜像与编译器包的 Lcil 文本连同接口文件 gzip 压缩写到
-// src/boot/seed/（信任根：构建从这里发射出 stage1，不再经过 Scheme 镜像与 stage0）。编译器包的嵌入资源（cleat.ifc / cleat.inl）
+// src/boot/seed/（信任根：构建从这里发射出 stage1）。编译器包的嵌入资源（cleat.ifc / cleat.inl）
 // 从 dll 里取出成种子旁的文件，Lcil 里的资源路径改成相对路径。写完后把种子发射一遍，与 stage3 逐字节比较。
 void ClojureSeed(string[] a)
 {
@@ -546,40 +482,6 @@ void Stage1(string[] a)
 // 只编译 C# 项目（不经 MSBuild 生成 boot 镜像）
 void BuildCSharp() => Run("dotnet", ["build", solution, "-c", "Release", "-p:BuildBootImage=false", "-v", "quiet", "-nologo"]);
 
-// stage0 执行种子 → 运行 nano 构建脚本 → stage1 Scheme boot 镜像（IronScheme 05 §3 Phase A）。在 src/scheme 目录下运行：
-// 库搜索路径 lib（编译器、(cleat scheme clr)、nanopass 的适配库）与 nanopass（框架本身）
-void SchemeStage1(string[] a)
-{
-    string outDir = a.Length > 0 ? Path.GetFullPath(a[0]) : bootDir;
-    Run("dotnet", [stage0, "-I", "lib", "-I", "nanopass", "boot/boot-seed.core", "boot/buildscript-nano.sps", outDir], schemeDir);
-}
-
-// 文本种子再生成（IronScheme 05 §5）：seed-buildscript.sps 只展开 boot 源码、不编译，写回 boot/boot-seed.core
-void Seed(bool onStage0)
-{
-    BuildCSharp();
-    if (onStage0)
-    {
-        // 脚本会覆盖 boot-seed.core，stage0 执行的是它的副本
-        string tmp = Directory.CreateTempSubdirectory("cleat-seed").FullName;
-        try
-        {
-            string copy = Path.Combine(tmp, "boot-seed.core");
-            File.Copy(Path.Combine(schemeDir, "boot", "boot-seed.core"), copy);
-            Run("dotnet", [stage0, "-I", "lib", copy, "boot/seed-buildscript.sps", "./"], schemeDir);
-        }
-        finally
-        {
-            Directory.Delete(tmp, true);
-        }
-    }
-    else
-    {
-        if (!File.Exists(schemeBoot)) throw new CommandFailed($"{schemeBoot} not found: run dotnet build first, or use 'seed --stage0'");
-        Run("dotnet", [stage0, "-I", "lib", "--boot", schemeBoot, "boot/seed-buildscript.sps", "./"], schemeDir);
-    }
-}
-
 // ILVerify（dotnet tool install -g dotnet-ilverify）：全局工具目录为用户目录下的 .dotnet/tools，可用环境变量 ILVERIFY 指定
 void ILVerify(string dll)
 {
@@ -589,17 +491,14 @@ void ILVerify(string dll)
     if (!File.Exists(tool)) throw new CommandFailed($"ilverify not found at {tool}: dotnet tool install -g dotnet-ilverify (or set ILVERIFY)");
     // 本程序运行在 .NET 10 上，其运行时目录就是要引用的框架程序集
     string runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
-    // 编译产物可能直接调用 Scheme boot 镜像中的过程（IronScheme iron-034e）：校验它们时引用镜像；校验镜像自己时不重复
-    string[] bootRef = Path.GetFileName(dll) == Path.GetFileName(schemeBoot) || !File.Exists(schemeBoot) ? [] : ["-r", schemeBoot];
     // Clojure 产物直接链接 cleat.boot.dll 的已知函数（cleat-033）：校验它们时也引用 Clojure 镜像
     string clojureBoot = Path.Combine(bootDir, "cleat.boot.dll");
     string[] clojureRef = Path.GetFileName(dll) == "cleat.boot.dll" || !File.Exists(clojureBoot) ? [] : ["-r", clojureBoot];
     Run(tool, [dll,
              "-r", Path.Combine(runtimeDir, "*.dll"),
              "-r", Bin("Cleat.Core", "Cleat.Core.dll"),
-             "-r", Bin("Cleat.Scheme", "Cleat.Scheme.dll"),
              "-r", Bin("Cleat.Emit", "cleat-emit.dll"),
-             "-r", Path.Combine(Path.GetDirectoryName(dll)!, "*.dll"), ..bootRef, ..clojureRef]);
+             "-r", Path.Combine(Path.GetDirectoryName(dll)!, "*.dll"), ..clojureRef]);
 }
 
 void Run(string file, string[] arguments, string? workingDirectory = null, (string, string)[]? env = null)

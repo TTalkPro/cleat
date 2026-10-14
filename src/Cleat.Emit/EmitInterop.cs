@@ -7,25 +7,15 @@ using System.Reflection.Emit;
 namespace Cleat.Emit;
 
 // 互操作指令的决议（designs/05-cil-backend.md §5；从 IronScheme 移植）。
-// 两个运行时（LCIL.md §2 的 runtime 子句，designs/15 §1）各有一套规则，按方法选择：
-//   clojure：类型名经 Cleat.Core.Runtime.TypeResolver 解析，运行时决议与值转换由 Cleat.Core.Runtime.Reflector 完成（void → nil）；
-//   scheme ：类型名经 Cleat.Scheme.TypeResolver（含别名、尖括号泛型）解析，运行时决议与值转换由 Cleat.Scheme.Interop 完成
-//            （void → 未指定值，字符串规范化为宽串）。
+// 运行时 clojure（LCIL.md §2 的 runtime 子句）：类型名经 Cleat.Core.Runtime.TypeResolver 解析，运行时决议与值转换由
+// Cleat.Core.Runtime.Reflector 完成（void → nil）。
 // 成员唯一时静态生成调用，参数经 Convert<T>、返回值经 ConvertFrom 转换；
 // 不唯一、类型在运行时才知道、索引器、params 数组、值类型实例等情况，生成对运行时 Call / GetField / … 的调用，由运行时决议。
 public sealed partial class LcilEmitter
 {
     private sealed class CoreApi
     {
-        public readonly bool IsScheme;
         public MethodInfo Resolve, Call, GetField, SetField, New, NewArray, Cast, Is, ConvertGeneric, ConvertFrom;
-        // 只有 Scheme 运行时有：返回值的字符串规范化、未指定值、泛型类型名说明用的符号与表
-        public MethodInfo NormalizeString;
-        public FieldInfo Unspecified;
-        public Func<string, object> Intern;
-        public Func<object[], object> MakeList;
-
-        private CoreApi(bool scheme) { IsScheme = scheme; }
 
         private static MethodInfo Need(Type t, string name, Type[] ps) => t.GetMethod(name, ps) ?? throw new LcilException($"{t.FullName}.{name} not found in {t.Assembly.GetName().Name}");
 
@@ -45,75 +35,29 @@ public sealed partial class LcilEmitter
 
         public static CoreApi Clojure(Assembly core)
         {
-            var api = new CoreApi(false);
+            var api = new CoreApi();
             api.Common(core.GetType("Cleat.Core.Runtime.Reflector", true), core.GetType("Cleat.Core.Runtime.TypeResolver", true), typeof(string));
-            return api;
-        }
-
-        public static CoreApi Scheme(Assembly scheme)
-        {
-            var api = new CoreApi(true);
-            api.Common(scheme.GetType("Cleat.Scheme.Interop", true), scheme.GetType("Cleat.Scheme.TypeResolver", true), typeof(object));
-            api.NormalizeString = Need(scheme.GetType("Cleat.Scheme.SchemeString", true), "Normalize", new[] { typeof(string) });
-            api.Unspecified = scheme.GetType("Cleat.Scheme.Unspecified", true).GetField("Instance");
-            var intern = Need(scheme.GetType("Cleat.Scheme.Symbol", true), "Intern", new[] { typeof(string) });
-            api.Intern = s => intern.Invoke(null, new object[] { s });
-            var fromArray = Need(scheme.GetType("Cleat.Scheme.Cons", true), "FromArray", new[] { typeof(object[]) });
-            api.MakeList = xs => fromArray.Invoke(null, new object[] { xs });
             return api;
         }
     }
 
-    private CoreApi _clojureApi, _schemeApi;
+    private CoreApi _clojureApi;
 
-    /// <summary>方法所属运行时的互操作 API（按需加载对应的运行时程序集）。</summary>
-    private CoreApi Core(BodyContext cx) =>
-      cx.Runtime == LcilRuntime.Scheme
-        ? _schemeApi ??= CoreApi.Scheme(LoadReference(SchemeAssemblyName))
-        : _clojureApi ??= CoreApi.Clojure(LoadReference(CoreAssemblyName));
+    /// <summary>运行时的互操作 API（按需加载 Cleat.Core）。</summary>
+    private CoreApi Core(BodyContext cx) => _clojureApi ??= CoreApi.Clojure(LoadReference(CoreAssemblyName));
 
     private static readonly MethodInfo s_getTypeFromHandle = typeof(Type).GetMethod("GetTypeFromHandle");
     private static readonly MethodInfo s_objectGetType = typeof(object).GetMethod("GetType");
 
     /// <summary>
-    /// 互操作指令的类型操作数：本 Lcil 中定义的类型，否则经所属运行时的 TypeResolver 按方法的命名空间列表解析
-    /// （clojure：ClojureCLR 的类型名语法，含泛型与数组；scheme：IronScheme 的别名表，尖括号泛型转成符号说明）。
+    /// 互操作指令的类型操作数：本 Lcil 中定义的类型，否则经运行时的 TypeResolver 按方法的命名空间列表解析
+    /// （ClojureCLR 的类型名语法，含泛型与数组）。
     /// </summary>
     private Type ClrType(string name, BodyContext cx, Instr ins)
     {
         if (_types.TryGetValue(name, out var tb)) return tb;
-        var api = Core(cx);
-        var t = (Type)api.Resolve.Invoke(null, new object[] { api.IsScheme ? GenericSpec(name, api) : name, cx.Namespaces });
+        var t = (Type)Core(cx).Resolve.Invoke(null, new object[] { name, cx.Namespaces });
         return t ?? throw Err(ins.Pos, "type not found: " + name);
-    }
-
-    /// <summary>
-    /// Scheme 运行时：泛型类型名 "Name&lt;A,B&lt;C&gt;&gt;" → TypeResolver 的说明 (Name A (B C))（符号组成的 Cons）；其余原样返回字符串。
-    /// </summary>
-    private static object GenericSpec(string name, CoreApi api)
-    {
-        if (name.IndexOf('<') < 0) return name;
-        int pos = 0;
-        object Parse()
-        {
-            int start = pos;
-            while (pos < name.Length && name[pos] != '<' && name[pos] != ',' && name[pos] != '>') pos++;
-            var head = name.Substring(start, pos - start).Trim();
-            if (pos >= name.Length || name[pos] != '<') return head;
-            pos++;
-            var items = new List<object> { api.Intern(head) };
-            while (true)
-            {
-                var a = Parse();
-                items.Add(a is string s ? api.Intern(s) : a);
-                if (pos >= name.Length) throw new LcilException("bad generic type name: " + name);
-                char c = name[pos++];
-                if (c == '>') break;
-                if (c != ',') throw new LcilException("bad generic type name: " + name);
-            }
-            return api.MakeList(items.ToArray());
-        }
-        return Parse();
     }
 
     private LocalBuilder Temp(BodyContext cx, int i)
@@ -135,14 +79,13 @@ public sealed partial class LcilEmitter
     }
 
     /// <summary>
-    /// 栈顶类型为 t 的值 → 运行时的表示。clojure：void → nil，long / double / bool / char 只装箱，其余值类型与 object 按运行时规则转换（int → long 等）。
-    /// scheme：void → 未指定值，字符串规范化（含代理码元的转为宽串，iron-055），值类型装箱后按运行时规则转换。
+    /// 栈顶类型为 t 的值 → 运行时的表示：void → nil，long / double / bool / char 只装箱，其余值类型与 object 按运行时规则转换（int → long 等）。
     /// </summary>
     private static void ConvertFrom(ILGenerator il, CoreApi api, Type t)
     {
         if (t == typeof(void))
         {
-            if (api.IsScheme) il.Emit(OpCodes.Ldsfld, api.Unspecified); else il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldnull);
             return;
         }
         if (t == typeof(object) || t == typeof(ValueType))
@@ -152,9 +95,8 @@ public sealed partial class LcilEmitter
             il.Emit(OpCodes.Call, api.ConvertFrom);
             return;
         }
-        if (api.IsScheme && t == typeof(string)) { il.Emit(OpCodes.Call, api.NormalizeString); return; }
         if (!t.IsValueType) return;   // 其他引用类型 ConvertFrom 不改变值
-        if (!api.IsScheme && (t == typeof(long) || t == typeof(double) || t == typeof(bool) || t == typeof(char))) { il.Emit(OpCodes.Box, t); return; }   // 本就是 Clojure 的表示
+        if (t == typeof(long) || t == typeof(double) || t == typeof(bool) || t == typeof(char)) { il.Emit(OpCodes.Box, t); return; }   // 本就是 Clojure 的表示
         il.Emit(OpCodes.Box, t);
         EmitType(il, t);
         il.Emit(OpCodes.Call, api.ConvertFrom);
@@ -360,7 +302,7 @@ public sealed partial class LcilEmitter
             il.Emit(OpCodes.Ldloc, Temp(cx, 1));
             ConvertTo(il, api, f.FieldType);
             il.Emit(ins.ClrStatic ? OpCodes.Stsfld : OpCodes.Stfld, f);
-            ConvertFrom(il, api, typeof(void));   // 结果：clojure 为 nil，scheme 为未指定值
+            ConvertFrom(il, api, typeof(void));   // 结果 nil
             return;
         }
         if (t != null) EmitType(il, t);

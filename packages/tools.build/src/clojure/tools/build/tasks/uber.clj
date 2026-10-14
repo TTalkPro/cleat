@@ -198,12 +198,10 @@
 
 (defn- runtime-files
   "[[source target-relative-path]...]: the cleat host (its directory) and the
-  runtime it runs (both images, the driver libraries, the bundled libs)."
+  runtime it runs (the image, the compiler package, the bundled libs)."
   []
   (let [host-dir (Path/GetFullPath System.AppContext/BaseDirectory)
-        scheme-boot Cleat.Host.Program/SchemeBootPath
         clojure-boot Cleat.Host.Program/ClojureBootPath
-        driver-dir Cleat.Host.Program/DriverLibraryDir
         beside (fn [p exts] (keep #(let [f (Path/ChangeExtension p %)] (when (File/Exists f) [f (Path/GetFileName f)])) exts))]
     (when-not clojure-boot
       (throw (ex-info "uber: this cleat has no Clojure boot image to copy" {})))
@@ -211,14 +209,9 @@
       (for [f (Directory/GetFiles host-dir)
             :when (not (str/ends-with? f ".pdb"))]
         [f (Path/GetFileName f)])
-      ;; the Scheme image and driver libraries are only loaded when the Clojure compiler is not used
-      (when scheme-boot (beside scheme-boot [".dll" ".ifc"]))
       (beside clojure-boot [".dll" ".ifc" ".inl"])
       (keep (fn [n] (let [f (Path/Combine (Path/GetDirectoryName clojure-boot) n)] (when (File/Exists f) [f n])))
-            ["Cleat.Clojure.Libs.dll" "cleat.compiler.dll"])
-      (when (and driver-dir (Directory/Exists driver-dir))
-        (for [f (file/collect-files driver-dir)]
-          [f (str "cleat.scheme.clojure/" (str/replace (Path/GetRelativePath driver-dir f) "\\" "/"))])))))
+            ["Cleat.Clojure.Libs.dll" "cleat.compiler.dll"]))))
 
 (defn- launcher-name
   "The launchers' name: :launcher, or the uber dir's own name (target/app -> app).

@@ -1,18 +1,18 @@
 ;; Clojure 前端（cleat-086，designs/19 D3）：Clojure 形式 → L0，取代 psyntax + (clojure syntax) / (clojure namespaces) + parse-core。
 ;;
 ;; 照 Clojure 语义的分析器，没有语法对象：宏 = Var 上的 :macro，以 (&form &env 实参…) 调用；决议直接用 clojure.lang.Namespace；
-;; 特殊形式、宿主语法糖、类型提示（Cleat.Core.Compiler.HostSyntax）、:inline 与错误的 phase 照 src/scheme/clojure/syntax.sls 与
+;; 特殊形式、宿主语法糖、类型提示（Cleat.Core.Compiler.HostSyntax）、:inline 与错误的 phase 照原版 syntax.sls（"原版"指 cleat-093 前仓库里的 Scheme 实现 src/scheme，已删除，见 git 历史） 与
 ;; namespaces.sls 逐条移植（各函数注明出处）。
 ;;
-;; 产出的 L0 与现行"psyntax 展开 + parse-core"的输出相同（designs/19 D5 的 G1）——连 Scheme 的痕迹一起：
+;; 产出的 L0 原与"psyntax 展开 + parse-core"的输出相同（designs/19 D5 的 G1）；cleat-092 起去掉了原版的痕迹：
 ;;   let* → 每个绑定一层 (call (lambda #f (clause (x) #f 体)) 初值)；命名 let（loop*、fn* 子句的 recur 目标）→
 ;;   (call (letrec ((lp (lambda "loop" / "recur" …))) lp) 初值…)；recur → (call lp 实参…)；try 的处理器是 lambda；
-;;   宿主调用的"无泛型实参"是 Scheme 的 '()；case* / deftype* 的描述、fn* 的原始签名表是 Scheme 列表（codegen 读它们）。
+;;   宿主调用的"无泛型实参"是 nil；case* / deftype* 的描述、fn* 的原始签名表是向量（codegen 读它们）。
 ;;   这些在 cleat-092 清理。局部变量名 g$名字$N$c（与 psyntax 的改名同形，差分工具按 g$ 前缀规范化）。
-;; 体（do、let* / fn* 的体、try 的各段）都是表达式的序列（Scheme 版的子形式都包在 %ctx 里，经表达式展开器）：
+;; 体（do、let* / fn* 的体、try 的各段）都是表达式的序列（原版的子形式都包在 %ctx 里，经表达式展开器）：
 ;; 空为 (quote nil)，一项为它本身，多项为 begin；嵌套的 do 是嵌套的 begin，不拼接。
 ;;
-;; 小函数内联（.inl，cleat-042 第 4 项）暂不做：接口文件里存的是 Scheme 的 Lcore，Clojure 编译器在 cleat-090 写自己的格式；
+;; 小函数内联（.inl，cleat-042 第 4 项）：cleat-090 起接口文件旁的 .inl 存 L0 子句（[:cleat/l0 子句]）；
 ;; 影子模式的 G1 在 CLEAT_NO_INLINE=1 下比较。
 (ns cleat.compiler.analyzer
   (:refer-clojure :exclude [macroexpand-1])
@@ -30,7 +30,7 @@
 
 (defrecord Local [sym name tag mutable? kind])   ; sym：Clojure 符号；name：L0 里的变量名；kind：:local :arg :field :this :catch :async :no-await
 
-;; 序号在进程内唯一（不按形式重置）：一个编译单元里有多个形式，codegen 的类型表等按变量名记（Scheme 版的 gensym 同样全局唯一，cleat-090）
+;; 序号在进程内唯一（不按形式重置）：一个编译单元里有多个形式，codegen 的类型表等按变量名记（原版的 gensym 同样全局唯一，cleat-090）
 (def ^:private counter (atom 0))
 
 (defn- fresh-name
@@ -429,7 +429,7 @@
 (defn- direct-link-target [v n]
   (let [r (AotPaths/DirectLinkTarget v n)] (when (string? r) r)))
 
-;; —— 调用点内联接口文件里的小函数（cleat-042 第 4 项，Scheme 版 syntax.sls inline-target / inline-call；Clojure 编译器的 .inl 是
+;; —— 调用点内联接口文件里的小函数（cleat-042 第 4 项，原版 syntax.sls inline-target / inline-call；Clojure 编译器的 .inl 是
 ;; L0 子句，cleat-090）：((lambda (r t …) (if (IsInstanceOf 函数类 r) ((lambda 子句) t …) (r t …))) Var读 实参 …)。
 ;; 守卫保证 with-redefs / 重定义照常生效；实参只求值一次。子句的变量逐一改名（同一个体内联多次时名字不重复）；形参与实参临时变量带
 ;; $inl 后缀（编译器不把它们推断为 double）。构建 Clojure 镜像时关闭（各级镜像的接口文件相同，不动点成立）；CLEAT_NO_INLINE 时不内联。
@@ -457,7 +457,7 @@
           (@inline-cache k)
           (let [r (try
                     (let [data (Cleat.Core.Runtime.Fasl/Read ^bytes bytes)]
-                      ;; Scheme 编译器写的 .inl 是 Lcore 子句（Scheme 的表，Cleat.Core 的 fasl 读不了），不认
+                      ;; 别的格式的 .inl 不认
                       (when (and (vector? data) (= :cleat/l0 (first data)))
                         (when-let [t (find-type-named (.-ClassName e))] [t (second data)])))
                     (catch Exception _ nil))]
@@ -899,7 +899,7 @@
     (cond (sym-is? (first f) "catch") :catch (sym-is? (first f) "finally") :finally :else nil)))
 
 (defn- sp-try
-  "try：先把子句分组（检查顺序同 Scheme 版），再按 psyntax 的展开顺序分析——体、各 catch 的处理器、finally。"
+  "try：先把子句分组（检查顺序同 原版），再按原版的展开顺序分析——体、各 catch 的处理器、finally。"
   [form ctx]
   (let [c ctx tail? (:tail? c)
         [body catches fin]

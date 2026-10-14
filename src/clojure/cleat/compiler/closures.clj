@@ -1,10 +1,10 @@
-;; uncover-free：L2 → L3，lambda 带上自由变量表（cleat-084 试点，移植 src/scheme/lib/cleat/scheme/compiler/closures.sls）。
-;; 自由变量表的顺序与 Scheme 版相同（set-add 追加在末尾），L3 的 unparse 逐项一致。
+;; uncover-free：L2 → L3，lambda 带上自由变量表（cleat-084 试点，移植原版 closures.sls（"原版"指 cleat-093 前仓库里的 Scheme 实现 src/scheme，已删除，见 git 历史））。
+;; 自由变量表的顺序与 原版相同（set-add 追加在末尾），L3 的 unparse 逐项一致。
 (ns cleat.compiler.closures
   (:require [cleat.nanopass :refer [define-pass nanopass-case out]]
             [cleat.compiler.languages :refer [L2 L3]]))
 
-;; —— 小集合（无重复的向量，顺序同 Scheme 版）——
+;; —— 小集合（无重复的向量，顺序同 原版）——
 (defn- member? [x s] (loop [s (seq s)] (cond (nil? s) false (= x (first s)) true :else (recur (next s)))))
 (defn- set-add [x s] (if (member? x s) s (conj s x)))
 (defn- set-union [a b] (if (empty? b) a (reduce (fn [s x] (set-add x s)) a b)))

@@ -1,5 +1,8 @@
 # 00 总体设计
 
+> **2026-10-15（cleat-093）**：Scheme 元层已全部删除——编译器与 nanopass 用 Clojure 实现并自举（[19](19-clojure-self-hosting.md)、[08 §0](08-bootstrap.md)），
+> 仓库里只有 C# 运行时（Cleat.Core）、Lcil 发射器（Cleat.Emit）、宿主与 Clojure 源码。下面"2026-10-10 方向变更"及 §5 的目录布局是 M2′ ~ M7 时期的记录。
+>
 > **2026-10-10 方向变更**：按 [14](14-three-layer-architecture.md) 方案 C 与 [15](15-scheme-core-vendoring.md) 执行——纳入 IronScheme 的元层（psyntax、nanopass、Scheme 编译器、stage0、种子），编译器用 Scheme 写、语法对象可扩展、异常模型简化为 try / catch，Clojure 作为元层之上的库获得卫生宏。本文 D4（C# 展开器）、D6（编译器用 Clojure）、D14 与里程碑 M2 / M4 / M5 由 15 §5 取代；其余决策与已完成的 M1 / M3 继续有效。
 
 Cleat：.NET 上的 Clojure 实现。运行时用 C#，编译器用 Clojure 自己写（nanopass），CIL 与 LLVM IR 是两个平等的后端，自举只依靠 .NET SDK 与本仓库。
@@ -89,29 +92,24 @@ src/
   Cleat.Core/                      ; Clojure 运行时（C#，第 1 层的 Clojure 部分）
     clojure.lang/                  ; EPL：从 ClojureCLR 改写的集合、数值、Var、Namespace、reader…
     Runtime/                       ; 原语表、钩子、Reflector、TypeResolver、Loader、接口文件
-    Expander/                      ; C# 展开器（cleat-013/014；现为 Scheme 版的规格与测试）
-  Cleat.Scheme/                    ; Scheme 元层运行时（C#，自 IronScheme.Core 纳入：过程、符号、数值塔、记录、条件、端口、互操作、fasl）
-  Cleat.Stage0/                    ; Scheme Lcore 解释器（自 IronScheme.Stage0）：执行文本种子
-  Cleat.Emit/                      ; Lcil → Reflection.Emit；`(runtime scheme|clojure)` 子句选择互操作规则；联合 fasl 编码
-  Cleat.PrimGen/                   ; 反射 Cleat.Scheme 与 Cleat.Core 生成 primitives.ss / primitives.edn
-  Cleat.Host/                      ; 命令行、REPL、`GenerateSchemeBootImage` / `GenerateBootImage`
-  scheme/                          ; 元层的 Scheme 源码（第 2 层）
-    boot/                          ; (rnrs) 库、psyntax 展开器、boot-seed.core、构建脚本
-    compiler/                      ; nanopass pass 链、codegen、targets、Lcil 写出（(ironscheme compiler …)）
-    nanopass/                      ; 原版 nanopass（MIT）+ IronScheme 适配，不改
-    clojure/                       ; (clojure syntax)、命名空间模型、语法扩展注册（cleat-048 ~ 050）
-  clojure/                         ; EPL：core.clj 等（第 3 层，按 D15 分层）
-  boot/                            ; primitives.ss / .edn、boot-order.edn、生成的 cleat.scheme.boot.dll 与 cleat.boot.dll（忽略）
+    Compiler/                      ; 编译驱动的宿主操作（DriverOps、Diagnostics、AotPaths、HostSyntax）
+    Expand.cs                      ; LocalBinding（&env）与 ExpanderException
+  Cleat.Emit/                      ; Lcil → Reflection.Emit（自 IronScheme.Emit，BSD）；fasl 常量编码；`cleat-emit --seed` 发射种子
+  Cleat.Host/                      ; 命令行、REPL、`EmitSeedStage1` / `GenerateBootImage` / `GenerateCompilerPackage`
+  Cleat.Hosting/  Cleat.Runtime/   ; C# 嵌入入口；NuGet 包
+  clojure/                         ; EPL：core.clj 等；cleat/nanopass*（Clojure 版 nanopass）、cleat/compiler/（编译器）
+  boot/                            ; boot-order.edn、seed/（Lcil 文本种子）、生成的 cleat.boot.dll 与 cleat.compiler.dll（忽略）
 tests/
-  Cleat.Core.Tests/  Cleat.Scheme.Tests/（含 Bootstrap 类别）
+  Cleat.Core.Tests/  Cleat.Host.Tests/（含 Bootstrap 类别）
+  nanopass/                        ; cleat.nanopass 与编译器的 Clojure 测试
   conformance/                     ; corpus.edn、runner、已知偏离表
   clojure-test-suite/              ; 子模块（jank）
   test_clojure/                    ; 从 ClojureCLR 移植
-tools/build.cs                     ; scheme-stage1 / seed / ilverify / conformance 等维护命令
+tools/build.cs                     ; stage1 / selfhost / clojure-seed / ilverify / conformance 等维护命令
 spikes/                            ; 每个验证任务一个目录
 ```
 
-（LLVM 后端的 `native/` 目录随 06 搁置；原计划的 `src/cleat/nanopass`、`src/cleat/compiler`（Clojure 写的编译器）由 `src/scheme/` 取代，见 15 §5。）
+（以上为 cleat-093 之后的布局；LLVM 后端的 `native/` 目录随 06 搁置。）
 
 ## 6. 里程碑
 

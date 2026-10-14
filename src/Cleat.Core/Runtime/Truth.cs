@@ -1,7 +1,7 @@
 namespace Cleat.Core.Runtime;
 
 /// <summary>
-/// 布尔单例与真值判断，生成的代码在每个 if 与布尔结果处调用（cleat-082：原在 Cleat.Scheme.RT，Scheme 的 RT.True / False 指向这里的同一对象）。
+/// 布尔单例与真值判断，生成的代码在每个 if 与布尔结果处调用（cleat-082 从元层搬来）。
 /// </summary>
 public static class Truth
 {

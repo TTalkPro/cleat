@@ -95,7 +95,7 @@
   加载器加了 `Loader.FindTypeOnLoadPath`：类型名在别处都找不到时，按元数据给加载路径目录里的 `*.dll`（不递归）建公有类型表（目录变了重建），
   命中再载入程序集（`RT.classForName` 的最后一站）。
 - **`compile-clj` 的子进程**：照上游写编译脚本——require `:bindings` 里 Var 的命名空间，在 `with-bindings` 里调编译驱动
-  `Cleat.Scheme.Clojure.Driver/CompilePackage`；`:filter-nses` 把包的根换成对应的子目录与文件（驱动的根检查因此也接受文件）。
+  `cleat.compiler.driver/compile-package`；`:filter-nses` 把包的根换成对应的子目录与文件（驱动的根检查因此也接受文件）。
 - **`process`**：`:inherit` 而 `*out*` / `*err*` 不是控制台时（REPL、测试捕获输出）转写到 `*out*` / `*err*`；`:write` / `:append` 建父目录。
 - **反射**：cleat 不报告反射（`*warn-on-reflection*` 无输出），上游的 `test-capture-reflection` 不移植。
 - **版本序**：`pack` 缺省依赖 `Cleat.Runtime >= 运行着的版本`（现在是 `1.0.0`）；SemVer 里带预发布标签的版本低于同号正式版、标签之间按字典序比较，测试打的运行时包要不低于它（就用 `1.0.0`）。

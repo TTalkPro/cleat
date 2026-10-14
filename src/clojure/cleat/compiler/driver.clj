@@ -1,6 +1,6 @@
 ;; 编译驱动（cleat-090，designs/19 阶段 B）：Clojure 的 eval / load / compile / --compile-boot / --compile-package 走 Clojure 编译器。
-;; 照 Scheme 版 src/scheme/clojure/driver.sls 与 compile.sls（流程、单元收集的后序、镜像构建的 id 重置、包程序集的改写）与
-;; Cleat.Scheme.Clojure.Driver 的接口文件。CLEAT_COMPILER=clojure（缺省）时宿主在加载镜像之后调 install-hooks!。
+;; 照原版 driver.sls / compile.sls / Driver.cs（流程、单元收集的后序、镜像构建的 id 重置、包程序集的改写）（"原版"指 cleat-093 前仓库里的 Scheme 实现 src/scheme，已删除，见 git 历史）。
+;; 宿主在加载镜像之后 require 本命名空间并调 install-hooks!。
 ;;
 ;;   (eval-toplevel 形式)          Compiler.eval：序列形式先 macroexpand（带上原形式的源位置），顶层 (do …) 拆开逐个求值；
 ;;                                 其余分析为 L0、编成内存程序集执行（还没有简单形式的解释）
@@ -25,7 +25,7 @@
 
 ;; —— 单元：编译一个文件 / 镜像 / 包时收集各顶层形式的 L0（求值之后记入，后序）——
 ;; 状态是线程局部的映射（DriverOps.State），不用 Clojure 的动态绑定：驱动的 binding 弹出时会连带弹掉用户代码里不成对的
-;; pushThreadBindings（Scheme 版的 parameterize 与 Clojure 的绑定无关）。
+;; pushThreadBindings（原版的 parameterize 与 Clojure 的绑定无关）。
 ;;   :unit     atom：L0 的向量
 ;;   :boot     构建镜像：嵌套加载的文件也记入同一个单元
 ;;   :package  {:roots 根目录列表或 true, :segments (atom [[加载键 [L0 …]] …])}
@@ -42,14 +42,14 @@
 (defn- run-compiled
   "L0 → 内存程序集 → 执行，值经 HoldResult 取回。"
   [l0]
-  (let [nm (str "eval$c" (swap! eval-counter inc))   ; 与 Scheme 驱动的 eval$N 不重名（同时存在时按程序集名解析类型）
+  (let [nm (str "eval$c" (swap! eval-counter inc))   ; 原版驱动的程序集叫 eval$N，为区分而带 c
         [lcil cs] (pl/compile-unit [[0 (with-output-language [L0 Expr] (out (clj-call "HoldResult" false ~l0)))]]
                                    nm "#Module" true (fn [_ _ _]))
         asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil nm (object-array cs))]
     (run-module asm)
     (take-result)))
 
-;; —— 简单形式的解释（Scheme 版 Driver.TryEvalSimple，designs/04 §9：Chez 的 compile-interpret-simple）——
+;; —— 简单形式的解释（原版 Driver.TryEvalSimple，designs/04 §9：Chez 的 compile-interpret-simple）——
 ;; 不创建函数 / 类型的形式（常量、局部变量、Var 的读写与 def、调用、ClojureOps 的 clj-call、关键字调用、let、if、begin）直接解释，
 ;; 不生成内存程序集。先整体检查（simple?），通过才求值。
 
@@ -166,7 +166,7 @@
   (loop [f form] (let [g (an/macroexpand-1 f)] (if (identical? g f) f (recur g)))))
 
 (defn eval-toplevel
-  "Clojure 的 Compiler.eval（Scheme 版 clojure-eval-toplevel）。"
+  "Clojure 的 Compiler.eval（原版 clojure-eval-toplevel）。"
   [form]
   (let [form (if (seq? form) (an/transfer-source (run-form #(macroexpand-full form) form) form) form)]
     (if (and (seq? form) (= 'do (first form)))
@@ -228,7 +228,7 @@
       (with-st {:unit (when (:boot (st)) (:unit (st)))}
         (if (:boot (st)) (load-built reader path name) (load-reader reader path name))))))
 
-;; —— 接口文件（Cleat.Scheme.Clojure.Driver 的 BuildInterfaceFile，读 L0 与 Lcil）——
+;; —— 接口文件（原版 Driver.BuildInterfaceFile，读 L0 与 Lcil）——
 
 (defn- lcil-types
   "Lcil 里定义的类型名"
@@ -249,7 +249,7 @@
 (defn- fn-class [le] (:class (first (second (prod-of le)))))
 
 (defn- fn-arities
-  "各子句的形参个数；变长子句（与 必需个数 + 1 个形参同形的最后一个，CljFnName 的 :variadic）记为 -(必需 + 1)（Scheme 版 FnArities）"
+  "各子句的形参个数；变长子句（与 必需个数 + 1 个形参同形的最后一个，CljFnName 的 :variadic）记为 -(必需 + 1)（原版 FnArities）"
   [le]
   (let [[_ [nm cl*]] (prod-of le)
         r (mapv (fn [cl] (let [[_ [x*]] (prod-of cl)] (count x*))) cl*)
@@ -277,14 +277,14 @@
     (sequential? x) (doseq [y x] (walk-l0 y fn-names defs cands))
     :else nil))
 
-;; 可内联的小函数（Scheme 版 Driver.InlineClauses / InlineOk）：顶层 (def v (fn* …)) 的固定子句足够小、只含 let / loop / if / 调用这类
-;; 结构时，接口文件记下子句——Clojure 编译器记 L0 子句的 S 表达式（fasl，[:cleat/l0 子句]，与 Scheme 编译器的 Lcore 子句区分）
+;; 可内联的小函数（原版 Driver.InlineClauses / InlineOk）：顶层 (def v (fn* …)) 的固定子句足够小、只含 let / loop / if / 调用这类
+;; 结构时，接口文件记下子句——Clojure 编译器记 L0 子句的 S 表达式（fasl，[:cleat/l0 子句]）
 
 (def ^:private inline-max-pairs 160)
 (def ^:private no-inline-heads '#{set! clj-def clj-var-set! clj-deftype try-catch try-finally})
 
 (defn- inline-ok?
-  "序对个数不超过上限（同 Scheme 版按表的格子数），不含赋值、定义、类型、try 与嵌套的 fn*"
+  "序对个数不超过上限（同 原版按表的格子数），不含赋值、定义、类型、try 与嵌套的 fn*"
   [sexpr]
   (let [pairs (volatile! 0)]
     (letfn [(ok? [x]
@@ -350,7 +350,7 @@
     (when (System.IO.File/Exists ifc) (System.IO.File/Delete ifc))
     (.Save file ifc)))
 
-;; —— AOT 单元（Scheme 版 compile.sls）——
+;; —— AOT 单元（原版 compile.sls）——
 
 (defn- check-boot-image-l0 [image-id]
   (with-output-language [L0 Expr] (out (clj-call "CheckBootImage" false (quote ~image-id)))))
@@ -365,7 +365,7 @@
   (Cleat.Emit.LcilEmitter/SaveData lcil dll dll false))
 
 (defn- compile-boot-unit
-  "Clojure 镜像（Scheme 版 clojure-compile-boot-unit）：一个单元编成 dll，旁边写 Lcil 文本与接口文件。"
+  "Clojure 镜像（原版 clojure-compile-boot-unit）：一个单元编成 dll，旁边写 Lcil 文本与接口文件。"
   [l0s dll]
   (let [asm (System.IO.Path/GetFileNameWithoutExtension ^String dll)
         lcil (compile-forms l0s asm)
@@ -377,7 +377,7 @@
     (write-interface-file dll l0s lcil)
     dll))
 
-;; 包程序集（Scheme 版 clojure-compile-package-unit / package-lcil）：入口 Initialize 只做镜像核对（Init0）与预链接，每个文件一个入口
+;; 包程序集（原版 clojure-compile-package-unit / package-lcil）：入口 Initialize 只做镜像核对（Init0）与预链接，每个文件一个入口
 ;; Load<i> 依次调它的 Init<k>；程序集级特性 CleatPackage、CleatNamespace 作索引；(lazy-start)；接口文件作为嵌入资源
 
 (defn- init-call [k] (list 'call "#Module" (str "Init" k) () "System.Object"))

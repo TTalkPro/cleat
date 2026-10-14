@@ -14,9 +14,9 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（n
 | [07-nanopass-port.md](07-nanopass-port.md) | 表面设计 D1 ~ D6 由 19 重新启用（stage0 前提的部分仍失效）：nanopass 框架移植到 Clojure：表面语法、上下文切换、注册表、运行时表示、验证 |
 | [08-bootstrap.md](08-bootstrap.md) | 自举：stage0 解释器、Phase A / B、可选 Lcore 种子、交叉编译纪律、确定性 |
 | [09-testing.md](09-testing.md) | 符合性判据（jolt 语料、clojure-test-suite、test_clojure）、测试分层、基线 |
-| [15-scheme-core-vendoring.md](15-scheme-core-vendoring.md) | **被 19 取代**（M8 完成后归档）：纳入 IronScheme 元层的取舍与更名、可扩展语法对象协议、try / catch 异常模型、为何 nanopass 不改、新里程碑 M2′ / M4′ / M5′ |
-| [14-three-layer-architecture.md](14-three-layer-architecture.md) | **探讨**：VM / Scheme 元层 / Clojure 三层架构的四个结构性问题与修正、剩余风险 |
-| [13-syntax-objects-and-scheme-core.md](13-syntax-objects-and-scheme-core.md) | **探讨**：语法对象重塑展开流程、驱动 nanopass 的最小 Scheme 元语言、"Clojure on IronScheme"方案 C 与 A / B 的取舍、PoC 计划 |
+| [15-scheme-core-vendoring.md](15-scheme-core-vendoring.md) | **历史**（被 19 取代，元层已在 cleat-093 删除）：纳入 IronScheme 元层的取舍与更名、可扩展语法对象协议、try / catch 异常模型、为何 nanopass 不改、新里程碑 M2′ / M4′ / M5′ |
+| [14-three-layer-architecture.md](14-three-layer-architecture.md) | **历史探讨**（元层已删除）：VM / Scheme 元层 / Clojure 三层架构的四个结构性问题与修正、剩余风险 |
+| [13-syntax-objects-and-scheme-core.md](13-syntax-objects-and-scheme-core.md) | **历史探讨**（元层已删除）：语法对象重塑展开流程、驱动 nanopass 的最小 Scheme 元语言、"Clojure on IronScheme"方案 C 与 A / B 的取舍、PoC 计划 |
 | [16-nanopass-host-survey.md](16-nanopass-host-survey.md) | **调研**：nanopass 宿主语言对比（SBCL/CLOS、Erlang、Clojure），pass 分发本质取证，ellipsis 难度定位，07 号文的可行性背书 |
 | [17-lazy-runtime-startup.md](17-lazy-runtime-startup.md) | **实现**：包程序集（每包一个、命名空间索引、去掉源码旁 `.clj.dll`）、运行时 NuGet 包 `Cleat.Runtime`、生成类型惰性启动 CleatRuntime，让 C# / F# 直接引用 cleat 的 NuGet 包（cleat-067） |
 | [19-clojure-self-hosting.md](19-clojure-self-hosting.md) | **现行方向**（2026-10-14 起）：Clojure 版 nanopass 与编译器、分级差分门控、自举不动点与 Lcil 文本种子、生成代码去 Scheme、删除 Scheme 元层；任务 cleat-081 ~ 094 |

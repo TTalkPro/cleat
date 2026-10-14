@@ -5,7 +5,7 @@ using clojure.lang;
 
 namespace Cleat.Core.Compiler;
 
-/// <summary>AOT 的输出路径、加载键、镜像核对与直接链接目标（cleat-082 从 Cleat.Scheme 的 Driver 搬来）。</summary>
+/// <summary>AOT 的输出路径、加载键、镜像核对与直接链接目标（cleat-082 从元层的 Driver 搬来）。</summary>
 public static class AotPaths
 {
     private static readonly object s_false = false;
@@ -60,7 +60,7 @@ public static class AotPaths
         if (var is not Var v) return s_false;
         int n;
         try { n = Convert.ToInt32(argc); }
-        catch (Exception) { return s_false; }   // Scheme 的 fixnum 是 Int64，其余不是参数个数的直接放弃直连
+        catch (Exception) { return s_false; }   // 不是参数个数的直接放弃直连
         // IFn.invoke 只有 1 ~ 20 个固定参数的签名：更多参数的调用不做直连
         var e = InterfaceFile.FindKnown(clojure.lang.Symbol.intern(v.Namespace.Name.Name, v.Symbol.Name));
         return e is { HasStatic: true } && n is >= 1 and <= 20 && Array.IndexOf(e.Arities, n) >= 0 ? e.ClassName : s_false;

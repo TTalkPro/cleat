@@ -9,8 +9,7 @@ namespace Cleat.Core.Runtime;
 
 /// <summary>
 /// 原语表（designs/02-runtime.md §5、04 §5）：编译器可以静态调用 / 内联的运行时静态方法。
-/// 集中声明在这里而不是在 clojure.lang/ 的 EPL 文件上加属性；PrimGen 据此生成 src/boot/primitives.edn，
-/// PrimitiveRegistry 据此在 cleat.kernel 命名空间里绑定同名 Var（stage0 与 REPL 用）。
+/// 集中声明在这里而不是在 clojure.lang/ 的 EPL 文件上加属性；PrimitiveRegistry 据此在 cleat.kernel 命名空间里绑定同名 Var。
 /// 每项：Clojure 名字、所在类型、方法名、参数类型、标志（:pure 可常量折叠；:inline 发射器有内联模板）。
 /// 编译器按 (类型, 方法, 参数类型) 查表，core.clj 里的 (. clojure.lang.RT (first x)) 这类宿主调用因此可内联。
 /// </summary>
@@ -72,27 +71,6 @@ public static class Primitives
 
     public static Entry Find(Type type, string method, Type[] ps) =>
       Table.FirstOrDefault(e => e.Type == type && e.Method == method && e.Params.SequenceEqual(ps));
-
-    /// <summary>primitives.edn 的文本（确定：按名字排序；类型名用全名）。</summary>
-    public static string ToEdn()
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.Append(";; 由 Cleat.PrimGen 生成（designs/02-runtime.md §5）；不要手改。\n");
-        sb.Append("{:version 1\n :primitives\n {");
-        bool first = true;
-        foreach (var e in Table.OrderBy(e => e.Name, StringComparer.Ordinal))
-        {
-            var m = e.MethodInfo;
-            if (!first) sb.Append("\n  ");
-            first = false;
-            var flags = new List<string>();
-            if (e.Pure) flags.Add(":pure");
-            if (e.Inline) flags.Add(":inline");
-            sb.Append($"cleat.kernel/{e.Name} [{{:target :clr :type \"{e.Type.FullName}\" :method \"{e.Method}\" :params [{string.Join(" ", e.Params.Select(p => '"' + p.FullName + '"'))}] :ret \"{m.ReturnType.FullName}\" :flags #{{{string.Join(" ", flags)}}}}}]");
-        }
-        sb.Append("}}\n");
-        return sb.ToString();
-    }
 }
 
 /// <summary>原语包装成 IFn：按参数个数选重载，参数经 Reflector.Convert、返回值经 ConvertFrom。</summary>

@@ -10,7 +10,7 @@ namespace Cleat.Core.Runtime;
 /// gen-class 类的静态初始化经 clojure.lang.RT 拉起运行时。
 ///
 /// 宿主（Program.Start）启动时自己登记 <see cref="MarkStarting"/> / <see cref="MarkStarted"/>；否则第一次调用时按名字载入
-/// Cleat.Hosting（Cleat.Core 不引用它：依赖方向是 Hosting → Scheme → Core）并以缺省选项调 <c>CleatRuntime.Init</c>。
+/// Cleat.Hosting（Cleat.Core 不引用它：依赖方向是 Hosting → Host → Core）并以缺省选项调 <c>CleatRuntime.Init</c>。
 /// 并发的首次调用只启动一次，其余线程等它完成；正在启动的线程自己（启动期间的加载）直接返回。已启动时代价是一次 volatile 读。
 /// </summary>
 public static class RuntimeBootstrap

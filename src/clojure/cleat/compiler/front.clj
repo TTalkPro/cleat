@@ -1,10 +1,10 @@
-;; 前端的分析与 pass（cleat-084 试点，移植 src/scheme/lib/cleat/scheme/compiler/front.sls 的一部分：analyze、check-forward、
-;; convert-assignments；simplify-letrec、cp0-lite、simplify-if 在 cleat-087 移植）。注释见 Scheme 版。
+;; 前端的分析与 pass（cleat-084 试点，移植原版 front.sls（"原版"指 cleat-093 前仓库里的 Scheme 实现 src/scheme，已删除，见 git 历史） 的一部分：analyze、check-forward、
+;; convert-assignments；simplify-letrec、cp0-lite、simplify-if 在 cleat-087 移植）。注释见 原版。
 (ns cleat.compiler.front
   (:require [cleat.nanopass :refer [define-pass nanopass-case out]]
             [cleat.compiler.languages :refer [L0 L1 L2]]))
 
-;; —— 小集合（无重复的列表，顺序同 Scheme 版：set-add 加在前面）——
+;; —— 小集合（无重复的列表，顺序同 原版：set-add 加在前面）——
 (defn- member? [x s] (loop [s (seq s)] (cond (nil? s) false (= x (first s)) true :else (recur (next s)))))
 (defn- set-add [x s] (if (member? x s) s (cons x s)))
 (defn- set-union [a b]
@@ -120,7 +120,7 @@
   (nanopass-case [L0 Expr] e [(lambda ~nm ~cl* ...) true] [else false]))
 
 (def ^:private const-in-run?
-  (let [v (System.Environment/GetEnvironmentVariable "CLEAT_NO_070")]
+  (let [v (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT")]
     (not (and (string? v) (or (= v "1") (.Contains ^String v "letrec"))))))
 
 (define-pass simplify-letrec L0 [ir an] -> L1 []
@@ -249,7 +249,7 @@
   (Expr ir))
 
 (defn- simple-datum?
-  "值得传播的常量（Scheme 版的 simple-datum?：fixnum、flonum、布尔、字符；Clojure 的 long 照 Scheme 版不算 fixnum，不传播——
+  "值得传播的常量（原版的 simple-datum?：fixnum、flonum、布尔、字符；Clojure 的 long 照 原版不算 fixnum，不传播——
   传播会改变 identical? 与装箱次数）。"
   [d]
   (or (instance? Int32 d) (instance? Double d) (boolean? d) (char? d)))

@@ -3,7 +3,7 @@
 本文件只做索引。任务详情见 `tasks/` 目录，设计见 [designs/](designs/README.md)。
 状态：未开始 / 进行中 / 完成 / 搁置。工作约定：每个任务完成后提交一次，提交信息不带 Co-Authored-By。
 
-**双轨纪律（M8，designs/19 D9，cleat-085 起到 cleat-091 默认切换为止）**：Scheme 编译器（`src/scheme/lib/cleat/scheme/compiler*`、`src/scheme/clojure/`）只修缺陷、不加功能；修的缺陷同时在 Clojure 编译器（`src/clojure/cleat/compiler/`）里修，并补一条差分用例（`tools/compiler-diff.clj` 能看到的输入，或 `tests/nanopass` 的快照对照）。新的编译器功能等切换之后只做在 Clojure 编译器里。
+**双轨纪律（M8，designs/19 D9，cleat-085 起到 cleat-091 默认切换为止；cleat-093 删除 Scheme 编译器后结束）**：Scheme 编译器（`src/scheme/lib/cleat/scheme/compiler*`、`src/scheme/clojure/`）只修缺陷、不加功能；修的缺陷同时在 Clojure 编译器（`src/clojure/cleat/compiler/`）里修，并补一条差分用例（`tools/compiler-diff.clj` 能看到的输入，或 `tests/nanopass` 的快照对照）。新的编译器功能等切换之后只做在 Clojure 编译器里。
 
 | ID | 标题 | 里程碑 | 依赖 | 状态 |
 |----|------|--------|------|------|
@@ -99,7 +99,7 @@
 | [cleat-090](tasks/cleat-090-clojure-compiler-driver.md) | Clojure 写的编译驱动，CLEAT_COMPILER=clojure 下全量测试（G3） | M8 | cleat-089 | 完成 |
 | [cleat-091](tasks/cleat-091-self-hosting-and-lcil-seed.md) | 自举不动点（G4）、Lcil 文本种子、构建不再经 stage0、默认切到 Clojure 编译器 | M8 | cleat-090 | 完成 |
 | [cleat-092](tasks/cleat-092-de-scheme-codegen.md) | 生成代码去 Scheme：catch 不用 Procedure、去 EmptyList 占位、Clojure 数据常量表与 .inl、(runtime clojure) | M8 | cleat-091 | 完成 |
-| [cleat-093](tasks/cleat-093-remove-scheme.md) | 删除 Scheme：src/scheme、Cleat.Scheme、Cleat.Stage0、Scheme 测试、构建目标、NOTICE、文档归档 | M8 | cleat-092 | 未开始 |
+| [cleat-093](tasks/cleat-093-remove-scheme.md) | 删除 Scheme：src/scheme、Cleat.Scheme、Cleat.Stage0、PrimGen、Scheme 测试、构建目标、NOTICE、文档归档；宿主只有 Clojure 编译器 | M8 | cleat-092 | 完成 |
 | [cleat-094](tasks/cleat-094-republish-self-hosted.md) | 自寄宿后的新版本（Cleat.Runtime / Cli 1.1.0 等）重推 BaGetter，cleat.nanopass 用户文档 | M8 | cleat-093 | 未开始 |
 | [cleat-095](tasks/cleat-095-nanopass-user-layer.md) | cleat.nanopass 第二层：显式 catamorphism、多层省略号的单项、define-parser、trace、上游测试（取代 cleat-056；不阻塞阶段 B / C） | M8 | cleat-084 | 未开始 |
 
@@ -125,7 +125,7 @@
 ## 关键路径
 
 **M8（2026-10-14 起，现行）**：081 → 082 → 083 → 084 → 085 → 086 → 087 → 088 → 089 → 090 → 091 → 092 → 093 → 094；095 不在关键路径上（[19 §5](designs/19-clojure-self-hosting.md)）。
-双轨纪律（19 D9）：从 cleat-085 起到 cleat-091 默认切换为止，Scheme 编译器只修缺陷、不加功能，修的缺陷同时在 Clojure 编译器里修并补差分用例。
+双轨纪律（19 D9）：从 cleat-085 起到 cleat-091 默认切换为止，Scheme 编译器只修缺陷、不加功能，修的缺陷同时在 Clojure 编译器里修并补差分用例；cleat-093 删除 Scheme 编译器后结束。
 
 此前：cleat-045 → 046 → 047 → 048 → 049 → 050 → 051 → 052 → 055 → 053 → 032（原路径 013 → 015 → … → 029 → 031 已由此取代）。LLVM 相关任务搁置，不在当前计划内。
 

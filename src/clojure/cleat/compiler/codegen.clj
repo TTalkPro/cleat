@@ -1,8 +1,8 @@
-;; 代码生成：L3 → Lcil（cleat-088 起，移植 src/scheme/lib/cleat/scheme/compiler/codegen.sls；cleat-092 起只产出 Clojure 的运行时契约：
-;; 生成的代码只引用 Cleat.Core 与 clojure.lang，常量表是 Clojure 数据，try 的处理器内联进 catch 块，Scheme 的过程类、共享持有类、
+;; 代码生成：L3 → Lcil（cleat-088 起，移植原版 codegen.sls（"原版"指 cleat-093 前仓库里的 Scheme 实现 src/scheme，已删除，见 git 历史）；cleat-092 起只产出 Clojure 的运行时契约：
+;; 生成的代码只引用 Cleat.Core 与 clojure.lang，常量表是 Clojure 数据，try 的处理器内联进 catch 块，原版的过程类、共享持有类、
 ;; 原语与数据都不再出现）。
 ;;
-;; 逐函数照 Scheme 版（各函数注明对应的 Scheme 名字）。只有 Clojure 输入用得到的节点（cleat-085 的普查；Scheme 专有的节点 cleat-092 从语言里删去）。
+;; 逐函数照原版（各函数注明对应的原版名字）。只有 Clojure 输入用得到的节点（cleat-085 的普查；原版专有的节点 cleat-092 从语言里删去）。
 ;;
 ;; Lcil 是 Clojure 的列表数据（符号、字符串、整数、浮点、布尔），直接交给 Cleat.Emit（ClojureData）；lcil->string 写成文本（转储与差分用）。
 (ns cleat.compiler.codegen
@@ -57,16 +57,16 @@
 
 (defn objs [n] (repeat n obj))
 
-;; —— 测量开关（Scheme 版同名）——
+;; —— 测量开关：CLEAT_NO_OPT=1 关掉全部，或含 known / inline / infer 关掉对应的一项 ——
 
 (defn- env [n] (or (System.Environment/GetEnvironmentVariable n) ""))
-(def ^:private no-034 (env "CLEAT_SCHEME_NO_034"))
-(defn- opt-off? [nm] (or (= no-034 "1") (str/includes? no-034 nm)))
+(def ^:private no-opt (env "CLEAT_NO_OPT"))
+(defn- opt-off? [nm] (or (= no-opt "1") (str/includes? no-opt nm)))
 (def opt-034? (not (opt-off? "known")))
 (def opt-inline? (not (opt-off? "inline")))
 (def opt-infer? (not (opt-off? "infer")))
 
-;; —— 编译单元（Scheme 版 unit）——
+;; —— 编译单元（原版 unit）——
 
 (defn- make-unit [assembly-name module-name]
   {:name assembly-name :module module-name
@@ -77,8 +77,8 @@
 
 (defn- next-id! [u] (let [n @(:counter u)] (swap! (:counter u) inc) n))
 
-;; —— 常量表（Scheme 版 constant-index!）——
-;; Hashtable 按 Equals 比较：Scheme 的数据按值去重；宿主对象（Clojure 的值）只有同一个对象才共用下标
+;; —— 常量表（原版 constant-index!）——
+;; Hashtable 按 Equals 比较：数、字符、字符串、关键字、布尔按值去重；其余只有同一个对象才共用下标
 
 (defn- neg-zero? [x] (and (instance? Double x) (zero? (double x)) (neg? (/ 1.0 (double x)))))
 (defn- signed-zero-constant? [d] (neg-zero? d))
@@ -111,7 +111,7 @@
       (let [j (str/index-of s "$" 2)] (if j (subs s 2 j) s))
       s)))
 
-;; —— 方法上下文（Scheme 版 mctx）——
+;; —— 方法上下文（原版 mctx）——
 
 (defn- make-method-ctx [u class static? loop-label loop-arity self-mref]
   {:unit u :class class :static? static? :vars (ht) :locals (atom []) :buffer (atom []) :nlabels (atom 0) :try-depth (atom 0)
@@ -259,7 +259,7 @@
     [ds (- (+ pi ex) lead)]))
 
 (defn- flonum->string
-  "Scheme 的 number->string（flonum，boot/numbers.sls）：0 ≤ k ≤ 9 普通十进制，-3 ≤ k ≤ 0 写 0.00ddd，其余写指数 d.ddde±x（一位有效数字写 1e23），
+  "原版的 number->string（flonum）：0 ≤ k ≤ 9 普通十进制，-3 ≤ k ≤ 0 写 0.00ddd，其余写指数 d.ddde±x（一位有效数字写 1e23），
   特殊值 +nan.0 / +inf.0 / -inf.0。"
   [^double d]
   (cond
@@ -340,14 +340,14 @@
       (.Append sb \newline)
       (str sb))))
 
-;; —— 每个编译单元重算的表（Scheme 版同名）——
+;; —— 每个编译单元重算的表（原版同名）——
 (def ^:private var-types (ht))      ; 变量 → :fx / :fl / :l64（拆箱）
 (def ^:private sound-types (ht))    ; 推断收敛后的类型（宿主调用按它选重载）
 (def ^:private fixed-types (ht))    ; 原始签名子句的 L / D 形参
 (def ^:private var-facts (ht))      ; 变量的已知类型（不改变存储）
 (def ^:private assigned-vars (ht))  ; 被 set! 的局部变量
 
-;; —— 类型格（Scheme 版 iron-071 的格元素；Clojure 输入只用到其中几种，加上 cleat-042 的 :l64）——
+;; —— 类型格（原版 iron-071 的格元素；Clojure 输入只用到其中几种，加上 cleat-042 的 :l64）——
 
 (def ^:private type-parents {:fx :int :int :real :fl :real :real :num})
 (defn- type-ancestors [t] (if t (cons t (type-ancestors (type-parents t))) ()))
@@ -359,7 +359,7 @@
 (defn- meet-type [a b] (type-join a b))
 
 (defn- datum-type
-  "常量的类型：Int32 是 fx（Scheme 版的 fixnum），Double 是 fl，long / 大整数是 int，其余数是 real。"
+  "常量的类型：Int32 是 fx（原版的 fixnum），Double 是 fl，long / 大整数是 int，其余数是 real。"
   [d]
   (cond (instance? Int32 d) :fx
         (instance? Double d) :fl
@@ -415,7 +415,7 @@
 (declare host-call-type)
 
 (defn expr-type
-  "表达式的类型（:fx :fl :int … 与 :l64）或 nil；env：变量 → 类型 | :top。不在 env 里的变量查 var-facts（Scheme 版 expr-type 的 Clojure 子集）。"
+  "表达式的类型（:fx :fl :int … 与 :l64）或 nil；env：变量 → 类型 | :top。不在 env 里的变量查 var-facts（原版 expr-type 的 Clojure 子集）。"
   [e env]
   (nanopass-case [L3 Expr] e
     [(quote ~d) (if (instance? Int64 d) :l64 (datum-type d))]
@@ -435,7 +435,7 @@
     [(throw ~e) :top]
     [else nil]))
 
-;; —— 宿主调用的静态决议（cleat-042 第 3 项，Scheme 版 host-call-*）——
+;; —— 宿主调用的静态决议（cleat-042 第 3 项，原版 host-call-*）——
 
 (defn- host-call-layout
   "[static? 实例或nil 实参]，不是 CallStatic / CallInstance / GetStaticField / GetInstanceField 时 nil。"
@@ -491,7 +491,7 @@
          (by-type))]
       [else (by-type)])))
 
-;; —— 推断（iron-034c，Scheme 版 infer-walk / infer-var-types-into!，Clojure 子集）——
+;; —— 推断（iron-034c，原版 infer-walk / infer-var-types-into!，Clojure 子集）——
 
 (defn- inlined-binding? [x] (str/ends-with? (str x) "$inl"))
 
@@ -617,7 +617,7 @@
 (defn- bigger-than? [body n] (count-nodes body n))
 
 (defn- infer-var-types-into!
-  "Scheme 版 infer-var-types-into!（seeds 只用于推测循环，Clojure 输入没有，固定为 nil）。"
+  "原版 infer-var-types-into!（seeds 只用于推测循环，Clojure 输入没有，固定为 nil）。"
   [form out]
   (let [defs (ht) excluded (ht) labels (ht) raw-uses (ht) boxed-uses (ht)
         defs-order (atom [])]
@@ -664,7 +664,7 @@
       (propagate! cands)
       (run! decide! cands))))
 
-;; —— deftype* 描述的访问（Scheme 列表，见 Scheme 版 deftype-info-*）——
+;; —— deftype* 描述的访问（向量，见原版 deftype-info-*）——
 (defn- dinfo [d k] (nth d k))
 (defn- dinfo-kind [d] (dinfo d 1))   ; true reify*、false deftype*、:interface、:proxy、:genclass
 (defn- deftype-reify? [d] (true? (dinfo-kind d)))
@@ -678,7 +678,7 @@
                (reduce (fn [a v] (if (or (some #(= v %) a) (some #(= v %) x*)) a (conj a v))) acc x1*)]))
           [] le*))
 
-;; —— 原始值（iron-034c / cleat-042，Scheme 版 cg-raw 等）——
+;; —— 原始值（iron-034c / cleat-042，原版 cg-raw 等）——
 
 (declare cg cg* load-var! cg-raw)
 
@@ -755,7 +755,7 @@
       :else (cg-raw-default e mc t))))
 
 (defn- cg-prim-invoke!
-  "($clj-call \"PrimInvoke\" #f '签名 f 实参 …)：f 转为 primifs.<签名>、callvirt invokePrim（Scheme 版 cg-prim-invoke!）。"
+  "($clj-call \"PrimInvoke\" #f '签名 f 实参 …)：f 转为 primifs.<签名>、callvirt invokePrim（原版 cg-prim-invoke!）。"
   [e* mc ctx]
   (let [sig (quoted-datum (first e*)) f (second e*) args (drop 2 e*)
         cs (sig-params sig) rc (sig-ret sig)
@@ -777,7 +777,7 @@
       (finish-value! mc ctx))))
 
 (defn- cg-static-host-call!
-  "静态决议的宿主调用（Scheme 版 cg-static-host-call!）。sl：[签名 static? 实例 实参]。"
+  "静态决议的宿主调用（原版 cg-static-host-call!）。sl：[签名 static? 实例 实参]。"
   [sl mc ctx]
   (let [[^objects sig static? inst args] sl
         decl (aget sig 0) nm (aget sig 1) pts (vec (aget sig 2)) ret (str (aget sig 3)) virt? (aget sig 4)
@@ -821,7 +821,7 @@
                       :else nil)
                 (finish-value! mc ctx)))))
 
-;; —— 变量与局部变量清除（cleat-042 第 5 项，Scheme 版同名）——
+;; —— 变量与局部变量清除（cleat-042 第 5 项，原版同名）——
 
 (defn- var-location [mc x]
   (or (hget (:vars mc) x) (throw (ex-info (str "codegen: unbound variable " x) {:var x}))))
@@ -960,7 +960,7 @@
   (with-buffer mc #(let [t (and (not @(:big? mc)) (hget var-types x))]
                      (if t (cg-raw e mc t) (cg e mc :value)))))
 
-;; —— 表达式（Scheme 版 cg / cg*）——
+;; —— 表达式（原版 cg / cg*）——
 
 (defn- raw-tail-leaf? [e]
   (nanopass-case [L3 Expr] e
@@ -1081,7 +1081,7 @@
          (emit! mc (i 'ldloc tmp))
          (finish-value! mc ctx)))]
     [(try-catch ~e (~d* ~e*) ...)
-     ;; try { 值 = body } catch (T_i) { 异常 → 处理器的形参；值 = 处理器体 } …：处理器内联进 catch 块（cleat-092，原来是 Scheme 过程闭包）。
+     ;; try { 值 = body } catch (T_i) { 异常 → 处理器的形参；值 = 处理器体 } …：处理器内联进 catch 块（cleat-092，原来是过程闭包）。
      ;; 处理器引用的外层变量在 body 里钉住（异常可能在 body 清掉它们之后抛出）；各处理器互为分支，生成第 i 个时先扣掉后面处理器的引用数
      (let [tmp (when-not (= ctx :effect) (new-local! mc obj))
            hctx (if tmp :value :effect)
@@ -1201,7 +1201,7 @@
        (emit! mc (i 'label end))
        (finish-value! mc ctx))]
     [(clj-case ~d ~e0 ~e1 ~e* ...)
-     ;; CaseExpr（ClojureCLR 的语义），见 Scheme 版的注释
+     ;; CaseExpr（ClojureCLR 的语义），见 原版的注释
      (let [[shift mask kind entries] (vec d)
            entries (mapv vec entries)
            x (new-local! mc obj) k (new-local! mc int32-type)
@@ -1251,7 +1251,7 @@
      (operands! mc [#(do (ref-var! mc x true) (emit! mc (i 'castclass box-type))) #(cg e mc :value)])
      (emit! mc (i 'stfld box-type "Value"))
      (finish-none! mc ctx)]
-    ;; simplify-letrec 给前向变量的初值与检查（Scheme 版的 $uninitialized / $check-initialized 原语）
+    ;; simplify-letrec 给前向变量的初值与检查（原版的 $uninitialized / $check-initialized 原语）
     [(uninitialized)
      (when-not (= ctx :effect)
        (emit! mc (i 'ldsfld clojure-ops-type "Uninitialized"))
@@ -1263,10 +1263,10 @@
        (finish-value! mc ctx))]
     [else (unsupported-node e)]))
 
-;; —— 调用（Scheme 版 cg-call 的 Clojure 子集：自尾调用、letrec 的直接调用、一般调用）——
+;; —— 调用（原版 cg-call 的 Clojure 子集：自尾调用、letrec 的直接调用、一般调用）——
 
 (defn- cg-call
-  "(call e0 e* …)：lower-loops 把立即调用的 lambda 变成 let、命名 let 变成 label，剩下的（不应出现）按 IFn 调用；Scheme 过程的调用路径
+  "(call e0 e* …)：lower-loops 把立即调用的 lambda 变成 let、命名 let 变成 label，剩下的（不应出现）按 IFn 调用；原版过程的调用路径
   （自尾调用、iron-070 的局部直接调用）cleat-092 删去。"
   [e0 e* mc ctx]
   (cg* (with-output-language [L3 Expr] (out (clj-invoke ~e0 ~e* ...))) mc ctx))
@@ -1317,7 +1317,7 @@
   (emit! mc (i 'newobj (second c) ()))
   (fill-fields! mc c fv* nil))
 
-;; —— Clojure 的 fn* → AFunction / RestFn 子类（cleat-051，Scheme 版 clj-fn-class! 等）——
+;; —— Clojure 的 fn* → AFunction / RestFn 子类（cleat-051，原版 clj-fn-class! 等）——
 
 (defn- unique-type-name! [u nm]
   (let [names (:type-names u)]
@@ -1424,7 +1424,7 @@
                                [(i 'call class "invokeStatic" (apply i (objs (inc (count x*)))) obj) (i 'ret)])))]))
 
 (defn- clj-fn-class!
-  "fn* → AFunction / RestFn 的子类（Scheme 版 clj-fn-class!）。"
+  "fn* → AFunction / RestFn 的子类（原版 clj-fn-class!）。"
   [mc nm x1* cl* self]
   (let [u (:unit mc)
         fields (if self (remove #(= self %) x1*) x1*)
@@ -1474,8 +1474,8 @@
                                    @methods))))
     [static? cname "Instance"]))
 
-;; —— deftype* / reify* / gen-interface / proxy-class* / gen-class* → CLR 类型（cleat-089，Scheme 版 cleat-051 / 043 / 053）——
-;; 描述 d 是分析器算好的 Clojure 数据（向量；类型写作 ["类型名" 值类型?]），见 Scheme 版各 deftype-info-* 的注释。
+;; —— deftype* / reify* / gen-interface / proxy-class* / gen-class* → CLR 类型（cleat-089，原版 cleat-051 / 043 / 053）——
+;; 描述 d 是分析器算好的 Clojure 数据（向量；类型写作 ["类型名" 值类型?]），见 原版各 deftype-info-* 的注释。
 
 (defn- sl "描述里的列表 → 向量（false / nil 为空）" [x] (if (or (nil? x) (false? x)) [] (vec x)))
 (defn- tname [t] (first t))
@@ -1498,7 +1498,7 @@
 (def ^:private box-zero [(i 'ldc.i4 0) (i 'box int32-type)])
 
 (defn- record-members
-  "defrecord 的另外两个构造函数与静态 create（Scheme 版 record-members）。"
+  "defrecord 的另外两个构造函数与静态 create（原版 record-members）。"
   [name d]
   (let [n (count (dinfo-fields d)) drops (dinfo-drops d) ks (dinfo-record-keys d) nb (- n drops)
         alt-ctor (fn [k tail]
@@ -1804,7 +1804,7 @@
                 (throw-not-implemented (str iface "." name " is not implemented by " class)))))))
 
 (defn- deftype-class!
-  "deftype* / reify* 的类（Scheme 版 deftype-class!）。返回 [类名 自由变量…]。"
+  "deftype* / reify* 的类（原版 deftype-class!）。返回 [类名 自由变量…]。"
   [mc d x* le*]
   (let [u (:unit mc)
         name (dinfo-class d)
@@ -1863,9 +1863,9 @@
              (i 'call clojure-ops-type "DefineType" (i obj) obj)))
     (finish-value! mc ctx)))
 
-;; —— 常量的编码（AOT 单元，cleat-089；Scheme 版 (clojure compile) 的 encode-clojure-constant）——
+;; —— 常量的编码（AOT 单元，cleat-089；原版 (clojure compile) 的 encode-clojure-constant）——
 ;; 元素经 Cleat.Core.Compiler.RawData 原样取出（宿主调用会把 Int32 换成 long，而 Int32 编码为 (fix n)、long 为 (long n)）。
-;; 只有 Clojure 的值（cleat-092 起没有 Scheme 数据）；记录、集合按值重建，不共享（同 Scheme 版）。
+;; 只有 Clojure 的值（cleat-092）；记录、集合按值重建，不共享（同原版）。
 
 (def ^:private raw-items Cleat.Core.Compiler.RawData/Items)
 
@@ -1942,7 +1942,7 @@
   [cs]
   (map-raw encode-constant cs))
 
-;; —— 编译单元（Scheme 版 generate-unit）——
+;; —— 编译单元（原版 generate-unit）——
 
 (defn- init-name [k] (str "Init" k))
 
@@ -1952,7 +1952,7 @@
     (finish-method mc (init-name k) ['static] [])))
 
 (defn generate-unit
-  "L3 顶层表达式 → [Lcil 常量列表]（Scheme 版 generate-unit）。loop-flags：与 forms 对齐的\"含循环\"标志（只对它们做类型推断）。
+  "L3 顶层表达式 → [Lcil 常量列表]（原版 generate-unit）。loop-flags：与 forms 对齐的\"含循环\"标志（只对它们做类型推断）。
   live?：内存模式（eval）——常量不编码，Lcil 里写 (live-constants n)，常量对象交给发射器。"
   [forms assembly-name module-name loop-flags live?]
   (let [u (make-unit assembly-name module-name)]
@@ -1979,7 +1979,7 @@
                         (cond
                           (empty? cs) []
                           live? [(i 'live-constants (count cs))]
-                          ;; Scheme 版在 canonical-gensyms 时（boot 镜像）把编码里的 Scheme gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
+                          ;; 原版在 canonical-gensyms 时（boot 镜像）把编码里的 gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
                           :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
                         (cons module @(:classes u))))]
       [lcil cs])))

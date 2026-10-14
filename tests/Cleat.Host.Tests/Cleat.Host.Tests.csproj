@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 宿主的进程级测试（cleat-052）：以子进程运行 cleat（Scheme 镜像 + 驱动库 + 钩子），经标准输入 / 输出驱动 REPL、脚本、-e、load、
+  <!-- 宿主的进程级测试（cleat-052）：以子进程运行 cleat（镜像 + 编译器 + 钩子），经标准输入 / 输出驱动 REPL、脚本、-e、load、
        require、compile 到包程序集（cleat-067）。 -->
   <PropertyGroup>
     <RootNamespace>Cleat.Host.Tests</RootNamespace>
@@ -11,8 +11,8 @@
     <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
   </ItemGroup>
   <ItemGroup>
-    <!-- 先构建宿主（及其 Scheme 镜像与预编译的驱动库）；进程级测试以子进程运行 src/Cleat.Host/bin/…/cleat.dll，
-         cleat-055 的边界测试（SchemeInvisibilityTests）在测试进程里启动宿主（Program.Start），所以引用其程序集 -->
+    <!-- 先构建宿主（及其镜像与编译器包）；进程级测试以子进程运行 src/Cleat.Host/bin/…/cleat.dll，
+         cleat-055 的边界测试（ValueBoundaryTests）在测试进程里启动宿主（Program.Start），所以引用其程序集 -->
     <ProjectReference Include="..\..\src\Cleat.Host\Cleat.Host.csproj" />
   </ItemGroup>
 </Project>

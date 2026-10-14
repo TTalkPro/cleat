@@ -1,7 +1,7 @@
 # 08 自举
 
-> **2026-10-15 改版（cleat-091，[19 D7](19-clojure-self-hosting.md)）**：Clojure 镜像与 Clojure 写的编译器自举，信任根是 Lcil 文本种子，
-> 不再经过 Scheme 镜像与 stage0（下文 §1 ~ §8 是 Scheme 元层时期的设计，Scheme 编译器作对照保留到 cleat-093）。
+> **2026-10-15 改版（cleat-091，[19 D7](19-clojure-self-hosting.md)）**：Clojure 镜像与 Clojure 写的编译器自举，信任根是 Lcil 文本种子。
+> §0 是现行设计；§1 ~ §8 是 Scheme 元层时期（cleat-046 ~ 092）的设计，Scheme 元层已在 cleat-093 删除，只作历史保留。
 
 ## 0. Clojure 编译器的自举（cleat-091 起）
 
@@ -33,14 +33,15 @@
       从种子构建（dotnet build）得到的镜像与编译器包与种子发射出的 stage1 相同
 ```
 
-宿主在镜像旁有编译器包时用 Clojure 编译器，不装 Scheme 镜像（`CLEAT_COMPILER` 缺省为 `clojure`）；`--no-boot`、镜像旁没有编译器、
-编译器源码比包新（开发时）时照旧装 Scheme 镜像，Scheme 驱动先跑、Clojure 编译器从源码加载后接手。
+宿主加载镜像后 `require` 编译器的驱动 `cleat.compiler.driver`：镜像旁有编译器包就登记它、从包加载；自举时 `CLEAT_COMPILER_NS=cleat.compiler0`
+指定改名的工具编译器，从 `-I` 的源码加载（cleat-093 起没有别的编译器：没有镜像或镜像旁没有编译器包时 `eval` 不可用，`--compile-*` 报错）。
+编译器源码改了而包没重编时，`dotnet build` 的 `GenerateCompilerPackage` 按输入增量重编（宿主不再比较源码与包的时间）。
 
 **种子的纪律**：种子是构建的起点，`dotnet build` 出的镜像与编译器包必须与种子发射出的 stage1 逐字节相同（Host 测试
 `ClojureBootstrapTests.BuildFromTheSeedReproducesTheSeed`）。所以改了 src/clojure（core.clj 等进镜像的源码、编译器源码）之后、提交之前
 要 `tools/build.cs clojure-seed` 重生成种子（约 3 分钟）；只改 C# 运行时不必（种子是 Lcil 文本，不含运行时的实现）。
 
-**运行时契约的两步法**：生成的代码调用 Cleat.Core / Cleat.Scheme 的 C# 方法（`ClojureOps`、`ClojureStaticCalls`、`RT.Box` …），种子里的
+**运行时契约的两步法**：生成的代码调用 Cleat.Core 的 C# 方法（`ClojureOps`、`ClojureStaticCalls`、`RT.Box` …），种子里的
 Lcil 也一样。改这些签名时：① 先加新入口、保留旧入口，让旧种子发射出的 stage1 仍能运行，编译器改用新入口；② `tools/build.cs clojure-seed`
 重生成种子（新种子只用新入口）；③ 再删旧入口。发射器的改动同理：种子是 Lcil 文本，发射器的行为变化会改变 stage1 的字节，重生成种子即可。
 

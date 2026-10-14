@@ -14,8 +14,7 @@ namespace Cleat.Core.Compiler;
 public static class DriverOps
 {
     /// <summary>
-    /// (run-form thunk form) → thunk 的值。异常不包装、原样传出；第一次经过（最内层的形式）时记下 文件:行（<see cref="Diagnostics.Stamp"/>），
-    /// 与 Scheme 驱动的 RunForm 相同。
+    /// (run-form thunk form) → thunk 的值。异常不包装、原样传出；第一次经过（最内层的形式）时记下 文件:行（<see cref="Diagnostics.Stamp"/>）。
     /// </summary>
     public static readonly IFn RunForm = new RunFormFn();
 

@@ -1,7 +1,0 @@
-(lambda #f
-  (clause
-    (a)
-    #f
-    (letrec ((sq (lambda "sq"
-                   (clause (x) #f (call (gref g$*$1$%b) x x)))))
-      (call (gref g$+$2$%b) (call sq '3) (call sq a)))))

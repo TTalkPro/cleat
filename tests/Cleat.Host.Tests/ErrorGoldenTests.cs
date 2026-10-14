@@ -47,7 +47,6 @@ public class ErrorGoldenTests
         }
         string got = Normalize(dir, r.Err) + "exit: " + r.ExitCode + "\n";
         Assert.That(got, Is.EqualTo(expected), r.ToString());
-        Assert.That(got, Does.Not.Contain("Cleat.Scheme"), "no Scheme runtime names in diagnostics");
     }
 
     /// <summary>cli 黄金文件里的机器相关路径：宿主目录 → &lt;host&gt;，用例目录 → &lt;case&gt;，仓库根 → &lt;repo&gt;。</summary>
@@ -66,11 +65,11 @@ public class ErrorGoldenTests
     }
 
     /// <summary>
-    /// 栈：缺省不打印（与 Clojure 的 REPL / clojure.main 相同）；CLEAT_TRACE_ERRORS=clojure 打印过滤过的栈——没有 Cleat.Scheme.* 与
-    /// Scheme 生成的代码（_Module$…）的帧，留下 Clojure 函数类的帧；CLEAT_TRACE_ERRORS=1 打印完整的 CLR 异常（含 Cleat.Scheme 的帧）。
+    /// 栈：缺省不打印（与 Clojure 的 REPL / clojure.main 相同）；CLEAT_TRACE_ERRORS=clojure 打印过滤过的栈——没有编译器与驱动
+    /// （cleat.compiler.*、DriverOps）、单元入口（#Module$）与反射调用的帧，留下 Clojure 函数类的帧；CLEAT_TRACE_ERRORS=1 打印完整的 CLR 异常。
     /// </summary>
     [Test]
-    public void StackTracesHideSchemeFramesUnlessAskedFor()
+    public void StackTracesHideCompilerFramesUnlessAskedFor()
     {
         string dir = Path.Combine(ErrorsDir, "runtime", "divide-by-zero-in-fn");
         var plain = HostProcessTests.CleatIn(dir, null, null, "input.clj");
@@ -79,11 +78,11 @@ public class ErrorGoldenTests
         var filtered = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "clojure") }, "input.clj");
         Assert.That(filtered.Err, Does.StartWith("Execution error (ArithmeticException) at (input.clj:3).\nDivide by zero\nSystem.ArithmeticException: Divide by zero\n"), filtered.ToString());
         Assert.That(filtered.Err, Does.Contain("   at user$f.invoke"), "the Clojure fn frame stays: " + filtered);
-        Assert.That(filtered.Err, Does.Not.Contain("Cleat.Scheme"), filtered.ToString());
-        Assert.That(filtered.Err, Does.Not.Contain("_Module$"), filtered.ToString());
+        Assert.That(filtered.Err, Does.Not.Contain("cleat.compiler."), filtered.ToString());
+        Assert.That(filtered.Err, Does.Not.Contain("#Module$"), filtered.ToString());
 
         var full = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "1") }, "input.clj");
-        // 全部的帧：Scheme 驱动的（Cleat.Scheme.）或 Clojure 驱动的（cleat.compiler.，CLEAT_COMPILER=clojure，cleat-090）
-        Assert.That(full.Err, Does.Contain("Cleat.Scheme.").Or.Contain("cleat.compiler."), "CLEAT_TRACE_ERRORS=1 shows everything: " + full);
+        // 全部的帧，含驱动的（cleat.compiler.driver，cleat-090）
+        Assert.That(full.Err, Does.Contain("cleat.compiler."), "CLEAT_TRACE_ERRORS=1 shows everything: " + full);
     }
 }

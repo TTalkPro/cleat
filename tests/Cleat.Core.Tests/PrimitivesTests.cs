@@ -1,4 +1,3 @@
-using System.IO;
 using System.Linq;
 using Cleat.Core.Runtime;
 using clojure.lang;
@@ -6,7 +5,7 @@ using NUnit.Framework;
 
 namespace Cleat.Core.Tests;
 
-// cleat-011：原语表、primitives.edn、cleat.kernel 绑定
+// cleat-011：原语表、cleat.kernel 绑定
 public class PrimitivesTests
 {
     [Test]
@@ -14,18 +13,6 @@ public class PrimitivesTests
     {
         foreach (var e in Primitives.Table) Assert.That(e.MethodInfo.IsStatic, Is.True, e.ToString());
         Assert.That(Primitives.Table.Select(e => e.ToString()).Distinct().Count(), Is.EqualTo(Primitives.Table.Count), "no duplicate entries");
-    }
-
-    [Test]
-    public void EdnIsDeterministicAndMatchesTheCommittedFile()
-    {
-        var text = Primitives.ToEdn();
-        Assert.That(text, Is.EqualTo(Primitives.ToEdn()));
-        Assert.That(text, Does.Contain("cleat.kernel/first [{:target :clr :type \"clojure.lang.RT\" :method \"first\" :params [\"System.Object\"] :ret \"System.Object\" :flags #{:inline}}]"));
-        Assert.That(text, Does.Contain("cleat.kernel/add [{:target :clr :type \"clojure.lang.Numbers\" :method \"add\" :params [\"System.Object\" \"System.Object\"] :ret \"System.Object\" :flags #{:pure :inline}}]"));
-        string committed = Path.Combine(FindRoot(), "src", "boot", "primitives.edn");
-        Assert.That(File.Exists(committed), Is.True, "run the build (Cleat.PrimGen) to generate src/boot/primitives.edn");
-        Assert.That(File.ReadAllText(committed), Is.EqualTo(text), "src/boot/primitives.edn is stale: rebuild Cleat.PrimGen");
     }
 
     [Test]
@@ -45,10 +32,4 @@ public class PrimitivesTests
         Assert.That(Primitives.Find(typeof(RT), "first", new[] { typeof(object) }).Inline, Is.True);
     }
 
-    private static string FindRoot()
-    {
-        for (var d = new DirectoryInfo(TestContext.CurrentContext.TestDirectory); d != null; d = d.Parent)
-            if (File.Exists(Path.Combine(d.FullName, "Cleat.slnx"))) return d.FullName;
-        return Directory.GetCurrentDirectory();
-    }
 }

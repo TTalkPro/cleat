@@ -10,8 +10,8 @@ namespace Cleat.Core.Compiler;
 /// <summary>
 /// 展开期的宿主类型规则（cleat-050），供 <c>(clojure syntax)</c> 调用：类型名 / 类型提示的决议与 deftype* / reify* 的接口方法匹配。
 /// 规则与错误信息逐条照 C# 展开器（Cleat.Core.Expand.Expander 的 MaybeType / TagType / MaybeArrayType / GatherMethods /
-/// ParseTypeMethod，cleat-013/014）；那里是私有方法，这里是 Scheme 侧可调用的静态入口。
-/// 返回值只有 Type、字符串、布尔与 object[]（经 Scheme 互操作不变形）；错误以字符串返回，由调用方报语法错误。
+/// ParseTypeMethod，cleat-013/014）；那里是私有方法，这里是分析器可调用的静态入口。
+/// 返回值只有 Type、字符串、布尔与 object[]；错误以字符串返回，由调用方报语法错误。
 /// </summary>
 public static partial class HostSyntax
 {

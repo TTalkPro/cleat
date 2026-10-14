@@ -65,14 +65,6 @@ src/boot/*.pdb
 **/*.clj.dll
 artifacts/
 
-# Scheme meta-layer (cleat-046): generated boot image lives in src/boot/ (above); never leave one beside the sources
-src/scheme/boot/*.dll
-src/scheme/boot/*.lcil
-src/scheme/boot/*.pdb
-tests/scheme/compiler/snapshots/*.actual
-# cleat-052：宿主用的预编译 Scheme 库（Cleat.Host 的 GenerateClojureHostLibraries）
-src/boot/cleat.scheme.clojure/
-
 # nREPL port files (nrepl.cmdline writes one in its working directory; the package tests run there)
 .nrepl-port
 

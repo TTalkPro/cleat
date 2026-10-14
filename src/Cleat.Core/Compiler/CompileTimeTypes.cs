@@ -4,8 +4,8 @@ using System.Collections.Concurrent;
 namespace Cleat.Core.Compiler;
 
 /// <summary>
-/// 编译期生成、尚未保存的类型（deftype* 的桩与本进程定义的类型）按全名登记，类型名决议先查这里（cleat-082：原在 Scheme 的
-/// TypeResolver 里，搬进 Cleat.Core 后 Clojure 前端与 Scheme 的解析器共用一张表）。
+/// 编译期生成、尚未保存的类型（deftype* 的桩与本进程定义的类型）按全名登记，类型名决议先查这里（cleat-082 从元层的
+/// TypeResolver 搬进 Cleat.Core）。
 /// </summary>
 public static class CompileTimeTypes
 {

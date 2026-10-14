@@ -13,7 +13,7 @@ public sealed class LcilAssembly
     public string Name;
     public List<string> References = new List<string>();
     public string EntryType, EntryMethod;
-    /// <summary>(runtime scheme|clojure)：互操作指令与常量编码按哪个运行时解释（LCIL.md §2）；方法可单独覆盖。缺省 clojure。</summary>
+    /// <summary>(runtime clojure)：互操作指令与常量编码按哪个运行时解释（LCIL.md §2）；cleat-093 起只有 clojure（Scheme 运行时随元层删除）。</summary>
     public string Runtime = LcilRuntime.Clojure;
     /// <summary>(attribute "T" "字符串参数" …)：程序集级自定义属性。</summary>
     public List<(string Type, List<string> Args)> Attributes = new List<(string, List<string>)>();
@@ -30,11 +30,11 @@ public sealed class LcilAssembly
     public string File;
 }
 
-/// <summary>Lcil 方法 / 常量表所属的运行时（互操作决议与值表示的规则，designs/15 §1）。</summary>
+/// <summary>Lcil 方法 / 常量表所属的运行时（互操作决议与值表示的规则）。cleat-093 起只有 clojure；子句保留，便于将来再加运行时。</summary>
 public static class LcilRuntime
 {
-    public const string Clojure = "clojure", Scheme = "scheme";
-    public static readonly string[] All = { Clojure, Scheme };
+    public const string Clojure = "clojure";
+    public static readonly string[] All = { Clojure };
 }
 
 public sealed class LcilType
@@ -66,7 +66,7 @@ public sealed class LcilMethod
     public List<string> Namespaces = new List<string>();
     /// <summary>(implements "I" "名字")：显式实现接口 I 的方法（DefineMethodOverride）；此时本方法可以是 private。</summary>
     public string ImplementsType, ImplementsName;
-    /// <summary>(runtime scheme|clojure)：本方法互操作指令的运行时；null 时沿用程序集的。</summary>
+    /// <summary>(runtime clojure)：本方法互操作指令的运行时；null 时沿用程序集的。</summary>
     public string Runtime;
     public List<Instr> Body = new List<Instr>();
     public SNode Pos;

@@ -9,7 +9,7 @@ using NUnit.Framework;
 namespace Cleat.Host.Tests;
 
 /// <summary>
-/// cleat-052：宿主的进程级测试。每个测试在自己的临时目录里以子进程运行 <c>dotnet cleat.dll …</c>（工作区的 Scheme 镜像由宿主自动找到），
+/// cleat-052：宿主的进程级测试。每个测试在自己的临时目录里以子进程运行 <c>dotnet cleat.dll …</c>（工作区的镜像与编译器包由宿主自动找到），
 /// 测试原写于 clojure.core 之前（只用特殊形式、def、fn*、互操作与 cleat.kernel 原语）；cleat-053 起宿主自动加载 Clojure 镜像
 /// src/boot/cleat.boot.dll，打印走 print-method，REPL 照 clojure.main 做 repl-requires。
 /// </summary>
@@ -178,7 +178,7 @@ public class HostProcessTests
         Assert.That(first.Out, Is.EqualTo("user=> "));
         // 第二次计时（第一次有磁盘缓存的影响）
         var r = CleatIn(_dir, ":repl/quit\n", new[] { ("CLEAT_TIME", "1") });
-        Assert.That(r.Err, Does.Match(@"cleat: Scheme image \d+ ms, driver libraries \((fasl|clojure)\) \d+ ms"), "the precompiled driver libraries (or the Clojure compiler's package) should be used: " + r);
+        Assert.That(r.Err, Does.Match(@"cleat: Clojure image \d+ ms, compiler \(package\) \d+ ms"), "the compiler's package assembly should be used: " + r);
         TestContext.Out.WriteLine($"startup to first prompt and exit: {r.Elapsed.TotalMilliseconds:F0} ms ({r.Err.Trim()})");
     }
 
@@ -307,24 +307,20 @@ public class HostProcessTests
     [Test]
     public void PackageCompiledAgainstAnotherClojureImageIsRejected()
     {
-        // 两个最小的包程序集充当两个不同的 Clojure 镜像（--boot 加载的是任何 Cleat 模块；镜像 id 为其 MVID）
-        Write("img/image_a.clj", "(def image :a)\n");
+        // 另一个"镜像"：任何 Cleat 模块的 MVID 都可以当镜像 id（--target-image，cleat-091 自举时给下一级镜像编包用）；
+        // 包程序集的入口核对正在运行的镜像的 id
         Write("img/image_b.clj", "(def image :b)\n");
-        var images = Cleat(null, "-I", "img", "-e", CompileExpr("image_a"), "-e", CompileExpr("image_b"));
+        var images = Cleat(null, "-I", "img", "-e", CompileExpr("image_b"));
         Assert.That(images.ExitCode, Is.EqualTo(0), images.ToString());
-        string a = Path.Combine(_dir, "img", "image_a.dll"), b = Path.Combine(_dir, "img", "image_b.dll");
+        string b = Path.Combine(_dir, "img", "image_b.dll");
 
         Write("lp/my/lib.clj", Lib);
-        var c = Cleat(null, "--boot", a, "-I", "lp", "-e", CompileExpr("my/lib"));
+        var c = Cleat(null, "-I", "lp", "--compile-package", Path.Combine(_dir, "lp", "my.lib.dll"), "--package", "my.lib",
+            "--root", Path.Combine(_dir, "lp"), "--target-image", b, "my.lib");
         Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
 
-        var same = Cleat(null, "--boot", a, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")", "-e", AssemblyOfAdd2);
-        Assert.That(same.ExitCode, Is.EqualTo(0), same.ToString());
-        Assert.That(same.Out, Is.EqualTo("loading my.lib\n\"my.lib\"\n"));
-        Assert.That(same.Err, Is.Empty);
-
         // cleat-067：不再回退源码（开发时一律从源码加载，包程序集只在构建时产生），报错让人重编
-        var other = Cleat(null, "--boot", b, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")");
+        var other = Cleat(null, "-I", "lp", "-e", "(clojure.lang.RT/load \"my/lib\")");
         Assert.That(other.ExitCode, Is.Not.EqualTo(0), other.ToString());
         Assert.That(other.Err, Does.Contain("module was compiled against boot image"));
         Assert.That(other.Err, Does.Contain("recompile"));
@@ -368,7 +364,7 @@ public class HostProcessTests
         Assert.That(p.ExitCode, Is.EqualTo(0), output);
         Assert.That(File.Exists(Path.Combine(outDir, "cleat")) || File.Exists(Path.Combine(outDir, "cleat.exe")), Is.True, output);
         Assert.That(File.Exists(Path.Combine(outDir, "cleat.boot.dll")), Is.True, "Clojure 镜像随发布");
-        Assert.That(File.Exists(Path.Combine(outDir, "cleat.scheme.boot.dll")), Is.True, "Scheme 镜像随发布");
+        Assert.That(File.Exists(Path.Combine(outDir, "cleat.compiler.dll")), Is.True, "编译器包随发布");
         Assert.That(File.Exists(Path.Combine(outDir, "Cleat.Clojure.Libs.dll")), Is.True, "随附库的包程序集随发布");
         string cleat = Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat");
         var r = CleatIn(outDir, null, null, "-e", "(+ 1 2)", "-e", "(require 'clojure.test.tap)", "-e", ":published-ok");
@@ -422,13 +418,14 @@ public class HostProcessTests
     [Test]
     public void SimpleFormsAreNotCompiled()
     {
-        var r = Cleat(null, "-e", "(def a 1) (def b [a 2]) (cleat.kernel/add a 1) (. \"x\" Length) (let* [k :k] (k {:k 1}))",
-            "-e", "[(. Cleat.Scheme.Clojure.Driver SimpleCount) (. Cleat.Scheme.Clojure.Driver CompiledCount)]",
+        var r = Cleat(null, "-e", "(set! (. Cleat.Core.Compiler.DriverOps SimpleCount) 0) (set! (. Cleat.Core.Compiler.DriverOps CompiledCount) 0)",
+            "-e", "(def a 1) (def b [a 2]) (cleat.kernel/add a 1) (. \"x\" Length) (let* [k :k] (k {:k 1}))",
+            "-e", "[(. Cleat.Core.Compiler.DriverOps SimpleCount) (. Cleat.Core.Compiler.DriverOps CompiledCount)]",
             "-e", "((fn* [] 1))",
-            "-e", "(. Cleat.Scheme.Clojure.Driver CompiledCount)");
+            "-e", "(. Cleat.Core.Compiler.DriverOps CompiledCount)");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         var lines = r.Out.TrimEnd('\n').Split('\n');
-        Assert.That(lines[^3], Is.EqualTo("[6 0]"), "five simple forms (plus the vector itself) and nothing compiled: " + r);
+        Assert.That(lines[^3], Is.EqualTo("[7 0]"), "the two set! and five simple forms (plus the vector itself) and nothing compiled: " + r);
         Assert.That(lines[^1], Is.EqualTo("1"));
     }
 }

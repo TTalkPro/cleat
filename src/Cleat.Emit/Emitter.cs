@@ -28,8 +28,6 @@ public enum EmitMode
 public sealed partial class LcilEmitter
 {
     public const string CoreAssemblyName = "Cleat.Core";
-    /// <summary>Scheme 元层运行时（designs/15 §1）：(runtime scheme) 的互操作、常量表的 fasl 读回都在这里。</summary>
-    public const string SchemeAssemblyName = "Cleat.Scheme";
 
     /// <summary>额外的程序集查找目录（命令行 -r）；默认含发射器所在目录。</summary>
     public static readonly List<string> ProbeDirectories = new List<string> { AppContext.BaseDirectory };
@@ -55,15 +53,14 @@ public sealed partial class LcilEmitter
 
     public static Assembly EmitInMemory(LcilAssembly a) => EmitInMemory(a, null);
 
-    /// <summary>eval 的快速路径：直接发射编译器产出的 Lcil S 表达式（Scheme 或 Clojure 数据），不经文本（iron-033）。</summary>
+    /// <summary>eval 的快速路径：直接发射编译器产出的 Lcil S 表达式（Clojure 数据），不经文本（iron-033）。</summary>
     public static Assembly EmitInMemoryData(object lcil, string file, object[] constants) =>
       EmitInMemory(LcilParser.FromTree(DataToTree(lcil, file), file), constants);
 
-    /// <summary>编译器产出的 Lcil 数据 → SNode 树：按顶层对象所属的程序集选 Scheme（Cons / Symbol）或 Clojure（ISeq / Symbol）的转换。</summary>
+    /// <summary>编译器产出的 Lcil 数据（ISeq / Symbol / 字符串 / 数）→ SNode 树。</summary>
     private static SList DataToTree(object lcil, string file)
     {
-        var asm = lcil?.GetType().Assembly;
-        var tree = asm != null && asm.GetName().Name == SchemeAssemblyName ? SchemeData.Convert(lcil, asm) : ClojureData.Convert(lcil, LoadReference(CoreAssemblyName));
+        var tree = ClojureData.Convert(lcil, LoadReference(CoreAssemblyName));
         if (!(tree is SList top) || top.Head != "lcil") throw new LcilException($"{file}: expected a (lcil 1 ...) form");
         return top;
     }
@@ -139,12 +136,8 @@ public sealed partial class LcilEmitter
         _asm = asm;
         _module = module;
         _debug = debug;
-        // Cleat.Core 是隐含引用（CleatModule 属性、Clojure 互操作、常量表都要它）；Cleat.Scheme 只在 (runtime scheme) 的单元里是
-        // （Scheme 互操作、编码的常量表由它的 Fasl 读回；cleat-092 起 clojure 单元的常量表由 Cleat.Core 读回）
-        var implicitRefs = new List<string> { CoreAssemblyName };
-        if (asm.Runtime == LcilRuntime.Scheme || asm.Types.Any(t => t.Methods.Any(m => m.Runtime == LcilRuntime.Scheme)))
-            implicitRefs.Add(SchemeAssemblyName);
-        foreach (var r in implicitRefs.Concat(asm.References).Distinct()) _references.Add(LoadReference(r));
+        // Cleat.Core 是隐含引用（CleatModule 属性、Clojure 互操作、常量表都要它）
+        foreach (var r in new[] { CoreAssemblyName }.Concat(asm.References).Distinct()) _references.Add(LoadReference(r));
         // 互操作类型名在已加载程序集中查找：被引用程序集的依赖也要加载
         // 每个程序集只处理一次：eval 与 compile-library 每次都新建发射器，重复 Assembly.Load 是热点（iron-033）
         foreach (var a in _references.ToList())
@@ -177,9 +170,6 @@ public sealed partial class LcilEmitter
         var core = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(x => x.GetName().Name == CoreAssemblyName);
         if (core?.GetType("Cleat.Core.Runtime.Loader")?.GetProperty("LoadPath")?.GetValue(null) is IEnumerable<string> paths)
             foreach (var p in paths) yield return p;
-        var scheme = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(x => x.GetName().Name == SchemeAssemblyName);
-        if (scheme?.GetType("Cleat.Scheme.Builtins")?.GetProperty("IncludePaths")?.GetValue(null) is IEnumerable<string> includes)
-            foreach (var p in includes) yield return p;
         yield return AppContext.BaseDirectory;
     }
 
@@ -218,7 +208,7 @@ public sealed partial class LcilEmitter
                 var u = a.GetType(name);
                 if (u != null && (u.IsPublic || u.IsNestedPublic)) { t = u; break; }
             }
-        // 还没加载的框架程序集（cleat-092：生成的代码不再引用 Cleat.Scheme，它的依赖不会顺带把 System.Diagnostics.Process 等带进来；
+        // 还没加载的框架程序集（cleat-092：生成的代码只引用 Cleat.Core，System.Diagnostics.Process 等不会被依赖顺带带进来；
         // 独立运行的 cleat-emit 发射种子时按命名空间前缀在受信平台程序集里找：System.Diagnostics.ProcessStartInfo → System.Diagnostics.Process.dll 等）
         t ??= FrameworkType(name);
         if (t == null) throw Err(pos, "type not found: " + name);

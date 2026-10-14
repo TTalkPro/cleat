@@ -1,5 +1,5 @@
-;; 编译器的中间语言（cleat-083）：src/scheme/lib/cleat/scheme/compiler/languages.sls 的 L0 ~ L3 逐字移植到 cleat.nanopass。
-;; 阶段 A ~ C 与 Scheme 版形状相同（designs/19 §1"先忠实，后清理"），差分门控 G1 按 unparse 比较；Scheme 专用的节点在 cleat-092 按普查裁掉。
+;; 编译器的中间语言（cleat-083）：原版 languages.sls（"原版"指 cleat-093 前仓库里的 Scheme 实现 src/scheme，已删除，见 git 历史） 的 L0 ~ L3 逐字移植到 cleat.nanopass。
+;; 阶段 A ~ C 与原版形状相同（designs/19 §1"先忠实，后清理"），差分门控 G1 按 unparse 比较；原版专用的节点在 cleat-092 按普查裁掉。
 ;;
 ;;   L0  前端的输出：固定文法，符号已分为词法变量 x、全局位置 (gref s)、库变量 (mref x)、原语 pr。
 ;;       let 与 label / jump 由 lower-loops 产生
@@ -7,7 +7,7 @@
 ;;   L2  convert-assignments 之后：被捕获且被赋值的词法变量改为 Box（box / unbox / set-box!）
 ;;   L3  uncover-free 之后：lambda 带自由变量表
 ;;
-;; 应用一律带关键字 call（不带关键字的产生式会吞掉同形的形式，03 §9）。各节点的含义见 Scheme 版的注释。
+;; 应用一律带关键字 call（不带关键字的产生式会吞掉同形的形式，03 §9）。各节点的含义见 原版的注释。
 (ns cleat.compiler.languages
   (:require [cleat.nanopass :refer [define-language]]))
 

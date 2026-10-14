@@ -1,5 +1,5 @@
-;; cleat.compiler.languages 的验收（cleat-083）：语言定义的特性。原来还把 Scheme 编译器的快照读进来做往返比较，
-;; cleat-092 去掉 Scheme 专有的节点之后快照不再能解析，该测试删去（快照随 Scheme 在 cleat-093 删除）。
+;; cleat.compiler.languages 的验收（cleat-083）：语言定义的特性。原来还把原版（Scheme 实现，cleat-093 删）编译器的快照读进来做往返比较，
+;; cleat-092 去掉原版专有的节点之后快照不再能解析，该测试删去。
 (ns cleat.compiler.languages-test
   (:require [clojure.test :refer [deftest is testing]]
             [cleat.nanopass :as np]

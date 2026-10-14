@@ -25,7 +25,7 @@ public class FaslEncoderTests
         Assert.That(a, Is.EqualTo(b));
         Assert.That(a[..6], Is.EqualTo(FaslEncoder.Magic));
         Assert.That(a[6], Is.EqualTo(FaslEncoder.Version));
-        Assert.That(a[7], Is.EqualTo(FaslEncoder.Vec));
+        Assert.That(a[7], Is.EqualTo(FaslEncoder.Table));
         Assert.That(a[8], Is.EqualTo(29), "table length");
     }
 

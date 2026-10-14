@@ -9,8 +9,7 @@ namespace Cleat.Core.Runtime;
 /// <summary>
 /// 编译后的 Clojure 代码直接调用的运行时操作（编译器的 <c>clj-call</c> 节点：参数与返回都是 object，尾部实参可打包成 object[]），
 /// 以及 deftype* / proxy / gen-class / async 生成代码的辅助方法。规则与 C# 展开器（cleat-013/014）给编译器的 Lcore 节点相同：
-/// 调用 = IFn.invoke，Var 读 = getRawRoot / get，宿主互操作 = Reflector。cleat-082 从 Cleat.Scheme 搬来；展开期用的 Scheme 过程
-/// 留在 Cleat.Scheme.Clojure.ExpandOps。
+/// 调用 = IFn.invoke，Var 读 = getRawRoot / get，宿主互操作 = Reflector。cleat-082 从元层搬来。
 /// </summary>
 public static class ClojureOps
 {
@@ -41,7 +40,7 @@ public static class ClojureOps
       instance ?? throw new NullReferenceException($"Cannot invoke member {name} on nil");
 
     // —— 编译后代码直接调用的静态方法（cleat-051 的 $clj-call 节点：参数与返回都是 object，尾部实参可打包成 object[]）——
-    // 与上面同名操作的过程语义相同；编译器生成 call ClojureOps::方法，不经 Scheme 过程，也不经 Scheme 互操作的转换。
+    // 与上面同名操作的过程语义相同；编译器生成 call ClojureOps::方法。
 
     public static object VectorOf(object[] items) => clojure.lang.RT.vector(items);
     public static object MapOf(object[] kvs) => clojure.lang.RT.map(kvs);
@@ -50,7 +49,7 @@ public static class ClojureOps
 
     /// <summary>
     /// simplify-letrec 的前向变量（letrec 里在定义之前就可能被读到的变量）：初值是这个标记，读时经 <see cref="CheckInitialized"/>
-    /// 核对（cleat-092；原来是 Cleat.Scheme.Calls 的 UninitializedValue / CheckInitialized）。
+    /// 核对（cleat-092）。
     /// </summary>
     public static readonly object Uninitialized = new UninitializedMarker();
 
@@ -108,9 +107,9 @@ public static class ClojureOps
     }
 
     // —— 编译路径的求值结果（cleat-055 值边界）——
-    // 镜像的 compile-core 返回的 thunk 是 (lambda () (clr-static-call ModuleLoader Run asm))：Scheme 互操作把返回值按 Scheme 规范化
+    // 编译执行的形式的值不经宿主调用的返回值转换（Int32 会被换成 long）
     // （long → fixnum Int32 等），Clojure 的顶层值经过它就变了。驱动把 Lcore 包成 ($clj-call 'HoldResult #f 核心)：值在编译后的代码里
-    // 直接存进线程槽（不经 Scheme 互操作），thunk 返回 nil，再由过程 TakeResult 原样取出。
+    // 直接存进线程槽，再由 DriverOps.TakeResult 原样取出。
 
     [ThreadStatic] private static object t_result;
 
@@ -120,7 +119,7 @@ public static class ClojureOps
         return null;
     }
 
-    /// <summary>取出并清空 HoldResult 存的值（Scheme 侧的过程 TakeResult 调它）。</summary>
+    /// <summary>取出并清空 HoldResult 存的值（DriverOps.TakeResult 调它）。</summary>
     public static object TakeHeldResult()
     {
         object r = t_result;

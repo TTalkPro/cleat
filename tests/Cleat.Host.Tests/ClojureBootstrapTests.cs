@@ -1,69 +1,48 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using NUnit.Framework;
 
 namespace Cleat.Host.Tests;
 
 /// <summary>
-/// Clojure 镜像的自举不动点（cleat-053，designs/08 §3 第二段、§7）：
-///   A：宿主不加载 Clojure 镜像（--no-boot），从 src/clojure 源码按 boot-order.edn 加载并编译 → A/cleat.boot.dll；
-///   B：宿主加载 A，再从源码编译一遍 → B；C：加载 B 编译 → C。
-/// 判据：B 与 C 的 Lcil 文本一致、dll 逐字节一致（A 不同：它展开 core.clj 时用的是 RT 的引导 ns 宏等，B / C 用镜像里的）；
-/// C 能运行冒烟集；ILVerify（装了的话）通过。每段约 20 秒。
+/// Clojure 编译器的自举不动点（cleat-091，designs/08 §0、19 D7 / G4）：tools/build.cs selfhost 从 src/boot 的镜像与编译器包（stage1）
+/// 出发自举两级，stage2 与 stage3 的镜像与编译器包逐字节相同（改名的工具编译器在上一级镜像上编出、以这一级镜像为目标）。
+/// stage3 能运行冒烟集；ILVerify（装了的话）通过；dotnet build 从种子发射的 stage1 与 src/boot 相同。每级约 70 秒。
 /// </summary>
 [Category("Bootstrap")]
 [NonParallelizable]
 public class ClojureBootstrapTests
 {
     private static readonly string s_root = Path.Combine(Path.GetTempPath(), "cleat-clojure-bootstrap");
-    private static string Dir(string stage) => Path.Combine(s_root, stage);
-    private static string Dll(string stage) => Path.Combine(Dir(stage), "cleat.boot.dll");
-    private static string Lcil(string stage) => Path.Combine(Dir(stage), "cleat.boot.lcil");
-    private static string Src => Path.Combine(HostProcessTests.RepoDir, "src", "clojure");
-    private static string BootOrder => Path.Combine(HostProcessTests.RepoDir, "src", "boot", "boot-order.edn");
-
-    private static void Build(string stage, string from)
-    {
-        if (from != null && !File.Exists(Dll(from))) Assert.Ignore($"stage {from} not built");
-        Directory.CreateDirectory(Dir(stage));
-        var args = (from == null ? new[] { "--no-boot" } : new[] { "--boot", Dll(from) })
-            .Concat(new[] { "-I", Src, "--compile-boot", Dll(stage), "--boot-order", BootOrder }).ToArray();
-        var sw = Stopwatch.StartNew();
-        var r = HostProcessTests.CleatIn(Dir(stage), null, null, args);
-        TestContext.Out.WriteLine($"stage {stage}{(from == null ? " (from source)" : " (on " + from + ")")}: {sw.Elapsed.TotalSeconds:F1} s\n{r.Err}");
-        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        Assert.That(File.Exists(Dll(stage)) && File.Exists(Lcil(stage)) && File.Exists(Path.ChangeExtension(Dll(stage), ".ifc")), Is.True, r.ToString());
-    }
+    private static string Stage3 => Path.Combine(s_root, "stage3");
+    private static string Dll => Path.Combine(Stage3, "cleat.boot.dll");
 
     [Test, Order(1)]
-    public void StageA_FromSource() => Build("A", null);
-
-    [Test, Order(2)]
-    public void StageB_OnA() => Build("B", "A");
-
-    [Test, Order(3)]
-    public void StageC_OnB() => Build("C", "B");
-
-    [Test, Order(4)]
-    public void Fixpoint()
+    public void SelfhostReachesAFixedPoint()
     {
-        if (!File.Exists(Dll("C"))) Assert.Ignore("stage C not built");
-        Assert.That(File.ReadAllText(Lcil("C")), Is.EqualTo(File.ReadAllText(Lcil("B"))), "B / C Lcil");
-        Assert.That(File.ReadAllBytes(Dll("C")), Is.EqualTo(File.ReadAllBytes(Dll("B"))), "B / C dll");
-        foreach (var s in new[] { "A", "C" })
-            TestContext.Out.WriteLine($"sha256 {Sha(Dll(s))}  {s}/cleat.boot.dll ({new FileInfo(Dll(s)).Length} bytes); lcil {Sha(Lcil(s))}");
+        var psi = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
+            WorkingDirectory = HostProcessTests.RepoDir,
+        };
+        foreach (var a in new[] { "run", "tools/build.cs", "--", "selfhost", s_root }) psi.ArgumentList.Add(a);
+        var sw = Stopwatch.StartNew();
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException("cannot start dotnet");
+        string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        TestContext.Out.WriteLine($"selfhost: {sw.Elapsed.TotalSeconds:F0} s\n{output}");
+        Assert.That(p.ExitCode, Is.EqualTo(0), output);
+        Assert.That(output, Does.Contain("selfhost: fixed point"), output);
+        Assert.That(File.Exists(Dll) && File.Exists(Path.Combine(Stage3, "cleat.compiler.dll")), Is.True, output);
     }
 
-    private static string Sha(string path) => Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
-
-    /// <summary>C 是能用的镜像：新进程只加载它（不碰源码）跑冒烟集。</summary>
-    [Test, Order(5)]
-    public void StageC_Runs()
+    /// <summary>stage3 是能用的镜像：新进程只加载它与它旁边的编译器包（不碰 src/boot）跑冒烟集。</summary>
+    [Test, Order(2)]
+    public void Stage3Runs()
     {
-        if (!File.Exists(Dll("C"))) Assert.Ignore("stage C not built");
-        var r = HostProcessTests.CleatIn(Dir("C"), null, null, "--boot", Dll("C"), "-e",
+        if (!File.Exists(Dll)) Assert.Ignore("stage3 not built");
+        var r = HostProcessTests.CleatIn(Stage3, null, null, "--boot", Dll, "-e",
             "[(reduce + (range 100)) (str \"a\" 1) (pr-str {:a [1 2]}) (format \"%d\" 3) (sort-by - [1 3 2])]",
             "-e", "(defrecord P [x y]) (:y (->P 1 2))",
             "-e", "(defprotocol Q (q [this])) (extend-type String Q (q [s] (count s))) (q \"abc\")",
@@ -75,24 +54,10 @@ public class ClojureBootstrapTests
         Assert.That(r.Out, Does.EndWith("\"A\"\n"), r.ToString());
     }
 
-    /// <summary>
-    /// cleat-091（designs/08 §0）：dotnet build 从种子发射 stage1，再由它编出 src/boot 的镜像与编译器包；种子是不动点，所以两者与
-    /// stage1 逐字节相同（改了 Clojure 源码或编译器而没有重生成种子时不同：tools/build.cs clojure-seed）。
-    /// </summary>
-    [Test, Order(7)]
-    public void BuildFromTheSeedReproducesTheSeed()
-    {
-        string stage1 = Path.Combine(HostProcessTests.RepoDir, "src", "Cleat.Host", "obj", "seed-stage1");
-        if (!File.Exists(Path.Combine(stage1, "cleat.compiler.dll"))) Assert.Ignore("stage1 not emitted (dotnet build -p:BuildBootImage=false?)");
-        foreach (var dll in new[] { "cleat.boot.dll", "cleat.compiler.dll" })
-            Assert.That(File.ReadAllBytes(Path.Combine(HostProcessTests.RepoDir, "src", "boot", dll)),
-                        Is.EqualTo(File.ReadAllBytes(Path.Combine(stage1, dll))), dll + ": src/boot vs the seed's stage1");
-    }
-
-    [Test, Order(6)]
+    [Test, Order(3)]
     public void Verify()
     {
-        if (!File.Exists(Dll("C"))) Assert.Ignore("stage C not built");
+        if (!File.Exists(Dll)) Assert.Ignore("stage3 not built");
         var tool = Environment.GetEnvironmentVariable("ILVERIFY")
           ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "tools",
                           OperatingSystem.IsWindows() ? "ilverify.exe" : "ilverify");
@@ -101,15 +66,27 @@ public class ClojureBootstrapTests
         var psi = new ProcessStartInfo(tool) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         foreach (var a in new[]
                  {
-                     Dll("C"), "-r", Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location), "*.dll"),
-                     "-r", Path.Combine(hostDir, "Cleat.Core.dll"), "-r", Path.Combine(hostDir, "Cleat.Scheme.dll"),
-                     "-r", Path.Combine(hostDir, "cleat-emit.dll"),
-                     "-r", Path.Combine(HostProcessTests.RepoDir, "src", "boot", "cleat.scheme.boot.dll"),
+                     Dll, "-r", Path.Combine(Path.GetDirectoryName(typeof(object).Assembly.Location), "*.dll"),
+                     "-r", Path.Combine(hostDir, "Cleat.Core.dll"), "-r", Path.Combine(hostDir, "cleat-emit.dll"),
                  })
             psi.ArgumentList.Add(a);
         using var p = Process.Start(psi);
         string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
         p.WaitForExit();
-        Assert.That(output, Does.Contain($"All Classes and Methods in {Dll("C")} Verified."), output);
+        Assert.That(output, Does.Contain($"All Classes and Methods in {Dll} Verified."), output);
+    }
+
+    /// <summary>
+    /// cleat-091（designs/08 §0）：dotnet build 从种子发射 stage1，再由它编出 src/boot 的镜像与编译器包；种子是不动点，所以两者与
+    /// stage1 逐字节相同（改了 Clojure 源码或编译器而没有重生成种子时不同：tools/build.cs clojure-seed）。
+    /// </summary>
+    [Test, Order(4)]
+    public void BuildFromTheSeedReproducesTheSeed()
+    {
+        string stage1 = Path.Combine(HostProcessTests.RepoDir, "src", "Cleat.Host", "obj", "seed-stage1");
+        if (!File.Exists(Path.Combine(stage1, "cleat.compiler.dll"))) Assert.Ignore("stage1 not emitted (dotnet build -p:BuildBootImage=false?)");
+        foreach (var dll in new[] { "cleat.boot.dll", "cleat.compiler.dll" })
+            Assert.That(File.ReadAllBytes(Path.Combine(HostProcessTests.RepoDir, "src", "boot", dll)),
+                        Is.EqualTo(File.ReadAllBytes(Path.Combine(stage1, dll))), dll + ": src/boot vs the seed's stage1");
     }
 }

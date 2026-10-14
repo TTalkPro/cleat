@@ -7,14 +7,14 @@ namespace Cleat.Core.Compiler;
 
 /// <summary>
 /// 原样取出数据的元素（cleat-089）：Clojure 代码里宿主调用与字段读取的返回值经 RetObject，Int32 会被换成 long；常量编码要区分
-/// Scheme 的 fixnum（Int32，如读入器给元数据的行号）与 Clojure 的 long，所以经这些 IFn 取元素（IFn 调用的结果不转换）。
+/// Int32（如读入器给元数据的行号）与 Clojure 的 long，所以经这些 IFn 取元素（IFn 调用的结果不转换）。
 /// </summary>
 public static class RawData
 {
-    /// <summary>(items x) → 元素的向量：Clojure 集合按 seq 顺序（map 为 [k v k v …]），其余 IEnumerable（Scheme 的正规表）逐个。</summary>
+    /// <summary>(items x) → 元素的向量：Clojure 集合按 seq 顺序（map 为 [k v k v …]），其余 IEnumerable 逐个。</summary>
     public static readonly IFn Items = new ItemsFn();
 
-    /// <summary>(field obj "名字") → 公开实例字段的值（Scheme 的 Cons 的 car / cdr）。</summary>
+    /// <summary>(field obj "名字") → 公开实例字段的值。</summary>
     public static readonly IFn Field = new FieldFn();
 
     private sealed class ItemsFn : AFn

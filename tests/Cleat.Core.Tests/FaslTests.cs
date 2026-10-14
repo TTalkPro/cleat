@@ -1,13 +1,13 @@
 using System;
 using System.Text.RegularExpressions;
 using Cleat.Emit;
-using Fasl = Cleat.Scheme.Fasl;
+using Fasl = Cleat.Core.Runtime.Fasl;
 using clojure.lang;
 using NUnit.Framework;
 
 namespace Cleat.Core.Tests;
 
-// cleat-021：编码 → fasl → 对象；对象 → fasl → 对象。cleat-045 起 fasl 由 Cleat.Scheme.Fasl 统一读写（联合编码），Clojure 标签照旧
+// cleat-021：编码 → fasl → 对象；对象 → fasl → 对象（cleat-092 起由 Cleat.Core.Runtime.Fasl 读写；Scheme 的 fasl 随元层在 cleat-093 删除）
 public class FaslTests
 {
     private static object[] ReadTable(string table)
@@ -18,13 +18,12 @@ public class FaslTests
     }
 
     /// <summary>
-    /// cleat-092：(runtime clojure) 单元的常量表由 Cleat.Core.Runtime.Fasl 读回（生成的程序集不再引用 Cleat.Scheme）；Clojure 值经它写出再读回相同；
-    /// Scheme 的标签它不认。
+    /// cleat-092：常量表由 Cleat.Core.Runtime.Fasl 读回；Clojure 值经它写出再读回相同；未知标签报错。
     /// </summary>
     [Test]
     public void CoreFaslReadsClojureTablesAndRoundTripsValues()
     {
-        var items = new SExprReader(@"((nil) (true) (long -5) (fix 7) (double ""3FF0000000000000"") (flo ""4000000000000000"") (bigint ""123456789012345678901234567890"") (bigdec ""1.5"") (ratio ""1/3"")
+        var items = new SExprReader(@"((nil) (true) (long -5) (fix 7) (double ""3FF0000000000000"") (double ""4000000000000000"") (bigint ""123456789012345678901234567890"") (bigdec ""1.5"") (ratio ""1/3"")
           (char 65) (str ""héllo"") (sym ""clojure.core"" ""inc"") (kw ""ns"" ""b"") (var ""cleat.test.fasl"" ""g"")
           (list (long 1) (long 2)) (vec (long 1)) (set (kw ""a"")) (sorted-set (long 3) (long 1)) (queue (long 1) (long 2)) (map (kw ""k"") (long 1)) (sorted-map (long 2) (str ""b"") (long 1) (str ""a""))
           (meta (map (kw ""tag"") (sym ""String"")) (sym ""s"")) (regex ""a+"") (uuid ""7f2a1c2e-0000-4000-8000-000000000001"") (type ""System.String""))", "c").ReadAll();
@@ -35,7 +34,7 @@ public class FaslTests
         Assert.That(t[2], Is.EqualTo(-5L));
         Assert.That(t[3], Is.TypeOf<int>().And.EqualTo(7), "fix reads back as Int32");
         Assert.That(t[4], Is.EqualTo(1.0));
-        Assert.That(t[5], Is.EqualTo(2.0), "flo and double both read as double");
+        Assert.That(t[5], Is.EqualTo(2.0));
         Assert.That(RT.printString(t[6]), Is.EqualTo("123456789012345678901234567890N"));
         Assert.That(t[9], Is.EqualTo('A'));
         Assert.That(t[10], Is.EqualTo("héllo"));
@@ -58,9 +57,11 @@ public class FaslTests
         var withMeta = ((IObj)Symbol.intern("x")).withMeta(RT.map(Keyword.intern("tag"), Symbol.intern("long")));
         Assert.That(((IMeta)Cleat.Core.Runtime.Fasl.Read(Cleat.Core.Runtime.Fasl.Write(withMeta))).meta(), Is.EqualTo(withMeta.meta()));
 
-        // Scheme 的值不认
-        var scheme = FaslEncoder.EncodeTable(((SList)new SExprReader("((empty))", "c").ReadAll()[0]).Items, "c", LcilRuntime.Scheme);
-        Assert.Throws<System.IO.InvalidDataException>(() => Cleat.Core.Runtime.Fasl.ReadTable(scheme));
+        // 未知的标签（IronScheme 联合编码里 Scheme 的 '()）不认
+        var bad = FaslEncoder.EncodeTable(((SList)new SExprReader("((nil))", "c").ReadAll()[0]).Items, "c");
+        bad[^1] = 0x05;
+        Assert.Throws<System.IO.InvalidDataException>(() => Cleat.Core.Runtime.Fasl.ReadTable(bad));
+        Assert.Throws<LcilException>(() => FaslEncoder.EncodeTable(((SList)new SExprReader("((empty))", "c").ReadAll()[0]).Items, "c"), "Scheme encodings are gone");
     }
 
     [Test]
@@ -140,6 +141,6 @@ public class FaslTests
         var sharedBack = (IPersistentVector)Fasl.Read(Fasl.Write(RT.vector(shared, shared)));
         Assert.That(sharedBack.nth(0), Is.SameAs(sharedBack.nth(1)));
         Assert.That(Fasl.Write(RT.vector(1L, 2L)), Is.EqualTo(Fasl.Write(RT.vector(1L, 2L))), "deterministic");
-        Assert.Throws<Cleat.Scheme.SchemeRuntimeError>(() => Fasl.Write(new object()));   // fasl-write 是 Scheme 原语的后端：报 assertion-violation（无钩子时为 SchemeRuntimeError）
+        Assert.Throws<System.IO.InvalidDataException>(() => Fasl.Write(new object()));
     }
 }

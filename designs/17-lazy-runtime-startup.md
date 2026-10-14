@@ -8,7 +8,7 @@ AOT 产物现在是每个命名空间一个 `.clj.dll`（ClojureCLR 的命名：
 它有三个问题：
 
 1. **不能被 .NET 冷加载**。生成的类型（gen-class、deftype、defrecord、proxy）是真实 CLR 类型，但用它们之前必须先显式启动 cleat
-   运行时（登记原语、`RT.Init`、Scheme 镜像、驱动库、钩子、Clojure 镜像），只有宿主 `cleat` 与 `CleatRuntime.Init`（cleat-035）做这件事。
+   运行时（登记原语、`RT.Init`、Clojure 镜像、编译器、钩子），只有宿主 `cleat` 与 `CleatRuntime.Init`（cleat-035）做这件事。
    JVM 上 gen-class 类的静态初始化经 `clojure.lang.RT` 自动拉起运行时，Java 代码直接 `new` 就行。
 2. **粒度不对**。nrepl 加 neorepl 编出 44 个程序集；NuGet 包、C# / F# 项目引用的单位应该是包。JVM 上一个包是一个 jar。
 3. **同进程连着编译多个命名空间不行**。每个文件一个编译单元，后编的单元引用前面那个求值时生成的内存类型（`eval$N` 程序集）。
@@ -87,7 +87,7 @@ Clojure 的包（如 `Cleat.Nrepl`）的 nupkg 依赖 `Cleat.Runtime`（版本�
 ### 4.2 `RuntimeBootstrap`（Cleat.Core）
 
 - `EnsureStarted(Assembly caller)`：已启动或正在启动（宿主 / Hosting 的启动过程、镜像初始化期间）时返回；否则加锁只启动一次。
-- Cleat.Core 不引用 Hosting（依赖方向 Hosting → Scheme → Core），所以按名字 `Assembly.Load("Cleat.Hosting")` 并反射调用
+- Cleat.Core 不引用 Hosting（依赖方向 Hosting → Host → Core），所以按名字 `Assembly.Load("Cleat.Hosting")` 并反射调用
   `CleatRuntime.Init`；宿主与 Hosting 启动时登记"已启动"。找不到 Hosting 或镜像时抛出说明清楚的异常（缺什么、在哪里找过）。
 - `CleatRuntime.Var` / `Require` / `Eval` 未初始化时自动以缺省选项 `Init`。
 

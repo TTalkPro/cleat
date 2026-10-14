@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- C# 程序嵌入 cleat 的入口（cleat-035，IronScheme designs/07 §5 的 Hosting 对应物）：初始化两个镜像、
+  <!-- C# 程序嵌入 cleat 的入口（cleat-035，IronScheme designs/07 §5 的 Hosting 对应物）：初始化镜像与编译器、
        求值源码、require 命名空间、取 Var 调用。引用宿主程序集是为了复用同一个初始化路径（Program.Start）。 -->
   <PropertyGroup>
     <RootNamespace>Cleat.Core.Hosting</RootNamespace>

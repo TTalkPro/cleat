@@ -13,10 +13,7 @@ namespace Cleat.Core.Hosting;
 /// <summary>初始化选项；全部可省。</summary>
 public sealed class CleatOptions
 {
-    /// <summary>Scheme boot 镜像路径；缺省时按宿主的规则自动找（应用目录、各级 src/boot/）。</summary>
-    public string SchemeBoot { get; set; }
-
-    /// <summary>Clojure boot 镜像路径；缺省自动找，找不到时从 src/clojure 源码不可用（宿主同规则）。</summary>
+    /// <summary>Clojure boot 镜像路径；缺省时按宿主的规则自动找（应用目录、各级 src/boot/）。</summary>
     public string ClojureBoot { get; set; }
 
     /// <summary>额外的加载路径（require / load 按它找源码，目录里的包程序集也登记）。</summary>
@@ -28,7 +25,7 @@ public sealed class CleatOptions
 
 /// <summary>
 /// C# 程序嵌入 cleat 的入口（cleat-035）。类名沿用 IronScheme 的 SchemeRuntime 叫 CleatRuntime——
-/// 名为 Cleat 的类无法在 Cleat.* 命名空间树之外引用（会被根命名空间 Cleat 遮住）：<see cref="Init"/> 加载 Scheme 与 Clojure 镜像并登记钩子（与宿主完全同一路径），
+/// 名为 Cleat 的类无法在 Cleat.* 命名空间树之外引用（会被根命名空间 Cleat 遮住）：<see cref="Init"/> 加载 Clojure 镜像与编译器并登记钩子（与宿主完全同一路径），
 /// <see cref="Eval"/> 求值源码、<see cref="Require"/> 加载命名空间、<see cref="Var"/> 取命名空间里的函数调用。
 /// 展开器与编译器不是线程安全的、需要大栈：所有调用经锁排到一条 512 MB 栈的工作线程上串行执行（Kestrel 的并发请求因此安全）。
 /// Clojure 的异常原样传出（ex-info 是 ExceptionInfo，错误位置在 Data["cleat.error/location"]）。
@@ -160,7 +157,7 @@ public static class CleatRuntime
     /// <summary>在启动时调用，发出 Init 未完成的信号（Marshal 的 s_initialized 检查只在完成后为真，嵌套调用走不到）。</summary>
     private static void InitBody(CleatOptions o)
     {
-        var hostOptions = new Program.Options { SchemeBoot = o.SchemeBoot, Boot = o.ClojureBoot };
+        var hostOptions = new Program.Options { Boot = o.ClojureBoot };
         foreach (var p in o.LoadPaths) hostOptions.IncludeDirs.Add(Path.GetFullPath(p));
         Program.Start(hostOptions);
         // Eval / Require 的环境：user 命名空间（refer clojure.core）+ *command-line-args*；绑定推给工作线程的余生

@@ -20,7 +20,7 @@ public sealed class InterfaceFile
         public string ClassName;    // 函数类（含程序集名："T, asm"）
         public int[] Arities;       // 固定参数个数；变长用 -(required + 1) 表示
         public bool HasStatic;      // 有 invokeStatic
-        // 可内联的固定子句（cleat-042）：参数个数 → 子句 (形参 体 …) 的 Lcore（Cleat.Scheme 的 fasl 字节）；没有时为 null。
+        // 可内联的固定子句（cleat-042）：参数个数 → L0 子句的 fasl 字节（Cleat.Core.Runtime.Fasl，[:cleat/l0 子句]）；没有时为 null。
         // 不写进 .ifc（启动时要解析），写在旁边的二进制文件 .inl，第一次要用时才读（FindInline）
         public Dictionary<int, byte[]> Inline;
         internal InterfaceFile Owner;

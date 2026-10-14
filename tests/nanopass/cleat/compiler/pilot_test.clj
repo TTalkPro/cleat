@@ -1,5 +1,5 @@
-;; cleat-084 的验收试点。原来用 cleat.nanopass 改写的 pass 在 Scheme 编译器的快照上与 Scheme 版比较输出（uncover-free、lower-loops、
-;; convert-assignments）；cleat-092 去掉 Scheme 专有的节点之后快照不再能解析，那些测试删去（快照随 Scheme 在 cleat-093 删除）。
+;; cleat-084 的验收试点。原来还在原版（Scheme 实现，cleat-093 删）编译器的快照上比较 pass 的输出（uncover-free、lower-loops、
+;; convert-assignments）；cleat-092 去掉原版专有的节点之后快照不再能解析，那些测试删去。
 (ns cleat.compiler.pilot-test
   (:require [clojure.test :refer [deftest is testing]]
             [cleat.nanopass :as np]

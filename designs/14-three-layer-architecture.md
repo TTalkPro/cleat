@@ -1,5 +1,7 @@
 # 14 探讨：三层架构（VM / Scheme 元层 / Clojure）会不会有问题
 
+> **历史文档（2026-10-15）**：Scheme 元层已随 [cleat-093](../tasks/cleat-093-remove-scheme.md) 全部删除，编译器用 Clojure 实现并自举（[19](19-clojure-self-hosting.md)）。本文只作决策过程的记录。
+
 > 状态：探讨。用户提出的分层：
 > 1. 最底层：LLVM、CLR、JVM 等虚拟机；
 > 2. 中间：nanopass 的 Scheme 语法对象、必要的 Scheme 语法与 rnrs 库（可裁剪），并提供 Clojure 语法对象；

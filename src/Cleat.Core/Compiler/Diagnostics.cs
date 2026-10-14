@@ -9,7 +9,7 @@ namespace Cleat.Core.Compiler;
 
 /// <summary>
 /// Clojure 风格的诊断（cleat-055 的诊断边界）：读 / 执行错误的源位置记录、错误文本（clojure.main/ex-str）、过滤过的栈。
-/// cleat-082 从 Cleat.Scheme 的 Driver 搬来，编译驱动（Scheme 版与将来的 Clojure 版）共用。
+/// cleat-082 从元层的 Driver 搬来，编译驱动（cleat.compiler.driver）用。
 /// </summary>
 public static class Diagnostics
 {
@@ -123,8 +123,8 @@ public static class Diagnostics
 
     /// <summary>
     /// 报告错误（写到 *err*）：Clojure 的 REPL / clojure.main 只打印 ex-str 的两行，不打印栈（cleat-055 诊断边界）。
-    /// 环境变量 CLEAT_TRACE_ERRORS：<c>clojure</c> 时加上过滤过的栈（<see cref="ClojureStackTrace"/>：没有 Cleat.Scheme.* 与
-    /// Scheme 生成的代码的帧，与 Clojure 过滤 clojure.lang 帧同理）；其他非空值（如 1）时加上完整的 CLR 异常与栈。
+    /// 环境变量 CLEAT_TRACE_ERRORS：<c>clojure</c> 时加上过滤过的栈（<see cref="ClojureStackTrace"/>：没有编译器、驱动与
+    /// 反射调用的帧，与 Clojure 过滤 clojure.lang 帧同理）；其他非空值（如 1）时加上完整的 CLR 异常与栈。
     /// </summary>
     public static void ReportError(Exception e)
     {
@@ -213,9 +213,8 @@ public static class Diagnostics
     };
 
     /// <summary>
-    /// 过滤过的栈（CLEAT_TRACE_ERRORS=clojure）：去掉 Cleat.Scheme 程序集的帧（驱动、过程外壳、模块加载）、Scheme 编译器生成的
-    /// 顶层代码（<c>_Module$…</c> / <c>#Module$…</c>）、动态方法与反射调用的帧；留下 Clojure 的函数类 / deftype、clojure.lang 与宿主的帧。
-    /// 内层异常以 Caused by 接上。
+    /// 过滤过的栈（CLEAT_TRACE_ERRORS=clojure）：去掉编译器与驱动（cleat.compiler.*、DriverOps）、单元入口（#Module$）与反射调用的帧，
+    /// 留下用户代码的帧。
     /// </summary>
     public static string ClojureStackTrace(Exception e)
     {
@@ -239,20 +238,20 @@ public static class Diagnostics
 
     public static bool IsClojureFrame(Type t)
     {
-        if (t == null || t.Assembly.GetName().Name == "Cleat.Scheme") return false;
+        if (t == null) return false;
         string n = t.FullName ?? t.Name;
-        if (n.StartsWith("_Module$", StringComparison.Ordinal) || n.StartsWith("#Module$", StringComparison.Ordinal)) return false;
-        // Clojure 写的编译器与驱动（cleat-090）同 Scheme 驱动一样不算用户的帧
+        if (n.StartsWith("#Module$", StringComparison.Ordinal)) return false;   // 单元的入口（顶层形式的执行）
+        // 编译器与驱动（cleat-090）不算用户的帧
         if (n.StartsWith("cleat.compiler.", StringComparison.Ordinal) || n.StartsWith("cleat.nanopass.", StringComparison.Ordinal)
             || n.StartsWith("Cleat.Core.Compiler.DriverOps", StringComparison.Ordinal))
             return false;
-        if (n.StartsWith("Cleat.Scheme.", StringComparison.Ordinal) || n.StartsWith("System.Reflection.", StringComparison.Ordinal)
+        if (n.StartsWith("System.Reflection.", StringComparison.Ordinal)
             || n.StartsWith("System.RuntimeMethodHandle", StringComparison.Ordinal) || n.StartsWith("System.Runtime.ExceptionServices.", StringComparison.Ordinal))
             return false;
         return true;
     }
 
-    /// <summary>异常的原因文本；Scheme 侧登记 <see cref="MessageHook"/> 给 Scheme 条件对象取文本（cleat-082），返回 null 时用 Message。</summary>
+    /// <summary>异常的原因文本；<see cref="MessageHook"/>（可选）返回 null 时用 Message。</summary>
     public static Func<Exception, string> MessageHook;
 
     private static string Message(Exception e) => MessageHook?.Invoke(e) ?? e.Message;

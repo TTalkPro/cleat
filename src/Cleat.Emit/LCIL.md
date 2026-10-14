@@ -11,9 +11,9 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
 ```scheme
 (lcil 1
   (assembly "名字"
-    (references "Cleat.Scheme" …)?           ; 额外引用的程序集（名字或 dll 路径）
+    (references "cleat.boot" …)?             ; 额外引用的程序集（名字或 dll 路径）
     (entry "入口类型" "入口方法")?            ; 入口：public static object 方法()（§6）
-    (runtime scheme|clojure)?                ; [cleat] 互操作指令与常量表所属的运行时，缺省 clojure（§5、§8）
+    (runtime clojure)?                       ; [cleat] 互操作指令与常量表所属的运行时，只有 clojure（§5、§8；scheme 随元层在 cleat-093 删除）
     (attribute "T" "字符串参数" …)*          ; [cleat] 程序集级自定义属性，构造函数只取字符串参数
     (resource "名字" "文件路径")*            ; [cleat] 嵌入资源（只用于保存 dll）：发射时读入文件内容（包程序集的接口文件，cleat-067）
     (lazy-start)?)                           ; [cleat] 每个类型初始化器（没有的类型补一个，接口除外）先调 RuntimeBootstrap.EnsureStarted（包程序集，cleat-067）
@@ -22,7 +22,7 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
   (type …) …)
 ```
 
-**隐含引用**：`Cleat.Core`（`CleatModuleAttribute`、Clojure 互操作、活常量池）总是引用；`Cleat.Scheme`（Scheme 互操作、编码常量表的读回 `Cleat.Scheme.Fasl.ReadPackedTable`）在程序集或任一方法的 `runtime` 为 `scheme`、或有 `constants` 时引用。
+**隐含引用**：`Cleat.Core`（`CleatModuleAttribute`、互操作、常量表的读回 `Cleat.Core.Runtime.Fasl.ReadPackedTable`、活常量池）总是引用。
 
 ## §3 类型、字段、方法
 
@@ -33,7 +33,7 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
     (params "类型" …) (ret "类型")
     (locals "类型" …)?
     (clr-namespaces "命名空间" …)?
-    (runtime scheme|clojure)?                ; [cleat] 覆盖程序集的 runtime（只影响本方法的互操作指令）
+    (runtime clojure)?                       ; [cleat] 覆盖程序集的 runtime（只影响本方法的互操作指令）
     (implements "接口" "接口方法名")?        ; [cleat] 显式接口实现
     (source "文件")?
     (body 指令 …)))
@@ -47,7 +47,7 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
 
 ## §4 类型引用
 
-字符串 `"T"`：本 Lcil 中定义的类型名；否则全名在已加载程序集与 `references` 中查找（`System.Object`、`clojure.lang.AFunction`、`Cleat.Scheme.Procedure`）；`"T, 程序集名"` 指定程序集；后缀 `[]` 一维数组、`&` 按引用（只用于参数）；`System.Void` 只用于返回类型；泛型类型名写 `"Name<A,B>"`（互操作指令的类型操作数经所属运行时的 `TypeResolver` 解析；§5）。
+字符串 `"T"`：本 Lcil 中定义的类型名；否则全名在已加载程序集与 `references` 中查找（`System.Object`、`clojure.lang.AFunction`、`Cleat.Core.Runtime.Box`）；`"T, 程序集名"` 指定程序集；后缀 `[]` 一维数组、`&` 按引用（只用于参数）；`System.Void` 只用于返回类型；泛型类型名写 `"Name<A,B>"`（互操作指令的类型操作数经所属运行时的 `TypeResolver` 解析；§5）。
 
 方法引用：`"T" "名字" ("P" …) "R"`，返回类型用于核对；构造函数 `"T" ("P" …)`（`newobj`）。字段引用：`"T" "名字"`。
 
@@ -69,17 +69,14 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
 | 指令 | 栈 |
 |---|---|
 | `(clr-call T 成员 static? argc [("A"…)])` | 实例? 参数×argc → 结果。`T` 为 `#f` 表示按实例运行时类型；成员为 `"名字"`、`("名字" ("P"…))` 或 `("名字" ("P"…)|#f ("G"…))`；可选 `("A"…)` 为实参类型提示 |
-| `(clr-field-get T "f" static?)` / `(clr-field-set T "f" static?)` | 实例? → 值 / 实例? 值 → nil（scheme：未指定值） |
+| `(clr-field-get T "f" static?)` / `(clr-field-set T "f" static?)` | 实例? → 值 / 实例? 值 → nil |
 | `(clr-new T argc [("A"…)])` / `(clr-new-array T)` | 参数×argc → 对象 / 长度 → 数组 |
 | `(clr-cast T)` `(clr-is T)` `(clr-type T)` | 值 → 值 / 布尔对象 / `System.Type` |
 
-**[cleat] 两个运行时**（方法的 `runtime`，缺省程序集的，再缺省 `clojure`）决定互操作指令的类型解析、运行时决议与值转换：
-
-| | `clojure` | `scheme` |
-|---|---|---|
-| 类型名 | `Cleat.Core.Runtime.TypeResolver`（ClojureCLR 类型名语法、`clr-namespaces`） | `Cleat.Scheme.TypeResolver`（IronScheme 别名表；`Name<A,B>` 转成符号说明） |
-| 运行时决议与转换 | `Cleat.Core.Runtime.Reflector`（`Call` / `GetField` / `SetField` / `New` / `NewArray` / `Cast` / `Is` / `Convert<T>` / `ConvertFrom`） | `Cleat.Scheme.Interop`（同名方法） |
-| 返回值 | `void` → `nil`；`long` / `double` / `bool` / `char` 只装箱；其余值类型与 `object` 按 `Reflector.ConvertFrom`（`int` → `long` 等） | `void` → `Unspecified.Instance`；`string` 经 `SchemeString.Normalize`（含代理码元的转宽串）；值类型装箱后按 `Interop.ConvertFrom`（`long` → fixnum / bignum 等） |
+**[cleat] 运行时**（方法的 `runtime`，缺省程序集的，再缺省 `clojure`；cleat-093 起只有 `clojure`）决定互操作指令的类型解析、运行时决议与值转换：
+类型名经 `Cleat.Core.Runtime.TypeResolver`（ClojureCLR 类型名语法、`clr-namespaces`）；运行时决议与转换经 `Cleat.Core.Runtime.Reflector`
+（`Call` / `GetField` / `SetField` / `New` / `NewArray` / `Cast` / `Is` / `Convert<T>` / `ConvertFrom`）；返回值 `void` → `nil`，`long` / `double` / `bool` / `char`
+只装箱，其余值类型与 `object` 按 `Reflector.ConvertFrom`（`int` → `long` 等）。
 
 ## §6 校验（读取时报错，带行列）
 
@@ -87,18 +84,22 @@ S 表达式，UTF-8。读取器 `Cleat.Emit.SExprReader` 只认：列表 `( … 
 
 ## §7 程序集约定
 
-入口 `(entry …)` 须是 `public static object M()`；发射器写程序集属性 `Cleat.Core.CleatModuleAttribute("类型", "方法")`，加载器（`Cleat.Core.Runtime.Loader`、`Cleat.Scheme.ModuleLoader`）据此调用（designs/05 §6）。
+入口 `(entry …)` 须是 `public static object M()`；发射器写程序集属性 `Cleat.Core.CleatModuleAttribute("类型", "方法")`，加载器（`Cleat.Core.Runtime.Loader`）据此调用（designs/05 §6）。
 
-## §8 常量编码（[cleat] 联合编码，designs/15 §1）
+## §8 常量编码（[cleat]）
 
-`(constants …)` 的每项是中立编码，`Cleat.Emit.FaslEncoder` 写成二进制 fasl（magic `CLFASL`，版本 1，Deflate 压缩后作为 `$Constants` 的初始化数据），运行时 `Cleat.Scheme.Fasl.ReadPackedTable` 读回。标签字节两套互不重叠，一张表里可以混用：
+`(constants …)` 的每项是中立编码，`Cleat.Emit.FaslEncoder` 写成二进制 fasl（magic `CLFASL`，版本 2，Deflate 压缩后作为 `$Constants` 的初始化数据），运行时
+`Cleat.Core.Runtime.Fasl.ReadPackedTable` 读回。标签字节沿用 IronScheme 联合编码的值（Scheme 专有的标签随元层在 cleat-093 删除，值不复用）：
 
-| 来源 | 编码 | 读回 |
-|---|---|---|
-| 两边共用 | `(nil)` `(true)` `(false)` `(def n x)` `(ref n)` | `null`、装箱 bool、共享与环 |
-| IronScheme | `(unspecified)` `(eof)` `(fix n)` `(big "十进制")` `(rat "n/d")` `(flo "位模式")` `(cpx 实 虚)` `(chr 码点)` `(mstr "…")` `(gensym "…")` `(pair a d)` `(dlist e … 表尾)` `(bv "十六进制")` `(rtd …)` `(rec rtd f …)` `(ann …)` `(eqht k v …)` `(cnd …)` `(rcd rtd 父)` | Scheme 值（IronScheme 04 §3） |
-| cleat | `(long n)` `(double "位模式")` `(bigint "…")` `(bigdec "…")` `(ratio "n/d")` `(char 码元)` `(kw "name")` / `(kw "ns" "name")` `(var "ns" "name")` `(map k v …)` `(set e …)` `(sorted-map k v …)` `(sorted-set e …)` `(queue e …)` `(meta m x)` `(regex "…")` `(inst "…")` `(uuid "…")` `(type "全名")` `(record "全名" k v …)` | clojure.lang 值（designs/05 §3） |
-| **按 runtime 解释** | `(str "…")` `(sym …)` `(list e …)` `(vec e …)` | `scheme`：`string`（含 BMP 外字符为宽串）/ `Cleat.Scheme.Symbol`（一个名字）/ `Cons` 表 / `object[]`；`clojure`：`string` / `clojure.lang.Symbol`（`(sym "name")` 或 `(sym "ns" "name")`）/ `PersistentList` / `PersistentVector` |
-| cleat（无歧义，cleat-051） | `(cstr "…")` `(csym "name")` / `(csym "ns" "name")` `(clist e …)` `(cvec e …)` | 总是 Clojure 的 `string` / `clojure.lang.Symbol` / `PersistentList` / `PersistentVector`，与程序集的 runtime 无关：Scheme 单元（Scheme 编译器的产物都是 `(runtime scheme)`）里的 Clojure 常量用它们 |
+| 编码 | 读回 |
+|---|---|
+| `(nil)` `(true)` `(false)` `(def n x)` `(ref n)` | `null`、装箱 bool、共享与环 |
+| `(fix n)` | `Int32`（读入器给元数据的行号等） |
+| `(long n)` `(double "位模式")` `(bigint "…")` `(bigdec "…")` `(ratio "n/d")` `(char 码元)` | 数与字符 |
+| `(str "…")` `(sym "name")` / `(sym "ns" "name")` `(kw "name")` / `(kw "ns" "name")` `(var "ns" "name")` | `string` / `clojure.lang.Symbol` / `Keyword` / `Var` |
+| `(list e …)` `(vec e …)` `(map k v …)` `(set e …)` `(sorted-map k v …)` `(sorted-set e …)` `(queue e …)` | clojure.lang 集合 |
+| `(meta m x)` `(regex "…")` `(inst "…")` `(uuid "…")` `(type "全名")` `(record "全名" k v …)` | 元数据、正则、DateTime、Guid、Type、记录（designs/05 §3） |
+
+`(cstr …)` / `(csym …)` / `(clist …)` / `(cvec …)` 是 `str` / `sym` / `list` / `vec` 的别名（cleat-051 两个运行时并存时的无歧义写法）。
 
 常量表所属的运行时是程序集的 `runtime`（方法级的 `runtime` 只影响互操作指令）。

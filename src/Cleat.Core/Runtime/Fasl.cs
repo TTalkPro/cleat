@@ -11,8 +11,8 @@ namespace Cleat.Core.Runtime;
 /// <summary>
 /// Clojure 数据的 fasl（cleat-092；designs/05 §3）：编译器写进程序集的常量表（Cleat.Emit.FaslEncoder 编码、Deflate 压缩，
 /// 类型初始化器经 <see cref="ReadPackedTable"/> 读回）与接口文件旁的内联体 .inl（<see cref="Write"/> / <see cref="Read"/>）。
-/// 标签与 Cleat.Emit.FaslEncoder / Cleat.Scheme.Fasl 一致（联合编码）；这里只认 Clojure 的值与少数无歧义的通用标签
-/// （fix 读成 Int32、flo 与 double 都读成 double、str 与 cstr 都读成 string、表的外层 vec），Scheme 的记录、注解、条件等不认。
+/// 标签与 Cleat.Emit.FaslEncoder 一致（标签值沿用 IronScheme 的联合编码，Scheme 专有的标签随元层在 cleat-093 删除）；fix 读成 Int32，
+/// 表的外层是 Table 标签（object[]）。
 /// def / ref 表示共享与环（不可变集合先读元素再建，环不支持）。
 /// </summary>
 public static class Fasl
@@ -20,12 +20,12 @@ public static class Fasl
     public const byte Version = 2;
     private static readonly byte[] s_magic = Encoding.ASCII.GetBytes("CLFASL");
 
-    // 标签（与 Cleat.Emit.FaslEncoder 一致）：0x0_ 单例；0x1_ 数；0x2_ 字符、字符串、符号；0x3_ 序列；0x5_ Clojure 其他；0x6_ 共享
-    private const byte Nil = 0x00, True = 0x01, False = 0x02, Empty = 0x05,
-      Fix = 0x10, Flo = 0x13,
+    // 标签（与 Cleat.Emit.FaslEncoder 一致）：0x0_ 单例；0x1_ 数；0x2_ 字符、字符串、符号；0x3_ 序列；0x5_ 其他；0x6_ 共享
+    private const byte Nil = 0x00, True = 0x01, False = 0x02,
+      Fix = 0x10,
       Long = 0x18, Double = 0x19, BigIntTag = 0x1A, BigDec = 0x1B, RatioTag = 0x1C,
-      Chr = 0x20, Str = 0x21, Char = 0x28, CljStr = 0x29, CljSym = 0x2A, Kw = 0x2B, VarTag = 0x2C,
-      Vec = 0x32,
+      Char = 0x28, CljStr = 0x29, CljSym = 0x2A, Kw = 0x2B, VarTag = 0x2C,
+      Table = 0x32,
       CljList = 0x38, CljVec = 0x39, Map = 0x3A, Set = 0x3B, SortedMap = 0x3C, SortedSet = 0x3D, Queue = 0x3E,
       Meta = 0x50, RegexTag = 0x51, Inst = 0x52, Uuid = 0x53, TypeTag = 0x54, Record = 0x55,
       Def = 0x60, Ref = 0x61;
@@ -128,27 +128,19 @@ public static class Fasl
                 case True: return Register<object>(def, Truth.True);
                 case False: return Register<object>(def, Truth.False);
                 case Fix: return Register<object>(def, _r.ReadInt32());
-                case Flo:
                 case Double: return Register<object>(def, BitConverter.Int64BitsToDouble(_r.ReadInt64()));
                 case Long: return Register<object>(def, _r.ReadInt64());
                 case BigIntTag: return Register<object>(def, BigInt.fromBigInteger(BigInteger.Parse(String())));
                 case BigDec: return Register<object>(def, BigDecimal.Parse(String()));
                 case RatioTag: return Register(def, LispReader.MatchNumber(String()) ?? throw new InvalidDataException("bad ratio in fasl"));
-                case Chr:
-                    {
-                        int cp = _r.ReadInt32();
-                        if (cp >= 0x10000) throw new InvalidDataException("fasl: character outside the BMP");
-                        return Register<object>(def, (char)cp);
-                    }
                 case Char: return Register<object>(def, (char)_r.ReadUInt16());
-                case Str:
                 case CljStr: return Register<object>(def, String());
                 case CljSym: { string ns = String(), name = String(); return Register<object>(def, Symbol.intern(NsOrNull(ns), name)); }
                 case Kw: { string ns = String(), name = String(); return Register<object>(def, Keyword.intern(NsOrNull(ns), name)); }
                 case VarTag: { string ns = String(), name = String(); return Register<object>(def, Var.intern(Namespace.findOrCreatePending(Symbol.intern(ns)), Symbol.intern(name))); }
-                case Vec:
+                case Table:
                     {
-                        // 常量表的外层（发射器写成一个向量）；元素读成 object[]
+                        // 常量表的外层；元素读成 object[]
                         var v = Register(def, new object[Count()]);
                         for (int i = 0; i < v.Length; i++) v[i] = Object();
                         return v;
@@ -201,8 +193,7 @@ public static class Fasl
                         int n = Count();
                         return _defs.TryGetValue(n, out var o) ? o : throw new InvalidDataException("fasl: reference to undefined object " + n);
                     }
-                case Empty: throw new InvalidDataException("fasl: Scheme's '() is not a Clojure value");
-                default: throw new InvalidDataException($"fasl: unknown or non-Clojure tag 0x{tag:x2}");
+                default: throw new InvalidDataException($"fasl: unknown tag 0x{tag:x2}");
             }
         }
     }
@@ -329,7 +320,7 @@ public static class Fasl
                 case Guid g: _w.Write(Uuid); String(g.ToString()); return;
                 case Type t: _w.Write(TypeTag); String(t.FullName); return;
                 case object[] arr:
-                    _w.Write(Vec);
+                    _w.Write(Table);
                     _w.Write7BitEncodedInt(arr.Length);
                     foreach (var e in arr) Object(e);
                     return;

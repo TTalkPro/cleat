@@ -6,7 +6,7 @@ using NUnit.Framework;
 
 namespace Cleat.Core.Tests;
 
-// cleat-030：宿主的命令行与 REPL（用假的 eval 钩子；真正的求值在 boot 镜像 / stage0）
+// cleat-030：宿主的命令行与 REPL（用假的 eval 钩子；真正的求值由编译器的驱动登记）
 public class HostTests
 {
     [Test]

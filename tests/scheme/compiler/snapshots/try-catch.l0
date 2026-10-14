@@ -1,9 +1,0 @@
-(lambda #f
-  (clause
-    (th h)
-    #f
-    (try-catch
-      (call th)
-      (#f (lambda #f (clause (c) #f (call h c))))
-      ("System.InvalidOperationException"
-       (lambda #f (clause (e) #f e))))))
