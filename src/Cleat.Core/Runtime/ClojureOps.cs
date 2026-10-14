@@ -48,6 +48,20 @@ public static class ClojureOps
     public static object SetOf(object[] items) => clojure.lang.RT.set(items);
     public static object WithMetaOf(object o, object m) => ((IObj)o).withMeta((IPersistentMap)m);
 
+    /// <summary>
+    /// simplify-letrec 的前向变量（letrec 里在定义之前就可能被读到的变量）：初值是这个标记，读时经 <see cref="CheckInitialized"/>
+    /// 核对（cleat-092；原来是 Cleat.Scheme.Calls 的 UninitializedValue / CheckInitialized）。
+    /// </summary>
+    public static readonly object Uninitialized = new UninitializedMarker();
+
+    private sealed class UninitializedMarker
+    {
+        public override string ToString() => "#<uninitialized>";
+    }
+
+    public static object CheckInitialized(object value, object name) =>
+      value is UninitializedMarker ? throw new InvalidOperationException($"attempt to reference an uninitialized binding: {name}") : value;
+
     /// <summary>静态方法调用：t 为 Type，name 为成员名，gen 为泛型实参（Type 的 object[]）或 nil。</summary>
     public static object CallStatic(object t, object name, object gen, object[] args) =>
       Reflector.Call(HostSyntax.Real((Type)t), (string)name, null, args, null, Types(gen));

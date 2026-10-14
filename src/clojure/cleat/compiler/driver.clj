@@ -1,6 +1,6 @@
 ;; 编译驱动（cleat-090，designs/19 阶段 B）：Clojure 的 eval / load / compile / --compile-boot / --compile-package 走 Clojure 编译器。
 ;; 照 Scheme 版 src/scheme/clojure/driver.sls 与 compile.sls（流程、单元收集的后序、镜像构建的 id 重置、包程序集的改写）与
-;; Cleat.Scheme.Clojure.Driver 的接口文件。CLEAT_COMPILER=clojure 时宿主在加载镜像之后调 install-hooks!。
+;; Cleat.Scheme.Clojure.Driver 的接口文件。CLEAT_COMPILER=clojure（缺省）时宿主在加载镜像之后调 install-hooks!。
 ;;
 ;;   (eval-toplevel 形式)          Compiler.eval：序列形式先 macroexpand（带上原形式的源位置），顶层 (do …) 拆开逐个求值；
 ;;                                 其余分析为 L0、编成内存程序集执行（还没有简单形式的解释）
@@ -320,7 +320,7 @@
                      (let [[_ [x*]] (prod-of cl)
                            sexpr (np/unparse cl)]
                        (when (inline-ok? sexpr)
-                         (try [(count x*) (Cleat.Scheme.Fasl/Write [:cleat/l0 sexpr] true)]
+                         (try [(count x*) (Cleat.Core.Runtime.Fasl/Write [:cleat/l0 sexpr])]
                               (catch Exception _ nil)))))   ; 常量里有 fasl 写不了的对象：不内联
                    (take last-fixed cl*)))))))
 

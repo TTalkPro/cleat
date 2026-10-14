@@ -19,7 +19,6 @@
 (defrecord Analysis [assigned      ; 被 set! 的词法变量
                      captured      ; 出现在某个 lambda 自由变量中的词法变量
                      letrec-refs   ; letrec 右边（L0 节点）→ 它引用的同组变量
-                     massigned     ; 被 mset! 的库变量
                      forward       ; simplify-letrec 引入的前向变量
                      fields])      ; deftype* 的字段变量（被 set! 也不装箱）
 
@@ -30,7 +29,6 @@
   (let [assigned (System.Collections.Hashtable.)
         captured (System.Collections.Hashtable.)
         letrec-refs (System.Collections.Hashtable.)
-        massigned (System.Collections.Hashtable.)
         fields (System.Collections.Hashtable.)]
     (letfn [(Expr [e]
               (nanopass-case [L0 Expr] e
@@ -39,12 +37,6 @@
                 [(if ~e0 ~e1 ~e2) (union* [(Expr e0) (Expr e1) (Expr e2)])]
                 [(begin ~e* ... ~e) (union* (map Expr (cons e e*)))]
                 [(set! ~x ~e) (mark! assigned x) (set-add x (Expr e))]
-                [(gref ~s) ()]
-                [(gset! ~s ~e) (Expr e)]
-                [(mref ~x) ()]
-                [(mset! ~x ~e) (mark! massigned x) (Expr e)]
-                [(prim ~pr) ()]
-                [(primcall ~pr ~e* ...) (union* (map Expr e*))]
                 [(lambda ~nm ~cl* ...)
                  (let [fv (union* (map Clause cl*))]
                    (doseq [x fv] (mark! captured x))
@@ -57,28 +49,12 @@
                 [(let ([~x* ~e*] ...) ~body) (set-union (union* (map Expr e*)) (set-minus (Expr body) x*))]
                 [(label ~x (~x* ...) ~body0 ~body1) (set-minus (set-union (Expr body0) (Expr body1)) (cons x x*))]
                 [(jump ~x ~e* ...) (set-add x (union* (map Expr e*)))]
-                [(library ~d ([~x* ~s* ~e*] ...) ~body) (union* (cons (Expr body) (map Expr e*)))]
+                [(uninitialized) ()]
+                [(check-initialized ~e) (Expr e)]
                 [(call ~e ~e* ...) (union* (map Expr (cons e e*)))]
-                [(and ~e* ...) (union* (map Expr e*))]
-                [(or ~e* ...) (union* (map Expr e*))]
                 [(throw ~e) (Expr e)]
-                [(break) ()]
                 [(try-finally ~e0 ~e1) (set-union (Expr e0) (Expr e1))]
                 [(try-catch ~e (~d* ~e*) ...) (union* (cons (Expr e) (map Expr e*)))]
-                [(escape-frame ~x ~body) (set-minus (Expr body) (list x))]
-                [(try-handle ~x ~body0 ~body1) (set-union (Expr body0) (set-minus (Expr body1) (list x)))]
-                [(host-call ~d0 ~d1 ~st ~e* ...) (union* (map Expr e*))]
-                [(host-field-get ~d0 ~d1 ~st ~e* ...) (union* (map Expr e*))]
-                [(host-field-set ~d0 ~d1 ~st ~e* ...) (union* (map Expr e*))]
-                [(host-new ~d ~e* ...) (union* (map Expr e*))]
-                [(host-new-array ~d ~e) (Expr e)]
-                [(host-cast ~d ~e) (Expr e)]
-                [(host-is ~d ~e) (Expr e)]
-                [(host-typeof ~d) ()]
-                [(host-using ~d) ()]
-                [(host-reference ~d) ()]
-                [(host-namespaces) ()]
-                [(unsupported ~d ~e* ...) (union* (map Expr e*))]
                 [(clj-var-ref ~d ~st) ()]
                 [(clj-var-set! ~d ~e) (Expr e)]
                 [(clj-def ~d ~st0 ~st1 ~e0 ~e1) (set-union (Expr e0) (Expr e1))]
@@ -95,15 +71,15 @@
                 [(clause (~x* ...) ~x ~body) (set-minus (Expr body) (if x (cons x x*) x*))]))]
       ;; union* 等返回惰性序列；分析的副作用（登记表）必须在返回前发生
       (dorun (Expr ir))
-      (->Analysis assigned captured letrec-refs massigned (System.Collections.Hashtable.) fields))))
+      (->Analysis assigned captured letrec-refs (System.Collections.Hashtable.) fields))))
 
 ;; —— check-forward：L1 → L1 ——
-;; 前向变量在赋值之前可能被读到：对它们的引用包上 $check-initialized（名字照 Scheme 版是 Scheme 符号，报错时用）
+;; 前向变量在赋值之前可能被读到：对它们的引用包上 check-initialized（运行时读到未初始化的标记值时按变量名报错）
 (define-pass check-forward L1 [ir an] -> L1 []
   (definitions
     (defn forward? [x] (marked? (:forward an) x)))
   (Expr [ir] -> Expr []
-    [~x (if (forward? x) (out (primcall $check-initialized ~x (quote ~(Cleat.Scheme.Symbol/Intern (str x))))) x)]))
+    [~x (if (forward? x) (out (check-initialized ~x)) x)]))
 
 ;; —— convert-assignments：L1 → L2 ——
 (define-pass convert-assignments L1 [ir an] -> L2 []
@@ -126,10 +102,7 @@
     [(jump ~x ~[e*] ...)
      (let [p* (or (.get_Item label-params x) [])]
        (out (jump ~x ~(map (fn [p e] (if (boxed? p) (out (box ~e)) e)) p* e*) ...)))]
-    [(try-handle ~x ~[body0] ~[body1])
-     (if (boxed? x)
-       (out (try-handle ~x ~body0 (begin (set! ~x (box ~x)) ~body1)))
-       (out (try-handle ~x ~body0 ~body1)))])
+    [(check-initialized ~[e]) (out (check-initialized ~e))])
   (Clause [ir] -> Clause []
     [(clause (~x* ...) ~x ~[body])
      ;; 被装箱的形参：进入时把形参换成 Box
@@ -221,7 +194,7 @@
                (lp (seq x*) (seq e*)))]
          (if (empty? forward)
            inner
-           (out (let ([~forward ~(map (fn [_] (out (primcall $uninitialized))) forward)] ...) ~inner)))))])
+           (out (let ([~forward ~(map (fn [_] (out (uninitialized))) forward)] ...) ~inner)))))])
   (LambdaOf LambdaExpr [ir] -> LambdaExpr [])
   (Expr ir))
 
@@ -249,26 +222,18 @@
     (defn bump! [x] (.set_Item ^System.Collections.Hashtable counts x (inc (or (.get_Item ^System.Collections.Hashtable counts x) 0)))))
   (Expr [ir] -> * []
     [~x (bump! x)]
-    [(mref ~x) (bump! x)]
     [(lambda ~nm ~cl* ...) (doseq [cl cl*] (Clause cl))]
     [(set! ~x ~e) (Expr e)]
-    [(mset! ~x ~e) (Expr e)]
     [(if ~e0 ~e1 ~e2) (Expr e0) (Expr e1) (Expr e2)]
     [(begin ~e* ... ~e) (doseq [x e*] (Expr x)) (Expr e)]
-    [(gset! ~s ~e) (Expr e)]
-    [(primcall ~pr ~e* ...) (doseq [x e*] (Expr x))]
     [(letrec ([~x* ~le*] ...) ~body) (doseq [x le*] (Expr x)) (Expr body)]
     [(let ([~x* ~e*] ...) ~body) (doseq [x e*] (Expr x)) (Expr body)]
-    [(library ~d ([~x* ~s* ~e*] ...) ~body) (doseq [x e*] (Expr x)) (Expr body)]
     [(call ~e ~e* ...) (Expr e) (doseq [x e*] (Expr x))]
-    [(and ~e* ...) (doseq [x e*] (Expr x))]
-    [(or ~e* ...) (doseq [x e*] (Expr x))]
     [(throw ~e) (Expr e)]
     [(try-finally ~e0 ~e1) (Expr e0) (Expr e1)]
     [(label ~x (~x* ...) ~body0 ~body1) (Expr body0) (Expr body1)]
     [(jump ~x ~e* ...) (doseq [x e*] (Expr x))]
-    [(escape-frame ~x ~body) (Expr body)]
-    [(try-handle ~x ~body0 ~body1) (Expr body0) (Expr body1)]
+    [(check-initialized ~e) (Expr e)]
     [(try-catch ~e (~d* ~e*) ...) (Expr e) (doseq [x e*] (Expr x))]
     [(clj-var-set! ~d ~e) (Expr e)]
     [(clj-def ~d ~st0 ~st1 ~e0 ~e1) (Expr e0) (Expr e1)]
@@ -278,24 +243,16 @@
     [(clj-static-call ~d0 ~d1 ~e* ...) (doseq [x e*] (Expr x))]
     [(clj-case ~d ~e0 ~e1 ~e* ...) (Expr e0) (Expr e1) (doseq [x e*] (Expr x))]
     [(clj-deftype ~d (~x* ...) ~le* ...) (doseq [x le*] (Expr x))]
-    [(host-call ~d0 ~d1 ~st ~e* ...) (doseq [x e*] (Expr x))]
-    [(host-field-get ~d0 ~d1 ~st ~e* ...) (doseq [x e*] (Expr x))]
-    [(host-field-set ~d0 ~d1 ~st ~e* ...) (doseq [x e*] (Expr x))]
-    [(host-new ~d ~e* ...) (doseq [x e*] (Expr x))]
-    [(host-new-array ~d ~e) (Expr e)]
-    [(host-cast ~d ~e) (Expr e)]
-    [(host-is ~d ~e) (Expr e)]
-    [(unsupported ~d ~e* ...) (doseq [x e*] (Expr x))]
     [else nil])
   (Clause [ir] -> * []
     [(clause (~x* ...) ~x ~body) (Expr body)])
   (Expr ir))
 
 (defn- simple-datum?
-  "Scheme 版的 simple-datum?：fixnum（Int32）、flonum、布尔、字符、Scheme 符号、空表。Clojure 的 long（Int64）不是 fixnum，不传播。"
+  "值得传播的常量（Scheme 版的 simple-datum?：fixnum、flonum、布尔、字符；Clojure 的 long 照 Scheme 版不算 fixnum，不传播——
+  传播会改变 identical? 与装箱次数）。"
   [d]
-  (or (instance? Int32 d) (instance? Double d) (boolean? d) (char? d)
-      (instance? Cleat.Scheme.Symbol d) (instance? Cleat.Scheme.EmptyList d)))
+  (or (instance? Int32 d) (instance? Double d) (boolean? d) (char? d)))
 
 (define-pass simplify-lets L1 [ir an] -> L1 []
   (definitions

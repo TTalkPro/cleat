@@ -23,13 +23,6 @@
            [Cleat.Core.Expand ExpanderException LocalBinding]
            [clojure.lang Symbol Keyword Var Namespace RT IObj IMeta IPersistentMap IPersistentVector IPersistentSet ISeq IPersistentList]))
 
-;; —— Scheme 数据（过渡期：codegen 读的描述照 Scheme 版是 Scheme 列表，cleat-092 改成 Clojure 数据）——
-
-(defn slist [& xs] (reduce (fn [tail x] (Cleat.Scheme.Cons. x tail)) Cleat.Scheme.EmptyList/Instance (reverse xs)))
-(defn slist* [xs] (apply slist xs))
-(defn spair [a b] (Cleat.Scheme.Cons. a b))
-(defn ssym [s] (Cleat.Scheme.Symbol/Intern s))
-(def sempty Cleat.Scheme.EmptyList/Instance)
 
 ;; —— 上下文（syntax.sls 的 ctx / local）——
 ;; :tail? 尾位置；:loop nil 或 [循环标签 参数个数]；:locals 局部（新的在前）；:fn-name 外层 fn 的类名；:hint def / letfn 给 fn* 的名字；
@@ -404,7 +397,7 @@
         (and (namespace sym) (HostSyntax/MaybeArrayType sym)) (type-reference (HostSyntax/MaybeArrayType sym))
         (and (namespace sym) (static-member-of ctx sym))
         (let [[t m] (static-member-of ctx sym)]
-          (clj-call "CallStatic" 3 (q t) (q (munge* m)) (q sempty)))
+          (clj-call "CallStatic" 3 (q t) (q (munge* m)) (q nil)))
         :else (err sym ctx msg)))))
 
 ;; —— 调用（syntax.sls application / var-call，namespaces.sls default-var-call）——
@@ -463,8 +456,8 @@
         (if (contains? @inline-cache k)
           (@inline-cache k)
           (let [r (try
-                    (let [data (Cleat.Scheme.Fasl/Read ^bytes bytes)]
-                      ;; Scheme 编译器写的 .inl 是 Lcore 子句（Scheme 的表），不认
+                    (let [data (Cleat.Core.Runtime.Fasl/Read ^bytes bytes)]
+                      ;; Scheme 编译器写的 .inl 是 Lcore 子句（Scheme 的表，Cleat.Core 的 fasl 读不了），不认
                       (when (and (vector? data) (= :cleat/l0 (first data)))
                         (when-let [t (find-type-named (.-ClassName e))] [t (second data)])))
                     (catch Exception _ nil))]
@@ -791,7 +784,7 @@
   (let [t (tag-of p)
         op (when (and (symbol? t) (nil? (namespace t))) (case (name t) "long" "longCast" "double" "doubleCast" nil))]
     (if op
-      (clj-call "CallStatic" 3 (q @rt-type) (q op) (q sempty) outer-name)
+      (clj-call "CallStatic" 3 (q @rt-type) (q op) (q nil) outer-name)
       outer-name)))
 
 (defn- fn-class-name [ctx self]
@@ -860,7 +853,7 @@
         variadic-n (let [cls (seq clauses)]
                      ;; 变长子句的必需参数个数
                      (some (fn [cl] (let [[req rst] (fn-params form ctx (first (clause-of cl)))] (when rst (count req)))) cls))
-        fname (l/->CljFnName nm (or variadic-n false) (slist* (map (fn [[n sig]] (spair n sig)) @prims))
+        fname (l/->CljFnName nm (or variadic-n false) (vec @prims)
                              (boolean (and thunk? (runtime-async?))))
         fnode (mk-lambda fname built)
         m (let [m (user-meta form)] (when m (let [m (dissoc m :rettag)] (when (pos? (count m)) m))))
@@ -978,7 +971,7 @@
   (let [{:keys [static target member prop? args type-args method? type]} (parse-dot form ctx)
         nt (ctx-nontail (ctx-clear ctx))
         t type
-        gen (if type-args (object-array type-args) sempty)]
+        gen (when type-args (object-array type-args))]
     (cond
       (and static (empty? args) (not method?))
       (if prop? (clj-call "GetStaticField" false (q t) (q member)) (clj-call "CallStatic" 3 (q t) (q member) (q gen)))
@@ -1037,7 +1030,7 @@
           entries (for [[h [test then]] imap]
                     [h test then (boolean (and skip-set (contains? skip-set h)))])
           int (fn [n] (parse-long (str n)))
-          data (slist (int shift) (int mask) kind (slist* (map (fn [[h test _ skip?]] (slist (int h) test skip?)) entries)))
+          data [(int shift) (int mask) kind (mapv (fn [[h test _ skip?]] [(int h) test skip?]) entries)]
           xn (analyze x (ctx-nontail c))
           dn (analyze default c)
           thens (mapv (fn [[_ _ then]] (analyze then c)) entries)]
@@ -1046,7 +1039,7 @@
 ;; deftype* / reify* / gen-interface / proxy-class* / gen-class*
 
 (defn- host-check [form ctx r] (if (string? r) (err form ctx r) r))
-(defn- type-desc [nm] (spair nm (boolean (HostSyntax/IsValueType nm))))
+(defn- type-desc [nm] [nm (boolean (HostSyntax/IsValueType nm))])
 
 (defn- build-type [form ctx tagname class-name field-syms ifaces method-forms reify?]
   (let [ifaces (host-check form ctx (HostSyntax/ResolveInterfaces ifaces))
@@ -1072,7 +1065,7 @@
                            r (host-check form ctx (HostSyntax/TypeMethod ifaces mname params))
                            iface (nth r 0) mn (nth r 1) ret (nth r 2) ptypes (vec (nth r 3))]
                        {:params params :body mbody :r r
-                        :spec (slist (if (nil? iface) false iface) mn (type-desc ret) (slist* (map type-desc ptypes)))
+                        :spec [(if (nil? iface) false iface) mn (type-desc ret) (mapv type-desc ptypes)]
                         :ptypes ptypes}))
                    method-forms)
           lambdas (mapv (fn [{:keys [params body ptypes]}]
@@ -1090,20 +1083,21 @@
                             (mk-lambda false [(mk-clause (cons this-name arg-names) false (named-let lp "recur" inner (vec arg-names) b))])))
                         ms)
           layout (HostSyntax/InterfaceLayout ifaces (object-array (map :r ms)) reify?)
-          stubs (map (fn [st]
-                       (slist (nth st 0) (nth st 1) (type-desc (nth st 2)) (slist* (map type-desc (nth st 3)))
-                              (let [t (nth st 4)] (if (nil? t) false t))))
-                     (nth layout 1))
+          stubs (mapv (fn [st]
+                        [(nth st 0) (nth st 1) (type-desc (nth st 2)) (mapv type-desc (nth st 3))
+                         (let [t (nth st 4)] (if (nil? t) false t))])
+                      (nth layout 1))
           drops (count (take-while #(#{"__meta" "__extmap" "__hash" "__hasheq"} (name (:sym %))) (reverse fields)))
           basis (take (- (count fields) drops) fields)
-          info (slist class-name reify?
-                      (slist* (map (fn [f] (slist (munge* (name (:sym f))) (:mutable f) (:volatile f))) fields))
-                      (slist* (seq (nth layout 0)))
-                      (slist* (map :spec ms))
-                      (slist* stubs)
-                      (if reify? false (apply vector (map :sym basis)))
-                      (if (and (not reify?) (pos? drops)) (slist* (map #(name (:sym %)) basis)) sempty)
-                      drops)]
+          ;; 描述（Clojure 向量，cleat-092）：[类名 reify? 字段 接口 方法 桩 basis 记录键 drops]，见 codegen 的 deftype-info-*
+          info [class-name reify?
+                (mapv (fn [f] [(munge* (name (:sym f))) (:mutable f) (:volatile f)]) fields)
+                (vec (nth layout 0))
+                (mapv :spec ms)
+                stubs
+                (if reify? false (apply vector (map :sym basis)))
+                (if (and (not reify?) (pos? drops)) (mapv #(name (:sym %)) basis) [])
+                drops]]
       (L0-out (clj-deftype ~info (~@(map :name fields)) ~@lambdas)))))
 
 (defn- build-interface [form ctx class-name extends sigs]
@@ -1115,13 +1109,13 @@
         specs (map (fn [sig]
                      (let [items (vec sig)]
                        (when (< (count items) 3) (err form ctx "Malformed gen-interface method signature"))
-                       (slist false (if (keyword? (items 0)) (name (items 0)) (str (items 0))) (resolve-type (items 2))
-                              (slist* (map (fn [p]
-                                             (when (clj-list? p) (err form ctx "by-ref parameters are not supported in gen-interface"))
-                                             (resolve-type p))
-                                           (items 1))))))
+                       [false (if (keyword? (items 0)) (name (items 0)) (str (items 0))) (resolve-type (items 2))
+                        (mapv (fn [p]
+                                (when (clj-list? p) (err form ctx "by-ref parameters are not supported in gen-interface"))
+                                (resolve-type p))
+                              (items 1))]))
                    sigs)
-        info (slist class-name (ssym "interface") sempty (slist* (map type-name ifaces)) (slist* specs) sempty false)]
+        info [class-name :interface [] (mapv type-name ifaces) (vec specs) [] false]]
     (L0-out (clj-deftype ~info ()))))
 
 (defn- sp-deftype* [form ctx]
@@ -1150,35 +1144,35 @@
 (defn- sp-proxy-class* [form ctx]
   (let [bases (vec (rest form))
         layout (host-check form ctx (HostSyntax/ProxyLayout (str (.Name ^Namespace (current-ns))) bases))
-        info (slist (nth layout 0) (ssym "proxy") (nth layout 1)
-                    (slist* (v->l (nth layout 2)))
-                    (slist* (map (fn [ps] (slist* (map type-desc ps))) (v->l (nth layout 3))))
-                    (slist* (map (fn [m]
-                                   (slist (nth m 0) (type-desc (nth m 1)) (slist* (map type-desc (nth m 2)))
-                                          (nth m 3) (nth m 4) (slist* (v->l (nth m 5))) (nth m 6) (nth m 7) (nth m 8)))
-                                 (v->l (nth layout 4)))))]
+        info [(nth layout 0) :proxy (nth layout 1)
+              (vec (v->l (nth layout 2)))
+              (mapv (fn [ps] (mapv type-desc ps)) (v->l (nth layout 3)))
+              (mapv (fn [m]
+                      [(nth m 0) (type-desc (nth m 1)) (mapv type-desc (nth m 2))
+                       (nth m 3) (nth m 4) (vec (v->l (nth m 5))) (nth m 6) (nth m 7) (nth m 8)])
+                    (v->l (nth layout 4)))]]
     (L0-out (clj-deftype ~info ()))))
 
 (defn- nil->f [x] (if (nil? x) false x))
 
 (defn- sp-gen-class* [form ctx]
   (let [layout (host-check form ctx (HostSyntax/GenClassLayout (str (.Name ^Namespace (current-ns))) (second form)))
-        descs (fn [x] (slist* (map type-desc (v->l x))))
-        info (slist (nth layout 0) (ssym "genclass") (nth layout 1) (slist* (v->l (nth layout 2)))
-                    (nth layout 3) (nth layout 4)
-                    (slist* (map #(slist* (v->l %)) (v->l (nth layout 5))))
-                    (slist* (map (fn [c] (slist (descs (nth c 0)) (descs (nth c 1)))) (v->l (nth layout 6))))
-                    (nil->f (nth layout 7)) (nil->f (nth layout 8)) (nil->f (nth layout 9))
-                    (slist* (map (fn [m]
-                                   (slist (nth m 0) (type-desc (nth m 1)) (descs (nth m 2)) (nth m 3) (nth m 4)
-                                          (let [t (nth m 5)] (if (nil? t) false (slist* (seq t))))
-                                          (nth m 6) (nth m 7) (nil->f (nth m 8)) (nth m 9)))
-                                 (v->l (nth layout 10))))
-                    (nil->f (nth layout 11)) (nil->f (nth layout 12))
-                    (slist* (map (fn [x] (slist (nth x 0) (nth x 1) (nth x 2) (nth x 3) (nil->f (nth x 4)) (nil->f (nth x 5))))
-                                 (v->l (nth layout 13))))
-                    (slist* (map (fn [x] (slist (nth x 0) (nth x 1) (slist* (v->l (nth x 2))) (nth x 3) (nth x 4)))
-                                 (v->l (nth layout 14)))))]
+        descs (fn [x] (mapv type-desc (v->l x)))
+        info [(nth layout 0) :genclass (nth layout 1) (vec (v->l (nth layout 2)))
+              (nth layout 3) (nth layout 4)
+              (mapv #(vec (v->l %)) (v->l (nth layout 5)))
+              (mapv (fn [c] [(descs (nth c 0)) (descs (nth c 1))]) (v->l (nth layout 6)))
+              (nil->f (nth layout 7)) (nil->f (nth layout 8)) (nil->f (nth layout 9))
+              (mapv (fn [m]
+                      [(nth m 0) (type-desc (nth m 1)) (descs (nth m 2)) (nth m 3) (nth m 4)
+                       (let [t (nth m 5)] (if (nil? t) false (vec (seq t))))
+                       (nth m 6) (nth m 7) (nil->f (nth m 8)) (nth m 9)])
+                    (v->l (nth layout 10)))
+              (nil->f (nth layout 11)) (nil->f (nth layout 12))
+              (mapv (fn [x] [(nth x 0) (nth x 1) (nth x 2) (nth x 3) (nil->f (nth x 4)) (nil->f (nth x 5))])
+                    (v->l (nth layout 13)))
+              (mapv (fn [x] [(nth x 0) (nth x 1) (vec (v->l (nth x 2))) (nth x 3) (nth x 4)])
+                    (v->l (nth layout 14)))]]
     (L0-out (clj-deftype ~info ()))))
 
 (defn- analyze-special [nm form ctx]

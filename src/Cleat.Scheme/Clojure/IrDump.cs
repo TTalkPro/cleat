@@ -74,7 +74,10 @@ public static class IrDump
     public static void InitShadow()
     {
         if (!(Enabled && ShadowEnabled) || s_shadow != null) return;
-        clojure.lang.RT.var("clojure.core", "require").invoke(clojure.lang.Symbol.intern("cleat.compiler.shadow"));
+        // 影子工具自己从源码加载（cleat-092 起不在编译器包里）：加载它的形式不转储、不占序号
+        s_suspended = true;
+        try { clojure.lang.RT.var("clojure.core", "require").invoke(clojure.lang.Symbol.intern("cleat.compiler.shadow")); }
+        finally { s_suspended = false; }
         s_shadow = clojure.lang.RT.var("cleat.compiler.shadow", "shadow-form");
     }
 
@@ -108,9 +111,11 @@ public static class IrDump
     }
 
     /// <summary>写一条记录：<c>;; 序号 阶段</c> 一行，后面是文本。</summary>
+    private static volatile bool s_suspended;
+
     public static void Write(string side, string unit, int index, string stage, string text)
     {
-        if (!Enabled) return;
+        if (!Enabled || s_suspended) return;
         lock (s_lock)
         {
             string dir = Path.Combine(Directory, side);

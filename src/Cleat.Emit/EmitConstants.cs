@@ -8,7 +8,8 @@ using System.Runtime.CompilerServices;
 namespace Cleat.Emit;
 
 // 常量表（designs/05 §3；从 IronScheme 移植）：编码成 fasl、用 Deflate 压缩后作为 "$Constants" 类型的初始化数据（RVA 静态数据）嵌入程序集，
-// 类型初始化器把它复制到 byte[]（RuntimeHelpers.InitializeArray），由 Cleat.Scheme.Fasl.ReadPackedTable 解压读回（联合编码：Scheme 与 Clojure 的标签各自独立，designs/15 §1）
+// 类型初始化器把它复制到 byte[]（RuntimeHelpers.InitializeArray），由 Fasl.ReadPackedTable 解压读回（(runtime clojure) 用 Cleat.Core.Runtime.Fasl，
+// scheme 用 Cleat.Scheme.Fasl；联合编码：Scheme 与 Clojure 的标签各自独立，designs/15 §1）
 // object[] 存入静态字段 c；ldconst k 即 c[k]。原先以 base64 字符串存放（UTF-16，约为原始字节的 2.7 倍，iron-037 改）。
 // 不用托管资源：内存模式（eval）的程序集不能带资源；初始化数据两种模式都可用。
 public sealed partial class LcilEmitter
@@ -44,7 +45,11 @@ public sealed partial class LcilEmitter
             il.Emit(OpCodes.Dup);
             il.Emit(OpCodes.Ldtoken, data);
             il.Emit(OpCodes.Call, typeof(RuntimeHelpers).GetMethod(nameof(RuntimeHelpers.InitializeArray), new[] { typeof(Array), typeof(RuntimeFieldHandle) }));
-            il.Emit(OpCodes.Call, LoadReference(SchemeAssemblyName).GetType("Cleat.Scheme.Fasl", true).GetMethod("ReadPackedTable", new[] { typeof(byte[]) }));
+            // 按单元的运行时选解码器（cleat-092）：clojure 的常量表只有 Clojure 数据，由 Cleat.Core 读回，生成的程序集不引用 Cleat.Scheme
+            var decoder = _asm.Runtime == LcilRuntime.Scheme
+                ? LoadReference(SchemeAssemblyName).GetType("Cleat.Scheme.Fasl", true)
+                : core.GetType("Cleat.Core.Runtime.Fasl", true);
+            il.Emit(OpCodes.Call, decoder.GetMethod("ReadPackedTable", new[] { typeof(byte[]) }));
         }
         il.Emit(OpCodes.Stsfld, _constantsField);
         il.Emit(OpCodes.Ret);

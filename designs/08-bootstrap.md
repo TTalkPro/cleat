@@ -36,6 +36,10 @@
 宿主在镜像旁有编译器包时用 Clojure 编译器，不装 Scheme 镜像（`CLEAT_COMPILER` 缺省为 `clojure`）；`--no-boot`、镜像旁没有编译器、
 编译器源码比包新（开发时）时照旧装 Scheme 镜像，Scheme 驱动先跑、Clojure 编译器从源码加载后接手。
 
+**种子的纪律**：种子是构建的起点，`dotnet build` 出的镜像与编译器包必须与种子发射出的 stage1 逐字节相同（Host 测试
+`ClojureBootstrapTests.BuildFromTheSeedReproducesTheSeed`）。所以改了 src/clojure（core.clj 等进镜像的源码、编译器源码）之后、提交之前
+要 `tools/build.cs clojure-seed` 重生成种子（约 3 分钟）；只改 C# 运行时不必（种子是 Lcil 文本，不含运行时的实现）。
+
 **运行时契约的两步法**：生成的代码调用 Cleat.Core / Cleat.Scheme 的 C# 方法（`ClojureOps`、`ClojureStaticCalls`、`RT.Box` …），种子里的
 Lcil 也一样。改这些签名时：① 先加新入口、保留旧入口，让旧种子发射出的 stage1 仍能运行，编译器改用新入口；② `tools/build.cs clojure-seed`
 重生成种子（新种子只用新入口）；③ 再删旧入口。发射器的改动同理：种子是 Lcil 文本，发射器的行为变化会改变 stage1 的字节，重生成种子即可。

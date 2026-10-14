@@ -1,9 +1,8 @@
 ;; lower-loops：L0 → L0，接在前端之后（cleat-084 试点，移植 src/scheme/lib/cleat/scheme/compiler/loops.sls，IronScheme iron-034b）。
 ;;
 ;;   D9  单绑定 letrec 的 lambda，全部引用都是参数个数相符的尾调用 ⇒ (label f (x …) body fbody)，调用 ⇒ (jump f e …)
-;;   let 绑定、只在尾位置调用的 lambda 也变成 label；消费者是字面 lambda 的 call-with-values 内联（D6）
-;;   局部逃逸的 call-with-return ⇒ escape-frame、字面 lambda 的 with-clr-exception-handler ⇒ try-handle（cleat-076）
-;; 各函数与 Scheme 版一一对应，注释见 Scheme 版。
+;;   let 绑定、只在尾位置调用的 lambda 也变成 label
+;; 各函数与 Scheme 版一一对应，注释见 Scheme 版；Scheme 专有的部分（call-with-values 内联、escape-frame、try-handle）cleat-092 删去。
 (ns cleat.compiler.loops
   (:require [cleat.nanopass :refer [define-pass nanopass-case with-output-language out]]
             [cleat.compiler.languages :refer [L0]]))
@@ -22,39 +21,15 @@
     [(if ~e0 ~e1 ~e2) [e0 e1 e2]]
     [(begin ~e* ... ~e) (conj (vec e*) e)]
     [(set! ~x ~e) [e]]
-    [(gref ~s) []]
-    [(gset! ~s ~e) [e]]
-    [(mref ~x) []]
-    [(mset! ~x ~e) [e]]
-    [(prim ~pr) []]
-    [(primcall ~pr ~e* ...) e*]
     [(lambda ~nm ~cl* ...) (mapv clause-body cl*)]
     [(letrec ([~x* ~e*] ...) ~body) (conj (vec e*) body)]
     [(let ([~x* ~e*] ...) ~body) (conj (vec e*) body)]
-    [(library ~d ([~x* ~s* ~e*] ...) ~body) (conj (vec e*) body)]
     [(call ~e ~e* ...) (vec (cons e e*))]
-    [(and ~e* ...) e*]
-    [(or ~e* ...) e*]
     [(throw ~e) [e]]
-    [(break) []]
     [(try-finally ~e0 ~e1) [e0 e1]]
     [(try-catch ~e (~d* ~e*) ...) (vec (cons e e*))]
     [(label ~x (~x* ...) ~body0 ~body1) [body0 body1]]
     [(jump ~x ~e* ...) e*]
-    [(escape-frame ~x ~body) [body]]
-    [(try-handle ~x ~body0 ~body1) [body0 body1]]
-    [(host-call ~d0 ~d1 ~st ~e* ...) e*]
-    [(host-field-get ~d0 ~d1 ~st ~e* ...) e*]
-    [(host-field-set ~d0 ~d1 ~st ~e* ...) e*]
-    [(host-new ~d ~e* ...) e*]
-    [(host-new-array ~d ~e) [e]]
-    [(host-cast ~d ~e) [e]]
-    [(host-is ~d ~e) [e]]
-    [(host-typeof ~d) []]
-    [(host-using ~d) []]
-    [(host-reference ~d) []]
-    [(host-namespaces) []]
-    [(unsupported ~d ~e* ...) e*]
     [(clj-var-ref ~d ~st) []]
     [(clj-var-set! ~d ~e) [e]]
     [(clj-def ~d ~st0 ~st1 ~e0 ~e1) [e0 e1]]
@@ -120,28 +95,6 @@
     [(set! ~x ~e) (or (= x v) (refs? v e))]
     [else (boolean (some #(refs? v %) (kids e)))]))
 
-(defn local-escape?
-  "e 在空栈位置求值时，k 的每次出现是否都是空栈位置上的单参数直接调用（cleat-076）。"
-  [k e]
-  (letfn [(none? [e] (not (refs? k e)))
-          (ok? [e]
-            (nanopass-case [L0 Expr] e
-              [~x (not= x k)]
-              [(call ~e0 ~e* ...)
-               (if (var-ref? e0 k)
-                 (and (= (count e*) 1) (none? (first e*)))
-                 (and (none? e0) (every? none? e*)))]
-              [(if ~e0 ~e1 ~e2) (and (ok? e0) (ok? e1) (ok? e2))]
-              [(begin ~e* ... ~e) (and (every? ok? e*) (ok? e))]
-              [(let ([~x* ~e*] ...) ~body) (and (every? none? e*) (ok? body))]
-              [(label ~x (~x* ...) ~body0 ~body1) (and (ok? body0) (ok? body1))]
-              [(try-finally ~e0 ~e1) (and (ok? e0) (none? e1))]
-              [(try-catch ~e (~d* ~e*) ...) (and (ok? e) (every? none? e*))]
-              [(try-handle ~x ~body0 ~body1) (and (ok? body0) (ok? body1))]
-              [(escape-frame ~x ~body) (ok? body)]
-              [else (none? e)]))]
-    (ok? e)))
-
 (defn jumpify
   "把 node 的尾位置上对 v 的调用改成 jump。"
   [v node]
@@ -174,17 +127,6 @@
 
 (define-pass lower-loops L0 [ir] -> L0 []
   (definitions
-    ;; (lambda () body) → body，否则 nil
-    (defn thunk-literal? [e]
-      (nanopass-case [L0 Expr] e
-        [(lambda ~nm ~cl)
-         (nanopass-case [L0 Clause] cl [(clause (~x* ...) ~x ~body) (when (and (empty? x*) (not x)) body)])]
-        [else nil]))
-    (defn consumer-literal? [e]
-      (nanopass-case [L0 Expr] e [(lambda ~nm ~cl) true] [else false]))
-    (defn consumer-parts [e]
-      (nanopass-case [L0 Expr] e
-        [(lambda ~nm ~cl) (nanopass-case [L0 Clause] cl [(clause (~x* ...) ~x ~body) [nm x* x body]])]))
     ;; let 绑定的单子句 lambda，体里只在尾位置按相符的参数个数调用：变成 label（见 Scheme 版）
     (defn lower-let [x* e* body]
       (loop [xs (seq x*) es (seq e*) keep-x () keep-e () labels ()]
@@ -217,41 +159,6 @@
          (if (and p* (= (count p*) (count e*)))
            (lower-let p* e* b)                  ; 立即调用的 lambda 就是 let
            (out (call ~(Expr e) ~(mapv Expr e*) ...)))))]
-    ;; D6：(call-with-values (lambda () p) (lambda (x … [. r]) b)) 内联（见 Scheme 版）
-    [(primcall ~pr ~e* ...)
-     (guard (and (= pr 'call-with-values) (= (count e*) 2) (thunk-literal? (first e*)) (consumer-literal? (second e*))))
-     (let [[nm x* rest cbody] (consumer-parts (second e*))
-           t (fresh "values")
-           n (count x*)
-           cnt (out (primcall $values-count ~t))
-           test (if rest (out (primcall $fx>=? ~cnt (quote ~n))) (out (primcall $fx=? ~cnt (quote ~n))))
-           refs (map-indexed (fn [i _] (out (primcall $values-ref ~t (quote ~i)))) x*)
-           bind-x* (if rest (concat x* [rest]) x*)
-           bind-e* (if rest (concat refs [(out (primcall $values-tail ~t (quote ~n)))]) refs)]
-       (out (let ([~t ~(Expr (thunk-literal? (first e*)))])
-              (if ~test
-                (let ([~bind-x* ~bind-e*] ...) ~(Expr cbody))
-                (primcall call-with-values
-                          (lambda false (clause () false ~t))
-                          (lambda ~nm (clause (~(mapv (fn [_] (fresh "arg")) x*) ...) ~(and rest (fresh "rest")) (quote false))))))))]
-    ;; (call-with-return (lambda (k) body)) 且 k 只在空栈位置被直接调用 → (escape-frame k body)
-    [(primcall ~pr ~e* ...)
-     (guard (and (= pr 'call-with-return) (= (count e*) 1)
-                 (let [[x* _] (simple-lambda (first e*))] (and x* (= (count x*) 1)))))
-     (let [[x* body] (simple-lambda (first e*))
-           k (first x*)
-           body (Expr body)]
-       (if (local-escape? k body)
-         (out (escape-frame ~k ~body))
-         (let [nm (nanopass-case [L0 Expr] (first e*) [(lambda ~nm ~cl) nm])]
-           (out (primcall ~pr (lambda ~nm (clause (~k) false ~body)))))))]
-    ;; (with-clr-exception-handler (lambda (ex) handler) (lambda () body)) → (try-handle ex body handler)
-    [(primcall ~pr ~e* ...)
-     (guard (and (= pr 'with-clr-exception-handler) (= (count e*) 2)
-                 (thunk-literal? (second e*)) (consumer-literal? (first e*))
-                 (let [[nm x* rest hbody] (consumer-parts (first e*))] (and (= (count x*) 1) (not rest)))))
-     (let [[nm x* rest hbody] (consumer-parts (first e*))]
-       (out (try-handle ~(first x*) ~(Expr (thunk-literal? (second e*))) ~(Expr hbody))))]
     [(let ([~x* ~e*] ...) ~body) (lower-let x* e* body)]
     [(letrec ([~x* ~e*] ...) ~body)
      (let [[p* fbody] (if (= (count x*) 1) (simple-lambda (first e*)) [nil nil])]

@@ -17,6 +17,52 @@ public class FaslTests
         return Fasl.ReadTable(bytes);
     }
 
+    /// <summary>
+    /// cleat-092：(runtime clojure) 单元的常量表由 Cleat.Core.Runtime.Fasl 读回（生成的程序集不再引用 Cleat.Scheme）；Clojure 值经它写出再读回相同；
+    /// Scheme 的标签它不认。
+    /// </summary>
+    [Test]
+    public void CoreFaslReadsClojureTablesAndRoundTripsValues()
+    {
+        var items = new SExprReader(@"((nil) (true) (long -5) (fix 7) (double ""3FF0000000000000"") (flo ""4000000000000000"") (bigint ""123456789012345678901234567890"") (bigdec ""1.5"") (ratio ""1/3"")
+          (char 65) (str ""héllo"") (sym ""clojure.core"" ""inc"") (kw ""ns"" ""b"") (var ""cleat.test.fasl"" ""g"")
+          (list (long 1) (long 2)) (vec (long 1)) (set (kw ""a"")) (sorted-set (long 3) (long 1)) (queue (long 1) (long 2)) (map (kw ""k"") (long 1)) (sorted-map (long 2) (str ""b"") (long 1) (str ""a""))
+          (meta (map (kw ""tag"") (sym ""String"")) (sym ""s"")) (regex ""a+"") (uuid ""7f2a1c2e-0000-4000-8000-000000000001"") (type ""System.String""))", "c").ReadAll();
+        var bytes = FaslEncoder.EncodeTable(((SList)items[0]).Items, "c", LcilRuntime.Clojure);
+        var t = Cleat.Core.Runtime.Fasl.ReadTable(bytes);
+        Assert.That(t[0], Is.Null);
+        Assert.That(t[1], Is.EqualTo(true));
+        Assert.That(t[2], Is.EqualTo(-5L));
+        Assert.That(t[3], Is.TypeOf<int>().And.EqualTo(7), "fix reads back as Int32");
+        Assert.That(t[4], Is.EqualTo(1.0));
+        Assert.That(t[5], Is.EqualTo(2.0), "flo and double both read as double");
+        Assert.That(RT.printString(t[6]), Is.EqualTo("123456789012345678901234567890N"));
+        Assert.That(t[9], Is.EqualTo('A'));
+        Assert.That(t[10], Is.EqualTo("héllo"));
+        Assert.That(t[11], Is.EqualTo(Symbol.intern("clojure.core", "inc")));
+        Assert.That(t[12], Is.EqualTo(Keyword.intern("ns", "b")));
+        Assert.That(t[13], Is.InstanceOf<Var>());
+        Assert.That(RT.printString(t[14]), Is.EqualTo("(1 2)"));
+        Assert.That(t[15], Is.InstanceOf<IPersistentVector>());
+        Assert.That(RT.printString(t[17]), Is.EqualTo("#{1 3}"));
+        Assert.That(RT.printString(t[19]), Is.EqualTo("{:k 1}"));
+        Assert.That(RT.printString(t[20]), Is.EqualTo("{1 \"a\", 2 \"b\"}"));
+        Assert.That(((IMeta)t[21]).meta().valAt(Keyword.intern("tag")), Is.EqualTo(Symbol.intern("String")));
+        Assert.That(t[24], Is.EqualTo(typeof(string)));
+
+        // 写出再读回（接口文件旁的 .inl：L0 子句的 S 表达式，[:cleat/l0 (clause (g$x$1$c) false …)]）
+        object v = RT.readString("[:cleat/l0 (clause (g$x$1$c) false (clj-invoke (clj-var-ref 1) g$x$1$c \"s\" 2.5 \\c {:a [1 2]} #{3} nil true))]");
+        var back = Cleat.Core.Runtime.Fasl.Read(Cleat.Core.Runtime.Fasl.Write(v));
+        Assert.That(RT.printString(back), Is.EqualTo(RT.printString(v)));
+        Assert.That(back, Is.EqualTo(v));
+        var withMeta = ((IObj)Symbol.intern("x")).withMeta(RT.map(Keyword.intern("tag"), Symbol.intern("long")));
+        Assert.That(((IMeta)Cleat.Core.Runtime.Fasl.Read(Cleat.Core.Runtime.Fasl.Write(withMeta))).meta(), Is.EqualTo(withMeta.meta()));
+
+        // Scheme 的值不认
+        var scheme = FaslEncoder.EncodeTable(((SList)new SExprReader("((empty))", "c").ReadAll()[0]).Items, "c", LcilRuntime.Scheme);
+        Assert.Throws<System.IO.InvalidDataException>(() => Cleat.Core.Runtime.Fasl.ReadTable(scheme));
+    }
+
     [Test]
     public void EncodedConstantsReadBackAsClojureData()
     {

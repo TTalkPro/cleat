@@ -139,9 +139,10 @@ public sealed partial class LcilEmitter
         _asm = asm;
         _module = module;
         _debug = debug;
-        // Cleat.Core 是隐含引用（CleatModule 属性、Clojure 互操作、活常量都要它）；Cleat.Scheme 在用到时也是（Scheme 互操作、编码的常量表由它的 Fasl 读回）
+        // Cleat.Core 是隐含引用（CleatModule 属性、Clojure 互操作、常量表都要它）；Cleat.Scheme 只在 (runtime scheme) 的单元里是
+        // （Scheme 互操作、编码的常量表由它的 Fasl 读回；cleat-092 起 clojure 单元的常量表由 Cleat.Core 读回）
         var implicitRefs = new List<string> { CoreAssemblyName };
-        if (asm.Constants.Count > 0 || asm.Runtime == LcilRuntime.Scheme || asm.Types.Any(t => t.Methods.Any(m => m.Runtime == LcilRuntime.Scheme)))
+        if (asm.Runtime == LcilRuntime.Scheme || asm.Types.Any(t => t.Methods.Any(m => m.Runtime == LcilRuntime.Scheme)))
             implicitRefs.Add(SchemeAssemblyName);
         foreach (var r in implicitRefs.Concat(asm.References).Distinct()) _references.Add(LoadReference(r));
         // 互操作类型名在已加载程序集中查找：被引用程序集的依赖也要加载
@@ -217,12 +218,45 @@ public sealed partial class LcilEmitter
                 var u = a.GetType(name);
                 if (u != null && (u.IsPublic || u.IsNestedPublic)) { t = u; break; }
             }
+        // 还没加载的框架程序集（cleat-092：生成的代码不再引用 Cleat.Scheme，它的依赖不会顺带把 System.Diagnostics.Process 等带进来；
+        // 独立运行的 cleat-emit 发射种子时按命名空间前缀在受信平台程序集里找：System.Diagnostics.ProcessStartInfo → System.Diagnostics.Process.dll 等）
+        t ??= FrameworkType(name);
         if (t == null) throw Err(pos, "type not found: " + name);
         // 只缓存非动态程序集中的类型：已加载的程序集不会卸载，结果不变；每次 eval 都新增动态程序集，不缓存时查找越来越慢（iron-033）
         // 库产物（.fasl / 库 dll）可能被重新加载出同名的新副本，运行时按最新的解析：程序集限定名只缓存 boot 的
         if (!t.Assembly.IsDynamic && (QualifiedSplit(name) == null || name.EndsWith(", cleat.boot", StringComparison.Ordinal)))
             s_staticTypes[name] = t;
         return t;
+    }
+
+    private static Dictionary<string, string> s_platformAssemblies;
+
+    /// <summary>类型名的命名空间前缀对应的受信平台程序集（TRUSTED_PLATFORM_ASSEMBLIES）里的类型，没有时 null。</summary>
+    private static Type FrameworkType(string name)
+    {
+        if (QualifiedSplit(name) != null || name.IndexOf('[') >= 0) return null;
+        s_platformAssemblies ??= (AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string ?? "")
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .GroupBy(f => Path.GetFileNameWithoutExtension(f), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        // 由长到短试命名空间前缀：System.Diagnostics.ProcessStartInfo → System.Diagnostics.ProcessStartInfo、System.Diagnostics、System
+        for (int dot = name.Length; dot > 0; dot = name.LastIndexOf('.', dot - 1))
+        {
+            string prefix = name.Substring(0, dot);
+            if (!s_platformAssemblies.TryGetValue(prefix, out var file)) continue;
+            Assembly a;
+            try { a = Assembly.Load(new AssemblyName(Path.GetFileNameWithoutExtension(file))); }
+            catch (Exception) { continue; }
+            var u = a.GetType(name);
+            if (u != null && (u.IsPublic || u.IsNestedPublic)) return u;
+            // 类型转发（System.Diagnostics.Process 的类型在 System.Diagnostics.Process.dll；有的在 System.Private.CoreLib）
+            foreach (var r in a.GetReferencedAssemblies())
+            {
+                try { u = Assembly.Load(r).GetType(name); } catch (Exception) { continue; }
+                if (u != null && (u.IsPublic || u.IsNestedPublic)) return u;
+            }
+        }
+        return null;
     }
 
     /// <summary>方括号外的第一个逗号的位置（程序集限定名），没有时为 null。</summary>

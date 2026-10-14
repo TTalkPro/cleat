@@ -1,9 +1,7 @@
-;; Clojure 编译器的流水线（cleat-086 起）：前端 → 前中端 pass → codegen（cleat-088）。影子模式（cleat-085）经 shadow-stages
-;; 对每个形式转储各阶段与 Lcil，tools/compiler-diff.clj 与 Scheme 编译器的转储比较（designs/19 D5 的 G1 / G2）；eval-form 用
-;; Clojure 编译器编译并运行一个顶层形式（驱动在 cleat-090）。
+;; Clojure 编译器的流水线（cleat-086 起）：前端 → 前中端 pass → codegen（cleat-088）。影子模式（cleat-085，cleat.compiler.shadow，
+;; 不进编译器包）经 front-ends 对每个形式转储各阶段与 Lcil；eval-form 用 Clojure 编译器编译并运行一个顶层形式（测试用，驱动在 cleat.compiler.driver）。
 (ns cleat.compiler.pipeline
   (:require [cleat.compiler.analyzer :as an]
-            [cleat.compiler.dump :as dump]
             [cleat.compiler.loops :as loops]
             [cleat.compiler.front :as front]
             [cleat.compiler.closures :as closures]
@@ -56,9 +54,9 @@
               :else 0))]
     (walk (cleat.nanopass/unparse l0))))
 
-(def ^:private eval-counter (atom 0))
+(def eval-counter (atom 0))
 
-(defn- front-ends
+(defn front-ends
   "各形式走前中端：[[L3 含循环?] …]。"
   [l0s dump]
   (loops/reset-fresh-names!)
@@ -74,25 +72,6 @@
   [l0s assembly-name module-name live? dump]
   (let [results (front-ends l0s dump)]
     (codegen/generate-unit (mapv first results) assembly-name module-name (mapv second results) live?)))
-
-(defn shadow-stages
-  "影子模式：形式 form（序号 ix）走已实现的阶段并转储。eval 的单元每个形式一个，lower-loops 的临时名从头编号。"
-  [form ix]
-  (let [nm (str "eval$s" (swap! eval-counter inc))   ; 与 Scheme 侧的 eval$N（可能被引用）区分
-        results (front-ends [[ix (eval-unit-l0 form)]] (fn [ix stage node] (dump/dump! "eval" ix stage node)))
-        gen (fn [live?] (first (codegen/generate-unit (mapv first results) nm "#Module" (mapv second results) live?)))]
-    (when dump/enabled?
-      (dump/write! "eval" ix "lcil" (codegen/lcil->string (gen true)))
-      ;; 同一个单元以 AOT 模式（常量编码）再生成一次，与 Scheme 编译器的 aot 阶段比较（cleat-089）
-      ;; 编不了的常量记为 aot-error，文本同 Scheme 版（消息与对象的类型名）
-      (let [aot (try (codegen/lcil->string (gen false))
-                     (catch clojure.lang.ExceptionInfo e
-                       (if (contains? (ex-data e) :object)
-                         (do (dump/write! "eval" ix "aot-error"
-                                          (str "cannot encode object " (let [o (:object (ex-data e))] (if (nil? o) "()" (.FullName (class o))))))
-                             nil)
-                         (throw e))))]
-        (when aot (dump/write! "eval" ix "aot" aot))))))
 
 (def ^:private run-counter (atom 0))
 
@@ -112,5 +91,5 @@
   (let [nm (str "ceval$" (swap! run-counter inc))
         [lcil cs] (compile-unit [[0 (eval-unit-l0 form)]] nm "#Module" true (fn [_ _ _]))
         asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil nm (object-array cs))]
-    (Cleat.Scheme.ModuleLoader/Run asm)
+    (.invoke ^clojure.lang.IFn Cleat.Core.Compiler.DriverOps/RunModule asm)
     (Cleat.Core.Runtime.ClojureOps/TakeHeldResult)))

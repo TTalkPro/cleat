@@ -8,6 +8,8 @@ namespace Cleat.Host.Tests;
 /// <summary>
 /// cleat-085（designs/19 D5）：逐形式转储（CLEAT_DUMP_IR）、影子模式（CLEAT_COMPILER=shadow）与 tools/compiler-diff.clj。
 /// 同一组形式跑两次，Scheme 一侧的转储在临时名规范化后相同；改变一个 pass（关掉 lower-loops）时差分定位到形式与阶段。
+/// 两个编译器输出相等的 G1 / G2 门控（cleat-086 ~ 089）在 cleat-092 之后不再成立（Clojure 编译器的输出去掉了 Scheme 的痕迹），测试已删；
+/// 影子模式与差分工具随 Scheme 在 cleat-093 删除。另有 Clojure 编译器自己的运行测试（ClojureCompiledFormsRun、ClojureDriverEvalsLoadsAndCompiles）。
 /// </summary>
 [Category("Host")]
 public class CompilerDiffTests
@@ -62,103 +64,6 @@ public class CompilerDiffTests
         Assert.That(d.Out, Does.Contain(" 0 different"), d.ToString());
     }
 
-    /// <summary>
-    /// cleat-086 / 087 的 G1：影子模式下 Clojure 编译器对各类形式给出的 L0（p0）与前中端各阶段（l0 sl cf c1 in l1 l2 l3）
-    /// 与 Scheme 编译器规范化后相同，语法错误的文本也相同
-    /// （小函数内联关掉：Clojure 编译器的 .inl 在 cleat-090 做）。完整的输入集用 tools/build.cs ir-dump --shadow --corpus 验收。
-    /// </summary>
-    [Test]
-    public void ShadowCompilerMatchesSchemeThroughL3()
-    {
-        string a = Path.Combine(_dir, "s");
-        var env = new[] { ("CLEAT_DUMP_IR", a), ("CLEAT_NO_SIMPLE_EVAL", "1"), ("CLEAT_COMPILER", "shadow"), ("CLEAT_NO_INLINE", "1") };
-        string[] forms =
-        {
-            "(defn ^long fib [^long n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))",
-            "(defn f ([] 0) ([x] (f x 1)) ([x y & more] (reduce + x (cons y more))))",
-            "(letfn [(ev? [n] (if (zero? n) true (od? (dec n)))) (od? [n] (if (zero? n) false (ev? (dec n))))] (ev? 10))",
-            "(let [x 1 x (inc x) {:keys [a b] :or {a 2}} {:b 3}] (loop [i 0 acc []] (if (< i 3) (recur (inc i) (conj acc (+ x a b i))) acc)))",
-            "(try (/ 1 0) (catch ArithmeticException e (.Message e)) (catch :default e :other) (finally (println \"done\")))",
-            "(case (rand-int 3) 0 :zero 1 :one (2 3) :many :default)",
-            "(defrecord P [x y] Object (ToString [_] (str x \",\" y)))",
-            "(deftype T [^:volatile-mutable n] clojure.lang.IDeref (deref [_] (set! n (inc n)) n))",
-            "(defprotocol Q (q [this] [this x]))",
-            "(extend-type String Q (q ([s] (count s)) ([s x] (str s x))))",
-            "(let [r (reify clojure.lang.IDeref (deref [_] 42))] [@r (.ToString (System.Text.StringBuilder. \"x\")) (Math/Abs -1) System.Int32/MaxValue (. \"abc\" (Substring 1)) (.-Length \"ab\")])",
-            "(def ^:dynamic *d* 1)",
-            "(binding [*d* 2] (set! *d* 3) [*d* #'*d* (var *d*) '(a b) ^{:m 1} [1 2] ^{:m (inc 1)} {:k [*d*]} #{1 :a \"s\"} #\"re\" \\c nil])",
-            "(proxy [Object] [] (ToString [] \"p\"))",
-            "(fn self [x] (if (pos? x) (self (dec x)) (with-meta [x] {:z 1})))",
-            "(recur 1)",
-            "(let [x])",
-            "(def)",
-            "(fn [x x] x)",
-            "(nosuch/thing 1)",
-            "(.foo)",
-        };
-        // 后面 6 个是语法错误：包进 try，进程不中断（顶层定义形式不能包，defprotocol 等要在顶层）
-        var args = forms.Select((f, i) => i < forms.Length - 6 ? f : "(try (eval '" + f + ") (catch Exception e (str \"caught \" (.Message e))))")
-            .SelectMany(f => new[] { "-e", f }).ToArray();
-        var r = HostProcessTests.CleatIn(_dir, null, env, args);
-        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        var d = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null, "-I", Path.Combine(HostProcessTests.RepoDir, "src", "clojure"),
-            Path.Combine(HostProcessTests.RepoDir, "tools", "compiler-diff.clj"), "diff", Path.Combine(a, "scheme"), Path.Combine(a, "clojure"),
-            "--stage", "p0", "--stage", "l0", "--stage", "sl", "--stage", "cf", "--stage", "c1", "--stage", "in",
-            "--stage", "l1", "--stage", "l2", "--stage", "l3", "--stage", "error");
-        Assert.That(d.ExitCode, Is.EqualTo(0), d.ToString());
-        Assert.That(d.Out, Does.Contain(" 0 different"), d.ToString());
-    }
-
-    /// <summary>
-    /// cleat-088 / 089 的 G2：影子模式下 Clojure 编译器的 codegen 给出的 Lcil 与 Scheme 编译器规范化后相同：内存模式（lcil 阶段）与
-    /// AOT 模式（aot 阶段，常量编码）。过程类与共享持有类、原始签名的函数、拆箱推断、try 的处理器、case、常量
-    /// （Int32 / true / false / 非有限浮点数 / 非 BMP 字符串 / Clojure 的各种值）、deftype* / reify* / proxy / gen-interface 的类。
-    /// 完整的输入集用 tools/build.cs ir-dump --shadow --corpus 验收。
-    /// </summary>
-    [Test]
-    public void ShadowCodegenMatchesSchemeLcil()
-    {
-        string a = Path.Combine(_dir, "g");
-        var env = new[] { ("CLEAT_DUMP_IR", a), ("CLEAT_NO_SIMPLE_EVAL", "1"), ("CLEAT_COMPILER", "shadow"), ("CLEAT_NO_INLINE", "1") };
-        string[] forms =
-        {
-            "(defn fib ^long [^long n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))",
-            "(defn f ([] 0) ([x] (f x 1)) ([x y & more] (reduce + x (cons y more))))",
-            "(defn h [^double d] (let [x (* d 2.5)] (loop [i 0 acc 0.0] (if (< i 10) (recur (inc i) (+ acc x)) acc))))",
-            "(letfn [(ev? [n] (if (zero? n) true (od? (dec n)))) (od? [n] (if (zero? n) false (ev? (dec n))))] (ev? 10))",
-            "(let [x 1 x (inc x) {:keys [a b] :or {a 2}} {:b 3}] (loop [i 0 acc []] (if (< i 3) (recur (inc i) (conj acc (+ x a b i))) acc)))",
-            "(try (/ 1 0) (catch ArithmeticException e (.Message e)) (catch :default e :other) (finally (println \"done\")))",
-            "(case (rand-int 3) 0 :zero 1 :one (2 3) :many :default)",
-            "(def ^:dynamic *d* 1)",
-            "(binding [*d* 2] (set! *d* 3) [*d* #'*d* (var *d*) '(a b) ^{:m 1} [1 2] ^{:m (inc 1)} {:k [*d*]} #{1 :a \"s\"} #\"re\" \\c nil false true])",
-            "[(Math/Abs -1) System.Int32/MaxValue (. \"abc\" (Substring 1)) (.-Length \"ab\") (.ToString (System.Text.StringBuilder. \"x\")) (= ##Inf (/ 1.0 0.0)) 2.147483647000001e9 \"\U0001F600\"]",
-            "(fn self [x] (if (pos? x) (self (dec x)) (with-meta [x] {:z 1})))",
-            "(defn g [m & {:keys [k] :or {k 0}}] (let [s (StringBuilder.)] (.Append s (str (:a m) k)) (str s)))",
-            // cleat-089：deftype* 一族的类生成
-            "(defrecord P [x y] Object (ToString [_] (str x \",\" y)))",
-            "(deftype T [^:volatile-mutable n] clojure.lang.IDeref (deref [_] (set! n (inc n)) n))",
-            "(defprotocol Q (q [this] [this x]))",
-            "(extend-type String Q (q ([s] (count s)) ([s x] (str s x))))",
-            "(let [r (reify clojure.lang.IDeref (deref [_] 42))] [@r (q \"ab\") (str (->P 1 2))])",
-            "(proxy [Object] [] (ToString [] \"p\"))",
-            "(definterface I1 (^long foo [^long x]))",
-            "(deftype U [] I1 (foo [_ x] (inc x)))",
-            "(def m ^{:line 3} '(a b ^:k c))",
-            "(def v [1 2.5 \"s\" \\c :k 'sym {:a 1} #{1 2} (int 7) 1N 1.5M 2/3 #\"r\" String])",
-        };
-        var r = HostProcessTests.CleatIn(_dir, null, env, forms.SelectMany(f => new[] { "-e", f }).ToArray());
-        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        var d = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null, "-I", Path.Combine(HostProcessTests.RepoDir, "src", "clojure"),
-            Path.Combine(HostProcessTests.RepoDir, "tools", "compiler-diff.clj"), "diff", Path.Combine(a, "scheme"), Path.Combine(a, "clojure"),
-            "--stage", "lcil", "--stage", "aot", "--stage", "aot-error", "--stage", "error");
-        Assert.That(d.ExitCode, Is.EqualTo(0), d.ToString());
-        Assert.That(d.Out, Does.Contain(" 0 different"), d.ToString());
-        // 每个顶层形式（defprotocol 等展开成几个）一条 lcil 与一条 aot（cleat-089：AOT 模式的常量编码），Clojure 一侧没有多出的记录
-        var m = System.Text.RegularExpressions.Regex.Match(d.Out, @"compared (\d+) records: \d+ same, 0 different; \d+ only in A, 0 only in B");
-        Assert.That(m.Success, Is.True, d.ToString());
-        Assert.That(int.Parse(m.Groups[1].Value), Is.GreaterThanOrEqualTo(2 * forms.Length), d.ToString());
-    }
-
     /// <summary>cleat-088 / 089：Clojure 编译器编出的程序集（内存模式）能加载运行（cleat.compiler.pipeline/eval-form），含 deftype / reify / proxy 生成的类。</summary>
     [Test]
     public void ClojureCompiledFormsRun()
@@ -199,13 +104,15 @@ public class CompilerDiffTests
     {
         var env = new[] { ("CLEAT_COMPILER", "clojure") };
         var r = HostProcessTests.CleatIn(_dir, null, env,
+            // 计数从零起：开发布局下编译器可能刚从源码加载过（它自己的形式也计数）
+            "-e", "(set! (. Cleat.Core.Compiler.DriverOps SimpleCount) 0) (set! (. Cleat.Core.Compiler.DriverOps CompiledCount) 0)",
             "-e", "(def a 1) (def b [a 2]) (. \"x\" Length) (let* [k :k] (k {:k 1}))",
             "-e", "[(. Cleat.Scheme.Clojure.Driver SimpleCount) (. Cleat.Scheme.Clojure.Driver CompiledCount)]",
             "-e", "(defn f [x] (* x 2)) (f 21)",
             "-e", "(. Cleat.Scheme.Clojure.Driver CompiledCount)",
             "-e", "(. clojure.lang.Var (pushThreadBindings {(var *warn-on-reflection*) true})) (set! *warn-on-reflection* false) *warn-on-reflection*");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        Assert.That(r.Out, Does.Contain("[5 0]\n#'user/f\n42\n1\n"), "simple forms interpreted, the fn compiled: " + r);
+        Assert.That(r.Out, Does.Contain("[6 0]\n#'user/f\n42\n1\n"), "simple forms interpreted (the second set! too), the fn compiled: " + r);
         Assert.That(r.Out, Does.EndWith("false\nfalse\n"), r.ToString());
 
         Directory.CreateDirectory(Path.Combine(_dir, "src", "demo"));

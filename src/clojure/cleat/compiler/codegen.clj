@@ -1,16 +1,13 @@
-;; 代码生成：L3 → Lcil（cleat-088 起，移植 src/scheme/lib/cleat/scheme/compiler/codegen.sls）。
+;; 代码生成：L3 → Lcil（cleat-088 起，移植 src/scheme/lib/cleat/scheme/compiler/codegen.sls；cleat-092 起只产出 Clojure 的运行时契约：
+;; 生成的代码只引用 Cleat.Core 与 clojure.lang，常量表是 Clojure 数据，try 的处理器内联进 catch 块，Scheme 的过程类、共享持有类、
+;; 原语与数据都不再出现）。
 ;;
-;; 逐函数照 Scheme 版（各函数注明对应的 Scheme 名字），产出的 Lcil 与 Scheme 编译器规范化后相同（designs/19 D5 的 G2）。
-;; 只移植 Clojure 输入用得到的部分（cleat-085 的普查）：gref / gset! / mref / mset! / prim / primcall / library / and / or / break /
-;; escape-frame / try-handle / host-* / unsupported 不会出现（遇到时报错）；收窄（iron-071）与推测 fixnum 循环只作用于 primcall 与
-;; boot 的 gref，不移植；boot / 用户库的接口文件（gref 的已知过程）不移植。Scheme 版的过程类（try 的处理器是 Scheme 的 lambda）、
-;; 共享持有类、commonize 照搬（cleat-092 清理）。
+;; 逐函数照 Scheme 版（各函数注明对应的 Scheme 名字）。只有 Clojure 输入用得到的节点（cleat-085 的普查；Scheme 专有的节点 cleat-092 从语言里删去）。
 ;;
-;; Lcil 是 Clojure 的列表数据（符号、字符串、整数、浮点、布尔），直接交给 Cleat.Emit（ClojureData）；lcil->string 写成与
-;; Scheme 版逐字相同的文本（转储与差分用）。
+;; Lcil 是 Clojure 的列表数据（符号、字符串、整数、浮点、布尔），直接交给 Cleat.Emit（ClojureData）；lcil->string 写成文本（转储与差分用）。
 (ns cleat.compiler.codegen
   (:require [clojure.string :as str]
-            [cleat.nanopass :refer [nanopass-case define-pass]]
+            [cleat.nanopass :refer [nanopass-case define-pass with-output-language out]]
             [cleat.nanopass.records :as r]
             [cleat.compiler.languages :as l :refer [L3]])
   (:import [System.Collections Hashtable]))
@@ -39,17 +36,8 @@
 (def string-type "System.String")
 (def void-type "System.Void")
 (def exception-type "System.Exception")
-(def scheme-exn-type "Cleat.Scheme.SchemeException")
-(def continuation-exn-type "Cleat.Scheme.ContinuationException")
-(def proc-type "Cleat.Scheme.Procedure")
-(def variadic-type "Cleat.Scheme.VariadicProcedure")
-(def box-type "Cleat.Scheme.Box")
-(def symbol-type "Cleat.Scheme.Symbol")
-(def rt-type "Cleat.Scheme.RT")
+(def box-type "Cleat.Core.Runtime.Box")
 (def truth-type "Cleat.Core.Runtime.Truth")
-(def calls-type "Cleat.Scheme.Calls")
-(def unspecified-type "Cleat.Scheme.Unspecified")
-(def empty-list-type "Cleat.Scheme.EmptyList")
 (def ifn-type "clojure.lang.IFn")
 (def clj-var-type "clojure.lang.Var")
 (def ilookup-type "clojure.lang.ILookup")
@@ -63,8 +51,7 @@
 (def type-type "System.Type")
 (def type-handle-type "System.RuntimeTypeHandle")
 (def static-calls-type "Cleat.Core.Runtime.ClojureStaticCalls")
-(def static-proc-type "Cleat.Scheme.StaticProcedure")
-(def core-assembly "Cleat.Scheme")
+(def core-assembly "Cleat.Core")
 (def target-tail-calls? true)
 (def target-clojure-tail-calls? false)
 
@@ -78,111 +65,15 @@
 (def opt-034? (not (opt-off? "known")))
 (def opt-inline? (not (opt-off? "inline")))
 (def opt-infer? (not (opt-off? "infer")))
-(def opt-shared? (not (opt-off? "shared")))
-(def opt-local-call? (let [v (env "CLEAT_NO_070")] (not (or (= v "1") (str/includes? v "call")))))
-(def opt-commonize? (let [v (env "CLEAT_NO_073")] (not (or (= v "1") (str/includes? v "commonize")))))
-
-;; —— Scheme 数据（过渡期：常量表里的 procedure-form 等照 Scheme 版是 Scheme 的列表与符号）——
-
-;; 真正的 Int32（Scheme 的 fixnum）：经 IFn 取得，宿主调用的返回值会被换成 long
-(def ^:private fixnum Cleat.Core.Compiler.Fixnum/Instance)
-(defn- scons [a d] (Cleat.Scheme.Cons. a d))
-(def ^:private sempty Cleat.Scheme.EmptyList/Instance)
-(defn- slist* [xs] (reduce (fn [tail x] (scons x tail)) sempty (reverse xs)))
-(defn- ssym [s] (Cleat.Scheme.Symbol/Intern ^String s))
-(defn- scheme-list? [x] (or (instance? Cleat.Scheme.Cons x) (instance? Cleat.Scheme.EmptyList x)))
-(defn- slist->seq
-  "Scheme 列表（正规）→ Clojure 序列。"
-  [x]
-  (loop [x x out []]
-    (if (instance? Cleat.Scheme.Cons x)
-      (recur (.-cdr ^Cleat.Scheme.Cons x) (conj out (.-car ^Cleat.Scheme.Cons x)))
-      out)))
 
 ;; —— 编译单元（Scheme 版 unit）——
 
-(defrecord Known [class clauses owner prefix])   ; clauses：[[固定参数个数 剩余?] …]
-
-(defn- make-unit [assembly-name module-name massigned]
+(defn- make-unit [assembly-name module-name]
   {:name assembly-name :module module-name
    :classes (atom []) :consts (atom []) :nconsts (atom 0) :const-index (ht)
-   :namespaces (atom []) :references (atom []) :mfields (atom []) :mfield-of (ht)
-   :known (ht) :prelink (atom []) :counter (atom 0) :massigned massigned :known-loc (ht)
-   :shared-count (atom 0) :shared (atom (sorted-map)) :type-names (ht) :local-known (ht)})
-
-(defn- known-field [^Known k]
-  (let [p (:prefix k)] (if (= p "") "Instance" (subs p 0 (dec (count p))))))
-
-(def shared-per-holder 200)
-
-(defn- shared-slot! [u]
-  (let [id @(:shared-count u)]
-    (swap! (:shared-count u) inc)
-    [(str (:module u) "$P" (quot id shared-per-holder)) (str "P" id "$")]))
-
-(defn- holder-entry
-  "持有类的 [字段 方法 初始化代码]（各逆序，atom）。"
-  [u holder]
-  (let [k (parse-long (subs holder (+ (count (:module u)) 2)))]
-    (or (get @(:shared u) k)
-        (let [v [(atom ()) (atom ()) (atom ())]]
-          (swap! (:shared u) assoc k v)
-          v))))
-
-(defn- sp-class [u] (str (:module u) "$SP"))
-
-(defn- func-type [n]
-  (case (int n)
-    0 "System.Func`1[System.Object]"
-    1 "System.Func`2[System.Object,System.Object]"
-    2 "System.Func`3[System.Object,System.Object,System.Object]"
-    3 "System.Func`4[System.Object,System.Object,System.Object,System.Object]"
-    "System.Func`5[System.Object,System.Object,System.Object,System.Object,System.Object]"))
-(def func-n-type "System.Func`2[System.Object[],System.Object]")
-
-(defn- sp-ctor-params []
-  ["System.String" "System.Object" "System.Object" (func-type 0) (func-type 1) (func-type 2) (func-type 3) (func-type 4) func-n-type])
-
-(defn- sp-class-def [u]
-  (let [invoke-k (fn [k]
-                   (i 'method (str "Invoke" k) (i 'attrs 'override) (apply i 'params (objs k)) (i 'ret obj)
-                      (apply i 'body
-                             (concat
-                               [(i 'ldarg 0) (i 'ldfld static-proc-type (str "_f" k)) (i 'dup) (i 'brfalse 'NOFIXED)]
-                               (for [j (range 1 (inc k))] (i 'ldarg j))
-                               [(i 'tail) (i 'callvirt (func-type k) "Invoke" (apply i (objs k)) obj) (i 'ret)
-                                (i 'label 'NOFIXED) (i 'pop)
-                                (i 'ldarg 0) (i 'ldfld static-proc-type "_fn") (i 'dup) (i 'brfalse 'NOENTRY)
-                                (i 'ldc.i4 k) (i 'newarr obj)]
-                               (mapcat (fn [j] [(i 'dup) (i 'ldc.i4 j) (i 'ldarg (inc j)) (i 'stelem.ref)]) (range k))
-                               [(i 'tail) (i 'callvirt func-n-type "Invoke" (i obj-array) obj) (i 'ret)
-                                (i 'label 'NOENTRY) (i 'pop)
-                                (i 'ldarg 0) (i 'ldc.i4 k) (i 'call static-proc-type "ArityFail" (i int32-type) obj) (i 'ret)]))))]
-    (apply i 'type (sp-class u) (i 'base static-proc-type) (i 'attrs 'sealed)
-           (concat
-             [(i 'method ".ctor" (i 'attrs 'ctor) (apply i 'params (sp-ctor-params))
-                 (apply i 'body (concat (for [j (range 10)] (i 'ldarg j))
-                                        [(i 'call static-proc-type ".ctor" (apply i (sp-ctor-params)) void-type) (i 'ret)])))]
-             (map invoke-k [0 1 2 3 4])
-             [(i 'method "InvokeN" (i 'attrs 'override) (i 'params obj-array) (i 'ret obj)
-                 (i 'body (i 'ldarg 0) (i 'ldfld static-proc-type "_fn") (i 'dup) (i 'brfalse 'NOENTRY)
-                    (i 'ldarg 1) (i 'tail) (i 'callvirt func-n-type "Invoke" (i obj-array) obj) (i 'ret)
-                    (i 'label 'NOENTRY) (i 'pop)
-                    (i 'ldarg 0) (i 'ldarg 1) (i 'call static-proc-type "DispatchN" (i obj-array) obj) (i 'ret)))]))))
+   :namespaces (atom []) :references (atom []) :counter (atom 0) :type-names (ht)})
 
 (defn- add-class! [u c] (swap! (:classes u) conj c))
-
-(defn- emit-holders!
-  "单元结束时生成持有类（Scheme 版 emit-holders!）。"
-  [u]
-  (let [shared @(:shared u)]
-    (when (seq shared) (add-class! u (sp-class-def u)))
-    (doseq [[k [fields methods inits]] shared]
-      (let [holder (str (:module u) "$P" k)]
-        (add-class! u (apply i 'type holder (i 'attrs 'abstract 'sealed)
-                             (concat (reverse @fields) (reverse @methods)
-                                     [(i 'method ".cctor" (i 'attrs 'cctor) (i 'params)
-                                         (apply i 'body (concat (apply concat (reverse @inits)) [(i 'ret)])))])))))))
 
 (defn- next-id! [u] (let [n @(:counter u)] (swap! (:counter u) inc) n))
 
@@ -192,16 +83,10 @@
 (defn- neg-zero? [x] (and (instance? Double x) (zero? (double x)) (neg? (/ 1.0 (double x)))))
 (defn- signed-zero-constant? [d] (neg-zero? d))
 
-(defn- scheme-number?
-  "Scheme 的 number?：fixnum（Int32）、flonum、bignum（System.Numerics.BigInteger）、ratnum、complexnum、rectnum。
-  Clojure 的 long、BigInt、Ratio、decimal 都不是。"
+(defn- equals-dedupable?
+  "按值合并的常量：数、字符、字符串、关键字、布尔；符号与集合可能带元数据、identical? 有意义，只有同一个对象才共用下标。"
   [d]
-  (or (instance? Int32 d) (instance? Double d) (instance? System.Numerics.BigInteger d) (instance? Cleat.Scheme.Fraction d)
-      (instance? Cleat.Scheme.Complex64 d) (instance? Cleat.Scheme.ComplexFraction d)))
-
-(defn- equals-dedupable? [d]
-  (or (scheme-number? d) (char? d) (string? d) (instance? Cleat.Scheme.Symbol d) (instance? Boolean d)
-      (scheme-list? d) (instance? |System.Object[]| d) (instance? |System.Byte[]| d) (instance? Cleat.Scheme.SchemeString d)))
+  (or (number? d) (char? d) (string? d) (keyword? d) (boolean? d)))
 
 (defn- constant-index! [u d]
   (let [hit (and (not (signed-zero-constant? d)) (hget (:const-index u) d))]
@@ -269,8 +154,6 @@
     (let [last-i (last code)]
       (cond
         (and (seq? last-i) (= 'castclass (first last-i))) [last-i]
-        (and (seq? last-i) (#{'call 'callvirt} (first last-i)) (= 5 (count last-i)) (= (nth last-i 4) proc-type))
-        [(i 'castclass (nth last-i 4))]
         :else []))))
 
 (defn- code-result-type [code]
@@ -278,7 +161,7 @@
     obj
     (let [x (last code)]
       (case (first x)
-        (call callvirt) (let [rt (last x)] (if (and (string? rt) (#{proc-type int32-type double-type} rt)) rt obj))
+        (call callvirt) (let [rt (last x)] (if (and (string? rt) (#{int32-type double-type} rt)) rt obj))
         unbox.any (let [t (second x)] (if (#{int32-type double-type} t) t obj))
         ldc.i4 int32-type
         ldc.r8 double-type
@@ -332,8 +215,8 @@
   (case ctx
     :effect nil
     :test (emit! mc (i 'ldc.i4 1))
-    :value (emit! mc (i 'ldsfld unspecified-type "Instance"))
-    :tail (do (emit! mc (i 'ldsfld unspecified-type "Instance")) (finish-value! mc :tail))))
+    :value (emit! mc (i 'ldnull))
+    :tail (do (emit! mc (i 'ldnull)) (finish-value! mc :tail))))
 
 (defn- tail-ok? [mc ctx]
   (and (= ctx :tail) (not @(:ret-type mc)) (zero? @(:try-depth mc)) target-tail-calls?))
@@ -353,13 +236,9 @@
 
 (defn- load-constant! [mc d]
   (cond
-    (instance? Int32 d) (emit! mc (i 'ldc.i4 d) (i 'call rt-type "Box" (i int32-type) obj))
-    ;; Scheme 版是 eq?：只有 #t / #f 本身（Truth 的两个对象）；读入器装箱的 true / false 进常量表
-    (Object/ReferenceEquals d Cleat.Core.Runtime.Truth/True) (emit! mc (i 'ldsfld truth-type "True"))
-    (Object/ReferenceEquals d Cleat.Core.Runtime.Truth/False) (emit! mc (i 'ldsfld truth-type "False"))
-    (instance? Cleat.Scheme.EmptyList d) (emit! mc (i 'ldsfld empty-list-type "Instance"))
+    (instance? Int32 d) (emit! mc (i 'ldc.i4 d) (i 'box int32-type))   ; 读入器给元数据的行号等；Clojure 的整数是 long
+    (boolean? d) (emit! mc (i 'ldsfld truth-type (if d "True" "False")))
     (nil? d) (emit! mc (i 'ldnull))
-    (instance? Cleat.Scheme.Unspecified d) (emit! mc (i 'ldsfld unspecified-type "Instance"))
     (and (char? d) (< (int d) 0x10000)) (emit! mc (i 'ldc.i4 (int d)) (i 'box char-type))
     (and (string? d) (bmp-safe-string? d)) (emit! mc (i 'ldstr d))
     :else (emit! mc (i 'ldconst (constant-index! (:unit mc) d)))))
@@ -470,7 +349,7 @@
 
 ;; —— 类型格（Scheme 版 iron-071 的格元素；Clojure 输入只用到其中几种，加上 cleat-042 的 :l64）——
 
-(def ^:private type-parents {:fx :int :int :real :fl :real :real :num :pair :list :null :list})
+(def ^:private type-parents {:fx :int :int :real :fl :real :real :num})
 (defn- type-ancestors [t] (if t (cons t (type-ancestors (type-parents t))) ()))
 (defn- type-join [a b]
   (cond (= a :top) b
@@ -480,19 +359,14 @@
 (defn- meet-type [a b] (type-join a b))
 
 (defn- datum-type
-  "常量的类型（Scheme 版 datum-type 照 Scheme 的谓词：fixnum 是 Int32）。"
+  "常量的类型：Int32 是 fx（Scheme 版的 fixnum），Double 是 fl，long / 大整数是 int，其余数是 real。"
   [d]
   (cond (instance? Int32 d) :fx
         (instance? Double d) :fl
-        (instance? System.Numerics.BigInteger d) :int
-        (instance? Cleat.Scheme.Fraction d) :real
-        (or (instance? Cleat.Scheme.Complex64 d) (instance? Cleat.Scheme.ComplexFraction d)) :num   ; 虚部为 0 时 Scheme 算 real，Clojure 输入里没有复数
-        (instance? Boolean d) :bool
+        (or (instance? Int64 d) (instance? System.Numerics.BigInteger d) (instance? clojure.lang.BigInt d)) :int
+        (number? d) :real
+        (boolean? d) :bool
         (char? d) :char
-        (instance? Cleat.Scheme.Symbol d) :symbol
-        (instance? Cleat.Scheme.EmptyList d) :null
-        (instance? Cleat.Scheme.Cons d) :pair
-        (instance? |System.Object[]| d) :vector
         :else nil))
 
 (def ^:private no-datum (Object.))
@@ -507,7 +381,7 @@
 (defn- numbers-type? [tp]
   (or (= tp "clojure.lang.Numbers") (and (instance? Type tp) (= (.FullName ^Type tp) "clojure.lang.Numbers"))))
 
-(defn- empty-gen? [g] (or (instance? Cleat.Scheme.EmptyList g) (false? g)))
+(defn- empty-gen? [g] (or (nil? g) (false? g)))
 
 (defn- numbers-arith-op [d0 d1 e*]
   (when (and (= d0 "CallStatic") (= d1 3) (<= 4 (count e*) 5) (numbers-type? (quoted-datum (first e*))))
@@ -583,7 +457,7 @@
      (when layout
        (let [t (quoted-datum (first e*))
              nm (quoted-datum (second e*))
-             gen (if (#{"CallStatic" "CallInstance"} d0) (quoted-datum (nth e* (if (first layout) 2 3))) sempty)]
+             gen (if (#{"CallStatic" "CallInstance"} d0) (quoted-datum (nth e* (if (first layout) 2 3))) nil)]
          (when (and (instance? Type t) (string? nm) (empty-gen? gen))
            (let [ats (mapv #(static-arg-type % env) (nth layout 2))]
              (if (some #{:pending} ats)
@@ -681,7 +555,7 @@
                (do (when (second lay) (Expr (second lay))) (run! Raw (nth lay 2)))
                (run! Expr e*)))]
     [(clj-static-call ~d0 ~d1 ~e* ...) (run! Expr e*)]
-    [(primcall ~pr ~e* ...) (run! Expr e*)]
+    [(check-initialized ~e) (Expr e)]
     [(clj-case ~d ~e0 ~e1 ~e* ...) (Expr e0) (Expr e1) (run! Expr e*)]
     [(clj-deftype ~d (~x* ...) ~le* ...) (run! exclude! x*) (run! Expr le*)]
     [else nil])
@@ -711,7 +585,7 @@
     [(clj-keyword-invoke ~d ~e ~e* ...) (Expr e) (run! Expr e*)]
     [(clj-call ~d0 ~d1 ~e* ...) (run! Expr e*)]
     [(clj-static-call ~d0 ~d1 ~e* ...) (run! Expr e*)]
-    [(primcall ~pr ~e* ...) (run! Expr e*)]
+    [(check-initialized ~e) (Expr e)]
     [(clj-case ~d ~e0 ~e1 ~e* ...) (Expr e0) (Expr e1) (run! Expr e*)]
     [(clj-deftype ~d (~x* ...) ~le* ...) (run! Expr le*)]
     [else nil])
@@ -734,7 +608,7 @@
     [(try-catch ~e (~d* ~e*) ...) (when (more?) (Expr e) (run! Expr e*))]
     [(label ~x (~x* ...) ~body0 ~body1) (when (more?) (Expr body0) (Expr body1))]
     [(jump ~x ~e* ...) (when (more?) (run! Expr e*))]
-    [(primcall ~pr ~e* ...) (when (more?) (run! Expr e*))]
+    [(check-initialized ~e) (when (more?) (Expr e))]
     [else (more?)])
   (Expr ir)
   (> @cnt n))
@@ -791,8 +665,8 @@
       (run! decide! cands))))
 
 ;; —— deftype* 描述的访问（Scheme 列表，见 Scheme 版 deftype-info-*）——
-(defn- dinfo [d k] (nth (slist->seq d) k))
-(defn- dinfo-kind [d] (let [r (dinfo d 1)] (if (instance? Cleat.Scheme.Symbol r) (keyword (str r)) r)))
+(defn- dinfo [d k] (nth d k))
+(defn- dinfo-kind [d] (dinfo d 1))   ; true reify*、false deftype*、:interface、:proxy、:genclass
 (defn- deftype-reify? [d] (true? (dinfo-kind d)))
 (defn- deftype-interface? [d] (= :interface (dinfo-kind d)))
 (defn- deftype-proxy? [d] (= :proxy (dinfo-kind d)))
@@ -814,7 +688,7 @@
   (case t
     :fl (emit! mc (i 'box double-type))
     :l64 (emit! mc (i 'box int64-type))
-    (emit! mc (i 'call rt-type "Box" (i int32-type) obj))))
+    (emit! mc (i 'box int32-type))))
 
 (defn- unbox-to-sig! [mc c]
   (case c
@@ -981,8 +855,16 @@
     (do (emit! mc (i 'ldloca t)) (take-slot! mc))
     (emit! mc (i 'ldloc t))))
 
+(defn- handler-parts
+  "try-catch 的处理器 (lambda nm (fv*) (clause (x) false body))：[异常变量 体]（cleat-092：处理器内联进 catch 块）"
+  [h]
+  (nanopass-case [L3 LambdaExpr] h
+    [(lambda ~nm (~x* ...) ~cl* ...)
+     (nanopass-case [L3 Clause] (first cl*) [(clause (~x1* ...) ~x ~body) [(first x1*) body]])]))
+
 (defn- walk-var-refs
-  "遍历 L3 表达式的变量引用（on-ref）与约束（on-bind）；不进入嵌套 lambda 的体，闭包创建时读的自由变量算引用。"
+  "遍历 L3 表达式的变量引用（on-ref）与约束（on-bind）；不进入嵌套 lambda 的体，闭包创建时读的自由变量算引用；
+  try 的处理器体内联，照常遍历。"
   [e on-ref on-bind]
   (letfn [(free-of [le self]
             (nanopass-case [L3 LambdaExpr] le
@@ -1002,7 +884,9 @@
               [(call ~e ~e* ...) (walk e) (run! walk e*)]
               [(throw ~e) (walk e)]
               [(try-finally ~e0 ~e1) (walk e0) (walk e1)]
-              [(try-catch ~e (~d* ~e*) ...) (walk e) (run! walk e*)]
+              [(try-catch ~e (~d* ~e*) ...)
+               (walk e)
+               (doseq [h e*] (let [[bn hbody] (handler-parts h)] (on-bind bn) (walk hbody)))]
               [(label ~x (~x* ...) ~body0 ~body1) (run! on-bind x*) (walk body0) (walk body1)]
               [(jump ~x ~e* ...) (run! walk e*)]
               [(box ~e) (walk e)]
@@ -1014,7 +898,7 @@
               [(clj-keyword-invoke ~d ~e ~e* ...) (walk e) (run! walk e*)]
               [(clj-call ~d0 ~d1 ~e* ...) (run! walk e*)]
               [(clj-static-call ~d0 ~d1 ~e* ...) (run! walk e*)]
-              [(primcall ~pr ~e* ...) (run! walk e*)]
+              [(check-initialized ~e) (walk e)]
               [(clj-case ~d ~e0 ~e1 ~e* ...) (walk e0) (walk e1) (run! walk e*)]
               [(clj-deftype ~d (~x* ...) ~le* ...) (when (deftype-reify? d) (run! on-ref (deftype-caps x* le*)))]
               [else nil]))]
@@ -1047,10 +931,7 @@
       :tlocal (do (emit! mc (i 'ldloc (second loc))) (box-raw! mc (nth loc 2)))
       :targ (do (emit! mc (i 'ldarg (second loc))) (box-raw! mc (nth loc 2)))
       (:field :dfield) (emit! mc (i 'ldarg 0) (i 'ldfld (:class mc) (second loc)))
-      :self (cond
-              (second loc) (emit! mc (i 'ldsfld (second loc) (nth loc 2)))   ; 共享持有类中的过程
-              (:static? mc) (emit! mc (i 'ldsfld (:class mc) "Instance"))
-              :else (emit! mc (i 'ldarg 0))))))
+      :self (emit! mc (i 'ldarg 0)))))
 
 (defn- store-var! [mc x]
   (let [loc (var-location mc x)]
@@ -1102,7 +983,7 @@
       (do (cg-raw e mc rt) (emit! mc (i 'ret)))
       (cg* e mc ctx))))
 
-(declare lambda-class! make-closure! fill-fields! local-known-preset! cg-call deftype-node!)
+(declare lambda-class! make-closure! fill-fields! cg-call deftype-node! source-name)
 
 (defn- unsupported-node [e]
   (throw (ex-info (str "codegen: node not supported by the Clojure compiler: " (r/brief e)) {:node e})))
@@ -1166,22 +1047,20 @@
      (finish-none! mc ctx)]
     [(lambda ~nm (~x* ...) ~cl* ...)
      (when-not (= ctx :effect)
-       (let [c (lambda-class! e mc nil nil nil)]
-         (make-closure! mc c x* nil)
+       (let [c (lambda-class! e mc nil)]
+         (make-closure! mc c x*)
          (finish-value! mc ctx)))]
     [(letrec ([~x* ~le*] ...) ~body)
-     ;; 先创建全部过程对象，再填自由变量字段（组内互相引用）；组内的同步 lambda 先登记（iron-070 的直接调用）
-     (let [presets (mapv (fn [x le] (local-known-preset! (:unit mc) x le)) x* le*)
-           classes (mapv (fn [x le k] (lambda-class! le mc x nil k)) x* le* presets)]
+     ;; 命名 fn*（自引用）：先创建全部函数对象，再填自由变量字段（组内互相引用）
+     (let [classes (mapv (fn [x le] (lambda-class! le mc x)) x* le*)]
        (run! #(bind-local! mc %) x*)
        (doseq [[x c] (map vector x* classes)]
-         (if (first c) (emit! mc (i 'ldsfld (second c) (nth c 2))) (emit! mc (i 'newobj (second c) ())))
+         (emit! mc (i 'newobj (second c) ()))
          (store-var! mc x))
        (doseq [[x c le] (map vector x* classes le*)]
-         (when-not (first c)
-           (nanopass-case [L3 LambdaExpr] le
-             [(lambda ~nm (~x1* ...) ~cl* ...)
-              (fill-fields! mc c (remove #(= x %) x1*) #(load-var! mc x))])))
+         (nanopass-case [L3 LambdaExpr] le
+           [(lambda ~nm (~x1* ...) ~cl* ...)
+            (fill-fields! mc c (remove #(= x %) x1*) #(load-var! mc x))]))
        (cg body mc ctx))]
     [(let ([~x* ~e*] ...) ~body)
      ;; 右边依次求值（看不到同一 let 的变量），再依次存入新变量
@@ -1202,21 +1081,26 @@
          (emit! mc (i 'ldloc tmp))
          (finish-value! mc ctx)))]
     [(try-catch ~e (~d* ~e*) ...)
-     ;; 处理器先求值存入局部变量；try { 值 = body } catch (T_i) { 值 = h_i(异常) } …；类型 #f 为 SchemeException
+     ;; try { 值 = body } catch (T_i) { 异常 → 处理器的形参；值 = 处理器体 } …：处理器内联进 catch 块（cleat-092，原来是 Scheme 过程闭包）。
+     ;; 处理器引用的外层变量在 body 里钉住（异常可能在 body 清掉它们之后抛出）；各处理器互为分支，生成第 i 个时先扣掉后面处理器的引用数
      (let [tmp (when-not (= ctx :effect) (new-local! mc obj))
-           hs (mapv (fn [h] (cg h mc :value) (let [t (new-local! mc obj)] (emit! mc (i 'stloc t)) t)) e*)
-           body (in-try mc #(do (cg e mc (if tmp :value :effect)) (when tmp (emit! mc (i 'stloc tmp)))))
-           handlers (mapv (fn [d h]
-                            (let [exc (new-local! mc obj)]
-                              (apply i 'catch (or d scheme-exn-type)
-                                     (concat [(i 'stloc exc) (i 'ldloc h) (i 'castclass proc-type) (i 'ldloc exc)]
-                                             (if d [] [(i 'castclass scheme-exn-type) (i 'callvirt scheme-exn-type "get_Condition" () obj)])
-                                             [(i 'callvirt proc-type "Invoke1" (i obj) obj)
-                                              (if tmp (i 'stloc tmp) (i 'pop))]))))
-                          d* hs)]
-       (emit! mc (apply i 'try (apply i 'body body)
-                        (concat (if (some identity d*) [(i 'catch continuation-exn-type (i 'rethrow))] [])
-                                handlers)))
+           hctx (if tmp :value :effect)
+           parts (mapv handler-parts e*)
+           hrefs (vec (distinct (mapcat (fn [[bn hbody]] (loop-outer-refs hbody [bn])) parts)))
+           pinned (:pinned mc)
+           _ (doseq [v hrefs] (hupdate! pinned v inc 0))
+           body (in-try mc #(do (cg e mc hctx) (when tmp (emit! mc (i 'stloc tmp)))))
+           _ (doseq [v hrefs] (hupdate! pinned v dec 0))
+           counts (mapv (fn [[_ hbody]] (branch-ref-counts mc hbody)) parts)
+           handlers (mapv (fn [j d [bn hbody]]
+                            (let [exc (bind-local-object! mc bn)
+                                  later (drop (inc j) counts)]
+                              (doseq [c later] (adjust-uses! mc c -))
+                              (let [code (in-try mc #(do (cg hbody mc hctx) (when tmp (emit! mc (i 'stloc tmp)))))]
+                                (doseq [c later] (adjust-uses! mc c +))
+                                (apply i 'catch d (cons (i 'stloc exc) code)))))
+                          (range) d* parts)]
+       (emit! mc (apply i 'try (apply i 'body body) handlers))
        (when tmp
          (emit! mc (i 'ldloc tmp))
          (finish-value! mc ctx)))]
@@ -1318,8 +1202,8 @@
        (finish-value! mc ctx))]
     [(clj-case ~d ~e0 ~e1 ~e* ...)
      ;; CaseExpr（ClojureCLR 的语义），见 Scheme 版的注释
-     (let [[shift mask kind entries] (slist->seq d)
-           entries (mapv slist->seq (slist->seq entries))
+     (let [[shift mask kind entries] (vec d)
+           entries (mapv vec entries)
            x (new-local! mc obj) k (new-local! mc int32-type)
            def-l (new-label! mc) end-l (new-label! mc)
            labels (mapv (fn [_] (new-label! mc)) entries)
@@ -1367,103 +1251,42 @@
      (operands! mc [#(do (ref-var! mc x true) (emit! mc (i 'castclass box-type))) #(cg e mc :value)])
      (emit! mc (i 'stfld box-type "Value"))
      (finish-none! mc ctx)]
-    ;; simplify-letrec 给前向变量的初值与检查（Scheme 版 cg-primcall 的一般情形：操作数依次求值后调原语表里的重载）；
-    ;; Clojure 输入里只有这两个原语
-    [(primcall ~pr ~e* ...)
-     (if-let [[t m n] ({'$uninitialized ["Cleat.Scheme.Calls" "UninitializedValue" 0]
-                        '$check-initialized ["Cleat.Scheme.Calls" "CheckInitialized" 2]} pr)]
-       (if (= n (count e*))
-         (do (operands! mc (map (fn [x] #(cg x mc :value)) e*))
-             (emit! mc (i 'call t m (apply i (objs n)) obj))
-             (finish-value! mc ctx))
-         (unsupported-node e))
-       (unsupported-node e))]
+    ;; simplify-letrec 给前向变量的初值与检查（Scheme 版的 $uninitialized / $check-initialized 原语）
+    [(uninitialized)
+     (when-not (= ctx :effect)
+       (emit! mc (i 'ldsfld clojure-ops-type "Uninitialized"))
+       (finish-value! mc ctx))]
+    [(check-initialized ~e)
+     (let [nm (nanopass-case [L3 Expr] e [~x (source-name x)] [(unbox ~x) (source-name x)] [else "?"])]
+       (cg e mc :value)
+       (emit! mc (i 'ldstr nm) (i 'call clojure-ops-type "CheckInitialized" (i obj obj) obj))
+       (finish-value! mc ctx))]
     [else (unsupported-node e)]))
 
 ;; —— 调用（Scheme 版 cg-call 的 Clojure 子集：自尾调用、letrec 的直接调用、一般调用）——
 
-(defn- invoke-method [n]
-  (if (<= n 4)
-    (i 'callvirt proc-type (str "Invoke" n) (apply i (objs n)) obj)
-    (i 'callvirt proc-type "InvokeN" (i obj-array) obj)))
+(defn- cg-call
+  "(call e0 e* …)：lower-loops 把立即调用的 lambda 变成 let、命名 let 变成 label，剩下的（不应出现）按 IFn 调用；Scheme 过程的调用路径
+  （自尾调用、iron-070 的局部直接调用）cleat-092 删去。"
+  [e0 e* mc ctx]
+  (cg* (with-output-language [L3 Expr] (out (clj-invoke ~e0 ~e* ...))) mc ctx))
 
-(defn- self-call? [e0 mc]
-  (nanopass-case [L3 Expr] e0
-    [~x (let [loc (hget (:vars mc) x)] (and loc (= :self (first loc))))]
-    [else false]))
-
-(defn- known-clause [k argc]
-  (loop [cls (seq (:clauses k)) j 0]
-    (cond
-      (nil? cls) nil
-      (second (first cls)) nil
-      (= (ffirst cls) argc) [k j]
-      :else (recur (next cls) (inc j)))))
-
-(defn- local-known-target [e0 mc argc]
-  (nanopass-case [L3 Expr] e0
-    [~x (when-let [e (hget (:local-known (:unit mc)) x)]
-          (when-let [t (known-clause (second e) argc)] (into [(first e)] t)))]
-    [else nil]))
-
-(defn- cg-call [e0 e* mc ctx]
-  (let [argc (count e*)]
-    (cond
-      ;; 自尾调用 → 循环
-      (and (tail-ok? mc ctx) (:loop-label mc) (= (:loop-arity mc) argc) (self-call? e0 mc))
-      (do (operands! mc (map (fn [x] #(cg x mc :value)) e*))
-          (doseq [j (reverse (range argc))] (emit! mc (i 'starg (+ j (:arg-base mc)))))
-          (emit! mc (i 'br (:loop-label mc))))
-      ;; letrec 绑定的过程（iron-070）
-      (local-known-target e0 mc argc)
-      (let [[kind k j] (local-known-target e0 mc argc)
-            instance? (= kind :instance)]
-        (operands! mc (concat (if instance? [#(do (cg e0 mc :value) (emit! mc (i 'castclass (:owner k))))] [])
-                              (map (fn [x] #(cg x mc :value)) e*)))
-        (when (tail-ok? mc ctx) (emit! mc (i 'tail)))
-        (emit! mc (i 'call (:owner k) (str (:prefix k) "C" j) (apply i (objs argc)) obj))
-        (finish-value! mc ctx))
-      :else
-      (do (operands! mc (cons #(do (cg e0 mc :value) (emit! mc (i 'call calls-type "Proc" (i obj) proc-type)))
-                              (map (fn [x] #(cg x mc :value)) e*)))
-          (when (> argc 4) (pack-array! mc argc))
-          (when (tail-ok? mc ctx) (emit! mc (i 'tail)))
-          (emit! mc (invoke-method argc))
-          (finish-value! mc ctx)))))
-
-;; —— lambda → 类（Scheme 版 lambda-class! 等）——
+;; —— lambda → 类 ——
 
 (defn- clause-shape [cl]
   (nanopass-case [L3 Clause] cl [(clause (~x* ...) ~x ~body) [(count x*) (boolean x)]]))
 
-(defn- first-match [clauses k]
-  (first (keep-indexed (fn [j [n rest?]] (when (if rest? (>= k n) (= k n)) j)) clauses)))
-
-(defn- class-name [u nm]
-  (str (sanitize (:module u)) "$" (next-id! u) (if (and nm (not (false? nm))) (str "$" (sanitize nm)) "")))
-
 (defn- source-name
-  "g$名字$序号$后缀 → 名字（Scheme 符号），其余原样（clause-form）。"
+  "g$名字$序号$后缀 → 名字，其余原样（分析器的临时名形状，报错信息用）。"
   [x]
   (let [s (str x) n (count s)]
-    (if (and (> n 2) (str/starts-with? s "g$"))
+    (if (and (> n 2) (= \g (nth s 0)) (= \$ (nth s 1)))
       (loop [j (dec n) dollars 0]
         (cond
-          (< j 2) (ssym s)
-          (= \$ (nth s j)) (if (= dollars 1) (ssym (subs s 2 j)) (recur (dec j) (inc dollars)))
+          (< j 2) s
+          (= \$ (nth s j)) (if (= dollars 1) (subs s 2 j) (recur (dec j) (inc dollars)))
           :else (recur (dec j) dollars)))
-      (ssym s))))
-
-(defn- clause-form
-  "子句的 (名字 . 形参)：Scheme 列表（procedure-form 的常量）。"
-  [nm cl]
-  (nanopass-case [L3 Clause] cl
-    [(clause (~x* ...) ~x ~body)
-     (let [head (cond (symbol? nm) (ssym (str nm)) (string? nm) (ssym nm) :else (ssym "lambda"))
-           params (map source-name x*)]
-       (if x
-         (reduce (fn [tail p] (scons p tail)) (source-name x) (reverse (cons head params)))
-         (slist* (cons head params))))]))
+      s)))
 
 (defn- finish-method [mc nm attrs params & [ret]]
   (i 'method nm (apply i 'attrs attrs) (apply i 'params params) (i 'ret (or ret obj))
@@ -1471,227 +1294,28 @@
      (i 'clr-namespaces)
      (apply i 'body @(:buffer mc))))
 
-(defn- arity-value
-  "procedure-arity：固定参数子句为 n，有剩余参数的为 n.0；多个子句为列表，没有子句为 '()。"
-  [clauses]
-  ;; 不经 first / nth 取元素：RT 的宿主调用会把返回的 Int32 换成 long
-  (let [arity (fn [[n rest?]] (if rest? (double n) (fixnum n)))]
-    (case (count clauses)
-      0 sempty
-      1 (arity (clauses 0))
-      (slist* (map arity clauses)))))
-
-(defn- arity-code [u clauses]
-  (let [a (arity-value clauses)]
-    (cond (instance? Cleat.Scheme.EmptyList a) [(i 'ldsfld empty-list-type "Instance")]
-          (instance? Int32 a) [(i 'ldc.i4 a) (i 'call rt-type "Box" (i int32-type) obj)]
-          :else [(i 'ldconst (constant-index! u a))])))
-
-(declare cg-clause-body)
-
-(defn- clause-method
-  "Scheme 过程的子句方法 C<i>（shared：[前缀 self 的位置]）。"
-  [u class static? cl j fields field-names self self-mref & [shared]]
-  (nanopass-case [L3 Clause] cl
-    [(clause (~x* ...) ~x ~body)
-     (let [start 'start
-           mc (make-method-ctx u class static? start (when-not x (count x*)) self-mref)
-           params (if x (concat x* [x]) x*)]
-       (doseq [[p k] (map vector params (iterate inc (:arg-base mc)))] (hput! (:vars mc) p [:arg k]))
-       (doseq [[f fname] (map vector fields field-names)] (hput! (:vars mc) f [:field fname]))
-       (when self (hput! (:vars mc) self (if shared (second shared) [:self])))
-       (reset! (:big? mc) (bigger-than? body big-body-nodes))
-       (emit! mc (i 'label start))
-       (cg body mc :tail)
-       (finish-method mc (str (if shared (first shared) "") "C" j) (if static? ['static] []) (objs (count params))))]))
-
-(defn- invoke-n-method [nm static? clauses]
-  (let [blocks (mapcat (fn [j [n rest?]]
-                         (let [nxt (symbol (str "N" j))]
-                           (concat [(i 'ldarg 1) (i 'ldlen) (i 'conv.i4) (i 'ldc.i4 n) (if rest? (i 'blt nxt) (i 'bne.un nxt))]
-                                   (if static? [] [(i 'ldarg 0)])
-                                   (mapcat (fn [k] [(i 'ldarg 1) (i 'ldc.i4 k) (i 'ldelem.ref)]) (range n))
-                                   (if rest? [(i 'ldarg 1) (i 'ldc.i4 n) (i 'call variadic-type "RestList" (i obj-array int32-type) obj)] [])
-                                   [(i 'call nm (str "C" j) (apply i (objs (+ n (if rest? 1 0)))) obj) (i 'ret) (i 'label nxt)])))
-                       (range) clauses)]
-    (i 'method "InvokeN" (i 'attrs 'override) (i 'params obj-array) (i 'ret obj)
-       (apply i 'body (concat blocks [(i 'ldarg 0) (i 'ldarg 1) (i 'ldlen) (i 'conv.i4)
-                                      (i 'call proc-type "ArityError" (i int32-type) obj) (i 'ret)])))))
-
-(defn- shared-invoke-n-method [holder prefix field clauses]
-  (let [blocks (mapcat (fn [j [n rest?]]
-                         (let [nxt (symbol (str "N" j))]
-                           (concat [(i 'ldarg 0) (i 'ldlen) (i 'conv.i4) (i 'ldc.i4 n) (if rest? (i 'blt nxt) (i 'bne.un nxt))]
-                                   (mapcat (fn [k] [(i 'ldarg 0) (i 'ldc.i4 k) (i 'ldelem.ref)]) (range n))
-                                   (if rest? [(i 'ldarg 0) (i 'ldc.i4 n) (i 'call static-proc-type "Rest" (i obj-array int32-type) obj)] [])
-                                   [(i 'call holder (str prefix "C" j) (apply i (objs (+ n (if rest? 1 0)))) obj) (i 'ret) (i 'label nxt)])))
-                       (range) clauses)]
-    (i 'method (str prefix "N") (i 'attrs 'static) (i 'params obj-array) (i 'ret obj)
-       (apply i 'body (concat blocks [(i 'ldsfld holder field) (i 'ldarg 0)
-                                      (i 'call static-proc-type "NoMatch" (i obj obj-array) obj) (i 'ret)])))))
-
-(defn- shared-procedure!
-  "034d：共享持有类中的过程（Scheme 版 shared-procedure!）。返回 [true 持有类 字段]。"
-  [mc nm cl* self self-mref k]
-  (let [u (:unit mc)
-        [holder prefix] (if k [(:owner k) (:prefix k)] (shared-slot! u))
-        field (subs prefix 0 (dec (count prefix)))
-        [efields emethods einits] (holder-entry u holder)
-        clauses (mapv clause-shape cl*)
-        self-loc [:self holder field]
-        methods (atom ())]
-    (doseq [[cl j] (map vector cl* (range))]
-      (swap! methods conj (clause-method u holder true cl j [] [] self self-mref [prefix self-loc])))
-    (let [need-n (some (fn [[n rest?]] (or rest? (> n 4))) clauses)]
-      (when need-n (swap! methods conj (shared-invoke-n-method holder prefix field clauses)))
-      (swap! efields conj (i 'field field proc-type 'static))
-      (swap! emethods #(concat @methods %))
-      (swap! einits conj
-             (concat
-               (if (and nm (not (false? nm))) [(i 'ldstr (str nm))] [(i 'ldnull)])
-               (arity-code u clauses)
-               (if (empty? cl*) [(i 'ldnull)] [(i 'ldconst (constant-index! u (slist* (map #(clause-form nm %) cl*))))])
-               (mapcat (fn [n]
-                         (let [t (first-match clauses n)]
-                           (if (and t (not (second (clauses t))))
-                             [(i 'ldnull) (i 'ldftn holder (str prefix "C" t) (apply i (objs n)) obj) (i 'newobj (func-type n) (i obj "System.IntPtr"))]
-                             [(i 'ldnull)])))
-                       (range 5))
-               (if need-n
-                 [(i 'ldnull) (i 'ldftn holder (str prefix "N") (i obj-array) obj) (i 'newobj func-n-type (i obj "System.IntPtr"))]
-                 [(i 'ldnull)])
-               [(i 'newobj (sp-class u) (i string-type obj obj (func-type 0) (func-type 1) (func-type 2) (func-type 3) (func-type 4) func-n-type))
-                (i 'stsfld holder field)])))
-    [true holder field]))
-
-(defn- procedure-class1!
-  "有自由变量（或不共享）的 Scheme 过程：Procedure / VariadicProcedure 的子类（Scheme 版 procedure-class1!）。"
-  [mc nm x1* cl* self self-mref preset]
-  (let [u (:unit mc)
-        fields (if self (remove #(= self %) x1*) x1*)
-        static? (empty? fields)
-        nm-str (if preset (:class preset) (class-name u nm))
-        clauses (mapv clause-shape cl*)
-        variadic? (some second clauses)
-        base (if variadic? variadic-type proc-type)
-        field-names (map #(str "c" %) (range (count fields)))
-        methods (atom [])
-        add! #(swap! methods conj %)]
-    (doseq [[cl j] (map vector cl* (range))]
-      (add! (clause-method u nm-str static? cl j fields field-names self self-mref)))
-    (doseq [k (range 5)]
-      (let [t (first-match clauses k)]
-        (when (and t (not (second (clauses t))))
-          (add! (i 'method (str "Invoke" k) (i 'attrs 'override) (apply i 'params (objs k)) (i 'ret obj)
-                   (apply i 'body (concat (if static? [] [(i 'ldarg 0)])
-                                          (for [j (range 1 (inc k))] (i 'ldarg j))
-                                          [(i 'tail) (i 'call nm-str (str "C" t) (apply i (objs k)) obj) (i 'ret)])))))))
-    (when (some (fn [[n rest?]] (or rest? (> n 4))) clauses)
-      (add! (invoke-n-method nm-str static? clauses)))
-    (add! (i 'method "get_Arity" (i 'attrs 'override) (i 'params) (i 'ret obj)
-             (apply i 'body (concat (arity-code u clauses) [(i 'ret)]))))
-    (when (seq cl*)
-      (add! (i 'method "get_Form" (i 'attrs 'override) (i 'params) (i 'ret obj)
-               (i 'body (i 'ldconst (constant-index! u (slist* (map #(clause-form nm %) cl*)))) (i 'ret)))))
-    (when (and nm (not (false? nm)))
-      (add! (i 'method "get_Name" (i 'attrs 'override) (i 'params) (i 'ret string-type)
-               (i 'body (i 'ldstr (str nm)) (i 'ret)))))
-    (add! (i 'method ".ctor" (i 'attrs 'ctor) (i 'params)
-             (i 'body (i 'ldarg 0) (i 'call base ".ctor" () void-type) (i 'ret))))
-    (when static?
-      (add! (i 'method ".cctor" (i 'attrs 'cctor) (i 'params)
-               (i 'body (i 'newobj nm-str ()) (i 'stsfld nm-str "Instance") (i 'ret)))))
-    (add-class! u (apply i 'type nm-str (i 'base base) (i 'attrs 'sealed)
-                         (concat (if static? [(i 'field "Instance" nm-str 'static)] (map #(i 'field % obj) field-names))
-                                 @methods)))
-    [static? nm-str "Instance"]))
-
-;; commonize（iron-073）：本单元里结构相同的闭合 lambda 共用一个过程
-(def commonize-node-limit 400)
-(def ^:private common-lambdas (atom {}))
-
-(defn- alpha-normalize
-  "局部变量按首次出现的顺序改成 0、1、2 …；quote 了 Scheme 的表或向量、含 Clojure 节点、嵌套的 lambda 名字是记录时为 nil。"
-  [forms]
-  (let [binders (ht) names (ht) n (atom 0) ok? (atom true)
-        bind! (fn [x] (when (symbol? x) (hput! binders x true)))]
-    (letfn [(collect [e]
-              (when (and (seq? e) (seq e))
-                (case (first e)
-                  quote (when (and (next e) (or (instance? Cleat.Scheme.Cons (second e)) (instance? |System.Object[]| (second e)))) (reset! ok? false))
-                  clause (do (run! bind! (second e)) (bind! (nth e 2)) (collect (nth e 3)))
-                  (let letrec) (do (doseq [b (second e)] (bind! (first b)) (collect (second b))) (collect (nth e 2)))
-                  label (do (bind! (second e)) (run! bind! (nth e 2)) (run! collect (drop 3 e)))
-                  lambda (do (let [nm (second e)] (when-not (or (symbol? nm) (string? nm) (nil? nm) (false? nm)) (reset! ok? false)))
-                             (run! collect (drop 2 e)))
-                  (do (when (and (symbol? (first e)) (str/starts-with? (str (first e)) "clj-")) (reset! ok? false))
-                      (run! collect e)))))
-            (rename [e]
-              (cond
-                (symbol? e) (if (hhas? binders e)
-                              (or (hget names e) (let [k @n] (swap! n inc) (hput! names e k) k))
-                              e)
-                (and (seq? e) (= 'quote (first e))) e
-                (seq? e) (apply list (map rename e))
-                :else e))]
-      (run! collect forms)
-      (when @ok? (mapv rename forms)))))
-
-(defn- lambda-key [nm cl*]
-  (when (every? (fn [cl] (nanopass-case [L3 Clause] cl [(clause (~x* ...) ~x ~body) (not (count-nodes body commonize-node-limit))])) cl*)
-    (when-let [forms (alpha-normalize (map cleat.nanopass/unparse cl*))]
-      (cons nm forms))))
-
 (declare clj-fn-class!)
 
-(defn- procedure-class! [mc nm x1* cl* self self-mref preset]
-  (let [fields (if self (remove #(= self %) x1*) x1*)]
-    (cond
-      (l/clj-fn-name? nm) (clj-fn-class! mc nm x1* cl* self)
-      (and opt-shared? (empty? fields))
-      (let [key (when (and opt-commonize? (not self) (nil? preset)) (lambda-key nm cl*))]
-        (or (and key (get @common-lambdas key))
-            (let [c (shared-procedure! mc nm cl* self self-mref preset)]
-              (when key (swap! common-lambdas assoc key c))
-              c)))
-      :else (procedure-class1! mc nm x1* cl* self self-mref preset))))
-
 (defn- lambda-class!
-  "返回 [static? 类名 字段名]。self：letrec 中绑定此 lambda 的变量；preset：预先登记的 known。"
-  [le mc self self-mref preset]
+  "fn* 的类：返回 [static? 类名 字段名]。self：letrec 中绑定此 lambda 的变量。到这里的 lambda 只有 Clojure 的 fn*
+  （try 的处理器内联、deftype 的方法另行生成、循环降成 label）。"
+  [le mc self]
   (nanopass-case [L3 LambdaExpr] le
-    [(lambda ~nm (~x1* ...) ~cl* ...) (procedure-class! mc nm x1* cl* self self-mref preset)]))
-
-(defn- known-for-export [u nm cl*]
-  (if opt-shared?
-    (let [[owner prefix] (shared-slot! u)] (->Known owner (mapv clause-shape cl*) owner prefix))
-    (let [nm (class-name u nm)] (->Known nm (mapv clause-shape cl*) nm ""))))
-
-(defn- local-known-preset!
-  "iron-070：letrec 绑定的同步 lambda 预先定下类名 / 共享槽并登记（Clojure 的 fn* 不登记）。"
-  [u x le]
-  (when opt-local-call?
-    (nanopass-case [L3 LambdaExpr] le
-      [(lambda ~nm (~x1* ...) ~cl* ...)
-       (when-not (l/clj-fn-name? nm)
-         (let [static? (empty? (remove #(= x %) x1*))
-               k (if (and static? opt-shared?)
-                   (known-for-export u nm cl*)
-                   (let [n (class-name u nm)] (->Known n (mapv clause-shape cl*) n "")))]
-           (hput! (:local-known u) x [(if static? :static :instance) k])
-           k))])))
-
-(defn- make-closure! [mc c fv* self]
-  (if (first c)
-    (emit! mc (i 'ldsfld (second c) (nth c 2)))
-    (do (emit! mc (i 'newobj (second c) ()))
-        (fill-fields! mc c fv* nil))))
+    [(lambda ~nm (~x1* ...) ~cl* ...)
+     (if (l/clj-fn-name? nm)
+       (clj-fn-class! mc nm x1* cl* self)
+       (throw (ex-info (str "codegen: a non-fn* lambda reached codegen: " (r/brief le)) {:node le})))]))
 
 (defn- fill-fields! [mc c fv* load]
   (doseq [[f j] (map vector fv* (range))]
     (if load (do (load) (emit! mc (i 'castclass (second c)))) (emit! mc (i 'dup)))
     (ref-var! mc f true)
     (emit! mc (i 'stfld (second c) (str "c" j)))))
+
+;; 创建闭包：newobj 后逐个写自由变量字段
+(defn- make-closure! [mc c fv*]
+  (emit! mc (i 'newobj (second c) ()))
+  (fill-fields! mc c fv* nil))
 
 ;; —— Clojure 的 fn* → AFunction / RestFn 子类（cleat-051，Scheme 版 clj-fn-class! 等）——
 
@@ -1708,8 +1332,7 @@
     (nanopass-case [L3 Clause] cl
       [(clause (~x* ...) ~x ~body)
        (when-not x
-         (some (fn [p] (when (= (long (.-car ^Cleat.Scheme.Cons p)) (count x*)) (.-cdr ^Cleat.Scheme.Cons p)))
-               (slist->seq (:prims nm))))])))
+         (some (fn [[n sig]] (when (= (long n) (count x*)) sig)) (:prims nm)))])))
 
 (defn- fix-clause-params!
   "原始签名子句的 L / D 形参登记为固定类型（cleat-042）。"
@@ -1852,11 +1475,11 @@
     [static? cname "Instance"]))
 
 ;; —— deftype* / reify* / gen-interface / proxy-class* / gen-class* → CLR 类型（cleat-089，Scheme 版 cleat-051 / 043 / 053）——
-;; 描述 d 是展开期算好的 Scheme 数据（列表、("类型名" . 值类型?) 对、字符串、布尔），见 Scheme 版各 deftype-info-* 的注释。
+;; 描述 d 是分析器算好的 Clojure 数据（向量；类型写作 ["类型名" 值类型?]），见 Scheme 版各 deftype-info-* 的注释。
 
-(defn- sl "Scheme 列表 → 向量（#f / 空表为空）" [x] (if (scheme-list? x) (slist->seq x) []))
-(defn- tname [t] (.-car ^Cleat.Scheme.Cons t))
-(defn- value-type? [t] (true? (.-cdr ^Cleat.Scheme.Cons t)))
+(defn- sl "描述里的列表 → 向量（false / nil 为空）" [x] (if (or (nil? x) (false? x)) [] (vec x)))
+(defn- tname [t] (first t))
+(defn- value-type? [t] (true? (second t)))
 (defn- spec-iface [sp] (let [x (nth (sl sp) 0)] (when (string? x) x)))
 (defn- spec-name [sp] (nth (sl sp) 1))
 (defn- spec-ret [sp] (nth (sl sp) 2))
@@ -1867,8 +1490,8 @@
 (defn- dinfo-methods [d] (sl (dinfo d 4)))
 (defn- dinfo-stubs [d] (mapv sl (sl (dinfo d 5))))
 (defn- dinfo-basis [d] (dinfo d 6))
-(defn- dinfo-record-keys [d] (let [v (slist->seq d)] (if (> (count v) 7) (sl (nth v 7)) [])))
-(defn- dinfo-drops [d] (let [v (slist->seq d)] (if (> (count v) 8) (nth v 8) 0)))
+(defn- dinfo-record-keys [d] (if (> (count d) 7) (sl (nth d 7)) []))
+(defn- dinfo-drops [d] (if (> (count d) 8) (nth d 8) 0))
 (defn- truthy? [x] (and (some? x) (not (false? x))))
 
 (defn- ldargs [n] (map #(i 'ldarg %) (range 1 (inc n))))
@@ -1932,7 +1555,7 @@
   [(i 'ldstr msg) (i 'newobj "System.NotImplementedException" (i string-type)) (i 'throw)])
 
 (defn- proxy-class! [mc d]
-  (let [u (:unit mc) v (slist->seq d)
+  (let [u (:unit mc) v (vec d)
         name (nth v 0) super (nth v 2) ifaces (sl (nth v 3)) ctors (mapv sl (sl (nth v 4))) methods (mapv sl (sl (nth v 5)))
         fmap "__clojureFnMap" iproxy "clojure.lang.IProxy"
         method-def
@@ -1994,7 +1617,7 @@
     [name]))
 
 (defn- genclass-class! [mc d]
-  (let [u (:unit mc) v (slist->seq d)
+  (let [u (:unit mc) v (vec d)
         [name _ super ifaces impl-ns load-impl? var-fields ctors init post-init state methods factory main exposes exposes-methods] v
         ifaces (sl ifaces) var-fields (mapv sl (sl var-fields)) ctors (mapv sl (sl ctors)) methods (mapv sl (sl methods))
         exposes (mapv sl (sl exposes)) exposes-methods (mapv sl (sl exposes-methods))
@@ -2240,12 +1863,11 @@
              (i 'call clojure-ops-type "DefineType" (i obj) obj)))
     (finish-value! mc ctx)))
 
-;; —— 常量的编码（AOT 单元，cleat-089；Scheme 版 constants.sls encode-constants 与 (clojure compile) 的 encode-clojure-constant）——
-;; 元素经 Cleat.Core.Compiler.RawData 原样取出（宿主调用会把 Int32 换成 long，而 Scheme 的 fixnum 编码为 (fix n)、long 为 (long n)）。
-;; 只处理 Clojure 输入的常量里出现的种类：Clojure 的值、Scheme 的表 / 向量 / 符号 / 数 / 字符 / 字符串；记录、条件、哈希表等报错。
+;; —— 常量的编码（AOT 单元，cleat-089；Scheme 版 (clojure compile) 的 encode-clojure-constant）——
+;; 元素经 Cleat.Core.Compiler.RawData 原样取出（宿主调用会把 Int32 换成 long，而 Int32 编码为 (fix n)、long 为 (long n)）。
+;; 只有 Clojure 的值（cleat-092 起没有 Scheme 数据）；记录、集合按值重建，不共享（同 Scheme 版）。
 
 (def ^:private raw-items Cleat.Core.Compiler.RawData/Items)
-(def ^:private raw-field Cleat.Core.Compiler.RawData/Field)
 
 (defn- map-raw
   "对 x 的每个元素（原样）调 f，结果组成向量。"
@@ -2253,43 +1875,16 @@
   (let [v (raw-items x) n (count v)]
     (loop [k 0 acc []] (if (< k n) (recur (inc k) (conj acc (f (v k)))) acc))))
 
-(defn- ref-table [] (Hashtable. System.Collections.Generic.ReferenceEqualityComparer/Instance))
-
-(defn- shareable? [x]
-  (or (instance? Cleat.Scheme.Cons x) (instance? |System.Object[]| x) (instance? |System.Byte[]| x)
-      (and (instance? Cleat.Scheme.SchemeString x) (.-IsMutable ^Cleat.Scheme.SchemeString x))))
-
-(defn- count-objects!
-  "第一遍：可共享对象出现的次数（已见过的不再深入，环也能结束）。"
-  [counts x]
-  (when (shareable? x)
-    (let [n (or (hget counts x) 0)]
-      (hput! counts x (inc n))
-      (when (zero? n)
-        (cond
-          (instance? Cleat.Scheme.Cons x) (do (count-objects! counts (raw-field x "car")) (count-objects! counts (raw-field x "cdr")))
-          (instance? |System.Object[]| x) (map-raw #(count-objects! counts %) x)
-          :else nil)))))
-
-(defn- bytes->hex [^bytes bs] (.Replace (BitConverter/ToString bs) "-" ""))
-
-(defn- flonum->hex
-  "flonum → IEEE 位模式（大端十六进制 16 位）"
+(defn- double->hex
+  "double → IEEE 位模式（大端十六进制 16 位）"
   [x]
   (let [bs (BitConverter/GetBytes (double x))]
     (when BitConverter/IsLittleEndian (Array/Reverse bs))
-    (bytes->hex bs)))
-
-(defn- encode-number [x]
-  (cond
-    (instance? Int32 x) (i 'fix x)
-    (instance? System.Numerics.BigInteger x) (i 'big (str x))
-    (instance? Cleat.Scheme.Fraction x) (i 'rat (str x))
-    (instance? Double x) (i 'flo (flonum->hex x))
-    :else (throw (ex-info (str "encode-constant: cannot encode number " x) {}))))
+    (.Replace (BitConverter/ToString bs) "-" "")))
 
 (defn- encoded-text
-  "Scheme 的 write 写出的编码文本（哈希 map / set 的项按它排序）。"
+  "编码的文本（哈希 map / set 的项按它排序：迭代顺序依赖键的哈希，Type、Var 等的哈希按对象标识、每个进程不同；
+  加载时按值重建，顺序不影响语义，排序使两次编译的 Lcil 相同——镜像不动点）。"
   [enc]
   (let [sb (System.Text.StringBuilder.)]
     (letfn [(w [x]
@@ -2310,17 +1905,22 @@
 (defn- sorted-pairs [kvs]
   (mapcat identity (sort-by #(encoded-text (first %)) compare (partition 2 kvs))))
 
-(defn- encode-clojure-constant
-  "x 是 Clojure 的值时返回它的编码（designs/05 §3、LCIL.md §8），否则 nil。带元数据的符号、集合写成 (meta 元数据 对象)。"
-  [x encode]
-  (let [with-meta (fn [enc] (let [m (when (instance? clojure.lang.IMeta x) (.meta ^clojure.lang.IMeta x))]
+(defn- encode-constant
+  "Clojure 值的编码（designs/05 §3、LCIL.md §8）。带元数据的符号、集合写成 (meta 元数据 对象)。"
+  [x]
+  (let [encode encode-constant
+        with-meta (fn [enc] (let [m (when (instance? clojure.lang.IMeta x) (.meta ^clojure.lang.IMeta x))]
                               (if (nil? m) enc (i 'meta (encode m) enc))))
         named (fn [ns nm] (if (nil? ns) [nm] [ns nm]))]
     (cond
-      (nil? x) nil
+      (nil? x) (i (symbol "nil"))
       (instance? clojure.lang.Var x) (i 'var (str (.Name (.Namespace ^clojure.lang.Var x))) (.Name (.Symbol ^clojure.lang.Var x)))
       (instance? Int64 x) (i 'long x)
+      (instance? Int32 x) (i 'fix x)
+      (instance? Double x) (i 'double (double->hex x))
       (instance? Boolean x) (if (true? x) (i (symbol "true")) (i (symbol "false")))
+      (char? x) (i 'char (int x))
+      (string? x) (i 'str x)
       (instance? clojure.lang.Keyword x) (apply i 'kw (named (.Namespace ^clojure.lang.Keyword x) (.Name ^clojure.lang.Keyword x)))
       (instance? clojure.lang.Symbol x) (with-meta (apply i 'csym (named (.Namespace ^clojure.lang.Symbol x) (.Name ^clojure.lang.Symbol x))))
       (instance? clojure.lang.IPersistentVector x) (with-meta (apply i 'cvec (map-raw encode x)))
@@ -2330,56 +1930,19 @@
       (instance? clojure.lang.IPersistentSet x) (with-meta (apply i 'set (sorted-items (map-raw encode x))))
       (or (instance? clojure.lang.IPersistentList x) (instance? clojure.lang.ISeq x)) (with-meta (apply i 'clist (map-raw encode x)))
       (instance? clojure.lang.BigInt x) (i 'bigint (str x))
+      (instance? System.Numerics.BigInteger x) (i 'bigint (str x))
       (instance? clojure.lang.BigDecimal x) (i 'bigdec (str x))
       (instance? clojure.lang.Ratio x) (i 'ratio (str x))
       (instance? System.Text.RegularExpressions.Regex x) (i 'regex (str x))
       (instance? Type x) (i 'type (.FullName ^Type x))
-      :else nil)))
-
-(defn- make-encoder [counts]
-  (let [ids (ref-table) next-id (atom 0)]
-    (letfn [(shared? [x] (> (or (hget counts x) 0) 1))
-            (encode [x]
-              (cond
-                (and (shareable? x) (hhas? ids x)) (i 'ref (hget ids x))
-                (and (shareable? x) (shared? x))
-                (let [id @next-id]
-                  (swap! next-id inc)
-                  (hput! ids x id)
-                  (i 'def id (encode-object x)))
-                :else (encode-object x)))
-            (encode-object [x]
-              (or (encode-clojure-constant x encode)
-                  (cond
-                    (instance? Cleat.Scheme.EmptyList x) (i 'empty)
-                    (nil? x) (i (symbol "nil"))
-                    (instance? Cleat.Scheme.Unspecified x) (i 'unspecified)
-                    (scheme-number? x) (encode-number x)
-                    (char? x) (i 'chr (int x))
-                    (and (instance? Cleat.Scheme.SchemeString x) (.-IsMutable ^Cleat.Scheme.SchemeString x)) (i 'mstr (str x))
-                    (or (string? x) (instance? Cleat.Scheme.SchemeString x)) (i 'str (str x))
-                    (instance? Cleat.Scheme.Symbol x) (i 'sym (str x))
-                    (instance? Cleat.Scheme.Cons x) (encode-list x)
-                    (instance? |System.Object[]| x) (apply i 'vec (map-raw encode x))
-                    (instance? |System.Byte[]| x) (i 'bv (bytes->hex x))
-                    :else (throw (ex-info (str "encode-constant: cannot encode object " (pr-str x)) {:object x})))))
-            ;; 表尾中未被共享的序对连成一段：(list e …) 或 (dlist e … 表尾)
-            (encode-list [x]
-              (loop [p (raw-field x "cdr") acc [(encode (raw-field x "car"))]]
-                (cond
-                  (instance? Cleat.Scheme.EmptyList p) (apply i 'list acc)
-                  (and (instance? Cleat.Scheme.Cons p) (not (shared? p))) (recur (raw-field p "cdr") (conj acc (encode (raw-field p "car"))))
-                  :else (apply i 'dlist (conj acc (encode p))))))]
-      encode)))
+      :else (throw (ex-info (str "encode-constant: cannot encode object " (pr-str x)) {:object x})))))
 
 (defn- encode-constants
-  "常量表 → 编码的列表；共享与环用 (def n x) / (ref n) 表示，编号在整张表内统一。cs 的元素原样取（见 RawData）。"
+  "常量表 → 编码的列表。cs 的元素原样取（见 RawData）。"
   [cs]
-  (let [counts (ref-table)]
-    (map-raw #(count-objects! counts %) cs)
-    (map-raw (make-encoder counts) cs)))
+  (map-raw encode-constant cs))
 
-;; —— 编译单元（Scheme 版 generate-unit，Clojure 子集：没有 library、已知过程的预链接与 boot 接口）——
+;; —— 编译单元（Scheme 版 generate-unit）——
 
 (defn- init-name [k] (str "Init" k))
 
@@ -2392,27 +1955,25 @@
   "L3 顶层表达式 → [Lcil 常量列表]（Scheme 版 generate-unit）。loop-flags：与 forms 对齐的\"含循环\"标志（只对它们做类型推断）。
   live?：内存模式（eval）——常量不编码，Lcil 里写 (live-constants n)，常量对象交给发射器。"
   [forms assembly-name module-name loop-flags live?]
-  (let [u (make-unit assembly-name module-name (ht))]
+  (let [u (make-unit assembly-name module-name)]
     (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars])
-    (reset! common-lambdas {})
     (run! collect-assigned! forms)
     (when opt-infer?
       (if (and loop-flags (= (count loop-flags) (count forms)))
         (doseq [[f lp?] (map vector forms loop-flags)] (when lp? (infer-var-types-into! f var-types)))
         (doseq [f forms] (infer-var-types-into! f var-types))))
     (let [inits (mapv (fn [f k] (top-level-method u f k)) forms (range))
-          _ (emit-holders! u)
           n (count inits)
           entry (i 'method "Initialize" (i 'attrs 'static) (i 'params) (i 'ret obj)
                    (apply i 'body
                           (cond
-                            (zero? n) [(i 'ldsfld unspecified-type "Instance") (i 'ret)]
+                            (zero? n) [(i 'ldnull) (i 'ret)]
                             :else (concat (mapcat (fn [k] [(i 'call module-name (init-name k) () obj) (i 'pop)]) (range (dec n)))
                                           [(i 'call module-name (init-name (dec n)) () obj) (i 'ret)]))))
           module (apply i 'type module-name (i 'attrs 'abstract 'sealed) (concat inits [entry]))
           cs @(:consts u)
           lcil (apply i 'lcil 1
-                      (i 'assembly assembly-name (apply i 'references core-assembly @(:references u)) (i 'runtime 'scheme)
+                      (i 'assembly assembly-name (apply i 'references core-assembly @(:references u)) (i 'runtime 'clojure)
                          (i 'entry module-name "Initialize"))
                       (concat
                         (cond

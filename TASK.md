@@ -98,7 +98,7 @@
 | [cleat-089](tasks/cleat-089-codegen-types-and-classes.md) | codegen 二：deftype / reify / proxy / gen-class、AOT 常量编码；G2（lcil + aot） | M8 | cleat-088 | 完成 |
 | [cleat-090](tasks/cleat-090-clojure-compiler-driver.md) | Clojure 写的编译驱动，CLEAT_COMPILER=clojure 下全量测试（G3） | M8 | cleat-089 | 完成 |
 | [cleat-091](tasks/cleat-091-self-hosting-and-lcil-seed.md) | 自举不动点（G4）、Lcil 文本种子、构建不再经 stage0、默认切到 Clojure 编译器 | M8 | cleat-090 | 完成 |
-| [cleat-092](tasks/cleat-092-de-scheme-codegen.md) | 生成代码去 Scheme：catch 不用 Procedure、去 EmptyList 占位、Clojure 数据常量表与 .inl、(runtime clojure) | M8 | cleat-091 | 未开始 |
+| [cleat-092](tasks/cleat-092-de-scheme-codegen.md) | 生成代码去 Scheme：catch 不用 Procedure、去 EmptyList 占位、Clojure 数据常量表与 .inl、(runtime clojure) | M8 | cleat-091 | 完成 |
 | [cleat-093](tasks/cleat-093-remove-scheme.md) | 删除 Scheme：src/scheme、Cleat.Scheme、Cleat.Stage0、Scheme 测试、构建目标、NOTICE、文档归档 | M8 | cleat-092 | 未开始 |
 | [cleat-094](tasks/cleat-094-republish-self-hosted.md) | 自寄宿后的新版本（Cleat.Runtime / Cli 1.1.0 等）重推 BaGetter，cleat.nanopass 用户文档 | M8 | cleat-093 | 未开始 |
 | [cleat-095](tasks/cleat-095-nanopass-user-layer.md) | cleat.nanopass 第二层：显式 catamorphism、多层省略号的单项、define-parser、trace、上游测试（取代 cleat-056；不阻塞阶段 B / C） | M8 | cleat-084 | 未开始 |
