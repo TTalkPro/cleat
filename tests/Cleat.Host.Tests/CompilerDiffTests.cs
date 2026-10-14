@@ -63,11 +63,12 @@ public class CompilerDiffTests
     }
 
     /// <summary>
-    /// cleat-086 的 G1@L0：影子模式下 Clojure 前端对各类形式给出的 L0（p0）与 Scheme 前端规范化后相同，语法错误的文本也相同
+    /// cleat-086 / 087 的 G1：影子模式下 Clojure 编译器对各类形式给出的 L0（p0）与前中端各阶段（l0 sl cf c1 in l1 l2 l3）
+    /// 与 Scheme 编译器规范化后相同，语法错误的文本也相同
     /// （小函数内联关掉：Clojure 编译器的 .inl 在 cleat-090 做）。完整的输入集用 tools/build.cs ir-dump --shadow --corpus 验收。
     /// </summary>
     [Test]
-    public void ShadowFrontEndMatchesSchemeAtL0()
+    public void ShadowCompilerMatchesSchemeThroughL3()
     {
         string a = Path.Combine(_dir, "s");
         var env = new[] { ("CLEAT_DUMP_IR", a), ("CLEAT_NO_SIMPLE_EVAL", "1"), ("CLEAT_COMPILER", "shadow"), ("CLEAT_NO_INLINE", "1") };
@@ -102,7 +103,8 @@ public class CompilerDiffTests
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         var d = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null, "-I", Path.Combine(HostProcessTests.RepoDir, "src", "clojure"),
             Path.Combine(HostProcessTests.RepoDir, "tools", "compiler-diff.clj"), "diff", Path.Combine(a, "scheme"), Path.Combine(a, "clojure"),
-            "--stage", "p0", "--stage", "error");
+            "--stage", "p0", "--stage", "l0", "--stage", "sl", "--stage", "cf", "--stage", "c1", "--stage", "in",
+            "--stage", "l1", "--stage", "l2", "--stage", "l3", "--stage", "error");
         Assert.That(d.ExitCode, Is.EqualTo(0), d.ToString());
         Assert.That(d.Out, Does.Contain(" 0 different"), d.ToString());
     }
