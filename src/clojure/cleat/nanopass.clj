@@ -1,6 +1,6 @@
 ;; cleat.nanopass：Clojure 写的 nanopass（cleat-083 起，designs/19 D2、07）。
-;; 本文件是对外的入口：define-language（cleat-083）；define-pass、nanopass-case、with-output-language、out、in-context（cleat-084，
-;; 展开在 cleat.nanopass.pass）。
+;; 本文件是对外的入口：define-language、define-parser、unparse（cleat-083）；define-pass、trace-define-pass、echo-define-pass、
+;; nanopass-case、with-output-language、out、in-context、pass-input-parser、pass-output-unparser（cleat-084 / 095，展开在 cleat.nanopass.pass）。
 ;;
 ;; (define-language L0
 ;;   (terminals (symbol (x)) (datum (d)))     ; 终结符：名字 + 元变量，谓词为 名字?（在当前命名空间决议）
@@ -46,18 +46,21 @@
 (defn- short-name [desc] (name (:name desc)))
 (defn- marker-name [desc] (symbol (str (short-name desc) "$Node")))
 (defn nonterminal-pred-name [desc nt] (symbol (str (short-name desc) ":" nt "?")))
-(defn production-pred-name [desc nt kw] (symbol (str (short-name desc) ":" nt ":" kw "?")))
+(defn production-pred-name [desc nt kw] (symbol (str (short-name desc) ":" nt ":" kw "?")))   ; kw：产生式的 :name（关键字或 appN）
 (defn constructor-name [desc nt kw] (symbol (str "make-" (short-name desc) ":" nt ":" kw)))
 
 ;; —— 运行时对象 ——
 
 (defn make-language
-  "语言的运行时对象并登记（define-language 的展开结果在加载时调用）。preds：终结符名 → 谓词；ctors：标签 → 构造函数。"
-  [desc preds ctors]
-  (r/register-runtime!
-    (r/->Language (:name desc) desc preds ctors
-                  (into {} (for [nt (:nonterminals desc) p (:prods nt) :when (:tag p)] [(:tag p) p]))
-                  (into {} (map (juxt :name identity) (:nonterminals desc))))))
+  "语言的运行时对象并登记（define-language 的展开结果在加载时调用）。preds：终结符名 → 谓词；ctors：标签 → 构造函数；
+  pretties：终结符名 → => 的美化函数。"
+  ([desc preds ctors] (make-language desc preds ctors {}))
+  ([desc preds ctors pretties]
+   (r/register-runtime!
+     (r/->Language (:name desc) desc preds ctors
+                   (into {} (for [nt (:nonterminals desc) p (:prods nt) :when (:tag p)] [(:tag p) p]))
+                   (into {} (map (juxt :name identity) (:nonterminals desc)))
+                   pretties))))
 
 ;; —— define-language ——
 ;; 展开结果不含 gensym（同一源码两次展开相同，自举不动点需要，07 D6）：生成函数的形参用固定名字 nanopass-x / nanopass-elem。
@@ -75,7 +78,7 @@
 (defn- field-check [desc nt prod field]
   (let [v (:name field)
         y 'nanopass-elem
-        fail `(r/bad-field '~(:name desc) '~(symbol (str nt ":" (:keyword prod))) '~v ~v)]
+        fail `(r/bad-field '~(:name desc) '~(symbol (str nt ":" (:name prod))) '~v ~v)]
     (cond
       (zero? (:depth field)) `(when-not ~(field-test desc field v) ~fail)
       ;; 一层、非 maybe：谓词直接交给 check-all
@@ -108,22 +111,25 @@
                   (or ~@(for [t terms] `(~(:pred (first (filter #(= t (:name %)) (:terminals desc)))) ~x)) false)))))
        ~@(for [[nt p] prods]
            (let [fs (mapv :name (:fields p))]
-             `(defn ~(constructor-name desc (:name nt) (:keyword p)) ~fs
+             `(defn ~(constructor-name desc (:name nt) (:name p)) ~fs
                 ~@(when *check-constructors* (map #(field-check desc (:name nt) p %) (:fields p)))
                 (new ~(:type p) ~@fs))))
        ~@(for [[nt p] prods]
            (let [x 'nanopass-x]
-             `(defn ~(production-pred-name desc (:name nt) (:keyword p)) [~x] (instance? ~(:type p) ~x))))
+             `(defn ~(production-pred-name desc (:name nt) (:name p)) [~x] (instance? ~(:type p) ~x))))
        (def ~(symbol (short-name desc))
          (make-language (lang/find-description '~qname)
                         ~(into {} (map (fn [t] [(list 'quote (:name t)) (:pred t)]) (:terminals desc)))
-                        ~(into {} (for [[nt p] prods] [(:tag p) (constructor-name desc (:name nt) (:keyword p))]))))
-       (defn ~(symbol (str "unparse-" (short-name desc))) [~'nanopass-x] (lang/unparse-node ~'nanopass-x))
+                        ~(into {} (for [[nt p] prods] [(:tag p) (constructor-name desc (:name nt) (:name p))]))
+                        ~(into {} (for [t (:terminals desc) :when (:pretty t)] [(list 'quote (:name t)) (:pretty t)]))))
+       (defn ~(symbol (str "unparse-" (short-name desc)))
+         ([~'nanopass-x] (lang/unparse-node ~'nanopass-x false))
+         ([~'nanopass-x ~'nanopass-raw] (lang/unparse-node ~'nanopass-x ~'nanopass-raw)))
        (var ~(symbol (short-name desc))))))
 
 (defmacro define-language
   "定义语言（见文件头）。子句：(terminals …)、(entry 非终结符)、(extends 基语言)、(非终结符 (元变量 …) 产生式 …)；
-  extends 时终结符与非终结符子句里用 (+ …) / (- …) 增删。"
+  extends 时终结符与非终结符子句里用 (+ …) / (- …) 增删；产生式或终结符后可跟 => 美化（unparse 用）。"
   [lname & clauses]
   (let [qname (symbol (str (ns-name *ns*)) (name lname))
         base-sym (some #(when (and (seq? %) (= 'extends (first %))) (second %)) clauses)
@@ -140,9 +146,9 @@
   (r/runtime-language (if (var? x) (qualified x) x)))
 
 (defn unparse
-  "节点 → S 表达式（列表；终结符原样）。"
-  [x]
-  (lang/unparse-node x))
+  "节点 → S 表达式（列表；终结符原样）。raw? 为真时不按 => 美化。"
+  ([x] (lang/unparse-node x false))
+  ([x raw?] (lang/unparse-node x raw?)))
 
 (defn parse
   "S 表达式 → 语言 l 的非终结符 nt（缺省为入口）的节点；不匹配时报错。"
@@ -153,6 +159,13 @@
      (if (identical? v ::lang/fail)
        (throw (ex-info (str "nanopass: invalid " (:name lg) " " nt ": " (pr-str x)) {:language (:name lg) :nonterminal nt :form x}))
        v))))
+
+(defmacro define-parser
+  "(define-parser parse-L L)：定义 S 表达式 → L 的节点的函数（上游 define-parser；(parse-L x) 按入口，(parse-L nt x) 指定非终结符）。"
+  [pname lname]
+  `(defn ~pname
+     ([x#] (parse (var ~lname) x#))
+     ([nt# x#] (parse (var ~lname) nt# x#))))
 
 (defn language->s-expression
   "语言 → 等价的 define-language 形式（展开 extends 之后的全量形式）。"
@@ -192,10 +205,38 @@
   (throw (ex-info "nanopass: in-context used outside an output context" {})))
 
 (defmacro define-pass
+  "(define-pass name Lin [ir 形参 …] -> Lout [返回值 …] (definitions …)? 处理器 … 体?)：见文件头的说明与 nanopass/README.md。"
   [pname in-lang formals arrow out-lang rets & body]
   (when-not (and (symbol? pname) (vector? formals) (seq formals) (= '-> arrow) (vector? rets))
     (throw (ex-info (str "nanopass: (define-pass name Lin [ir …] -> Lout [] …) expected, got " (pr-str (list* 'define-pass pname in-lang formals arrow out-lang rets))) {})))
-  (pass/expand-define-pass pname in-lang formals out-lang rets body))
+  (pass/expand-define-pass pname in-lang formals out-lang rets body nil))
+
+(defmacro trace-define-pass
+  "同 define-pass，运行时把输入与输出（unparse 过）打印到 *out*（上游 trace-define-pass）。"
+  [pname in-lang formals arrow out-lang rets & body]
+  (pass/expand-define-pass pname in-lang formals out-lang rets body :trace))
+
+(defmacro echo-define-pass
+  "同 define-pass，展开期把展开结果打印到 *out*（上游 echo-define-pass）。"
+  [pname in-lang formals arrow out-lang rets & body]
+  (let [form (pass/expand-define-pass pname in-lang formals out-lang rets body nil)]
+    (binding [*print-meta* false] (prn form))
+    form))
+
+(defmacro pass-input-parser
+  "(pass-input-parser p)：pass 输入语言的解析函数（S 表达式 → 节点）；输入为 * 时是 identity。"
+  [pname]
+  (let [m (meta (resolve pname))
+        in (:nanopass/input m)]
+    (when-not m (throw (ex-info (str "nanopass: " pname " is not a pass") {})))
+    (if in `(fn [x#] (parse (var ~(:lang in)) '~(:nt in) x#)) `identity)))
+
+(defmacro pass-output-unparser
+  "(pass-output-unparser p)：pass 输出语言的 unparse 函数；输出为 * 时是 identity。"
+  [pname]
+  (let [m (meta (resolve pname))]
+    (when-not m (throw (ex-info (str "nanopass: " pname " is not a pass") {})))
+    (if (:nanopass/output m) `(fn [x# & [raw#]] (unparse x# (boolean raw#))) `identity)))
 
 (defmacro nanopass-case
   "(nanopass-case [L NT] e [模式 body …] … [else …])：按 L 的 NT 分派 e；~[x] 对同一 nanopass-case 递归。展开期生成内联代码，不建闭包。"

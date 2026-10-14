@@ -86,9 +86,10 @@
 
 (deftest definition-errors
   (let [bad (fn [form] (try (macroexpand-1 form) nil (catch Exception e (.Message e))))]
-    (is (re-find #"must start with a keyword" (bad '(cleat.nanopass/define-language Lb (terminals (symbol (x))) (E (e) (x e))))))
+    (is (nil? (bad '(cleat.nanopass/define-language Lb (terminals (symbol (x))) (E (e) (x e))))) "不以关键字开头的产生式按形状匹配（cleat-095）")
+    (is (re-find #"invalid" (bad '(cleat.nanopass/define-language Lb (terminals (symbol (x))) (E (e) (1 e))))))
     (is (re-find #"unknown meta-variable" (bad '(cleat.nanopass/define-language Lb (terminals (symbol (x))) (E (e) (k y))))))
-    (is (re-find #"share a keyword" (bad '(cleat.nanopass/define-language Lb (terminals (symbol (x))) (E (e) (k x) (k e))))))
+    (is (re-find #"share a keyword and a shape" (bad '(cleat.nanopass/define-language Lb (terminals (symbol (x))) (E (e) (k x) (k e))))))
     (is (re-find #"declared twice" (bad '(cleat.nanopass/define-language Lb (terminals (symbol (x))) (E (x) (k x))))))
     (is (re-find #"not defined" (bad '(cleat.nanopass/define-language Lb (terminals (nosuch (x))) (E (e) (k x))))))
     (is (re-find #"cannot remove" (bad '(cleat.nanopass/define-language Lb (extends cleat.nanopass-test/Lt) (Expr (e) (- (nope e)))))))))

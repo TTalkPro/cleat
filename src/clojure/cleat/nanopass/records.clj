@@ -12,8 +12,8 @@
 
 ;; —— 语言的运行时对象 ——
 ;; desc：语言描述（cleat.nanopass.language 生成的纯数据）；preds：终结符名 → 谓词函数；ctors：标签 → 带检查的构造函数；
-;; by-tag：标签 → 产生式描述；nts：非终结符名 → 描述
-(defrecord Language [name desc preds ctors by-tag nts])
+;; by-tag：标签 → 产生式描述；nts：非终结符名 → 描述；pretties：终结符名 → unparse 的美化函数（=>，cleat-095）
+(defrecord Language [name desc preds ctors by-tag nts pretties])
 
 ;; 限定名 → Language（加载期登记；宏展开期另有描述的注册表，见 cleat.nanopass.language）
 (defonce ^:private languages (atom {}))

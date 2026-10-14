@@ -4,8 +4,9 @@ using NUnit.Framework;
 namespace Cleat.Host.Tests;
 
 /// <summary>
-/// cleat.nanopass（cleat-083 / 084，designs/19 D2）：tests/nanopass 下的 clojure.test 命名空间在宿主上从源码运行
-/// （-I src/clojure -I tests/nanopass；cleat-085 起改为加载编译器程序集）。每个命名空间一个测试，失败时输出 clojure.test 的报告。
+/// cleat.nanopass（cleat-083 / 084 / 095，designs/19 D2）：tests/nanopass 下的 clojure.test 命名空间在宿主上运行（cleat.nanopass 来自编译器包
+/// cleat.compiler.dll，测试从源码加载）；cleat.upstream.* 是上游 nanopass-framework-scheme 的 unit-tests.ss 与 compiler.ss / alltests.ss 的翻译。
+/// 每个命名空间一个测试，失败时输出 clojure.test 的报告。
 /// </summary>
 [Category("Host")]
 public class NanopassTests
@@ -17,6 +18,8 @@ public class NanopassTests
     [TestCase("cleat.nanopass-pass-test")]
     [TestCase("cleat.compiler.languages-test")]
     [TestCase("cleat.compiler.pilot-test")]
+    [TestCase("cleat.upstream.unit-tests")]
+    [TestCase("cleat.upstream.compiler-tests")]
     public void Namespace(string ns)
     {
         var r = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null, "-I", Src, "-I", TestSrc,

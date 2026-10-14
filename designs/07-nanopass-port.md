@@ -113,7 +113,7 @@
 
 ## §3 验证
 
-- 把上游 `tests/`（约 4700 行的测试编译器 `compiler.ss` 与 `tests.ss`）翻译成 Clojure，作为 `cleat.nanopass` 的验收用例：语言定义、`extends`、省略号多层、`maybe`、catamorphism 各种写法、自动生成处理器与子句、`trace`。
+- 把上游 `tests/`（约 4700 行的测试编译器 `compiler.ss` 与 `tests.ss`）翻译成 Clojure，作为 `cleat.nanopass` 的验收用例（cleat-095 完成：`tests/nanopass/cleat/upstream/`）：语言定义、`extends`、省略号多层、`maybe`、catamorphism 各种写法、自动生成处理器与子句、`trace`。
 - **【失效】** ~~在 stage0 上展开并运行上述测试（任务 cleat-020），记录展开与运行耗时，作为 08 §4 对 stage0 速度要求的依据。~~
   （原链接的任务号有误，应为 [cleat-023](../tasks/cleat-023-nanopass-port.md)，已搁置。）
 - 展开结果确定：同一源码两次展开得到相同形式（类型名、标签、临时变量名不含进程相关成分）。

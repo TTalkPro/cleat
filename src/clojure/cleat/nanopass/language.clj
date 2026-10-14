@@ -8,9 +8,14 @@
 ;; 产生式：
 ;;   {:kind :terminal    :meta x  :term symbol}            终结符交替
 ;;   {:kind :nonterminal :meta le :nt LambdaExpr}          非终结符交替
-;;   {:kind :pair :keyword if :pattern (if e0 e1 e2) :tag 3 :type L0-Expr-if
+;;   {:kind :pair :keyword if :name if :pattern (if e0 e1 e2) :tag 3 :type L0-Expr-if :pretty nil
 ;;    :fields [{:name e0 :raw e :sort :nt :of Expr :depth 0 :maybe false} …]}
+;;   不以关键字开头的产生式（上游允许，cleat-095 起支持）：(e0 e1 ...) 的 :keyword 为 nil，:name 为 app0、app1 …（按定义顺序），
+;;   按形状匹配（元素个数；有省略号时不少于固定元素数）。
 ;; 模式里 [ ] 与 ( ) 等价（描述里一律是列表）；元变量 = 终结符或非终结符声明的元变量名加后缀（数字、* 、^）。
+;; 产生式或终结符后面可以跟 => 美化（cleat-095，上游的 unparse 钩子）：产生式 => 模板（同样的元变量，unparse 时按它输出），
+;; 终结符 => 函数（unparse 时作用于终结符的值）；(unparse x true) 不美化。
+;; 终结符描述：{:name symbol :pred clojure.core/symbol? :metas [x] :pretty nil|限定符号}
 (ns cleat.nanopass.language
   (:require [cleat.nanopass.records :as r]))
 
@@ -40,11 +45,11 @@
     (symbol (subs s 0 i))))
 
 (defn- normalize
-  "模式：向量改为列表（[ ] 与 ( ) 等价）。"
+  "模式：向量改为列表（[ ] 与 ( ) 等价）；保留元数据（::pretty）。"
   [p]
   (cond
-    (vector? p) (apply list (map normalize p))
-    (seq? p) (apply list (map normalize p))
+    (vector? p) (with-meta (apply list (map normalize p)) (meta p))
+    (seq? p) (with-meta (apply list (map normalize p)) (meta p))
     :else p))
 
 (defn- ellipsis? [x] (= x '...))
@@ -59,8 +64,24 @@
 
 (defn- parse-terminal [resolve-pred t]
   (if (and (seq? t) (= 2 (count t)) (symbol? (first t)))
-    {:name (first t) :pred (resolve-pred (symbol (str (name (first t)) "?"))) :metas (metas-of (second t))}
+    {:name (first t) :pred (resolve-pred (symbol (str (name (first t)) "?"))) :metas (metas-of (second t))
+     :pretty (when-let [pf (::pretty (meta t))] (resolve-pred pf))}
     (throw (ex-info (str "nanopass: invalid terminal clause " (pr-str t)) {}))))
+
+(defn- attach-pretty
+  "项的序列里 x => y 合并为带 ::pretty 元数据 y 的 x（上游的 unparse 钩子）。"
+  [items]
+  (loop [xs (seq items) out []]
+    (cond
+      (nil? xs) out
+      (and (next xs) (= '=> (second xs)))
+      (do (when-not (nnext xs) (throw (ex-info "nanopass: => needs a template or a function after it" {})))
+          (recur (nnext (next xs)) (conj out (let [x (first xs)]
+                                               (if (instance? clojure.lang.IObj x)
+                                                 (vary-meta x assoc ::pretty (nth xs 2))
+                                                 (throw (ex-info (str "nanopass: => cannot follow " (pr-str x)) {})))))))
+      (= '=> (first xs)) (throw (ex-info "nanopass: misplaced =>" {}))
+      :else (recur (next xs) (conj out (first xs))))))
 
 (defn- edit-clause?
   "(+ …) / (- …)"
@@ -76,7 +97,7 @@
 (defn- prod-key [p] (normalize p))
 
 (defn- apply-edits
-  "base：已有的项；edits：子句体（(+ …) / (- …)，也可以直接写项，等同 +）；key：比较用的键。"
+  "base：已有的项；edits：子句体（(+ …) / (- …)，也可以直接写项，等同 +；项后可跟 => 美化）；key：比较用的键。"
   [base edits key what]
   (reduce
     (fn [items e]
@@ -87,10 +108,10 @@
                     (when-not (some #(= k (key %)) items)
                       (throw (ex-info (str "nanopass: cannot remove " what " " (pr-str x) ": not in the base language") {})))
                     (vec (remove #(= k (key %)) items))))
-                items (rest e))
-        (edit-clause? e '+) (into items (rest e))
+                items (attach-pretty (rest e)))
+        (edit-clause? e '+) (into items (attach-pretty (rest e)))
         :else (conj items e)))
-    (vec base) edits))
+    (vec base) (attach-pretty edits)))
 
 (defn- term-key [t] (:name t))
 
@@ -105,9 +126,14 @@
                       items (apply-edits (map (fn [t] (with-meta (list (:name t) (apply list (:metas t))) {::desc t})) (:terminals base))
                                          edits (fn [t] (first t)) "terminal")]
                   (mapv #(or (::desc (meta %)) (parse-terminal resolve-pred %)) items))
-                (mapv #(parse-terminal resolve-pred %) (mapcat rest (get by-head 'terminals))))
+                (mapv #(parse-terminal resolve-pred %) (attach-pretty (mapcat rest (get by-head 'terminals)))))
         entry (some-> (get by-head 'entry) last second)
-        base-nts (when base (mapv (fn [nt] {:name (:name nt) :metas (:metas nt) :prods (mapv #(if (= :pair (:kind %)) (:pattern %) (:meta %)) (:prods nt))}) (:nonterminals base)))
+        base-nts (when base (mapv (fn [nt] {:name (:name nt) :metas (:metas nt)
+                                            :prods (mapv #(if (= :pair (:kind %))
+                                                            (if (:pretty %) (vary-meta (:pattern %) assoc ::pretty (:pretty %)) (:pattern %))
+                                                            (:meta %))
+                                                         (:prods nt))})
+                                  (:nonterminals base)))
         nts (reduce
               (fn [nts c]
                 (check-nonterminal-clause c)
@@ -122,7 +148,7 @@
                     (do (when (some #(edit-clause? % '-) body)
                           (throw (ex-info (str "nanopass: nonterminal " nt-name " is not in the base language") {})))
                         (conj nts {:name nt-name :metas (metas-of metas)
-                                   :prods (mapv normalize (mapcat #(if (edit-clause? % '+) (rest %) [%]) body))})))))
+                                   :prods (mapv normalize (attach-pretty (mapcat #(if (edit-clause? % '+) (attach-pretty (rest %)) [%]) body)))})))))
               (or base-nts []) (get by-head :nt))]
     {:name qname
      :entry (or entry (:entry base) (:name (first nts)))
@@ -171,7 +197,9 @@
   "未注解的描述 → 完整描述（产生式按定义顺序编号 0 起；类型名与标签只取决于定义顺序，07 D6）。"
   [desc]
   (let [metas (meta-table desc)
+        meta-sym? (fn [x] (and (symbol? x) (try (contains? metas (raw-meta x)) (catch Exception _ false))))
         tag (volatile! -1)
+        acc (volatile! [])
         nts (mapv
               (fn [nt]
                 (let [prods (mapv
@@ -181,17 +209,38 @@
                                   (let [[sort of] (or (metas (raw-meta p))
                                                       (throw (ex-info (str "nanopass: unknown meta-variable " p " in " (:name nt)) {})))]
                                     (if (= sort :term) {:kind :terminal :meta p :term of} {:kind :nonterminal :meta p :nt of}))
-                                  (and (seq? p) (symbol? (first p)) (not (metas (first p))) (not (ellipsis? (first p))))
-                                  (let [fields (pattern-fields metas (rest p) 0)]
+                                  (and (seq? p) (symbol? (first p)) (not (meta-sym? (first p))) (not (ellipsis? (first p))))
+                                  (let [fields (pattern-fields metas (rest p) 0)
+                                        ;; 同一关键字的产生式可以有几个（按形状区分，如 (if e1 e2) 与 (if e1 e2 e3)）：第二个起名字带序号
+                                        same (count (filter #(= (first p) (:keyword %)) @acc))
+                                        nm (if (zero? same) (first p) (symbol (str (first p) (inc same))))]
                                     (when-not (apply distinct? (map :name (cons {:name (gensym)} fields)))
                                       (throw (ex-info (str "nanopass: duplicate meta-variable in " (pr-str p)) {})))
-                                    {:kind :pair :keyword (first p) :pattern p :fields fields
-                                     :tag (vswap! tag inc) :type (type-name (:name desc) (:name nt) (first p))})
-                                  :else (throw (ex-info (str "nanopass: production must start with a keyword: " (pr-str p)) {}))))
+                                    (let [prod {:kind :pair :keyword (first p) :name nm :pattern p :fields fields :pretty (some-> (::pretty (meta p)) normalize)
+                                                :tag (vswap! tag inc) :type (type-name (:name desc) (:name nt) nm)}]
+                                      (vswap! acc conj prod)
+                                      prod))
+                                  ;; 不以关键字开头的产生式（(e0 e1 ...)）：按形状匹配，名字 appN
+                                  (and (seq? p) (seq p) (or (not (symbol? (first p))) (meta-sym? (first p))))
+                                  (let [fields (pattern-fields metas p 0)
+                                        nm (symbol (str "app" (count (filter #(and (= :pair (:kind %)) (nil? (:keyword %))) @acc))))]
+                                    (when-not (apply distinct? (map :name (cons {:name (gensym)} fields)))
+                                      (throw (ex-info (str "nanopass: duplicate meta-variable in " (pr-str p)) {})))
+                                    (let [prod {:kind :pair :keyword nil :name nm :pattern p :fields fields :pretty (some-> (::pretty (meta p)) normalize)
+                                                :tag (vswap! tag inc) :type (type-name (:name desc) (:name nt) nm)}]
+                                      (vswap! acc conj prod)
+                                      prod))
+                                  :else (throw (ex-info (str "nanopass: invalid production: " (pr-str p)) {}))))
                               (:prods nt))
-                      kws (map :keyword (filter #(= :pair (:kind %)) prods))]
-                  (when-not (apply distinct? (cons (gensym) kws))
-                    (throw (ex-info (str "nanopass: two productions of " (:name nt) " share a keyword") {})))
+                      pairs (filter #(= :pair (:kind %)) prods)
+                      pats (map :pattern pairs)
+                      ;; 同一关键字、同样形状（元素个数、有无省略号）的两个产生式无法区分
+                      shape (fn [p] [(:keyword p) (count (remove ellipsis? (:pattern p))) (boolean (some ellipsis? (:pattern p)))])]
+                  (when-not (apply distinct? (cons (gensym) pats))
+                    (throw (ex-info (str "nanopass: the nonterminal " (:name nt) " in language " (:name desc) " lists the same production more than once") {})))
+                  (when-not (apply distinct? (cons (gensym) (map shape (filter :keyword pairs))))
+                    (throw (ex-info (str "nanopass: two productions of " (:name nt) " in language " (:name desc) " share a keyword and a shape") {})))
+                  (vreset! acc [])
                   (assoc nt :prods prods)))
               (:nonterminals desc))]
     (when-not (some #(= (:entry desc) (:name %)) nts)
@@ -229,42 +278,56 @@
          (:nonterminals desc))))
 
 ;; —— 按描述的 unparse ——
+;; ctx：{:env 字段名 → 值 :fields 字段名 → 字段描述 :lang 运行时语言 :raw? 布尔}；raw? 为假时按 => 美化
 
 (declare unparse-node unparse-elt)
 
-(defn- unparse-value [v]
-  (if (r/node? v) (unparse-node v) v))
+(defn- unparse-value [v raw?]
+  (if (r/node? v) (unparse-node v raw?) v))
 
-(defn- unparse-elts [pats env]
-  (loop [ps (seq pats) out []]
-    (if-not ps
-      out
-      (let [p (first ps)]
-        (if (and (next ps) (ellipsis? (second ps)))
-          (let [names (map :name (pattern-fields (fn [_] [:any nil]) [p] 0))
-                ;; 字段名就是元变量名：模式里的元变量可以直接查 env
-                n (count (env (first names)))
-                items (for [i (range n)]
-                        (unparse-elt p (into env (map (fn [f] [f (nth (env f) i)]) names))))]
-            (recur (nnext ps) (into out items)))
-          (recur (next ps) (conj out (unparse-elt p env))))))))
+(defn- unparse-term [ctx fname v]
+  (let [f (get (:fields ctx) fname)]
+    (if (and (not (:raw? ctx)) f (= :term (:sort f)))
+      (if-let [pf (get (:pretties (:lang ctx)) (:of f))] (pf v) v)
+      (unparse-value v (:raw? ctx)))))
 
-(defn- unparse-elt [p env]
+(defn- unparse-elts [pats ctx]
+  (let [env (:env ctx)]
+    (loop [ps (seq pats) out []]
+      (if-not ps
+        out
+        (let [p (first ps)]
+          (if (and (next ps) (ellipsis? (second ps)))
+            (let [names (filter #(contains? env %) (map :name (pattern-fields (fn [_] [:any nil]) [p] 0)))
+                  n (count (env (first names)))
+                  items (for [i (range n)]
+                          (unparse-elt p (assoc ctx :env (into env (map (fn [f] [f (nth (env f) i)]) names)))))]
+              (recur (nnext ps) (into out items)))
+            (recur (next ps) (conj out (unparse-elt p ctx)))))))))
+
+(defn- unparse-elt [p ctx]
   (cond
-    (symbol? p) (unparse-value (env p))
-    (and (seq? p) (= 'maybe (first p))) (unparse-value (env (second p)))
-    :else (apply list (unparse-elts p env))))
+    (symbol? p) (if (contains? (:env ctx) p) (unparse-term ctx p ((:env ctx) p)) p)   ; 不是字段的符号是美化模板里的字面量
+    (and (seq? p) (= 'maybe (first p))) (unparse-term ctx (second p) ((:env ctx) (second p)))
+    (seq? p) (apply list (unparse-elts p ctx))
+    :else p))
 
 (defn unparse-node
-  "节点 → S 表达式（列表；终结符原样）。不是节点的值原样返回。"
-  [x]
-  (if-not (r/node? x)
-    x
-    (let [^cleat.nanopass.records.INode n x
-          lang (r/node-language n)
-          prod ((:by-tag lang) (.nanoTag n))
-          env (zipmap (map :name (:fields prod)) (.nanoFields n))]
-      (apply list (:keyword prod) (unparse-elts (rest (:pattern prod)) env)))))
+  "节点 → S 表达式（列表；终结符原样）。不是节点的值原样返回。raw? 为假（缺省）时按 => 美化。"
+  ([x] (unparse-node x false))
+  ([x raw?]
+   (if-not (r/node? x)
+     x
+     (let [^cleat.nanopass.records.INode n x
+           lang (r/node-language n)
+           prod ((:by-tag lang) (.nanoTag n))
+           ctx {:env (zipmap (map :name (:fields prod)) (.nanoFields n))
+                :fields (into {} (map (juxt :name identity) (:fields prod)))
+                :lang lang :raw? raw?}]
+       (cond
+         (and (not raw?) (:pretty prod)) (unparse-elt (:pretty prod) ctx)
+         (:keyword prod) (apply list (:keyword prod) (unparse-elts (rest (:pattern prod)) ctx))
+         :else (apply list (unparse-elts (:pattern prod) ctx)))))))
 
 ;; —— 按描述的解析（S 表达式 → 节点）——
 
@@ -311,9 +374,11 @@
         (let [v (case (:kind p)
                   :terminal (if ((get (:preds lang) (:term p)) x) x ::fail)
                   :nonterminal (parse-nt lang (:nt p) x)
-                  :pair (if (and (or (seq? x) (vector? x)) (seq x) (= (first x) (:keyword p)))
+                  :pair (if (and (or (seq? x) (vector? x)) (or (nil? (:keyword p)) (and (seq x) (= (first x) (:keyword p)))))
                           (let [fields-by-name (into {} (map (juxt :name identity) (:fields p)))
-                                env (match-list lang fields-by-name (rest (:pattern p)) (rest x))]
+                                env (if (:keyword p)
+                                      (match-list lang fields-by-name (rest (:pattern p)) (rest x))
+                                      (match-list lang fields-by-name (:pattern p) x))]
                             (if env
                               (apply ((:ctors lang) (:tag p)) (map #(get env (:name %)) (:fields p)))
                               ::fail))
