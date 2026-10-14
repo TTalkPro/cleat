@@ -178,7 +178,7 @@ public class HostProcessTests
         Assert.That(first.Out, Is.EqualTo("user=> "));
         // 第二次计时（第一次有磁盘缓存的影响）
         var r = CleatIn(_dir, ":repl/quit\n", new[] { ("CLEAT_TIME", "1") });
-        Assert.That(r.Err, Does.Match(@"cleat: Scheme image \d+ ms, driver libraries \(fasl\) \d+ ms"), "the precompiled driver libraries should be used: " + r);
+        Assert.That(r.Err, Does.Match(@"cleat: Scheme image \d+ ms, driver libraries \((fasl|clojure)\) \d+ ms"), "the precompiled driver libraries (or the Clojure compiler's package) should be used: " + r);
         TestContext.Out.WriteLine($"startup to first prompt and exit: {r.Elapsed.TotalMilliseconds:F0} ms ({r.Err.Trim()})");
     }
 

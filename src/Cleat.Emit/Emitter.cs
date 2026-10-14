@@ -190,6 +190,9 @@ public sealed partial class LcilEmitter
         if (name.EndsWith("[]", StringComparison.Ordinal)) return T(name.Substring(0, name.Length - 2), pos).MakeArrayType();
         if (name.EndsWith("&", StringComparison.Ordinal)) return T(name.Substring(0, name.Length - 1), pos).MakeByRefType();
         if (_types.TryGetValue(name, out var tb)) return tb;
+        // 本单元的类型先于跨实例的静态缓存（缓存里可能是进程中运行着的同名程序集——上一级镜像——的类型）
+        if (QualifiedSplit(name) is int q && OwnQualifier(name.Substring(q + 1).Trim()) && _types.TryGetValue(name.Substring(0, q).Trim(), out var mine))
+            return mine;
         if (s_staticTypes.TryGetValue(name, out var cached)) return cached;
         var t = Type.GetType(name);
         if (t == null && QualifiedSplit(name) is int comma)
@@ -404,6 +407,9 @@ public sealed partial class LcilEmitter
         throw Err(pos, $"interface method not found: {it.FullName}::{name}");
     }
 
+    /// <summary>"类型, 程序集" 的程序集指本单元：eval$N（eval 时生成、AOT 时在本单元重新定义的类型）或本程序集自己的名字。</summary>
+    private bool OwnQualifier(string asmName) => asmName.StartsWith("eval$", StringComparison.Ordinal) || asmName == _asm.Name;
+
     // ———————————————— 成员引用 ————————————————
 
     private MethodBase Method(MethodRef r, SNode pos)
@@ -412,8 +418,9 @@ public sealed partial class LcilEmitter
         MethodBase found = null;
         // "类型, eval$N" 指向本单元重新定义的同名类型时（T 的 cleat-053 规则），成员也在本单元的定义里找（cleat-042）
         string key = r.Type;
+        // 程序集名是本程序集自己时同样（镜像里引用自己的类，cleat-091：从种子发射时没有已加载的同名镜像可找）
         if (!_methods.ContainsKey(key) && QualifiedSplit(key) is int comma && _types.ContainsKey(key.Substring(0, comma).Trim())
-            && key.Substring(comma + 1).Trim().StartsWith("eval$", StringComparison.Ordinal))
+            && OwnQualifier(key.Substring(comma + 1).Trim()))
             key = key.Substring(0, comma).Trim();
         if (_methods.TryGetValue(key, out var own))
             found = own.FirstOrDefault(x => (x.B is ConstructorInfo ? x.M.IsCctor ? ".cctor" : ".ctor" : x.M.Name) == r.Name && x.P.SequenceEqual(ps)).B;
@@ -645,7 +652,9 @@ public sealed partial class LcilEmitter
         foreach (var (name, path) in a.Resources)
         {
             resources ??= new BlobBuilder();
-            byte[] data = File.ReadAllBytes(path);
+            // 相对路径相对于 Lcil 文件所在的目录（种子里的包程序集，cleat-091）
+            string full = Path.IsPathRooted(path) || a.File == null ? path : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(a.File)) ?? ".", path);
+            byte[] data = File.ReadAllBytes(full);
             metadata.AddManifestResource(ManifestResourceAttributes.Public, metadata.GetOrAddString(name), default, (uint)resources.Count);
             resources.WriteInt32(data.Length);
             resources.WriteBytes(data);

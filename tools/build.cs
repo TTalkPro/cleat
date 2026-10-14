@@ -39,6 +39,8 @@
 //                         运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）与 dotnet tool 包 Cleat.Cli（cleat-071）：
 //                         Release 构建、compile-libs、tools.build 的包程序集，再 dotnet pack；默认输出 artifacts/nuget/。推到本地目录源或 BaGetter 后 C# / F#
 //                         项目引用它与 cleat 的包程序集即可（运行时第一次用到时自己启动）
+//   selfhost [目录]       Clojure 编译器自举两级（改名的工具编译器、--target-image），stage2 与 stage3 的镜像与编译器包逐字节相同（cleat-091）
+//   clojure-seed          自举到不动点后把 stage3 写成 src/boot/seed/*.gz（Lcil 文本种子），发射回来验证（cleat-091，designs/08 §0）
 //   bench [-r 次数] [--write] [--only 正则]
 //                         运行 bench/ 下的基准（每个一次宿主进程，逐个打印 BENCH <名字> <毫秒>），聚合最小/中位；
 //                         --write 把结果写到 bench/baseline.edn（优化前后对照，cleat-042）
@@ -47,6 +49,7 @@
 //                         驱动库（cleat.scheme.clojure/）、Clojure 镜像与 AOT 库随发布。默认 RID 为当前平台，
 //                         默认输出 artifacts/publish/cleat-<RID>/。REPL 与脚本直接可用
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 string root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName((string)AppContext.GetData("EntryPointFilePath")!)!, ".."));
 string srcDir = Path.Combine(root, "src");
@@ -91,6 +94,14 @@ try
         case "ir-dump":
             BuildCSharp();
             IrDumpCommand(rest);
+            break;
+        case "clojure-seed":
+            BuildCSharp();
+            ClojureSeed(rest);
+            break;
+        case "selfhost":
+            BuildCSharp();
+            SelfHost(rest);
             break;
         case "compile-compiler":
             BuildCSharp();
@@ -281,6 +292,113 @@ void CompileCompiler()
                    "--root", Path.Combine(cleat, "nanopass.clj"), "--root", Path.Combine(cleat, "nanopass"), "--root", Path.Combine(cleat, "compiler"),
                    "cleat.compiler.all"], root);
     Console.WriteLine("compile-compiler: -> " + dll);
+}
+
+// Clojure 编译器的自举（cleat-091，designs/19 D7 / G4）。正在运行的编译器（命名空间 cleat.compiler.*）不能在同一进程里重新加载
+// 自己的源码编自己（记录类型、接口被重定义，新旧代码混用），所以用改名的工具编译器：源码里的命名空间改成 cleat.compiler0.* /
+// cleat.nanopass0.*，由它编真正的 cleat.compiler。每一级：
+//   镜像 N+1 = 编译器 N 在镜像 N 上 --compile-boot；工具 N = 编译器 N 在镜像 N 上编改名的源码（--target-image 镜像 N+1）；
+//   编译器 N+1 = 工具 N 在镜像 N+1 上编源码。
+// stage1 是 src/boot 的镜像与编译器包；stage2 与 stage3 的镜像与编译器包都要逐字节相同（不动点；工具 1 编在 Scheme 编的镜像上，
+// 没有内联，与工具 2 不同，不比较）。
+void SelfHost(string[] a)
+{
+    string dir = Path.GetFullPath(a.Length > 0 ? a[0] : Path.Combine(Path.GetTempPath(), "cleat-selfhost"));
+    if (Directory.Exists(dir)) Directory.Delete(dir, true);
+    Directory.CreateDirectory(dir);
+    string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure"), order = Path.Combine(bootDir, "boot-order.edn");
+    string renamed = Path.Combine(dir, "renamed");
+    Run("dotnet", [host, "--rename-compiler-sources", Path.Combine(clj, "cleat"), Path.Combine(renamed, "cleat")], root);
+    (string, string)[] env = [("CLEAT_COMPILER", "clojure"), ("CLEAT_DUMP_LCIL", "1")];
+    (string, string)[] toolEnv = [.. env, ("CLEAT_COMPILER_NS", "cleat.compiler0")];
+    string[] Roots(string top, string suffix) =>
+      ["--root", Path.Combine(top, "nanopass" + suffix + ".clj"), "--root", Path.Combine(top, "nanopass" + suffix), "--root", Path.Combine(top, "compiler" + suffix)];
+    var sw = Stopwatch.StartNew();
+    void Step(string what, string[] args, (string, string)[] e)
+    {
+        var t = Stopwatch.StartNew();
+        Run("dotnet", [host, .. args], dir, e);
+        Console.WriteLine($"selfhost: {what} ({t.Elapsed.TotalSeconds:F1} s)");
+    }
+    string prevBoot = Path.Combine(bootDir, "cleat.boot.dll");
+    for (int n = 2; n <= 3; n++)
+    {
+        string st = Path.Combine(dir, "stage" + n), tool = Path.Combine(dir, "tool" + (n - 1));
+        Directory.CreateDirectory(st);
+        Directory.CreateDirectory(tool);
+        string boot = Path.Combine(st, "cleat.boot.dll");
+        Step($"stage{n} boot image", ["--boot", prevBoot, "-I", clj, "--compile-boot", boot, "--boot-order", order], env);
+        // 工具在上一级镜像上编出、以这一级镜像为目标；编译器在这一级镜像上编（直接链接与内联看的是运行着的镜像的接口文件），
+        // 所以编译器包只取决于这一级镜像与源码
+        Step($"tool{n - 1} (renamed compiler)", ["--boot", prevBoot, "-I", renamed, "-I", clj, "--compile-package", Path.Combine(tool, "cleat.compiler0.dll"),
+                                                 "--package", "cleat.compiler0", .. Roots(Path.Combine(renamed, "cleat"), "0"), "--target-image", boot,
+                                                 "cleat.compiler0.all"], env);
+        Step($"stage{n} compiler", ["--boot", boot, "-I", tool, "-I", clj, "--compile-package", Path.Combine(st, "cleat.compiler.dll"),
+                                     "--package", "cleat.compiler", .. Roots(Path.Combine(clj, "cleat"), ""), "cleat.compiler.all"], toolEnv);
+        prevBoot = boot;
+    }
+    bool Same(string rel)
+    {
+        string x = Path.Combine(dir, rel.Replace("N", "2").Replace("T", "1")), y = Path.Combine(dir, rel.Replace("N", "3").Replace("T", "2"));
+        // 包程序集的 Lcil 文本里嵌入资源（接口文件）的来源是临时目录，路径不比较（内容在 dll 里比较）
+        bool same = rel.EndsWith(".dll.lcil")
+            ? Regex.Replace(File.ReadAllText(x), @"cleat-ifc-\w+", "cleat-ifc") == Regex.Replace(File.ReadAllText(y), @"cleat-ifc-\w+", "cleat-ifc")
+            : File.ReadAllBytes(x).AsSpan().SequenceEqual(File.ReadAllBytes(y));
+        Console.WriteLine($"selfhost: {rel.Replace("N", "{2,3}").Replace("T", "{1,2}")}: {(same ? "identical" : "DIFFERENT")} ({new FileInfo(x).Length} bytes)");
+        return same;
+    }
+    bool ok = true;
+    foreach (var f in new[] { "stageN/cleat.boot.dll", "stageN/cleat.boot.lcil", "stageN/cleat.boot.ifc", "stageN/cleat.boot.inl",
+                              "stageN/cleat.compiler.dll", "stageN/cleat.compiler.dll.lcil" })
+        ok &= Same(f);
+    Console.WriteLine($"selfhost: {(ok ? "fixed point" : "NOT a fixed point")} in {sw.Elapsed.TotalSeconds:F0} s -> {dir}");
+    if (!ok) throw new CommandFailed("selfhost: stage2 and stage3 differ");
+}
+
+// Clojure 编译器的种子（cleat-091，designs/19 D7）：自举到不动点后，把 stage3 的镜像与编译器包的 Lcil 文本连同接口文件 gzip 压缩写到
+// src/boot/seed/（信任根：构建从这里发射出 stage1，不再经过 Scheme 镜像与 stage0）。编译器包的嵌入资源（cleat.ifc / cleat.inl）
+// 从 dll 里取出成种子旁的文件，Lcil 里的资源路径改成相对路径。写完后把种子发射一遍，与 stage3 逐字节比较。
+void ClojureSeed(string[] a)
+{
+    string work = Path.Combine(Path.GetTempPath(), "cleat-clojure-seed");
+    SelfHost([work]);
+    string st = Path.Combine(work, "stage3"), seed = Path.Combine(bootDir, "seed");
+    if (Directory.Exists(seed)) Directory.Delete(seed, true);
+    Directory.CreateDirectory(seed);
+    void Gzip(string name, byte[] data)
+    {
+        using var f = File.Create(Path.Combine(seed, name + ".gz"));
+        using var z = new System.IO.Compression.GZipStream(f, System.IO.Compression.CompressionLevel.SmallestSize);
+        z.Write(data);
+    }
+    foreach (var ext in new[] { ".lcil", ".ifc", ".inl" })
+        Gzip("cleat.boot" + ext, File.ReadAllBytes(Path.Combine(st, "cleat.boot" + ext)));
+    // 编译器包：资源从 dll 取出
+    var asm = System.Reflection.Assembly.Load(File.ReadAllBytes(Path.Combine(st, "cleat.compiler.dll")));
+    string lcil = File.ReadAllText(Path.Combine(st, "cleat.compiler.dll.lcil"));
+    foreach (var (res, file) in new[] { ("cleat.ifc", "cleat.compiler.ifc"), ("cleat.inl", "cleat.compiler.inl") })
+    {
+        using var rs = asm.GetManifestResourceStream(res);
+        if (rs == null) continue;
+        var ms = new MemoryStream();
+        rs.CopyTo(ms);
+        Gzip(file, ms.ToArray());
+        lcil = Regex.Replace(lcil, "\\(resource \"" + Regex.Escape(res) + "\" \"[^\"]*\"\\)", "(resource \"" + res + "\" \"" + file + "\")");
+    }
+    Gzip("cleat.compiler.lcil", System.Text.Encoding.UTF8.GetBytes(lcil));
+    // 验证：种子发射出的 dll 与 stage3 相同
+    string check = Path.Combine(work, "from-seed");
+    Run("dotnet", [Bin("Cleat.Emit", "cleat-emit.dll"), "--seed", seed, "-o", check, "-r", Path.GetDirectoryName(Bin("Cleat.Host", "cleat.dll"))!], root);
+    bool ok = true;
+    foreach (var dll in new[] { "cleat.boot.dll", "cleat.compiler.dll" })
+    {
+        bool same = File.ReadAllBytes(Path.Combine(check, dll)).AsSpan().SequenceEqual(File.ReadAllBytes(Path.Combine(st, dll)));
+        Console.WriteLine($"clojure-seed: {dll} from the seed: {(same ? "identical to stage3" : "DIFFERENT")}");
+        ok &= same;
+    }
+    long size = Directory.GetFiles(seed).Sum(f => new FileInfo(f).Length);
+    Console.WriteLine($"clojure-seed: {seed} ({size / 1024} KiB)");
+    if (!ok) throw new CommandFailed("clojure-seed: the seed does not reproduce stage3");
 }
 
 // tools.build 与 tools.namespace 编成包程序集放进 src/boot/tools/（cleat-071）：Cleat.Cli 随附，宿主的 -M / -T 用它们
@@ -484,13 +602,14 @@ void ILVerify(string dll)
              "-r", Path.Combine(Path.GetDirectoryName(dll)!, "*.dll"), ..bootRef, ..clojureRef]);
 }
 
-void Run(string file, string[] arguments, string? workingDirectory = null)
+void Run(string file, string[] arguments, string? workingDirectory = null, (string, string)[]? env = null)
 {
     // 输出被重定向时（如在测试中运行）不保留 MSBuild 节点进程：它们继承输出管道，调用方会一直等不到输出结束
     if (file == "dotnet" && arguments.Length > 0 && arguments[0] is "build" or "publish" && Console.IsOutputRedirected)
         arguments = [.. arguments, "-nodeReuse:false"];
     var psi = new ProcessStartInfo(file) { WorkingDirectory = workingDirectory ?? root, UseShellExecute = false, RedirectStandardInput = true };
     foreach (var a in arguments) psi.ArgumentList.Add(a);
+    foreach (var (k, v) in env ?? []) psi.Environment[k] = v;
     using var p = Process.Start(psi) ?? throw new CommandFailed($"cannot start {file}");
     p.StandardInput.Close();   // 构建脚本不读输入
     p.WaitForExit();

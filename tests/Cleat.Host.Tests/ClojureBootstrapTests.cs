@@ -75,6 +75,20 @@ public class ClojureBootstrapTests
         Assert.That(r.Out, Does.EndWith("\"A\"\n"), r.ToString());
     }
 
+    /// <summary>
+    /// cleat-091（designs/08 §0）：dotnet build 从种子发射 stage1，再由它编出 src/boot 的镜像与编译器包；种子是不动点，所以两者与
+    /// stage1 逐字节相同（改了 Clojure 源码或编译器而没有重生成种子时不同：tools/build.cs clojure-seed）。
+    /// </summary>
+    [Test, Order(7)]
+    public void BuildFromTheSeedReproducesTheSeed()
+    {
+        string stage1 = Path.Combine(HostProcessTests.RepoDir, "src", "Cleat.Host", "obj", "seed-stage1");
+        if (!File.Exists(Path.Combine(stage1, "cleat.compiler.dll"))) Assert.Ignore("stage1 not emitted (dotnet build -p:BuildBootImage=false?)");
+        foreach (var dll in new[] { "cleat.boot.dll", "cleat.compiler.dll" })
+            Assert.That(File.ReadAllBytes(Path.Combine(HostProcessTests.RepoDir, "src", "boot", dll)),
+                        Is.EqualTo(File.ReadAllBytes(Path.Combine(stage1, dll))), dll + ": src/boot vs the seed's stage1");
+    }
+
     [Test, Order(6)]
     public void Verify()
     {

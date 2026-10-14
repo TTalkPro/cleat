@@ -49,7 +49,7 @@
     (let [uber-dir (project-path "target/uber")]
       (is (set/subset? #{"P1.dll" "Demo.dll"} (lib-files uber-dir)))
       ;; the launchers are named after the uber dir (cleat-074)
-      (doseq [f ["cleat.dll" "Cleat.Core.dll" "cleat.scheme.boot.dll" "cleat.boot.dll" "cleat.scheme.clojure" "uber" "uber.cmd"]]
+      (doseq [f ["cleat.dll" "Cleat.Core.dll" "cleat.boot.dll" "cleat.compiler.dll" "uber" "uber.cmd"]]
         (is (exists? (Path/Combine uber-dir f)) f))
       (is (str/includes? (slurp (Path/Combine uber-dir "uber")) "-m foo.bar"))
       ;; the directory runs on its own (only dotnet needed)

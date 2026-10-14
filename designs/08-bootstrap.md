@@ -1,5 +1,46 @@
 # 08 自举
 
+> **2026-10-15 改版（cleat-091，[19 D7](19-clojure-self-hosting.md)）**：Clojure 镜像与 Clojure 写的编译器自举，信任根是 Lcil 文本种子，
+> 不再经过 Scheme 镜像与 stage0（下文 §1 ~ §8 是 Scheme 元层时期的设计，Scheme 编译器作对照保留到 cleat-093）。
+
+## 0. Clojure 编译器的自举（cleat-091 起）
+
+**组成**
+
+| 组成 | 是什么 | 由谁产生 |
+|---|---|---|
+| `src/boot/seed/*.gz` | 自举到不动点的镜像（`cleat.boot.lcil` 与 `.ifc` / `.inl`）与编译器包（`cleat.compiler.lcil`，嵌入资源 `.ifc` / `.inl` 在旁边）的 Lcil 文本，gzip；约 2 MB | `tools/build.cs clojure-seed`（自举两级、验证不动点、种子发射回来与 stage3 逐字节比较） |
+| stage1 | 种子发射出的 `cleat.boot.dll` 与 `cleat.compiler.dll`（`cleat-emit --seed`，`obj/seed-stage1/`） | `EmitSeedStage1`（`Cleat.Host.csproj`） |
+| `src/boot/cleat.boot.dll` | Clojure 镜像 | `GenerateBootImage`：stage1 在 stage1 镜像上 `--compile-boot` |
+| `src/boot/cleat.compiler.dll` | Clojure 编译器的包程序集 | `GenerateCompilerPackage`：改名的工具编译器在新镜像上编 |
+
+**改名的工具编译器**：正在运行的编译器（命名空间 `cleat.compiler.*` / `cleat.nanopass.*`）不能在同一进程里重新加载自己的源码编自己——
+记录类型、接口被重定义，新旧代码混用（`CljFnName` 的类变了而旧的谓词还在用）。所以先把源码改名成 `cleat.compiler0.*` /
+`cleat.nanopass0.*`（`cleat --rename-compiler-sources`），由正在运行的编译器编成工具，再由工具（`CLEAT_COMPILER_NS=cleat.compiler0`）
+编真正的 `cleat.compiler`。两套命名空间互不相干。
+
+**包与镜像**：包程序集带镜像核对（只能在编它时的那个镜像上运行）。工具以下一级镜像为目标编出（`--compile-package … --target-image 镜像.dll`），
+运行在下一级镜像上编编译器；编译器包里的直接链接与内联只看运行着的镜像的接口文件，所以编译器包只取决于镜像与源码。
+
+**流程与判据**（`tools/build.cs selfhost`）
+
+```
+ stage1 = 种子（或 src/boot 的镜像与编译器包）
+ 镜像 N+1 = 编译器 N 在镜像 N 上 --compile-boot
+ 工具 N   = 编译器 N 在镜像 N 上编改名的源码（--target-image 镜像 N+1）
+ 编译器 N+1 = 工具 N 在镜像 N+1 上编源码
+ 判据：stage2 与 stage3 的镜像（dll、Lcil、.ifc、.inl）与编译器包（dll、Lcil）逐字节相同；
+      从种子构建（dotnet build）得到的镜像与编译器包与种子发射出的 stage1 相同
+```
+
+宿主在镜像旁有编译器包时用 Clojure 编译器，不装 Scheme 镜像（`CLEAT_COMPILER` 缺省为 `clojure`）；`--no-boot`、镜像旁没有编译器、
+编译器源码比包新（开发时）时照旧装 Scheme 镜像，Scheme 驱动先跑、Clojure 编译器从源码加载后接手。
+
+**运行时契约的两步法**：生成的代码调用 Cleat.Core / Cleat.Scheme 的 C# 方法（`ClojureOps`、`ClojureStaticCalls`、`RT.Box` …），种子里的
+Lcil 也一样。改这些签名时：① 先加新入口、保留旧入口，让旧种子发射出的 stage1 仍能运行，编译器改用新入口；② `tools/build.cs clojure-seed`
+重生成种子（新种子只用新入口）；③ 再删旧入口。发射器的改动同理：种子是 Lcil 文本，发射器的行为变化会改变 stage1 的字节，重生成种子即可。
+
+
 > **2026-10-10 改版**：按 [15](15-scheme-core-vendoring.md) 的方案，自举分两段：Scheme 元层的镜像（种子 + Scheme stage0，自 IronScheme 纳入，cleat-046 已在本仓库达到不动点）与 Clojure 的镜像（由 Scheme 镜像编译 `core.clj`，cleat-053）。原设计（Clojure 的 C# stage0 解释器、Lcore 种子）作废，保留在文末"已作废"一节供查阅；§7 确定性措施继续有效。
 
 ## 1. 原则

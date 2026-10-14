@@ -210,17 +210,23 @@
         (let [full (AotPaths/PackageFullPath path)]
           (some #(AotPaths/UnderDirectory full %) roots)))))
 
+(defn- load-built
+  "编进镜像或包程序集的文件：*file* 绑成加载名（clojure/core.clj，同 JVM 的 :file），产物里不带构建机器上的绝对路径（cleat-091：
+  从种子构建的镜像在任何位置都与种子相同）"
+  [reader path name]
+  (binding [*file* name] (load-reader reader path name)))
+
 (defn- load-hook [reader path name]
   (let [pkg (:package (st))]
     (if (and pkg (not (:boot (st))) (package-file? pkg path))
       (let [unit (atom [])
-            v (with-st {:unit unit} (load-reader reader path name))
+            v (with-st {:unit unit} (load-built reader path name))
             k (AotPaths/LoadKey path name)]
         (when-not (some #(= k (first %)) @(:segments pkg))
           (swap! (:segments pkg) conj [k @unit]))
         v)
       (with-st {:unit (when (:boot (st)) (:unit (st)))}
-        (load-reader reader path name)))))
+        (if (:boot (st)) (load-built reader path name) (load-reader reader path name))))))
 
 ;; —— 接口文件（Cleat.Scheme.Clojure.Driver 的 BuildInterfaceFile，读 L0 与 Lcil）——
 
@@ -442,12 +448,14 @@
     dll))
 
 (defn compile-package
-  "在 user 命名空间里依次求值形式（通常是 (require 'ns) …），根目录下被加载到的文件编成一个包程序集（designs/17 §2）"
-  [package forms roots dll]
-  (let [pkg {:roots roots :segments (atom [])}]
-    (with-st {:package pkg :unit nil}
-      (run! eval-toplevel forms))
-    (compile-package-unit @(:segments pkg) package dll (AotPaths/ClojureImageId))))
+  "在 user 命名空间里依次求值形式（通常是 (require 'ns) …），根目录下被加载到的文件编成一个包程序集（designs/17 §2）。
+  image-id：镜像核对用的镜像 id（缺省正在运行的镜像；自举时为下一级镜像编编译器包，cleat-091）"
+  ([package forms roots dll] (compile-package package forms roots dll nil))
+  ([package forms roots dll image-id]
+   (let [pkg {:roots roots :segments (atom [])}]
+     (with-st {:package pkg :unit nil}
+       (run! eval-toplevel forms))
+     (compile-package-unit @(:segments pkg) package dll (or image-id (AotPaths/ClojureImageId))))))
 
 (defn- compile-reader
   "*compile-files* 为真时加载文件：这个文件与它加载到的、还没加载过的文件编成一个包程序集"

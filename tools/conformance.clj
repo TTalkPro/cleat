@@ -130,7 +130,7 @@
     (when (some #{"--gate"} args)
       (let [dpath (arg args "--divergences" "tests/conformance/cleat-divergences.edn")
             ;; :compiler 只适用于一个编译器的条目（cleat-090：Scheme 编译器的偏离在 Clojure 编译器下已不存在）；缺省两个都适用
-            compiler (let [c (System.Environment/GetEnvironmentVariable "CLEAT_COMPILER")] (if (= c "clojure") :clojure :scheme))
+            compiler (let [c (System.Environment/GetEnvironmentVariable "CLEAT_COMPILER")] (if (#{"scheme" "shadow"} c) :scheme :clojure))
             entries (filter #(or (nil? (:compiler %)) (= compiler (:compiler %))) (:entries (edn/read-string (slurp dpath))))
             listed (into {} (map (fn [e] [[(:suite e) (:label e)] e]) entries))
             ids (set (map (fn [r] [(:suite r) (:label r)]) rows))

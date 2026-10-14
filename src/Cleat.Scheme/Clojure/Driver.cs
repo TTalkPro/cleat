@@ -375,14 +375,19 @@ public static class Driver
     /// 编包程序集（designs/17 §2.2）：在 user 命名空间里依次求值 forms（通常是 <c>(require 'ns)</c>），roots（源码根目录）下被加载的文件
     /// 编成一个程序集 dllPath（每个文件一个入口；旁边 .ifc）。roots 为 null 时被加载的全部源码文件都编进去。
     /// </summary>
-    public static void CompilePackage(string package, System.Collections.IEnumerable forms, System.Collections.IEnumerable roots, string dllPath)
+    public static void CompilePackage(string package, System.Collections.IEnumerable forms, System.Collections.IEnumerable roots, string dllPath) =>
+      CompilePackage(package, forms, roots, dllPath, null);
+
+    /// <summary>imageId：包的镜像核对用的镜像 id（缺省正在运行的镜像；只有 Clojure 驱动支持，自举时用，cleat-091）。</summary>
+    public static void CompilePackage(string package, System.Collections.IEnumerable forms, System.Collections.IEnumerable roots, string dllPath, string imageId)
     {
         if (DriverOps.CompilePackageHook is { } clj)
         {
             object rts = roots == null ? (object)true : LazilyPersistentVector.createOwning(roots.Cast<object>().Select(r => (object)Path.GetFullPath(r.ToString())).ToArray());
-            clj.invoke(package, LazilyPersistentVector.createOwning(forms.Cast<object>().ToArray()), rts, Path.GetFullPath(dllPath));
+            clj.invoke(package, LazilyPersistentVector.createOwning(forms.Cast<object>().ToArray()), rts, Path.GetFullPath(dllPath), imageId);
             return;
         }
+        if (imageId != null) throw new NotSupportedException("--target-image needs the Clojure compiler's driver (CLEAT_COMPILER=clojure)");
         var hook = CompilePackageHook ?? throw new InvalidOperationException("the Clojure driver has not registered compile-package");
         object list = EmptyList.Instance;
         foreach (var f in forms.Cast<object>().Reverse()) list = new Cons(f, list);

@@ -78,6 +78,29 @@ public static class DriverOps
     /// <summary>接口文件条目的可内联子句（Clojure 驱动写 .inl，cleat-090）。</summary>
     public static void AddInline(InterfaceFile.Entry e, int arity, byte[] data) => (e.Inline ??= new System.Collections.Generic.Dictionary<int, byte[]>())[arity] = data;
 
+    /// <summary>
+    /// 自举用的改名工具编译器的源码（cleat-091，designs/19 D7）：正在运行的编译器（cleat.compiler.*）不能在同一进程里重新加载自己的源码
+    /// 编自己，所以把 from（src/clojure/cleat）下的 nanopass.clj、nanopass/、compiler/ 复制到 to 下的 nanopass0.clj、nanopass0/、compiler0/，
+    /// 文本里的命名空间 cleat.nanopass / cleat.compiler 改成 cleat.nanopass0 / cleat.compiler0。
+    /// </summary>
+    public static void RenameCompilerSources(string from, string to)
+    {
+        static string Rename(string text) => text.Replace("cleat.nanopass", "cleat.nanopass0").Replace("cleat.compiler", "cleat.compiler0");
+        Directory.CreateDirectory(to);
+        File.WriteAllText(Path.Combine(to, "nanopass0.clj"), Rename(File.ReadAllText(Path.Combine(from, "nanopass.clj"))));
+        foreach (var (src, dst) in new[] { ("nanopass", "nanopass0"), ("compiler", "compiler0") })
+        {
+            string dir = Path.Combine(to, dst);
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+            foreach (var f in Directory.GetFiles(Path.Combine(from, src), "*.clj", SearchOption.AllDirectories))
+            {
+                string target = Path.Combine(dir, Path.GetRelativePath(Path.Combine(from, src), f));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.WriteAllText(target, Rename(File.ReadAllText(f)));
+            }
+        }
+    }
+
     /// <summary>dll 的模块 MVID（发射器按内容哈希）：Clojure 镜像的 id，写进接口文件。</summary>
     public static Guid Mvid(string dllPath)
     {
