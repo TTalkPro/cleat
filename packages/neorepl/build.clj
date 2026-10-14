@@ -9,7 +9,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.Neorepl)
-(def default-version "0.1.3")   ; neorepl 0.1.0's port, package revision 3 (cleat-080: new images; the session cache race fix of cleat-076)
+(def default-version "0.1.4")   ; neorepl 0.1.0's port, package revision 4 (cleat-094: rebuilt for the self-hosted runtime 1.1.0)
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

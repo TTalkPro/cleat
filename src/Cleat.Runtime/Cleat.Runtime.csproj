@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- cleat 运行时的 NuGet 包（cleat-067，designs/17 §3）：没有自己的代码，只打包。
-       lib/net10.0/：Cleat.Core、Cleat.Scheme、Cleat.Hosting、宿主 cleat 与发射器 cleat-emit 等程序集；
-       runtime/：Scheme 镜像、Clojure 镜像（与接口文件）、驱动库 cleat.scheme.clojure/、随附库的包程序集，经
+       lib/net10.0/：Cleat.Core、Cleat.Hosting、宿主 cleat 与发射器 cleat-emit 等程序集；
+       runtime/：Clojure 镜像（与接口文件、内联体）、编译器包 cleat.compiler.dll、随附库的包程序集，经
        buildTransitive/Cleat.Runtime.targets 复制到引用方的输出目录（运行时按 AppContext.BaseDirectory 找到它们）。
        先 dotnet build（生成镜像）与 tools/build.cs compile-libs；tools/build.cs pack 按这个顺序做。 -->
   <PropertyGroup>
     <PackageId>Cleat.Runtime</PackageId>
-    <Version Condition="'$(Version)' == ''">1.0.5</Version>
+    <Version Condition="'$(Version)' == ''">1.1.0</Version>
     <Authors>cleat</Authors>
     <Description>The cleat runtime: Clojure on .NET. Reference it (with cleat package assemblies) to use Clojure code from C# and F#; the runtime starts on first use.</Description>
     <PackageLicenseExpression>EPL-1.0</PackageLicenseExpression>
@@ -33,8 +33,7 @@
 
   <ItemGroup>
     <None Include="buildTransitive\Cleat.Runtime.targets" Pack="true" PackagePath="buildTransitive\" />
-    <None Include="$(BootDir)cleat.scheme.boot.dll;$(BootDir)cleat.scheme.boot.ifc;$(BootDir)cleat.boot.dll;$(BootDir)cleat.boot.ifc;$(BootDir)cleat.boot.inl;$(BootDir)Cleat.Clojure.Libs.dll"
+    <None Include="$(BootDir)cleat.boot.dll;$(BootDir)cleat.boot.ifc;$(BootDir)cleat.boot.inl;$(BootDir)cleat.compiler.dll;$(BootDir)Cleat.Clojure.Libs.dll"
           Pack="true" PackagePath="runtime\" Visible="false" />
-    <None Include="$(BootDir)cleat.scheme.clojure\**\*" Pack="true" PackagePath="runtime\cleat.scheme.clojure\%(RecursiveDir)" Visible="false" />
   </ItemGroup>
 </Project>

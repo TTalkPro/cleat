@@ -12,6 +12,7 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（n
 | [05-cil-backend.md](05-cil-backend.md) | CIL 后端：继承 IronScheme 的 Lcil 与发射器，扩展项、常量编码、代码生成约定、决议规则、加载约定 |
 | [06-llvm-backend.md](06-llvm-backend.md) | LLVM IR 后端：AOT 交叉编译、C 内核运行时、用 Clojure 写的原生集合、对象模型与调用约定、M0 验证项 |
 | [07-nanopass-port.md](07-nanopass-port.md) | 表面设计 D1 ~ D6 由 19 重新启用（stage0 前提的部分仍失效）：nanopass 框架移植到 Clojure：表面语法、上下文切换、注册表、运行时表示、验证 |
+| [cleat.nanopass 用户文档](../src/clojure/cleat/nanopass/README.md) | 定义语言、写 pass、模式与模板的写法、与上游 nanopass 的对照表（cleat-094） |
 | [08-bootstrap.md](08-bootstrap.md) | 自举：stage0 解释器、Phase A / B、可选 Lcore 种子、交叉编译纪律、确定性 |
 | [09-testing.md](09-testing.md) | 符合性判据（jolt 语料、clojure-test-suite、test_clojure）、测试分层、基线 |
 | [15-scheme-core-vendoring.md](15-scheme-core-vendoring.md) | **历史**（被 19 取代，元层已在 cleat-093 删除）：纳入 IronScheme 元层的取舍与更名、可扩展语法对象协议、try / catch 异常模型、为何 nanopass 不改、新里程碑 M2′ / M4′ / M5′ |
