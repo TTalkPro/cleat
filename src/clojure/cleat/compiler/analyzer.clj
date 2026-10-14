@@ -8,13 +8,14 @@
 ;;   let* → 每个绑定一层 (call (lambda #f (clause (x) #f 体)) 初值)；命名 let（loop*、fn* 子句的 recur 目标）→
 ;;   (call (letrec ((lp (lambda "loop" / "recur" …))) lp) 初值…)；recur → (call lp 实参…)；try 的处理器是 lambda；
 ;;   宿主调用的"无泛型实参"是 Scheme 的 '()；case* / deftype* 的描述、fn* 的原始签名表是 Scheme 列表（codegen 读它们）。
-;;   这些在 cleat-092 清理。局部变量名 g$名字$N（与 psyntax 的改名同形，差分工具按 g$ 前缀规范化）。
+;;   这些在 cleat-092 清理。局部变量名 g$名字$N$c（与 psyntax 的改名同形，差分工具按 g$ 前缀规范化）。
 ;; 体（do、let* / fn* 的体、try 的各段）都是表达式的序列（Scheme 版的子形式都包在 %ctx 里，经表达式展开器）：
 ;; 空为 (quote nil)，一项为它本身，多项为 begin；嵌套的 do 是嵌套的 begin，不拼接。
 ;;
 ;; 小函数内联（.inl，cleat-042 第 4 项）暂不做：接口文件里存的是 Scheme 的 Lcore，Clojure 编译器在 cleat-090 写自己的格式；
 ;; 影子模式的 G1 在 CLEAT_NO_INLINE=1 下比较。
 (ns cleat.compiler.analyzer
+  (:refer-clojure :exclude [macroexpand-1])
   (:require [clojure.string :as str]
             [cleat.nanopass :refer [with-output-language out in-context]]
             [cleat.compiler.languages :as l :refer [L0]])
@@ -39,9 +40,10 @@
 (def ^:dynamic *counter* nil)
 
 (defn- fresh-name
-  "L0 的局部变量名：g$名字$N（psyntax 的改名形状；名字是符号的完整写法，限定符号带命名空间）。"
+  "L0 的局部变量名：g$名字$N$c（psyntax 的改名形状 g$名字$N$作用域；名字是符号的完整写法，限定符号带命名空间）。
+  codegen 的 clause-form 按这个形状还原源码里的名字（procedure-form 的常量）。"
   [base]
-  (symbol nil (str "g$" base "$" (swap! *counter* inc))))
+  (symbol nil (str "g$" base "$" (swap! *counter* inc) "$c")))
 
 (defn- marker? [l] (#{:async :no-await} (:kind l)))
 (defn- without-markers [ls] (remove marker? ls))

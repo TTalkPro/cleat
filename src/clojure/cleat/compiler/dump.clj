@@ -25,6 +25,7 @@
 
 (defn- value-text [field v]
   (cond
+    (:quoted field) (Cleat.Scheme.Clojure.IrDump/PrintQuotedDatum v)
     (and (:maybe field) (r/absent? v)) "false"
     (= :nt (:sort field)) (ir-text v)
     (= 'symbol (:of field)) (if (symbol? v) (ident v) (datum v))
@@ -58,7 +59,9 @@
           lang (r/node-language n)
           prod ((:by-tag lang) (.nanoTag n))
           env (zipmap (map :name (:fields prod)) (.nanoFields n))
-          fields (into {} (map (juxt :name identity) (:fields prod)))]
+          fields (into {} (map (juxt :name identity) (:fields prod)))
+          ;; quote 的数据是常量：long 以外的整数带类型名（IrDump.PrintQuotedDatum）
+          fields (if (= :quote (:keyword prod)) (update-vals fields #(assoc % :quoted true)) fields)]
       (str "(" (clojure.string/join " " (cons (ident (:keyword prod)) (elts-text (rest (:pattern prod)) env fields))) ")"))
     (symbol? x) (ident x)
     :else (datum x)))

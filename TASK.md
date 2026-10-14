@@ -94,8 +94,8 @@
 | [cleat-085](tasks/cleat-085-compiler-skeleton-and-diff.md) | cleat.compiler.dll 骨架、CLEAT_COMPILER 开关、逐 pass 导出与差分工具、L0 普查 | M8 | cleat-082、cleat-084 | 完成 |
 | [cleat-086](tasks/cleat-086-clojure-analyzer.md) | Clojure 前端（分析器）直接产出 L0，取代 psyntax 与 (clojure syntax)；G1@L0 | M8 | cleat-085 | 完成 |
 | [cleat-087](tasks/cleat-087-middle-passes.md) | 前中端 pass 用 cleat.nanopass 重写；G1@la/l1/l2/l3 | M8 | cleat-086 | 完成 |
-| [cleat-088](tasks/cleat-088-codegen-core.md) | codegen 一：单元、常量、Var 与调用、控制流、try、fn* 类、局部变量清除、接口文件；G2（无类型推断） | M8 | cleat-087 | 未开始 |
-| [cleat-089](tasks/cleat-089-codegen-types-and-classes.md) | codegen 二：类型格与收窄、原始签名、deftype / reify / proxy / gen-class、case、直接链接、async；G2 全部单元 | M8 | cleat-088 | 未开始 |
+| [cleat-088](tasks/cleat-088-codegen-core.md) | codegen 一：单元、常量、Var 与调用、控制流、try、fn* 类、局部变量清除、类型推断与原始签名、case、直接链接；G2（eval 单元） | M8 | cleat-087 | 完成 |
+| [cleat-089](tasks/cleat-089-codegen-types-and-classes.md) | codegen 二：deftype / reify / proxy / gen-class、AOT 常量编码与接口文件；G2 全部单元 | M8 | cleat-088 | 未开始 |
 | [cleat-090](tasks/cleat-090-clojure-compiler-driver.md) | Clojure 写的编译驱动，CLEAT_COMPILER=clojure 下全量测试（G3） | M8 | cleat-089 | 未开始 |
 | [cleat-091](tasks/cleat-091-self-hosting-and-lcil-seed.md) | 自举不动点（G4）、Lcil 文本种子、构建不再经 stage0、默认切到 Clojure 编译器 | M8 | cleat-090 | 未开始 |
 | [cleat-092](tasks/cleat-092-de-scheme-codegen.md) | 生成代码去 Scheme：catch 不用 Procedure、去 EmptyList 占位、Clojure 数据常量表与 .inl、(runtime clojure) | M8 | cleat-091 | 未开始 |

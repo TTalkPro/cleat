@@ -11,5 +11,6 @@
             [cleat.compiler.closures]
             [cleat.compiler.dump]
             [cleat.compiler.analyzer]
+            [cleat.compiler.codegen]
             [cleat.compiler.pipeline]
             [cleat.compiler.shadow]))

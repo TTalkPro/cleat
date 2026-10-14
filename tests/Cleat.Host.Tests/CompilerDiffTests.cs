@@ -109,6 +109,65 @@ public class CompilerDiffTests
         Assert.That(d.Out, Does.Contain(" 0 different"), d.ToString());
     }
 
+    /// <summary>
+    /// cleat-088 的 G2：影子模式下 Clojure 编译器的 codegen 给出的 Lcil（eval 单元，常量不编码）与 Scheme 编译器规范化后相同：
+    /// 过程类与共享持有类、原始签名的函数、拆箱推断、try 的处理器、case、常量（Int32 / true / false / 非有限浮点数 / 非 BMP 字符串）。
+    /// deftype* 一族在 cleat-089。完整的输入集用 tools/build.cs ir-dump --shadow --corpus 验收。
+    /// </summary>
+    [Test]
+    public void ShadowCodegenMatchesSchemeLcil()
+    {
+        string a = Path.Combine(_dir, "g");
+        var env = new[] { ("CLEAT_DUMP_IR", a), ("CLEAT_NO_SIMPLE_EVAL", "1"), ("CLEAT_COMPILER", "shadow"), ("CLEAT_NO_INLINE", "1") };
+        string[] forms =
+        {
+            "(defn fib ^long [^long n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2)))))",
+            "(defn f ([] 0) ([x] (f x 1)) ([x y & more] (reduce + x (cons y more))))",
+            "(defn h [^double d] (let [x (* d 2.5)] (loop [i 0 acc 0.0] (if (< i 10) (recur (inc i) (+ acc x)) acc))))",
+            "(letfn [(ev? [n] (if (zero? n) true (od? (dec n)))) (od? [n] (if (zero? n) false (ev? (dec n))))] (ev? 10))",
+            "(let [x 1 x (inc x) {:keys [a b] :or {a 2}} {:b 3}] (loop [i 0 acc []] (if (< i 3) (recur (inc i) (conj acc (+ x a b i))) acc)))",
+            "(try (/ 1 0) (catch ArithmeticException e (.Message e)) (catch :default e :other) (finally (println \"done\")))",
+            "(case (rand-int 3) 0 :zero 1 :one (2 3) :many :default)",
+            "(def ^:dynamic *d* 1)",
+            "(binding [*d* 2] (set! *d* 3) [*d* #'*d* (var *d*) '(a b) ^{:m 1} [1 2] ^{:m (inc 1)} {:k [*d*]} #{1 :a \"s\"} #\"re\" \\c nil false true])",
+            "[(Math/Abs -1) System.Int32/MaxValue (. \"abc\" (Substring 1)) (.-Length \"ab\") (.ToString (System.Text.StringBuilder. \"x\")) (= ##Inf (/ 1.0 0.0)) 2.147483647000001e9 \"\U0001F600\"]",
+            "(fn self [x] (if (pos? x) (self (dec x)) (with-meta [x] {:z 1})))",
+            "(defn g [m & {:keys [k] :or {k 0}}] (let [s (StringBuilder.)] (.Append s (str (:a m) k)) (str s)))",
+        };
+        var r = HostProcessTests.CleatIn(_dir, null, env, forms.SelectMany(f => new[] { "-e", f }).ToArray());
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        var d = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null, "-I", Path.Combine(HostProcessTests.RepoDir, "src", "clojure"),
+            Path.Combine(HostProcessTests.RepoDir, "tools", "compiler-diff.clj"), "diff", Path.Combine(a, "scheme"), Path.Combine(a, "clojure"),
+            "--stage", "lcil", "--stage", "error");
+        Assert.That(d.ExitCode, Is.EqualTo(0), d.ToString());
+        Assert.That(d.Out, Does.Contain(" 0 different"), d.ToString());
+        Assert.That(d.Out, Does.Contain($"compared {forms.Length} records"), d.ToString());
+    }
+
+    /// <summary>cleat-088：Clojure 编译器编出的程序集（内存模式）能加载运行（cleat.compiler.pipeline/eval-form）。</summary>
+    [Test]
+    public void ClojureCompiledFormsRun()
+    {
+        string[] forms =
+        {
+            "(require 'cleat.compiler.pipeline)",
+            "(def ev cleat.compiler.pipeline/eval-form)",
+            "(ev '(defn fib ^long [^long n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2))))))",
+            "(ev '(defn f ([] 0) ([x] (f x 1)) ([x y & more] (reduce + x (cons y more)))))",
+            "(ev '(defmacro twice [e] `(do ~e ~e)))",
+            "(prn (ev '[(fib 20) (f) (f 5) (f 1 2 3 4)"
+                + " (let [x 1 {:keys [a b] :or {a 2}} {:b 3}] (loop [i 0 acc []] (if (< i 3) (recur (inc i) (conj acc (+ x a b i))) acc)))"
+                + " (try (/ 1 0) (catch ArithmeticException e :div) (finally (println \"fin\")))"
+                + " (letfn [(ev? [n] (if (zero? n) true (od? (dec n)))) (od? [n] (if (zero? n) false (ev? (dec n))))] (ev? 10))"
+                + " (map (fn [x] (* x 2.5)) [1 2 3]) (case 2 0 :zero 1 :one (2 3) :many :default)"
+                + " (let [s (StringBuilder.)] (.Append s \"x\") (.Append s 42) (str s)) (let [a (atom 0)] (twice (swap! a inc)) @a)]))",
+        };
+        var r = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null,
+            new[] { "-I", Path.Combine(HostProcessTests.RepoDir, "src", "clojure") }.Concat(forms.SelectMany(f => new[] { "-e", f })).ToArray());
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("fin\n[6765 0 6 10 [6 7 8] :div true (2.5 5.0 7.5) :many \"x42\" 2]"), r.ToString());
+    }
+
     [Test]
     public void DiffLocatesTheFirstChangedStage()
     {

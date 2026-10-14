@@ -38,12 +38,13 @@
 ;; —— 规范化 ——
 
 (def temp-pattern
-  #"g\$[^\s()\[\]\"]+|[A-Za-z0-9_*+!?<>=$&.\-]*__\d+(?:__auto__)?|[A-Za-z0-9_*+!?<>=$&.\-]+%\d+")
+  #"eval\$\d+|g\$[^\s()\[\]\"]+|[A-Za-z0-9_*+!?<>=$&.\-]*__\d+(?:__auto__)?|[A-Za-z0-9_*+!?<>=$&.\-]+%\d+")
 
 (defn- temp-base
   "psyntax：g$名字$N$作用域 与 g$genN$作用域，内联副本再带 $inl；gensym：名字__N；fresh：名字%N。"
   [t]
   (cond
+    (str/starts-with? t "eval$") "eval$"
     (str/starts-with? t "g$") (let [parts (str/split t #"\$")
                                     ;; 名字里 gensym 的序号（seq_123、p__45、G__6、x__7__auto__）也去掉
                                     nm (str/replace (nth parts 1 "") #"\d+" "")]
@@ -127,6 +128,7 @@
     "cleat/record" (if (= "clj-fn-name" (first form)) (apply l/->CljFnName (rest form)) (tagged-literal tag form))
     "cleat/ssym" (symbol form)
     "cleat/id" (symbol form)
+    ("cleat/Int32" "cleat/Int16" "cleat/Byte" "cleat/SByte" "cleat/UInt32" "cleat/UInt16" "cleat/UInt64") form
     (tagged-literal tag form)))
 
 (defn read-ir [text]

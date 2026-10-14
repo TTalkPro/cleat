@@ -1171,7 +1171,7 @@ namespace clojure.lang
                         Util.Ret1(arg7, arg7 = null),
                         Util.Ret1(arg8, arg8 = null),
                         Util.Ret1(arg9, arg9 = null),
-                        Util.Ret1(arg10, arg10 = null));
+                        ArraySeq.create(Util.Ret1(arg10, arg10 = null)));
                 case 10:
                     return doInvoke(
                         Util.Ret1(arg1, arg1 = null), 
@@ -4159,6 +4159,9 @@ namespace clojure.lang
                             Util.Ret1(arg10, arg10 = null), 
                             Util.Ret1(arg11, arg11 = null), 
                             Util.Ret1(arg12, arg12 = null), 
+                            Util.Ret1(arg13, arg13 = null), 
+                            Util.Ret1(arg14, arg14 = null), 
+                            Util.Ret1(arg15, arg15 = null), 
                             Util.Ret1(arg16, arg16 = null), 
                             Util.Ret1(arg17, arg17 = null), 
                             Util.Ret1(arg18, arg18 = null),

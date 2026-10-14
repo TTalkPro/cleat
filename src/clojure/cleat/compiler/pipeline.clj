@@ -1,11 +1,13 @@
-;; Clojure 编译器的流水线（cleat-086 起）：前端 → 前中端 pass → codegen。现在接到前端（L0）；影子模式（cleat-085）经 shadow-stages
-;; 对每个形式转储已实现的阶段，tools/compiler-diff.clj 与 Scheme 编译器的转储比较（designs/19 D5 的 G1）。
+;; Clojure 编译器的流水线（cleat-086 起）：前端 → 前中端 pass → codegen（cleat-088）。影子模式（cleat-085）经 shadow-stages
+;; 对每个形式转储各阶段与 Lcil，tools/compiler-diff.clj 与 Scheme 编译器的转储比较（designs/19 D5 的 G1 / G2）；eval-form 用
+;; Clojure 编译器编译并运行一个顶层形式（驱动在 cleat-090）。
 (ns cleat.compiler.pipeline
   (:require [cleat.compiler.analyzer :as an]
             [cleat.compiler.dump :as dump]
             [cleat.compiler.loops :as loops]
             [cleat.compiler.front :as front]
             [cleat.compiler.closures :as closures]
+            [cleat.compiler.codegen :as codegen]
             [cleat.nanopass :refer [with-output-language out]]
             [cleat.compiler.languages :refer [L0]]))
 
@@ -41,8 +43,49 @@
      (dump "l3" l3)
      [l3 an])))
 
+(defn- typed-clauses
+  "形式里 ^long / ^double 形参的入口转换（($clj-call 'CallStatic 3 'RT '\"longCast\" …)）的个数：Scheme 版 parse-core 的 typed-count，
+  编译驱动据此连同 lower-loops 生成的 label 决定对哪些形式做类型推断。"
+  [l0]
+  (letfn [(walk [x]
+            (cond
+              (seq? x) (+ (if (and (= 'clj-call (first x)) (= "CallStatic" (second x)) (>= (count x) 5)
+                                   (let [op (nth x 4)] (and (seq? op) (#{"longCast" "doubleCast"} (second op)))))
+                            1 0)
+                          (reduce + 0 (map walk x)))
+              :else 0))]
+    (walk (cleat.nanopass/unparse l0))))
+
+(def ^:private eval-counter (atom 0))
+
+(defn compile-unit
+  "一个编译单元：L0 形式 → [Lcil 常量]（Scheme 版 compile-forms->lcil*）。dump：(dump 序号 阶段 节点)。"
+  [l0s assembly-name module-name live? dump]
+  (loops/reset-fresh-names!)
+  (let [results (mapv (fn [[ix l0]]
+                        (let [n0 (loops/loops-made)
+                              typed (typed-clauses l0)
+                              [l3 _] (front-end l0 (fn [stage node] (dump ix stage node)))]
+                          [l3 (or (> (loops/loops-made) n0) (pos? typed))]))
+                      l0s)]
+    (codegen/generate-unit (mapv first results) assembly-name module-name (mapv second results) live?)))
+
 (defn shadow-stages
   "影子模式：形式 form（序号 ix）走已实现的阶段并转储。eval 的单元每个形式一个，lower-loops 的临时名从头编号。"
   [form ix]
-  (loops/reset-fresh-names!)
-  (front-end (eval-unit-l0 form) (fn [stage node] (dump/dump! "eval" ix stage node))))
+  (let [nm (str "eval$" (swap! eval-counter inc))
+        [lcil _] (compile-unit [[ix (eval-unit-l0 form)]] nm "#Module" true
+                               (fn [ix stage node] (dump/dump! "eval" ix stage node)))]
+    (when dump/enabled? (dump/write! "eval" ix "lcil" (codegen/lcil->string lcil)))))
+
+(def ^:private run-counter (atom 0))
+
+(defn eval-form
+  "用 Clojure 编译器编译并运行一个顶层形式（内存模式：常量对象直接交给发射器），返回它的值。程序集名 ceval$N，
+  与 Scheme 编译器的 eval$N 分开。cleat-090 的驱动之前用于测试。"
+  [form]
+  (let [nm (str "ceval$" (swap! run-counter inc))
+        [lcil cs] (compile-unit [[0 (eval-unit-l0 form)]] nm "#Module" true (fn [_ _ _]))
+        asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil nm (object-array cs))]
+    (Cleat.Scheme.ModuleLoader/Run asm)
+    (Cleat.Core.Runtime.ClojureOps/TakeHeldResult)))

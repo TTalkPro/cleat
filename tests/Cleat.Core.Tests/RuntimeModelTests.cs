@@ -91,6 +91,130 @@ public class FunctionModelTests
         Assert.That(((IFn)f).invoke(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L, 14L, 15L, 16L, 17L, 18L, 19L, 20L, 21L, 22L), Is.Not.Null, "beyond 20 args goes through the params overload");
     }
 
+    // cleat-088：每个必需个数 × 每个实参个数，多出的实参都打包成剩余序列（10 / 20 个实参的重载曾把第 10 个实参原样传入、漏掉 13 ~ 15）
+    [Test]
+    public void RestFnPacksEveryArityCombination()
+    {
+        RestFn[] fns = [new RestReq0(), new RestReq1(), new RestReq2(), new RestReq3(), new RestReq4(), new RestReq5(), new RestReq6(), new RestReq7(), new RestReq8(), new RestReq9(), new RestReq10(), new RestReq11(), new RestReq12(), new RestReq13(), new RestReq14(), new RestReq15(), new RestReq16(), new RestReq17(), new RestReq18(), new RestReq19(), new RestReq20()];
+        for (int r = 0; r <= 20; r++)
+            for (int n = r; n <= 20; n++)
+            {
+                var args = new object[n];
+                for (int k = 0; k < n; k++) args[k] = (long)(k + 1);
+                var invoke = typeof(IFn).GetMethod("invoke", Array.ConvertAll(args, _ => typeof(object)));
+                var got = RT.printString(invoke.Invoke(fns[r], args));
+                var fixedPart = string.Join(" ", Array.ConvertAll(args[..r], a => a.ToString()));
+                var restPart = n == r ? "nil" : "(" + string.Join(" ", Array.ConvertAll(args[r..], a => a.ToString())) + ")";
+                Assert.That(got, Is.EqualTo("[" + (r == 0 ? "" : fixedPart + " ") + restPart + "]"), $"required {r}, {n} args");
+            }
+    }
+
+    private sealed class RestReq0 : RestFn
+    {
+        public override int getRequiredArity() => 0;
+        protected override object doInvoke(object rest) => RT.vector(rest);
+    }
+    private sealed class RestReq1 : RestFn
+    {
+        public override int getRequiredArity() => 1;
+        protected override object doInvoke(object a1, object rest) => RT.vector(a1, rest);
+    }
+    private sealed class RestReq2 : RestFn
+    {
+        public override int getRequiredArity() => 2;
+        protected override object doInvoke(object a1, object a2, object rest) => RT.vector(a1, a2, rest);
+    }
+    private sealed class RestReq3 : RestFn
+    {
+        public override int getRequiredArity() => 3;
+        protected override object doInvoke(object a1, object a2, object a3, object rest) => RT.vector(a1, a2, a3, rest);
+    }
+    private sealed class RestReq4 : RestFn
+    {
+        public override int getRequiredArity() => 4;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object rest) => RT.vector(a1, a2, a3, a4, rest);
+    }
+    private sealed class RestReq5 : RestFn
+    {
+        public override int getRequiredArity() => 5;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object rest) => RT.vector(a1, a2, a3, a4, a5, rest);
+    }
+    private sealed class RestReq6 : RestFn
+    {
+        public override int getRequiredArity() => 6;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, rest);
+    }
+    private sealed class RestReq7 : RestFn
+    {
+        public override int getRequiredArity() => 7;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, rest);
+    }
+    private sealed class RestReq8 : RestFn
+    {
+        public override int getRequiredArity() => 8;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, rest);
+    }
+    private sealed class RestReq9 : RestFn
+    {
+        public override int getRequiredArity() => 9;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, rest);
+    }
+    private sealed class RestReq10 : RestFn
+    {
+        public override int getRequiredArity() => 10;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, rest);
+    }
+    private sealed class RestReq11 : RestFn
+    {
+        public override int getRequiredArity() => 11;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, rest);
+    }
+    private sealed class RestReq12 : RestFn
+    {
+        public override int getRequiredArity() => 12;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, rest);
+    }
+    private sealed class RestReq13 : RestFn
+    {
+        public override int getRequiredArity() => 13;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, rest);
+    }
+    private sealed class RestReq14 : RestFn
+    {
+        public override int getRequiredArity() => 14;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object a14, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, rest);
+    }
+    private sealed class RestReq15 : RestFn
+    {
+        public override int getRequiredArity() => 15;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object a14, object a15, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, rest);
+    }
+    private sealed class RestReq16 : RestFn
+    {
+        public override int getRequiredArity() => 16;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object a14, object a15, object a16, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, rest);
+    }
+    private sealed class RestReq17 : RestFn
+    {
+        public override int getRequiredArity() => 17;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object a14, object a15, object a16, object a17, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, rest);
+    }
+    private sealed class RestReq18 : RestFn
+    {
+        public override int getRequiredArity() => 18;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object a14, object a15, object a16, object a17, object a18, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, rest);
+    }
+    private sealed class RestReq19 : RestFn
+    {
+        public override int getRequiredArity() => 19;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object a14, object a15, object a16, object a17, object a18, object a19, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, rest);
+    }
+    private sealed class RestReq20 : RestFn
+    {
+        public override int getRequiredArity() => 20;
+        protected override object doInvoke(object a1, object a2, object a3, object a4, object a5, object a6, object a7, object a8, object a9, object a10, object a11, object a12, object a13, object a14, object a15, object a16, object a17, object a18, object a19, object a20, object rest) => RT.vector(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, rest);
+    }
+
     [Test]
     public void KeywordsAndCollectionsAreFunctions()
     {

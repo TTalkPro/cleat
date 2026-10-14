@@ -160,7 +160,8 @@ public static class IrDump
                     for (object p = c.cdr; p is Cons pc; p = pc.cdr, i++)
                     {
                         sb.Append(' ');
-                        if (datums != null && Array.IndexOf(datums, i) >= 0) Datum(sb, pc.car);
+                        if (head.Name == "quote" && i == 0) QuotedDatum(sb, pc.car);
+                        else if (datums != null && Array.IndexOf(datums, i) >= 0) Datum(sb, pc.car);
                         else if (head.Name == "try-catch" && i > 0 && pc.car is Cons pair && pair.cdr is Cons rest)
                         {
                             // (try-catch e (d e) …)：每个处理器的 d 是数据
@@ -228,6 +229,23 @@ public static class IrDump
     }
 
     /// <summary>数据位置的值 → 规范文本。</summary>
+    // 常量（quote 的数据）本身是 long 以外的整数时带类型名：Scheme 的 fixnum 是 Int32，codegen 对它与 Clojure 的 long 生成的代码不同
+    // （cleat-088）。其余数据位置（clj-call 的参数个数等）与常量内部（元数据里的行号等）两边的整数类型可以不同，不影响 codegen，不区分
+    private static void QuotedDatum(StringBuilder sb, object x)
+    {
+        if (x is int or short or byte or sbyte or uint or ushort or ulong)
+            sb.Append("#cleat/").Append(x.GetType().Name).Append(' ').Append(Convert.ToString(x, CultureInfo.InvariantCulture));
+        else Datum(sb, x);
+    }
+
+    /// <summary>quote 的数据（常量）：同 <see cref="PrintDatum"/>，本身是 long 以外的整数时带类型名。</summary>
+    public static string PrintQuotedDatum(object x)
+    {
+        var sb = new StringBuilder();
+        QuotedDatum(sb, x);
+        return sb.ToString();
+    }
+
     public static string PrintDatum(object x)
     {
         var sb = new StringBuilder();
@@ -244,7 +262,7 @@ public static class IrDump
             case string s: Str(sb, s); break;
             case SchemeString ss: Str(sb, ss.ToString()); break;
             case char c: sb.Append("#cleat/char ").Append(((int)c).ToString(CultureInfo.InvariantCulture)); break;
-            case int or long or short or byte or sbyte or uint or ushort or ulong:
+            case long or int or short or byte or sbyte or uint or ushort or ulong:
                 sb.Append(Convert.ToString(x, CultureInfo.InvariantCulture)); break;
             case System.Numerics.BigInteger bi: sb.Append(bi.ToString(CultureInfo.InvariantCulture)).Append('N'); break;
             case BigInt cbi: sb.Append(cbi.ToString()).Append('N'); break;
