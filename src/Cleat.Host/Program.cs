@@ -147,6 +147,21 @@ public static class Program
         return 2;
     }
 
+    /// <summary>开发布局下编译器源码（src/clojure/cleat/nanopass*、compiler/）有比包程序集新的（cleat-085）。</summary>
+    private static bool CompilerSourcesNewer(string dll, string cleatSrc)
+    {
+        if (!Directory.Exists(cleatSrc)) return false;
+        var t = File.GetLastWriteTimeUtc(dll);
+        foreach (string f in Directory.EnumerateFiles(cleatSrc, "*.clj", SearchOption.AllDirectories))
+        {
+            string rel = Path.GetRelativePath(cleatSrc, f).Replace('\\', '/');
+            if ((rel.StartsWith("nanopass", StringComparison.Ordinal) || rel.StartsWith("compiler/", StringComparison.Ordinal))
+                && File.GetLastWriteTimeUtc(f) > t)
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>运行着的镜像与驱动库目录（Start 之后；没有 Clojure 镜像时 ClojureBootPath 为 null）。tools.build 的 uber 据此复制运行时（cleat-066）。</summary>
     public static string SchemeBootPath, ClojureBootPath, DriverLibraryDir;
 
@@ -156,6 +171,10 @@ public static class Program
     /// <summary>初始化运行时、加载两个镜像并登记钩子；返回 Clojure 镜像路径（没有时 null）。</summary>
     public static string Start(Options o)
     {
+        // CLEAT_COMPILER（designs/19 D5）：shadow 为影子模式（Scheme 编译执行，Clojure 编译器并行处理并转储，需 CLEAT_DUMP_IR）；
+        // clojure（全部走 Clojure 编译器）在 cleat-090 实现
+        if (Environment.GetEnvironmentVariable("CLEAT_COMPILER") is string cc && cc != "" && cc != "scheme" && cc != "shadow")
+            throw new NotSupportedException("CLEAT_COMPILER=" + cc + " is not supported yet (scheme, shadow; clojure comes with cleat-090)");
         RuntimeBootstrap.MarkStarting();      // 启动期间这条线程上的惰性启动检查直接返回（cleat-067）
         var sw = System.Diagnostics.Stopwatch.StartNew();
         string schemeBoot = o.SchemeBoot ?? Environment.GetEnvironmentVariable("CLEAT_SCHEME_BOOT") ?? FindBoot("cleat.scheme.boot.dll")
@@ -186,6 +205,12 @@ public static class Program
             // 这些命名空间从源码加载
             string libs = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "Cleat.Clojure.Libs.dll");
             if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot)) PackageIndex.RegisterFile(libs);
+            // Clojure 编译器的包程序集（cleat-085，designs/19 D6）：第一次 require 时才加载。比镜像旧时不用；开发布局下比编译器源码旧时也不用
+            // （从源码加载，改了编译器不必先重编包）
+            string compiler = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "cleat.compiler.dll");
+            if (File.Exists(compiler) && File.GetLastWriteTimeUtc(compiler) >= File.GetLastWriteTimeUtc(boot)
+                && !CompilerSourcesNewer(compiler, Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure", "cleat"))))
+                PackageIndex.RegisterFile(compiler);
             // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用；
             // 开发布局（镜像在仓库的 src/boot，旁边有 packages/tools.build/src）下不用：那是 pack 留下的构建产物，会落后于源码
             string tools = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "tools");
@@ -197,6 +222,8 @@ public static class Program
             // clojure.core.reducers 等由此可 require）
             string src = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure"));
             if (File.Exists(Path.Combine(src, "clojure", "core.clj"))) Loader.AddPath(src);
+            // 影子模式（CLEAT_COMPILER=shadow，cleat-085）：在执行任何形式之前加载 Clojure 编译器的影子命名空间
+            Cleat.Scheme.Clojure.IrDump.InitShadow();
         }
         ClojureImageMs = sw.ElapsedMilliseconds - SchemeImageMs - DriverMs;
         if (Environment.GetEnvironmentVariable("CLEAT_TIME") != null)

@@ -60,25 +60,48 @@ See docs/license.txt. |#
           (when (file-exists? f) (delete-file f))
           (call-with-output-file f (lambda (p) (let ((y (unparse x))) (if (string? y) (put-string p y) (write y p)))))))))
 
+;; 逐形式转储（cleat-085，designs/19 D5）：环境变量 CLEAT_DUMP_IR=目录 时，每个形式的各阶段 IR 以规范文本写到
+  ;; 目录/scheme/<单元>.ir（Cleat.Scheme.Clojure.IrDump），Clojure 编译器的影子模式写 目录/clojure/，tools/compiler-diff.clj 比较
+  (define dump-ir? (clr-static-call Cleat.Scheme.Clojure.IrDump get_Enabled))
+  (define current-dump-unit (make-parameter "unit"))
+  (define last-dump-index -1)     ; 最近一个形式的序号：单个形式的单元（eval）的 lcil 记录用它
+  (define (dump-ir index stage unparse x)
+    (when dump-ir?
+      (clr-static-call Cleat.Scheme.Clojure.IrDump Write "scheme" (current-dump-unit) index stage
+                       (clr-static-call Cleat.Scheme.Clojure.IrDump PrintSchemeIr (unparse x)))))
+
   ;; Lcore → L3；返回 (values L3 analysis)
   (define (front-end x)
-    (let* ((l0 (parse-core x))
+    (let* ((ix (if dump-ir? (clr-static-call Cleat.Scheme.Clojure.IrDump TakeIndex "scheme" (current-dump-unit)) 0))
+           (_ (set! last-dump-index ix))
+           (l0 (parse-core x))
            (_ (dump-pass "l0" unparse-L0 l0))
+           (_ (dump-ir ix "p0" unparse-L0 l0))
            (l0 (let ((l l0))           ; lower-loops：局部循环降级（iron-034b；CLEAT_SCHEME_NO_034 时关，测量用）；lower-async 不纳入（cleat-046）
                  (let ((v (clr-static-call System.Environment GetEnvironmentVariable "CLEAT_SCHEME_NO_034")))
                    (if (and (string? v) (or (string=? v "1") (string=? v "loops"))) l (lower-loops l)))))
            (_ (dump-pass "la" unparse-L0 l0))
+           (_ (dump-ir ix "l0" unparse-L0 l0))
            (an (analyze l0))
-           (l1 (cp0-lite (check-forward (simplify-letrec l0 an) an)))
+           (l1 (simplify-letrec l0 an))
+           (_ (dump-ir ix "sl" unparse-L1 l1))
+           (l1 (check-forward l1 an))
+           (_ (dump-ir ix "cf" unparse-L1 l1))
+           (l1 (cp0-lite l1))
+           (_ (dump-ir ix "c1" unparse-L1 l1))
            ;; 过程内联与 let 传播（iron-070；CLEAT_NO_070=1 时关），内联暴露的常量再折叠一次
            (l1 (if inline-enabled? (cp0-lite (simplify-lets (cp0-inline l1 an) an)) l1))
+           (_ (dump-ir ix "in" unparse-L1 l1))
            ;; if 化简（iron-073；CLEAT_NO_073 为 1 或含 if 时关）
            (l1 (simplify-if l1))
            (_ (dump-pass "l1" unparse-L1 l1))
+           (_ (dump-ir ix "l1" unparse-L1 l1))
            (l2 (convert-assignments l1 an))
            (_ (dump-pass "l2" unparse-L2 l2))
+           (_ (dump-ir ix "l2" unparse-L2 l2))
            (l3 (uncover-free l2)))
       (dump-pass "l3" unparse-L3 l3)
+      (dump-ir ix "l3" unparse-L3 l3)
       (values l3 an)))
 
   (define (compile-forms->lcil forms assembly-name module-name)
@@ -88,6 +111,10 @@ See docs/license.txt. |#
   ;; 返回 (values Lcil 常量列表)；live? 见 generate-unit
   (define (compile-forms->lcil* forms assembly-name module-name live?)
     (reset-fresh-names!)        ; lower-loops 的临时变量名在单元内唯一、跨编译确定
+    (parameterize ((current-dump-unit assembly-name))
+      (compile-forms->lcil** forms assembly-name module-name live?)))
+
+  (define (compile-forms->lcil** forms assembly-name module-name live?)
     (let ((massigned (make-eq-hashtable)))
       ;; 按顺序逐个形式走前端，同时记下哪些形式含循环（loop-forms，只对它们做类型推断）
       (let loop ((fs forms) (l3s '()) (loops '()))
@@ -99,7 +126,10 @@ See docs/license.txt. |#
                 (loop (cdr fs) (cons l3 l3s) (cons (> (+ (loops-made) (typed-clauses-made)) n0) loops))))
             (parameterize ((current-target (target-of (current-compile-target)))
                            (loop-forms (reverse loops)))
-              (generate-unit (reverse l3s) assembly-name module-name massigned live?))))))
+              (let-values (((lcil consts) (generate-unit (reverse l3s) assembly-name module-name massigned live?)))
+                (when dump-ir?
+                  (clr-static-call Cleat.Scheme.Clojure.IrDump Write "scheme" assembly-name (if (= (length forms) 1) last-dump-index -1) "lcil" (lcil->string lcil)))
+                (values lcil consts)))))))
 
   (define (compile->lcil-text forms assembly-name module-name)
     (lcil->string (compile-forms->lcil forms assembly-name module-name)))

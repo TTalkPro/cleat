@@ -3,6 +3,8 @@
 本文件只做索引。任务详情见 `tasks/` 目录，设计见 [designs/](designs/README.md)。
 状态：未开始 / 进行中 / 完成 / 搁置。工作约定：每个任务完成后提交一次，提交信息不带 Co-Authored-By。
 
+**双轨纪律（M8，designs/19 D9，cleat-085 起到 cleat-091 默认切换为止）**：Scheme 编译器（`src/scheme/lib/cleat/scheme/compiler*`、`src/scheme/clojure/`）只修缺陷、不加功能；修的缺陷同时在 Clojure 编译器（`src/clojure/cleat/compiler/`）里修，并补一条差分用例（`tools/compiler-diff.clj` 能看到的输入，或 `tests/nanopass` 的快照对照）。新的编译器功能等切换之后只做在 Clojure 编译器里。
+
 | ID | 标题 | 里程碑 | 依赖 | 状态 |
 |----|------|--------|------|------|
 | [cleat-001](tasks/cleat-001-repository-skeleton.md) | 仓库骨架与构建约定（含许可分区确认） | M0 | 无 | 完成 |
@@ -89,7 +91,7 @@
 | [cleat-082](tasks/cleat-082-move-clojure-runtime-helpers.md) | Clojure 运行时辅助类（Locals、ClojureOps、ClojureStaticCalls、HostSyntax、RT.IsTrue、Driver 的非 Scheme 部分）搬进 Cleat.Core | M8 | cleat-081 | 完成 |
 | [cleat-083](tasks/cleat-083-nanopass-languages.md) | cleat.nanopass 语言层：define-language、extends、deftype 记录、unparse、注册表；L0 ~ L3 的 Clojure 拼写 | M8 | cleat-081 | 完成 |
 | [cleat-084](tasks/cleat-084-nanopass-passes.md) | cleat.nanopass pass 层：define-pass、nanopass-case、(out …) 模板、catamorphism、自动补全；第一层；第二层拆到 cleat-095 | M8 | cleat-083 | 完成 |
-| [cleat-085](tasks/cleat-085-compiler-skeleton-and-diff.md) | cleat.compiler.dll 骨架、CLEAT_COMPILER 开关、逐 pass 导出与差分工具、L0 普查 | M8 | cleat-082、cleat-084 | 未开始 |
+| [cleat-085](tasks/cleat-085-compiler-skeleton-and-diff.md) | cleat.compiler.dll 骨架、CLEAT_COMPILER 开关、逐 pass 导出与差分工具、L0 普查 | M8 | cleat-082、cleat-084 | 完成 |
 | [cleat-086](tasks/cleat-086-clojure-analyzer.md) | Clojure 前端（分析器）直接产出 L0，取代 psyntax 与 (clojure syntax)；G1@L0 | M8 | cleat-085 | 未开始 |
 | [cleat-087](tasks/cleat-087-middle-passes.md) | 前中端 pass 用 cleat.nanopass 重写；G1@la/l1/l2/l3 | M8 | cleat-086 | 未开始 |
 | [cleat-088](tasks/cleat-088-codegen-core.md) | codegen 一：单元、常量、Var 与调用、控制流、try、fn* 类、局部变量清除、接口文件；G2（无类型推断） | M8 | cleat-087 | 未开始 |

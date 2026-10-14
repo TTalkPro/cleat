@@ -28,6 +28,12 @@
 //                         预编译随附命名空间（boot-order.edn 里 :boot false 的，或命令行给出的）为一个包程序集
 //                         src/boot/Cleat.Clojure.Libs.dll（designs/17）；宿主登记 Clojure 镜像旁的它，require 走包程序集
 //                         （从源码加载不了的命名空间跳过）                                  [cleat-033、cleat-067]
+//   ir-dump <目录> [--shadow] [--corpus]
+//                         逐形式转储的输入集（cleat-085，designs/19 D5）：CLEAT_DUMP_IR=<目录> 下在现有镜像上从源码编 boot 镜像、
+//                         随附库与 tools 包（产物写到临时目录，不动 src/boot），--corpus 再跑语料；--shadow 同时让 Clojure 编译器
+//                         处理每个形式（CLEAT_COMPILER=shadow）。比较与普查用 tools/compiler-diff.clj
+//   compile-compiler      Clojure 编译器（src/clojure/cleat/nanopass*、compiler/）编成包程序集 src/boot/cleat.compiler.dll
+//                         （dotnet build 的 GenerateCompilerPackage 也做，按输入增量）                                   [cleat-085]
 //   compile-tools         tools.namespace 与 tools.build 编成包程序集 src/boot/tools/（pack 也做；镜像变了之后单独重编用）  [cleat-082]
 //   pack [-o 目录] [--version 版本]
 //                         运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）与 dotnet tool 包 Cleat.Cli（cleat-071）：
@@ -82,6 +88,14 @@ try
             BuildCSharp();
             CompileLibs(rest);
             break;
+        case "ir-dump":
+            BuildCSharp();
+            IrDumpCommand(rest);
+            break;
+        case "compile-compiler":
+            BuildCSharp();
+            CompileCompiler();
+            break;
         case "compile-tools":
             BuildCSharp();
             CompileToolLibs();
@@ -118,30 +132,8 @@ int Usage()
 // 编成一个包程序集 src/boot/Cleat.Clojure.Libs.dll（--compile-package，designs/17 §2）。运行 -c Release 的宿主。
 void CompileLibs(string[] a)
 {
-    string[] nses = a;
-    if (nses.Length == 0)
-    {
-        var order = File.ReadAllText(Path.Combine(bootDir, "boot-order.edn"));
-        nses = System.Text.RegularExpressions.Regex.Matches(order, @"\{:ns ([^\s]+)\s+:path [^}]*:boot false\}")
-            .Select(m => (ns: m.Groups[1].Value.Trim(), text: m.Value))
-            .Where(x => !x.text.Contains(":loaded-by"))
-            .Select(x => x.ns)
-            .ToArray();
-    }
-    if (nses.Length == 0) throw new CommandFailed("compile-libs: no namespaces found in boot-order.edn");
     string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure");
-    string probe = "(doseq [n '[" + string.Join(" ", nses) + "]] (println (try (require n) (str \"ok \" n) (catch Exception e (str \"failed \" n \": \" (.Message e))))))";
-    var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true };
-    foreach (var x in new[] { host, "-I", clj, "-e", probe }) psi.ArgumentList.Add(x);
-    using (var p = Process.Start(psi) ?? throw new CommandFailed("cannot start dotnet"))
-    {
-        var lines = p.StandardOutput.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        p.WaitForExit();
-        foreach (var l in lines.Where(l => l.StartsWith("failed ")))
-            Console.Error.WriteLine($"compile-libs: warning: {l.Substring(7)}; skipped");
-        nses = lines.Where(l => l.StartsWith("ok ")).Select(l => l.Substring(3).Trim()).ToArray();
-    }
-    if (nses.Length == 0) throw new CommandFailed("compile-libs: none of the namespaces loads from source");
+    string[] nses = LoadableLibNamespaces(a);
     string dll = Path.Combine(bootDir, "Cleat.Clojure.Libs.dll");
     Run("dotnet", [host, "-I", clj, "--compile-package", dll, "--package", "clojure", "--root", clj, .. nses], root);
     Console.WriteLine($"compile-libs: {nses.Length} namespace(s) -> {dll}");
@@ -210,6 +202,86 @@ void Pack(string[] a)
 string CoreVersion() =>
     System.Text.RegularExpressions.Regex.Match(File.ReadAllText(Path.Combine(srcDir, "Cleat.Core", "Runtime", "CoreInfo.cs")),
         "Version = \"([^\"]+)\"").Groups[1].Value;
+
+// 逐形式转储（cleat-085）：每个宿主进程一个 CLEAT_DUMP_IR_TAG，eval 单元互不覆盖；简单形式也走编译器（CLEAT_NO_SIMPLE_EVAL）
+void IrDumpCommand(string[] a)
+{
+    if (a.Length == 0) throw new CommandFailed("ir-dump: needs an output directory");
+    string dir = Path.GetFullPath(a[0]);
+    bool shadow = a.Contains("--shadow"), corpus = a.Contains("--corpus");
+    if (Directory.Exists(dir)) Directory.Delete(dir, true);
+    string tmp = Path.Combine(dir, "build");
+    Directory.CreateDirectory(tmp);
+    string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure");
+    var env = new List<(string, string)> { ("CLEAT_DUMP_IR", dir), ("CLEAT_NO_SIMPLE_EVAL", "1") };
+    if (shadow) env.Add(("CLEAT_COMPILER", "shadow"));
+    void RunTagged(string tag, string[] args)
+    {
+        var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = root, UseShellExecute = false };
+        foreach (var x in args) psi.ArgumentList.Add(x);
+        foreach (var (k, v) in env) psi.Environment[k] = v;
+        psi.Environment["CLEAT_DUMP_IR_TAG"] = tag;
+        using var p = Process.Start(psi) ?? throw new CommandFailed("cannot start dotnet");
+        p.WaitForExit();
+        if (p.ExitCode != 0) throw new CommandFailed($"ir-dump: {tag} failed with exit code {p.ExitCode}");
+    }
+    var sw = Stopwatch.StartNew();
+    RunTagged("boot", [host, "--boot", Path.Combine(bootDir, "cleat.boot.dll"), "-I", clj, "--compile-boot", Path.Combine(tmp, "cleat.boot.dll"), "--boot-order", Path.Combine(bootDir, "boot-order.edn")]);
+    RunTagged("libs", [host, "-I", clj, "--compile-package", Path.Combine(tmp, "Cleat.Clojure.Libs.dll"), "--package", "clojure", "--root", clj, .. LoadableLibNamespaces([])]);
+    foreach (var (package, assembly, name) in new[] { ("tools.namespace", "Cleat.ToolsNamespace", "tools.namespace"), ("tools.build", "Cleat.ToolsBuild", "tools.build") })
+    {
+        string src = Path.Combine(root, "packages", package, "src");
+        var nses = Directory.GetFiles(src, "*.clj*", SearchOption.AllDirectories)
+            .Select(f => Path.ChangeExtension(Path.GetRelativePath(src, f), null).Replace(Path.DirectorySeparatorChar, '.').Replace('_', '-'))
+            .OrderBy(n => n, StringComparer.Ordinal);
+        RunTagged(name, [host, "-I", tmp, "-I", src, "--compile-package", Path.Combine(tmp, assembly + ".dll"), "--package", name, "--root", src, .. nses]);
+    }
+    if (corpus)
+        RunTagged("corpus", [host, "-I", clj, Path.Combine(root, "tools", "conformance.clj"), "--run", "--portability", "common"]);
+    Console.WriteLine($"ir-dump: {dir} ({sw.Elapsed.TotalSeconds:F0} s)");
+}
+
+// 随附库（boot-order.edn 里 :boot false 且没有 :loaded-by 的命名空间，或命令行点名的）中能从源码加载的：
+// 先在一个宿主进程里逐个试 require，加载不了的（clojure.repl.deps 需要未内置的 clojure/clr/basis）跳过
+string[] LoadableLibNamespaces(string[] given)
+{
+    string[] nses = given;
+    if (nses.Length == 0)
+    {
+        var order = File.ReadAllText(Path.Combine(bootDir, "boot-order.edn"));
+        nses = System.Text.RegularExpressions.Regex.Matches(order, @"\{:ns ([^\s]+)\s+:path [^}]*:boot false\}")
+            .Select(m => (ns: m.Groups[1].Value.Trim(), text: m.Value))
+            .Where(x => !x.text.Contains(":loaded-by"))
+            .Select(x => x.ns)
+            .ToArray();
+    }
+    if (nses.Length == 0) throw new CommandFailed("compile-libs: no namespaces found in boot-order.edn");
+    string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure");
+    string probe = "(doseq [n '[" + string.Join(" ", nses) + "]] (println (try (require n) (str \"ok \" n) (catch Exception e (str \"failed \" n \": \" (.Message e))))))";
+    var psi = new ProcessStartInfo("dotnet") { WorkingDirectory = root, UseShellExecute = false, RedirectStandardOutput = true };
+    foreach (var x in new[] { host, "-I", clj, "-e", probe }) psi.ArgumentList.Add(x);
+    using (var p = Process.Start(psi) ?? throw new CommandFailed("cannot start dotnet"))
+    {
+        var lines = p.StandardOutput.ReadToEnd().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        p.WaitForExit();
+        foreach (var l in lines.Where(l => l.StartsWith("failed ")))
+            Console.Error.WriteLine($"compile-libs: warning: {l.Substring(7)}; skipped");
+        nses = lines.Where(l => l.StartsWith("ok ")).Select(l => l.Substring(3).Trim()).ToArray();
+    }
+    if (nses.Length == 0) throw new CommandFailed("compile-libs: none of the namespaces loads from source");
+    return nses;
+}
+
+// Clojure 编译器的包程序集（cleat-085，designs/19 D6）：入口 cleat.compiler.all，根为 nanopass 与 compiler 的源码
+void CompileCompiler()
+{
+    string host = Bin("Cleat.Host", "cleat.dll"), clj = Path.Combine(srcDir, "clojure"), cleat = Path.Combine(clj, "cleat");
+    string dll = Path.Combine(bootDir, "cleat.compiler.dll");
+    Run("dotnet", [host, "-I", clj, "--compile-package", dll, "--package", "cleat.compiler",
+                   "--root", Path.Combine(cleat, "nanopass.clj"), "--root", Path.Combine(cleat, "nanopass"), "--root", Path.Combine(cleat, "compiler"),
+                   "cleat.compiler.all"], root);
+    Console.WriteLine("compile-compiler: -> " + dll);
+}
 
 // tools.build 与 tools.namespace 编成包程序集放进 src/boot/tools/（cleat-071）：Cleat.Cli 随附，宿主的 -M / -T 用它们
 void CompileToolLibs()

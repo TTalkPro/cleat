@@ -10,6 +10,10 @@
 cleat-084 的试点已移植：`src/clojure/cleat/compiler/loops.clj`（`lower-loops` 全部）、`closures.clj`（`uncover-free` / `attach`）、`front.clj` 的 `analyze`、`check-forward`、`convert-assignments`，
 在快照上与 Scheme 版相同（`cleat.compiler.pilot-test`）。本任务补上其余 pass，并接入 cleat-085 的差分工具在全部输入集上验收。
 
+## 普查给出的范围（cleat-085）
+要实现：lower-loops、cp0-lite（不含查表折叠与 discard）、simplify-lets、uncover-free / attach、convert-assignments（L1 → L2 的语言变换）、simplify-letrec 的形状变换；
+不移植：check-forward、simplify-if、primdata 折叠（Clojure 输入下不改变任何形式或 Lcil）；cp0-inline 是否需要用 G1 确认。
+
 ## 工作内容
 1. `lower-loops`、`analyze`（身份表）、`simplify-letrec`、`check-forward`、`cp0-lite`（只保留 Clojure 输入会触发的折叠）、`simplify-if`、`convert-assignments`、`uncover-free` / `attach`。
 2. 普查认定不需要的 pass 不移植，在本任务结论里列出依据。

@@ -46,14 +46,23 @@
   ;;; 形式在求值**之后**记入单元（后序）：求值中嵌套加载的文件（load / require）的形式排在这个形式之前——镜像初始化时
   ;;; 先执行被加载文件的形式，再执行 (load …) / (require …) 本身（镜像初始化期间加载是空操作，见 Loader.LoadBootImage；cleat-053）。
   ;;; 没有嵌套加载时与先序相同。
+  ;;; 逐形式转储与影子模式（cleat-085，designs/19 D5）：CLEAT_DUMP_IR 时每个形式进入时取一个序号，编译前交给前端
+  ;;; （IrDump.PushIndex）；CLEAT_COMPILER=shadow 时先让 Clojure 编译器处理同一个形式（在 Scheme 展开与求值之前，命名空间状态相同）
+  (define dump-ir? (clr-static-call Cleat.Scheme.Clojure.IrDump get_Enabled))
+  (define shadow? (and dump-ir? (clr-static-field-get Cleat.Scheme.Clojure.IrDump ShadowEnabled)))
+
   (define (eval-form form)
     (run-form
       (lambda ()
-        (let* ((core (clojure-expand form))
+        (let* ((ix (and dump-ir? (clr-static-call Cleat.Scheme.Clojure.IrDump NextIndex "both" "eval")))
+               (_ (when shadow? (clr-static-call Cleat.Scheme.Clojure.IrDump Shadow form ix)))
+               (core (clojure-expand form))
                (unit (current-unit))
                (v (let ((v (try-eval-simple core)))
                     (if (eq? v not-simple)
-                        (run-compiled core)
+                        (begin
+                          (when ix (clr-static-call Cleat.Scheme.Clojure.IrDump PushIndex ix))
+                          (run-compiled core))
                         v))))
           (when unit (vector-set! unit 0 (cons core (vector-ref unit 0))))
           v))

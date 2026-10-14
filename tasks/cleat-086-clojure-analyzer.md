@@ -6,6 +6,11 @@
 ## 目标
 用 Clojure 写的前端取代 psyntax + `src/scheme/clojure/{syntax,namespaces,syntax-kinds}.sls`，直接产出 L0，与现行"展开 + parse-core"的输出相同。
 
+## 接入（cleat-085 之后）
+- 前端产出的 L0 只含普查非零的产生式（见 [cleat-085 结论](cleat-085-compiler-skeleton-and-diff.md)）；局部变量名取 `g$名字$N` 一类（差分工具按 `g$` 前缀规范化）。
+- 影子模式：实现 `cleat.compiler.pipeline/shadow-stages`（`cleat.compiler.shadow` 调用），对每个形式转储 `p0` 起的阶段；`tools/build.cs ir-dump <目录> --shadow` 生成输入集，
+  `tools/compiler-diff.clj diff <目录>/scheme <目录>/clojure` 验收 G1@L0。
+
 ## 工作内容
 1. 宏展开：Var 的 `:macro`、`(&form &env …)`、`&env` 为 `LocalBinding` 映射、`macroexpand-1` / `macroexpand` 的停止点、展开错误的 phase 与源位置。
 2. 决议：直接用 `clojure.lang.Namespace`（别名、refer、import、重定义、`:const`）；特殊形式只在头部位置识别。

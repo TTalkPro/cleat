@@ -105,7 +105,8 @@
     <ClojureSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\clojure'))</ClojureSourceDir>
   </PropertyGroup>
   <ItemGroup>
-    <ClojureBootImageInput Include="$(ClojureSourceDir)\**\*.clj;$(ClojureSourceDir)\**\*.cljc;$(SchemeBootDir)\boot-order.edn" />
+    <ClojureBootImageInput Include="$(ClojureSourceDir)\**\*.clj;$(ClojureSourceDir)\**\*.cljc;$(SchemeBootDir)\boot-order.edn"
+                           Exclude="$(ClojureSourceDir)\cleat\nanopass.clj;$(ClojureSourceDir)\cleat\nanopass\**;$(ClojureSourceDir)\cleat\compiler\**" />
     <ClojureBootImageInput Include="$(SchemeBootImage);$(ClojureHostLibDir)\cleat-host.manifest" />
   </ItemGroup>
   <Target Name="GenerateBootImage" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(BuildBootImage)' == 'true'"
@@ -113,5 +114,23 @@
           Outputs="$(ClojureBootImage)">
     <Message Importance="high" Text="Cleat: compiling the Clojure boot image from src/clojure (about 20 seconds) -> $(ClojureBootImage)" />
     <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --scheme-boot &quot;$(SchemeBootImage)&quot; --no-boot -I &quot;$(ClojureSourceDir)&quot; --compile-boot &quot;$(ClojureBootImage)&quot;" />
+  </Target>
+
+  <!--
+    Clojure 编译器的包程序集（cleat-085；designs/19 D6）：现役的 Scheme 编译器把 src/clojure/cleat/nanopass*.clj 与 src/clojure/cleat/compiler/
+    编成 src/boot/cleat.compiler.dll（入口 cleat.compiler.all），宿主登记进包索引，第一次 require 时才加载。
+    按输入增量：这些源码、Clojure 镜像、宿主及其依赖程序集（约 20 秒）。也可以 tools/build.cs compile-compiler。
+  -->
+  <PropertyGroup>
+    <CompilerPackage>$(SchemeBootDir)\cleat.compiler.dll</CompilerPackage>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerPackageInput Include="$(ClojureSourceDir)\cleat\nanopass.clj;$(ClojureSourceDir)\cleat\nanopass\**\*.clj;$(ClojureSourceDir)\cleat\compiler\**\*.clj" />
+  </ItemGroup>
+  <Target Name="GenerateCompilerPackage" AfterTargets="GenerateBootImage" Condition="'$(BuildBootImage)' == 'true'"
+          Inputs="@(CompilerPackageInput);$(ClojureBootImage);$(TargetPath);$(OutDir)Cleat.Core.dll;$(OutDir)Cleat.Scheme.dll;$(OutDir)cleat-emit.dll"
+          Outputs="$(CompilerPackage)">
+    <Message Importance="high" Text="Cleat: compiling the Clojure compiler package (about 20 seconds) -> $(CompilerPackage)" />
+    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; -I &quot;$(ClojureSourceDir)&quot; --compile-package &quot;$(CompilerPackage)&quot; --package cleat.compiler --root &quot;$(ClojureSourceDir)/cleat/nanopass.clj&quot; --root &quot;$(ClojureSourceDir)/cleat/nanopass&quot; --root &quot;$(ClojureSourceDir)/cleat/compiler&quot; cleat.compiler.all" />
   </Target>
 </Project>
