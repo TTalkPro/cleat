@@ -242,6 +242,10 @@ public static class Diagnostics
         if (t == null || t.Assembly.GetName().Name == "Cleat.Scheme") return false;
         string n = t.FullName ?? t.Name;
         if (n.StartsWith("_Module$", StringComparison.Ordinal) || n.StartsWith("#Module$", StringComparison.Ordinal)) return false;
+        // Clojure 写的编译器与驱动（cleat-090）同 Scheme 驱动一样不算用户的帧
+        if (n.StartsWith("cleat.compiler.", StringComparison.Ordinal) || n.StartsWith("cleat.nanopass.", StringComparison.Ordinal)
+            || n.StartsWith("Cleat.Core.Compiler.DriverOps", StringComparison.Ordinal))
+            return false;
         if (n.StartsWith("Cleat.Scheme.", StringComparison.Ordinal) || n.StartsWith("System.Reflection.", StringComparison.Ordinal)
             || n.StartsWith("System.RuntimeMethodHandle", StringComparison.Ordinal) || n.StartsWith("System.Runtime.ExceptionServices.", StringComparison.Ordinal))
             return false;

@@ -172,9 +172,9 @@ public static class Program
     public static string Start(Options o)
     {
         // CLEAT_COMPILER（designs/19 D5）：shadow 为影子模式（Scheme 编译执行，Clojure 编译器并行处理并转储，需 CLEAT_DUMP_IR）；
-        // clojure（全部走 Clojure 编译器）在 cleat-090 实现
-        if (Environment.GetEnvironmentVariable("CLEAT_COMPILER") is string cc && cc != "" && cc != "scheme" && cc != "shadow")
-            throw new NotSupportedException("CLEAT_COMPILER=" + cc + " is not supported yet (scheme, shadow; clojure comes with cleat-090)");
+        // clojure：加载镜像之后 eval / load / compile / --compile-boot / --compile-package 全部走 Clojure 编译器（cleat-090）
+        if (Environment.GetEnvironmentVariable("CLEAT_COMPILER") is string cc && cc != "" && cc != "scheme" && cc != "shadow" && cc != "clojure")
+            throw new NotSupportedException("CLEAT_COMPILER=" + cc + " is not supported (scheme, shadow, clojure)");
         RuntimeBootstrap.MarkStarting();      // 启动期间这条线程上的惰性启动检查直接返回（cleat-067）
         var sw = System.Diagnostics.Stopwatch.StartNew();
         string schemeBoot = o.SchemeBoot ?? Environment.GetEnvironmentVariable("CLEAT_SCHEME_BOOT") ?? FindBoot("cleat.scheme.boot.dll")
@@ -226,6 +226,16 @@ public static class Program
             if (File.Exists(Path.Combine(src, "clojure", "core.clj"))) Loader.AddPath(src);
             // 影子模式（CLEAT_COMPILER=shadow，cleat-085）：在执行任何形式之前加载 Clojure 编译器的影子命名空间
             Cleat.Scheme.Clojure.IrDump.InitShadow();
+            // CLEAT_COMPILER=clojure（cleat-090）：Clojure 写的驱动登记钩子，取代 Scheme 驱动的
+            // （Clojure 编译器本身是 Clojure 代码：--boot 的模块不是带 clojure.core 的镜像时用不了，仍走 Scheme 驱动）
+            if (Environment.GetEnvironmentVariable("CLEAT_COMPILER") == "clojure" && RT.var("clojure.core", "require").isBound)
+            {
+                // 编译器不在加载路径上（发布布局还不带 cleat.compiler，镜像旁没有包时）：照旧走 Scheme 驱动
+                bool found;
+                try { RT.var("clojure.core", "require").invoke(Symbol.intern("cleat.compiler.driver")); found = true; }
+                catch (FileNotFoundException) { found = false; }
+                if (found) RT.var("cleat.compiler.driver", "install-hooks!").invoke();
+            }
         }
         ClojureImageMs = sw.ElapsedMilliseconds - SchemeImageMs - DriverMs;
         if (Environment.GetEnvironmentVariable("CLEAT_TIME") != null)
@@ -345,7 +355,7 @@ public static class Program
         if (loadedLibs != null) Var.pushThreadBindings(RT.map(loadedLibs, new Ref(PersistentTreeSet.EMPTY)));
         try
         {
-            Cleat.Scheme.Clojure.Driver.CompileBoot(forms, dll);
+            Cleat.Scheme.Clojure.Driver.CompileBoot(forms, dll);   // CLEAT_COMPILER=clojure 时交给 Clojure 驱动（cleat-090）
         }
         finally
         {
@@ -369,7 +379,7 @@ public static class Program
             .ToList();
         var roots = (o.PackageRoots.Count > 0 ? o.PackageRoots : o.IncludeDirs).Select(Path.GetFullPath).ToList();
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        Cleat.Scheme.Clojure.Driver.CompilePackage(o.PackageName ?? Path.GetFileNameWithoutExtension(dll), forms, roots, dll);
+        Cleat.Scheme.Clojure.Driver.CompilePackage(o.PackageName ?? Path.GetFileNameWithoutExtension(dll), forms, roots, dll);   // 同上
         Console.Error.WriteLine($"cleat: compiled package {Path.GetFileNameWithoutExtension(dll)} in {sw.ElapsedMilliseconds} ms -> {dll}");
         return 0;
     }

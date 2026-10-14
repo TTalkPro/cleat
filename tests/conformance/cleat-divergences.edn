@@ -43,7 +43,7 @@
  :entries
  [
   {:suite "destructure / :or" :label ":keys :or default uses sibling binding (lazy eval order)" :category :upstream/clojureclr :reason "ClojureCLR's destructure hoists :or defaults into locals evaluated before the keys are bound (Clojure 1.12 evaluates each default inline, lazily)"}
-  {:suite "syntax-quote / ~@ is lazy" :label "a top-level do evaluates the forms ahead of a splice before the splice is realized" :category :not-yet :reason "a macro's top-level (do …) is expanded as a whole before its forms run, so a splice sees the def ahead of it unevaluated; target cleat-033 (top-level form splitting in the driver)"}
+  {:suite "syntax-quote / ~@ is lazy" :label "a top-level do evaluates the forms ahead of a splice before the splice is realized" :category :not-yet :compiler :scheme :reason "a macro's top-level (do …) is expanded as a whole before its forms run, so a splice sees the def ahead of it unevaluated; target cleat-033 (top-level form splitting in the driver); the Clojure compiler's driver (cleat-090) passes it"}
   {:suite "host-interop / Var surface" :label "isMacro reads the macro flag" :category :host/jvm-api :reason "Java member Var.isMacro (no CLR counterpart under that name)"}
   {:suite "host-interop / Var surface" :label "getTag" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
   {:suite "host-interop / Var surface" :label "setMacro marks the var and its meta" :category :host/jvm-api :reason "Java member Var.isMacro (no CLR counterpart under that name)"}

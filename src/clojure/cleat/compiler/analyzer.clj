@@ -17,7 +17,7 @@
 (ns cleat.compiler.analyzer
   (:refer-clojure :exclude [macroexpand-1])
   (:require [clojure.string :as str]
-            [cleat.nanopass :refer [with-output-language out in-context]]
+            [cleat.nanopass :as np :refer [with-output-language out in-context]]
             [cleat.compiler.languages :as l :refer [L0]])
   (:import [Cleat.Core.Compiler HostSyntax AotPaths]
            [Cleat.Core.Expand ExpanderException LocalBinding]
@@ -37,13 +37,14 @@
 
 (defrecord Local [sym name tag mutable? kind])   ; sym：Clojure 符号；name：L0 里的变量名；kind：:local :arg :field :this :catch :async :no-await
 
-(def ^:dynamic *counter* nil)
+;; 序号在进程内唯一（不按形式重置）：一个编译单元里有多个形式，codegen 的类型表等按变量名记（Scheme 版的 gensym 同样全局唯一，cleat-090）
+(def ^:private counter (atom 0))
 
 (defn- fresh-name
   "L0 的局部变量名：g$名字$N$c（psyntax 的改名形状 g$名字$N$作用域；名字是符号的完整写法，限定符号带命名空间）。
   codegen 的 clause-form 按这个形状还原源码里的名字（procedure-form 的常量）。"
   [base]
-  (symbol nil (str "g$" base "$" (swap! *counter* inc) "$c")))
+  (symbol nil (str "g$" base "$" (swap! counter inc) "$c")))
 
 (defn- marker? [l] (#{:async :no-await} (:kind l)))
 (defn- without-markers [ls] (remove marker? ls))
@@ -269,9 +270,9 @@
 (defn- macro-arity-fix [^Var v ex]
   (if (instance? clojure.lang.ArityException ex)
     (let [^clojure.lang.ArityException ae ex
-          nm (.-name ae)]
+          nm (.Name ae)]
       (if (= (remove-fn-suffix nm) (str (munge* (str (.Name (.Namespace v)))) "$" (munge* (name (.Symbol v)))))
-        (clojure.lang.ArityException. (- (.-actual ae) 2) nm)
+        (clojure.lang.ArityException. (- (.Actual ae) 2) nm)
         ex))
     ex))
 
@@ -435,6 +436,71 @@
 (defn- direct-link-target [v n]
   (let [r (AotPaths/DirectLinkTarget v n)] (when (string? r) r)))
 
+;; —— 调用点内联接口文件里的小函数（cleat-042 第 4 项，Scheme 版 syntax.sls inline-target / inline-call；Clojure 编译器的 .inl 是
+;; L0 子句，cleat-090）：((lambda (r t …) (if (IsInstanceOf 函数类 r) ((lambda 子句) t …) (r t …))) Var读 实参 …)。
+;; 守卫保证 with-redefs / 重定义照常生效；实参只求值一次。子句的变量逐一改名（同一个体内联多次时名字不重复）；形参与实参临时变量带
+;; $inl 后缀（编译器不把它们推断为 double）。构建 Clojure 镜像时关闭（各级镜像的接口文件相同，不动点成立）；CLEAT_NO_INLINE 时不内联。
+
+(def inline-calls? (atom (nil? (System.Environment/GetEnvironmentVariable "CLEAT_NO_INLINE"))))
+
+(def ^:private inline-cache (atom {}))
+
+(defn- find-type-named [^String cls]
+  (let [comma (.IndexOf cls ",")
+        tn (if (neg? comma) cls (.Trim (subs cls 0 comma)))
+        an (when-not (neg? comma) (.Trim (subs cls (inc comma))))]
+    (some (fn [^System.Reflection.Assembly a]
+            (when (or (nil? an) (= an (.Name (.GetName a)))) (.GetType a tn false)))
+          (.GetAssemblies System.AppDomain/CurrentDomain))))
+
+(defn- inline-target
+  "Var 是接口文件里的已知函数、有参数个数为 n 的可内联子句（Clojure 编译器写的 L0 子句）时返回 [函数类 子句的 S 表达式]，否则 nil。"
+  [^Var v n]
+  (let [e (Cleat.Core.Runtime.InterfaceFile/FindKnown (symbol (str (.Name (.Namespace v))) (str (.Symbol v))))
+        bytes (when e (Cleat.Core.Runtime.InterfaceFile/FindInline e (int n)))]
+    (when bytes
+      (let [k [e n]]
+        (if (contains? @inline-cache k)
+          (@inline-cache k)
+          (let [r (try
+                    (let [data (Cleat.Scheme.Fasl/Read ^bytes bytes)]
+                      ;; Scheme 编译器写的 .inl 是 Lcore 子句（Scheme 的表），不认
+                      (when (and (vector? data) (= :cleat/l0 (first data)))
+                        (when-let [t (find-type-named (.-ClassName e))] [t (second data)])))
+                    (catch Exception _ nil))]
+            (swap! inline-cache assoc k r)
+            r))))))
+
+(defn- inl-name [^String old suffix]
+  ;; g$名字$N$c → g$名字$M$后缀
+  (let [parts (str/split old #"\$")]
+    (symbol nil (str "g$" (nth parts 1 "x") "$" (swap! counter inc) "$" suffix))))
+
+(defn- alpha-rename-clause
+  "子句 S 表达式 (clause (x …) x body) 里的局部变量（分析器的临时名 g$…$c）逐一改名；子句的形参带 $inl 后缀。quote 里的不动。"
+  [cl]
+  (let [env (volatile! {})
+        params (set (concat (second cl) (when (symbol? (nth cl 2)) [(nth cl 2)])))
+        temp? (fn [x] (and (symbol? x) (nil? (namespace x)) (str/starts-with? (name x) "g$")))
+        rn (fn [x] (or (@env x) (let [n (inl-name (name x) (if (params x) "inl" "c"))] (vswap! env assoc x n) n)))
+        walk (fn walk [x]
+               (cond
+                 (temp? x) (rn x)
+                 (and (seq? x) (= 'quote (first x))) x
+                 (seq? x) (apply list (map walk x))
+                 :else x))]
+    (walk cl)))
+
+(defn- inline-call [[type cl] v args]
+  (let [lam (np/parse L0 (list 'lambda false (alpha-rename-clause cl)))
+        r (fresh-name "r")
+        ts (mapv (fn [_] (inl-name "g$t$0$c" "inl")) args)]
+    (L0-out (call (lambda false (clause (~r ~@ts) false
+                                  (if (clj-call "IsInstanceOf" false (quote ~type) ~r)
+                                    (call ~lam ~@ts)
+                                    (clj-invoke ~r ~@ts))))
+                  ~(var-reference v) ~@args))))
+
 (defn- var-call [form ^Var v ctx]
   (let [args (rest form)
         n (count args)
@@ -452,6 +518,8 @@
       (clj-call "IsInstanceOf" false (q (maybe-type ctx (first args))) (analyze (second args) (assoc nt :pos pos)))
       (and (<= 1 n 4) (var-prim-sig vm n))
       (apply clj-call "PrimInvoke" false (q (var-prim-sig vm n)) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
+      (and @inline-calls? (inline-target v n))
+      (inline-call (inline-target v n) v (mapv #(analyze % (assoc nt :pos pos)) args))
       :else
       (if-let [cls (direct-link-target v n)]
         (L0-out (clj-static-call ~cls ~n ~(var-reference v) ~@(mapv #(analyze % (assoc nt :pos pos)) args)))
@@ -1148,8 +1216,7 @@
 (defn analyze-top
   "顶层形式 → L0（在 *ns* 里；上下文为非尾、没有局部）。"
   [form]
-  (binding [*counter* (atom 0)]
-    (analyze form (assoc root-ctx :pos (source-of form)))))
+  (analyze form (assoc root-ctx :pos (source-of form))))
 
 (defn macroexpand-1
   "Clojure 的 macroexpand-1（namespaces.sls macroexpand-1-in-ns）：宏调用（含以宏 Var 对象开头的形式）与宿主语法糖展开一层；
@@ -1157,12 +1224,12 @@
   [form]
   (let [ctx root-ctx]
     (cond
-      (macro-var-head form ctx) (call-macro (macro-var-head form ctx) form nil ctx)
+      (macro-var-head form ctx) (call-macro (macro-var-head form ctx) form (source-of form) ctx)
       (and (clj-list? form) (seq form) (symbol? (first form)) (not (special-head (first form))))
       (let [op (first form)
             [o _ _] (resolve-in (current-ns) op)]
         (cond
-          (and (instance? Var o) (.IsMacro ^Var o)) (call-macro o form nil ctx)
+          (and (instance? Var o) (.IsMacro ^Var o)) (call-macro o form (source-of form) ctx)
           (some? o) form
           (or (and (namespace op) (static-member-of ctx op)) (host-sugar? op)) (or (rewrite-to-dot ctx form form) form)
           :else form))

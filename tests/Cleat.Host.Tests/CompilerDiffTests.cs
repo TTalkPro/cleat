@@ -190,6 +190,38 @@ public class CompilerDiffTests
         Assert.That(r.Out, Does.Contain("[\"1,2\" 5 2 42 42 \"p\"]"), r.ToString());
     }
 
+    /// <summary>
+    /// cleat-090：CLEAT_COMPILER=clojure 时 eval / load / compile 走 Clojure 写的驱动（cleat.compiler.driver）：简单形式解释、其余编译执行
+    /// （共用 Driver 的计数），用户代码里不成对的 pushThreadBindings 不被驱动弹掉，*compile-files* 编出的包程序集在新进程里加载运行。
+    /// </summary>
+    [Test]
+    public void ClojureDriverEvalsLoadsAndCompiles()
+    {
+        var env = new[] { ("CLEAT_COMPILER", "clojure") };
+        var r = HostProcessTests.CleatIn(_dir, null, env,
+            "-e", "(def a 1) (def b [a 2]) (. \"x\" Length) (let* [k :k] (k {:k 1}))",
+            "-e", "[(. Cleat.Scheme.Clojure.Driver SimpleCount) (. Cleat.Scheme.Clojure.Driver CompiledCount)]",
+            "-e", "(defn f [x] (* x 2)) (f 21)",
+            "-e", "(. Cleat.Scheme.Clojure.Driver CompiledCount)",
+            "-e", "(. clojure.lang.Var (pushThreadBindings {(var *warn-on-reflection*) true})) (set! *warn-on-reflection* false) *warn-on-reflection*");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("[5 0]\n#'user/f\n42\n1\n"), "simple forms interpreted, the fn compiled: " + r);
+        Assert.That(r.Out, Does.EndWith("false\nfalse\n"), r.ToString());
+
+        Directory.CreateDirectory(Path.Combine(_dir, "src", "demo"));
+        File.WriteAllText(Path.Combine(_dir, "src", "demo", "util.clj"), "(ns demo.util)\n(defn twice [x] (* 2 x))\n");
+        File.WriteAllText(Path.Combine(_dir, "src", "demo", "core.clj"),
+            "(ns demo.core (:require [demo.util :as u]))\n(defrecord Pt [x y])\n(defn hello [n] (str \"hi \" (u/twice n) \" \" (:y (->Pt 1 2))))\n");
+        string classes = Path.Combine(_dir, "classes");
+        Directory.CreateDirectory(classes);
+        var c = HostProcessTests.CleatIn(_dir, null, env, "-I", "src", "-e", "(binding [*compile-path* \"classes\"] (compile 'demo.core))");
+        Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+        Assert.That(File.Exists(Path.Combine(classes, "demo.core.dll")), Is.True, c.ToString());
+        var run = HostProcessTests.CleatIn(_dir, null, null, "-I", "classes", "-e", "(require 'demo.core)", "-e", "(demo.core/hello 5)");
+        Assert.That(run.ExitCode, Is.EqualTo(0), run.ToString());
+        Assert.That(run.Out, Does.EndWith("\"hi 10 2\"\n"), run.ToString());
+    }
+
     [Test]
     public void DiffLocatesTheFirstChangedStage()
     {

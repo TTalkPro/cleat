@@ -83,6 +83,7 @@ public class ErrorGoldenTests
         Assert.That(filtered.Err, Does.Not.Contain("_Module$"), filtered.ToString());
 
         var full = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "1") }, "input.clj");
-        Assert.That(full.Err, Does.Contain("Cleat.Scheme."), "CLEAT_TRACE_ERRORS=1 shows everything: " + full);
+        // 全部的帧：Scheme 驱动的（Cleat.Scheme.）或 Clojure 驱动的（cleat.compiler.，CLEAT_COMPILER=clojure，cleat-090）
+        Assert.That(full.Err, Does.Contain("Cleat.Scheme.").Or.Contain("cleat.compiler."), "CLEAT_TRACE_ERRORS=1 shows everything: " + full);
     }
 }

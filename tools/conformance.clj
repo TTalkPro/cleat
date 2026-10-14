@@ -129,7 +129,9 @@
     ;; 门禁（cleat-032，与 jolt 的 certify 相同）：每个失败行都要在偏离表里；表里的行都要仍然失败、仍在语料中
     (when (some #{"--gate"} args)
       (let [dpath (arg args "--divergences" "tests/conformance/cleat-divergences.edn")
-            entries (:entries (edn/read-string (slurp dpath)))
+            ;; :compiler 只适用于一个编译器的条目（cleat-090：Scheme 编译器的偏离在 Clojure 编译器下已不存在）；缺省两个都适用
+            compiler (let [c (System.Environment/GetEnvironmentVariable "CLEAT_COMPILER")] (if (= c "clojure") :clojure :scheme))
+            entries (filter #(or (nil? (:compiler %)) (= compiler (:compiler %))) (:entries (edn/read-string (slurp dpath))))
             listed (into {} (map (fn [e] [[(:suite e) (:label e)] e]) entries))
             ids (set (map (fn [r] [(:suite r) (:label r)]) rows))
             failing (set (map (fn [r] [(:suite (:row r)) (:label (:row r))]) bad))

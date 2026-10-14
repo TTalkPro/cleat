@@ -46,5 +46,8 @@
 (deftest check-forward-wraps-forward-references
   (let [an (front/analyze (np/parse l/L0 '(quote 1)))]
     (.set_Item ^System.Collections.Hashtable (:forward an) 'f true)
-    (is (= '(begin (primcall $check-initialized f (quote f)) g (lambda false (clause (a) false (primcall $check-initialized f (quote f)))))
-           (np/unparse (front/check-forward (np/parse l/L1 '(begin f g (lambda false (clause (a) false f)))) an))))))
+    ;; 引号里的名字照 Scheme 版是 Scheme 符号（cleat-090）
+    (let [sf (Cleat.Scheme.Symbol/Intern "f")]
+      (is (= (list 'begin (list 'primcall '$check-initialized 'f (list 'quote sf)) 'g
+                   (list 'lambda false (list 'clause '(a) false (list 'primcall '$check-initialized 'f (list 'quote sf)))))
+             (np/unparse (front/check-forward (np/parse l/L1 '(begin f g (lambda false (clause (a) false f)))) an)))))))

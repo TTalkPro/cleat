@@ -64,14 +64,15 @@ public static class Driver
       s_varRef = Symbol.Intern("$clj-var-ref"), s_varSet = Symbol.Intern("$clj-var-set!"), s_def = Symbol.Intern("$clj-def"),
       s_invoke = Symbol.Intern("$clj-invoke"), s_kwInvoke = Symbol.Intern("$clj-keyword-invoke"), s_call = Symbol.Intern("$clj-call");
 
-    /// <summary>简单形式的求值次数与退回编译的次数（度量用）。</summary>
-    public static long SimpleCount, CompiledCount;
+    /// <summary>简单形式的求值次数与退回编译的次数（度量用；与 Clojure 驱动共用 <see cref="DriverOps"/> 的计数，cleat-090）。</summary>
+    public static long SimpleCount { get => DriverOps.SimpleCount; set => DriverOps.SimpleCount = value; }
+    public static long CompiledCount { get => DriverOps.CompiledCount; set => DriverOps.CompiledCount = value; }
 
     /// <summary>(try-eval-simple lcore) → 值，或 <see cref="NotSimple"/>。</summary>
     public static readonly Procedure TryEvalSimple = new P1("clojure-try-eval-simple", TryEval);
 
-    /// <summary>环境变量 CLEAT_NO_SIMPLE_EVAL 设置时关闭快速路径（度量与对照测试用）。</summary>
-    public static bool SimpleEvalEnabled = Environment.GetEnvironmentVariable("CLEAT_NO_SIMPLE_EVAL") == null;
+    /// <summary>环境变量 CLEAT_NO_SIMPLE_EVAL 设置时关闭快速路径（度量与对照测试用；与 Clojure 驱动共用）。</summary>
+    public static bool SimpleEvalEnabled { get => DriverOps.SimpleEvalEnabled; set => DriverOps.SimpleEvalEnabled = value; }
 
     public static object TryEval(object core)
     {
@@ -355,6 +356,12 @@ public static class Driver
     /// </summary>
     public static void CompileBoot(IEnumerable<object> forms, string dllPath)
     {
+        // CLEAT_COMPILER=clojure（cleat-090）：Clojure 写的驱动登记了编译入口时交给它
+        if (DriverOps.CompileBootHook is { } clj)
+        {
+            clj.invoke(LazilyPersistentVector.createOwning(forms.ToArray()), Path.GetFullPath(dllPath));
+            return;
+        }
         var hook = CompileBootHook ?? throw new InvalidOperationException("the Clojure driver has not registered compile-boot");
         object list = EmptyList.Instance;
         foreach (var f in forms.Reverse()) list = new Cons(f, list);
@@ -370,6 +377,12 @@ public static class Driver
     /// </summary>
     public static void CompilePackage(string package, System.Collections.IEnumerable forms, System.Collections.IEnumerable roots, string dllPath)
     {
+        if (DriverOps.CompilePackageHook is { } clj)
+        {
+            object rts = roots == null ? (object)true : LazilyPersistentVector.createOwning(roots.Cast<object>().Select(r => (object)Path.GetFullPath(r.ToString())).ToArray());
+            clj.invoke(package, LazilyPersistentVector.createOwning(forms.Cast<object>().ToArray()), rts, Path.GetFullPath(dllPath));
+            return;
+        }
         var hook = CompilePackageHook ?? throw new InvalidOperationException("the Clojure driver has not registered compile-package");
         object list = EmptyList.Instance;
         foreach (var f in forms.Cast<object>().Reverse()) list = new Cons(f, list);
@@ -604,7 +617,8 @@ public static class Driver
         });
         if (cached == null) return s_false;
         // 读不了的内联体（旧 fasl 版本、过期产物的 .inl）不内联，照常调用
-        try { return new object[] { cached[0], Cleat.Scheme.Fasl.Read((byte[])cached[1]) }; }
+        // Clojure 编译器写的 .inl 是 L0 子句（[:cleat/l0 …]，cleat-090），Scheme 的展开器只认 Lcore 子句（Scheme 的表）
+        try { return Cleat.Scheme.Fasl.Read((byte[])cached[1]) is Cons clause ? new object[] { cached[0], clause } : s_false; }
         catch (System.IO.InvalidDataException) { return s_false; }
     }
 

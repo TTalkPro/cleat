@@ -681,6 +681,7 @@
                (do (when (second lay) (Expr (second lay))) (run! Raw (nth lay 2)))
                (run! Expr e*)))]
     [(clj-static-call ~d0 ~d1 ~e* ...) (run! Expr e*)]
+    [(primcall ~pr ~e* ...) (run! Expr e*)]
     [(clj-case ~d ~e0 ~e1 ~e* ...) (Expr e0) (Expr e1) (run! Expr e*)]
     [(clj-deftype ~d (~x* ...) ~le* ...) (run! exclude! x*) (run! Expr le*)]
     [else nil])
@@ -710,6 +711,7 @@
     [(clj-keyword-invoke ~d ~e ~e* ...) (Expr e) (run! Expr e*)]
     [(clj-call ~d0 ~d1 ~e* ...) (run! Expr e*)]
     [(clj-static-call ~d0 ~d1 ~e* ...) (run! Expr e*)]
+    [(primcall ~pr ~e* ...) (run! Expr e*)]
     [(clj-case ~d ~e0 ~e1 ~e* ...) (Expr e0) (Expr e1) (run! Expr e*)]
     [(clj-deftype ~d (~x* ...) ~le* ...) (run! Expr le*)]
     [else nil])
@@ -732,6 +734,7 @@
     [(try-catch ~e (~d* ~e*) ...) (when (more?) (Expr e) (run! Expr e*))]
     [(label ~x (~x* ...) ~body0 ~body1) (when (more?) (Expr body0) (Expr body1))]
     [(jump ~x ~e* ...) (when (more?) (run! Expr e*))]
+    [(primcall ~pr ~e* ...) (when (more?) (run! Expr e*))]
     [else (more?)])
   (Expr ir)
   (> @cnt n))
@@ -1011,6 +1014,7 @@
               [(clj-keyword-invoke ~d ~e ~e* ...) (walk e) (run! walk e*)]
               [(clj-call ~d0 ~d1 ~e* ...) (run! walk e*)]
               [(clj-static-call ~d0 ~d1 ~e* ...) (run! walk e*)]
+              [(primcall ~pr ~e* ...) (run! walk e*)]
               [(clj-case ~d ~e0 ~e1 ~e* ...) (walk e0) (walk e1) (run! walk e*)]
               [(clj-deftype ~d (~x* ...) ~le* ...) (when (deftype-reify? d) (run! on-ref (deftype-caps x* le*)))]
               [else nil]))]
@@ -1363,6 +1367,17 @@
      (operands! mc [#(do (ref-var! mc x true) (emit! mc (i 'castclass box-type))) #(cg e mc :value)])
      (emit! mc (i 'stfld box-type "Value"))
      (finish-none! mc ctx)]
+    ;; simplify-letrec 给前向变量的初值与检查（Scheme 版 cg-primcall 的一般情形：操作数依次求值后调原语表里的重载）；
+    ;; Clojure 输入里只有这两个原语
+    [(primcall ~pr ~e* ...)
+     (if-let [[t m n] ({'$uninitialized ["Cleat.Scheme.Calls" "UninitializedValue" 0]
+                        '$check-initialized ["Cleat.Scheme.Calls" "CheckInitialized" 2]} pr)]
+       (if (= n (count e*))
+         (do (operands! mc (map (fn [x] #(cg x mc :value)) e*))
+             (emit! mc (i 'call t m (apply i (objs n)) obj))
+             (finish-value! mc ctx))
+         (unsupported-node e))
+       (unsupported-node e))]
     [else (unsupported-node e)]))
 
 ;; —— 调用（Scheme 版 cg-call 的 Clojure 子集：自尾调用、letrec 的直接调用、一般调用）——

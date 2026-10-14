@@ -46,13 +46,13 @@
 (define-syntax t
   (syntax-rules () ((_ name src expected) (check name (lambda () (str (ev src))) expected))))
 
-(define (simple-count) (clr-static-field-get Cleat.Scheme.Clojure.Driver SimpleCount))
-(define (compiled-count) (clr-static-field-get Cleat.Scheme.Clojure.Driver CompiledCount))
+(define (simple-count) (clr-static-prop-get Cleat.Scheme.Clojure.Driver SimpleCount))
+(define (compiled-count) (clr-static-prop-get Cleat.Scheme.Clojure.Driver CompiledCount))
 (define (format-error thunk)
   (with-clr-exception-handler
     (lambda (e) (clr-static-call Cleat.Core.Compiler.Diagnostics FormatError e))
     thunk))
-(define (set-simple! on?) (clr-static-field-set! Cleat.Scheme.Clojure.Driver SimpleEvalEnabled on?))
+(define (set-simple! on?) (clr-static-prop-set! Cleat.Scheme.Clojure.Driver SimpleEvalEnabled on?))
 
 ;;; 一个形式走哪条路径：'simple / 'compiled
 (define (path-of src)

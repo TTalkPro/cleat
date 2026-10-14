@@ -98,12 +98,12 @@
       (->Analysis assigned captured letrec-refs massigned (System.Collections.Hashtable.) fields))))
 
 ;; —— check-forward：L1 → L1 ——
-;; 前向变量在赋值之前可能被读到：对它们的引用包上 $check-initialized
+;; 前向变量在赋值之前可能被读到：对它们的引用包上 $check-initialized（名字照 Scheme 版是 Scheme 符号，报错时用）
 (define-pass check-forward L1 [ir an] -> L1 []
   (definitions
     (defn forward? [x] (marked? (:forward an) x)))
   (Expr [ir] -> Expr []
-    [~x (if (forward? x) (out (primcall $check-initialized ~x (quote ~x))) x)]))
+    [~x (if (forward? x) (out (primcall $check-initialized ~x (quote ~(Cleat.Scheme.Symbol/Intern (str x))))) x)]))
 
 ;; —— convert-assignments：L1 → L2 ——
 (define-pass convert-assignments L1 [ir an] -> L2 []
