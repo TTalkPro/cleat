@@ -1,6 +1,6 @@
 # cleat-024 语言 L0 ~ L3 与 parse-core
 
-- 里程碑：M4　依赖：cleat-023、cleat-011　状态：未开始
+- 里程碑：M4　依赖：cleat-023、cleat-011　状态：由 cleat-083 ~ 091 取代（[19](../designs/19-clojure-self-hosting.md)，2026-10-14）
 - 设计依据：[04 §1 ~ §3](../designs/04-compiler.md)、[03 §3](../designs/03-language-core.md)
 
 ## 目标

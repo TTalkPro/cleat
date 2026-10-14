@@ -1,6 +1,6 @@
 # cleat-028 编译驱动：compile-form / eval、compile、构建脚本
 
-- 里程碑：M4　依赖：cleat-027、cleat-022　状态：未开始
+- 里程碑：M4　依赖：cleat-027、cleat-022　状态：由 cleat-083 ~ 091 取代（[19](../designs/19-clojure-self-hosting.md)，2026-10-14）
 - 设计依据：[04 §9](../designs/04-compiler.md)、[08 §2、§3](../designs/08-bootstrap.md)
 
 ## 工作内容

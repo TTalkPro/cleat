@@ -1,6 +1,6 @@
 # cleat-027 codegen-cil：deftype / reify、case、try、互操作
 
-- 里程碑：M4　依赖：cleat-026　状态：未开始
+- 里程碑：M4　依赖：cleat-026　状态：由 cleat-083 ~ 091 取代（[19](../designs/19-clojure-self-hosting.md)，2026-10-14）
 - 设计依据：[04 §7、§8](../designs/04-compiler.md)、[05 §2、§4、§5](../designs/05-cil-backend.md)
 
 ## 工作内容

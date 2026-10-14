@@ -1,6 +1,6 @@
 # cleat-029 Phase A：stage0 编译出 cleat.boot.dll
 
-- 里程碑：M5　依赖：cleat-028、cleat-018　状态：未开始
+- 里程碑：M5　依赖：cleat-028、cleat-018　状态：由 cleat-083 ~ 091 取代（[19](../designs/19-clojure-self-hosting.md)，2026-10-14）
 - 设计依据：[08 §3](../designs/08-bootstrap.md)
 
 ## 目标

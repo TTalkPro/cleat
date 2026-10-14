@@ -1,6 +1,6 @@
 # cleat-026 codegen-cil：函数、调用、Var、原语内联、控制流
 
-- 里程碑：M4　依赖：cleat-025、cleat-020　状态：未开始
+- 里程碑：M4　依赖：cleat-025、cleat-020　状态：由 cleat-083 ~ 091 取代（[19](../designs/19-clojure-self-hosting.md)，2026-10-14）
 - 设计依据：[04 §4 ~ §6](../designs/04-compiler.md)、[05 §4](../designs/05-cil-backend.md)
 
 ## 目标

@@ -1,6 +1,6 @@
 # cleat-025 前中端 pass
 
-- 里程碑：M4　依赖：cleat-024　状态：未开始
+- 里程碑：M4　依赖：cleat-024　状态：由 cleat-083 ~ 091 取代（[19](../designs/19-clojure-self-hosting.md)，2026-10-14）
 - 设计依据：[04 §3](../designs/04-compiler.md)
 
 ## 目标

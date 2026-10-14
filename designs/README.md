@@ -11,14 +11,15 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（n
 | [04-compiler.md](04-compiler.md) | nanopass 编译器：L0 ~ L3、pass 链、机器描述表、原语编译、直接链接、互操作节点、`deftype`、驱动 |
 | [05-cil-backend.md](05-cil-backend.md) | CIL 后端：继承 IronScheme 的 Lcil 与发射器，扩展项、常量编码、代码生成约定、决议规则、加载约定 |
 | [06-llvm-backend.md](06-llvm-backend.md) | LLVM IR 后端：AOT 交叉编译、C 内核运行时、用 Clojure 写的原生集合、对象模型与调用约定、M0 验证项 |
-| [07-nanopass-port.md](07-nanopass-port.md) | **搁置、部分失效**（stage0 前提）：nanopass 框架移植到 Clojure：表面语法、上下文切换、注册表、运行时表示、验证 |
+| [07-nanopass-port.md](07-nanopass-port.md) | 表面设计 D1 ~ D6 由 19 重新启用（stage0 前提的部分仍失效）：nanopass 框架移植到 Clojure：表面语法、上下文切换、注册表、运行时表示、验证 |
 | [08-bootstrap.md](08-bootstrap.md) | 自举：stage0 解释器、Phase A / B、可选 Lcore 种子、交叉编译纪律、确定性 |
 | [09-testing.md](09-testing.md) | 符合性判据（jolt 语料、clojure-test-suite、test_clojure）、测试分层、基线 |
-| [15-scheme-core-vendoring.md](15-scheme-core-vendoring.md) | **现行方向**：纳入 IronScheme 元层的取舍与更名、可扩展语法对象协议、try / catch 异常模型、为何 nanopass 不改、新里程碑 M2′ / M4′ / M5′ |
+| [15-scheme-core-vendoring.md](15-scheme-core-vendoring.md) | **被 19 取代**（M8 完成后归档）：纳入 IronScheme 元层的取舍与更名、可扩展语法对象协议、try / catch 异常模型、为何 nanopass 不改、新里程碑 M2′ / M4′ / M5′ |
 | [14-three-layer-architecture.md](14-three-layer-architecture.md) | **探讨**：VM / Scheme 元层 / Clojure 三层架构的四个结构性问题与修正、剩余风险 |
 | [13-syntax-objects-and-scheme-core.md](13-syntax-objects-and-scheme-core.md) | **探讨**：语法对象重塑展开流程、驱动 nanopass 的最小 Scheme 元语言、"Clojure on IronScheme"方案 C 与 A / B 的取舍、PoC 计划 |
 | [16-nanopass-host-survey.md](16-nanopass-host-survey.md) | **调研**：nanopass 宿主语言对比（SBCL/CLOS、Erlang、Clojure），pass 分发本质取证，ellipsis 难度定位，07 号文的可行性背书 |
 | [17-lazy-runtime-startup.md](17-lazy-runtime-startup.md) | **实现**：包程序集（每包一个、命名空间索引、去掉源码旁 `.clj.dll`）、运行时 NuGet 包 `Cleat.Runtime`、生成类型惰性启动 CleatRuntime，让 C# / F# 直接引用 cleat 的 NuGet 包（cleat-067） |
+| [19-clojure-self-hosting.md](19-clojure-self-hosting.md) | **现行方向**（2026-10-14 起）：Clojure 版 nanopass 与编译器、分级差分门控、自举不动点与 Lcil 文本种子、生成代码去 Scheme、删除 Scheme 元层；任务 cleat-081 ~ 094 |
 | [18-tools-build.md](18-tools-build.md) | **实现**：tools.build 包（`cleat.edn` 的 NuGet / 本地依赖、`dotnet restore` 解析的 basis、编包程序集、`dotnet-build`、`pack` / `install` / `push`、可部署目录）与 tools.namespace 的部分移植（cleat-066） |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。

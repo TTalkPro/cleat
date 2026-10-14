@@ -1,5 +1,7 @@
 # 15 纳入 Scheme 元层：取舍、更名、可扩展语法对象、简化的异常模型
 
+> **状态（2026-10-14）：被 [19](19-clojure-self-hosting.md) 取代。** 编译器与 nanopass 将改用 Clojure 实现并自举，Scheme 元层在 M8 结束时删除；本文描述 M2′ ~ M5′ 期间的架构。
+
 > 2026-10-10 决定：按 [14](14-three-layer-architecture.md) 方案 C 进行，IronScheme 中有用的代码**直接纳入**本仓库并更名。两条原则：
 > 1. 编译器可以用 Scheme 写，但**语法对象必须可扩展**，以便在其上快速加功能；
 > 2. **尽量不改 nanopass**；这一层 Scheme 不对外、没有 call/cc 的需求，异常模型简化为 try / catch。

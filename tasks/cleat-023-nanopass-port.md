@@ -1,6 +1,6 @@
 # cleat-023 cleat.nanopass 移植
 
-- 里程碑：M4　依赖：cleat-018　状态：未开始
+- 里程碑：M4　依赖：cleat-018　状态：由 cleat-083 ~ 091 取代（[19](../designs/19-clojure-self-hosting.md)，2026-10-14）
 - 设计依据：[07](../designs/07-nanopass-port.md)
 
 ## 目标
