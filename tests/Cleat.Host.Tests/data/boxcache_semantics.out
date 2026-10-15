@@ -1,0 +1,9 @@
+true true true true true
+(System.Int64 System.Int64 System.Int64) 1024 -129 "System.ArithmeticException: integer overflow"
+[true true false] [false false true] [false true true] [true true false] [true false false] [true true false] [true true false] [false true true] [true true false] [true true false]
+false true false
+[true true false false true false false] [false false true true true false false] [false false true true true false false] [false false false false false true false] [false false false false false false true] [true true false false true false false] [false false false false true false false] [true true false false true false false] "System.NullReferenceException: Object reference not set to an instance of an object." "System.InvalidCastException: Unable to cast object of type 'System.String' to type 'Number'."
+true true true true false false true false true true true
+[true true false true false true false true false true false true false true false true false false true true true true false true true false true true]
+"System.ArgumentException: Don't know how to create ISeq from: System.Int64" "System.ArgumentException: Don't know how to create ISeq from: clojure.lang.Keyword"
+123 1024 -1 1023 1024 -129 System.Int64 1024 2 -137604029 1075576832

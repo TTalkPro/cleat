@@ -2136,7 +2136,7 @@ namespace clojure.lang
         public static object num(double x) { return x; }
 
 
-        public static object num(long x) { return x; }
+        public static object num(long x) { return Cleat.Core.Runtime.LongBox.Get(x); }   // 小整数装箱缓存（cleat-109）
 
 
         public static object num(ulong x) { return x; }
@@ -3775,6 +3775,8 @@ namespace clojure.lang
 
         static Ops ops(Object x)
         {
+            if (x is long) return LONG_OPS;       // cleat-109：GetTypeCode 的通用路径之前
+            if (x is double) return DOUBLE_OPS;
             Type xc = x.GetType();
 
             switch (Type.GetTypeCode(xc))
@@ -3890,6 +3892,8 @@ namespace clojure.lang
 
         static Category category(object x)
         {
+            if (x is long) return Category.Integer;   // cleat-109
+            if (x is double) return Category.Floating;
             Type xc = x.GetType();
             if (xc == typeof(Int32) || xc == typeof(Int64))
                 return Category.Integer;

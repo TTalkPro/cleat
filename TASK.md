@@ -115,7 +115,7 @@
 | [cleat-106](tasks/cleat-106-array-resolution.md) | 数组访问的静态决议：引用类型提示带到决议器、数组形参、类型化 aget（skeg 的 array1：long-array 版 10.7 s → 0.5 s） | M10 | cleat-102 | 完成 |
 | [cleat-107](tasks/cleat-107-r7rs-vs-jvm.md) | r7rs-benchmarks 的 Clojure 移植：cleat 对 JVM Clojure（linux01，同一份 .cljc，只计内部时间；56 项，几何平均 cleat / JVM = 4.52） | M10 | cleat-105 | 完成 |
 | [cleat-108](tasks/cleat-108-branch-join-raw-uses.md) | 推断的原始用途穿过分支汇合：if / let / begin 尾位置里的引用算原始用途 | M11 | cleat-107 | 完成 |
-| [cleat-109](tasks/cleat-109-small-int-box-cache.md) | 小整数装箱缓存：Int64 的装箱走预先分配的缓存（codegen 的 box、Num.Box、运行时 Numbers.num 等） | M11 | cleat-108 | 未开始 |
+| [cleat-109](tasks/cleat-109-small-int-box-cache.md) | 小整数装箱缓存与运行时数值的快路径 | M11 | cleat-108 | 完成 |
 | [cleat-110](tasks/cleat-110-user-known-calls.md) | 用户函数的已知调用：经 Var 调用、分析时 Var 的值是有 invokeStatic 的函数类时，isinst 守卫后直接 call | M11 | cleat-109 | 未开始 |
 | [cleat-111](tasks/cleat-111-runtime-fast-paths.md) | 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等 | M11 | cleat-110 | 未开始 |
 | [cleat-112](tasks/cleat-112-result-types-to-inference.md) | 结果类型交给推断：宿主调用返回的数组类型给无提示局部、deftype 原始字段读取的类型进算术 | M11 | cleat-111 | 未开始 |

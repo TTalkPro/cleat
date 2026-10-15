@@ -4511,9 +4511,8 @@ Note that read can execute code (controlled by *read-eval*),
   {:added "1.0"
    :static true}
   [coll]
-  (if (counted? coll)
-    (zero? (count coll))
-    (not (seq coll))))
+  ;; cleat-109：与 (if (counted? coll) (zero? (count coll)) (not (seq coll))) 相同，先用类检查排除 ASeq / LazySeq（见 Colls.IsEmpty）
+  (Cleat.Core.Runtime.Colls/IsEmpty coll))
 
 (declare reduce-kv)
 

@@ -91,8 +91,8 @@ dotnet run tools/build.cs -- selfhost        # 只验证不动点，不写种子
 
 | 套件 | 规模（2026-10-15） | 怎么跑 |
 |---|---|---|
-| Cleat.Core.Tests / Cleat.Host.Tests | 117 / 259 | `dotnet test Cleat.slnx -c Release` |
-| jolt 语料（`:common` 行） | 失败行全部登记在 [cleat-divergences.edn](tests/conformance/cleat-divergences.edn)（522 行，各带类别与原因） | `dotnet run tools/build.cs -- conformance --run --gate` |
+| Cleat.Core.Tests / Cleat.Host.Tests | 117 / 261 | `dotnet test Cleat.slnx -c Release` |
+| jolt 语料（`:common` 行） | 失败行全部登记在 [cleat-divergences.edn](tests/conformance/cleat-divergences.edn)（521 行，各带类别与原因） | `dotnet run tools/build.cs -- conformance --run --gate` |
 | clojure-test-suite | 247 个命名空间，断言 6866 通过 / 31 失败 / 6 错误 | `cleat tools/cts.clj cts` |
 | test_clojure（ClojureCLR） | 357 个测试，断言 3688 通过 / 18 失败 | `cleat tools/cts.clj test-clojure` |
 

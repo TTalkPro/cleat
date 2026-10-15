@@ -79,6 +79,13 @@ namespace clojure.lang
         {
             if (k1 == k2)
                 return true;
+            // cleat-109：最常见的两种数先判（GetType / GetTypeCode 的通用路径每次十几纳秒）；结果与 Numbers.equal 相同（同类比较，NaN 不等）
+            if (k1 is long l1)
+            {
+                if (k2 is long l2) return l1 == l2;
+            }
+            else if (k1 is double d1 && k2 is double d2)
+                return d1 == d2;
             if (k1 != null)
             {
                 if (IsNumeric(k1) && IsNumeric(k2))
@@ -142,24 +149,28 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static bool equiv(long x, object y)
         {
-            return equiv((object)x, y);
+            if (y is long ly) return x == ly;
+            return equiv(Numbers.num(x), y);
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static bool equiv(object x, long y)
         {
-            return equiv(x, (object)y);
+            if (x is long lx) return lx == y;
+            return equiv(x, Numbers.num(y));
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static bool equiv(double x, Object y)
         {
+            if (y is double dy) return x == dy;
             return equiv((object)x, y);
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static bool equiv(object x, double y)
         {
+            if (x is double dx) return dx == y;
             return equiv(x, (object)y);
         }
 
@@ -366,6 +377,7 @@ namespace clojure.lang
 
         public static long ConvertToLong(object o)
         {
+            if (o is long l) return l;   // cleat-109
             switch (Type.GetTypeCode(o.GetType()))
             {
                 case TypeCode.Byte:
@@ -604,6 +616,8 @@ namespace clojure.lang
 
         public static double ConvertToDouble(object o)
         {
+            if (o is double d) return d;   // cleat-109
+            if (o is long l) return l;
             switch (Type.GetTypeCode(o.GetType()))
             {
                 case TypeCode.Byte:
@@ -707,6 +721,7 @@ namespace clojure.lang
 
         public static bool IsNumeric(object o)
         {
+            if (o is long || o is double) return true;   // cleat-109
             return o != null && IsNumeric(o.GetType());
         }
 

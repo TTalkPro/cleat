@@ -33,7 +33,8 @@
 (def int64-type "System.Int64")
 (def double-type "System.Double")
 (def bool-type "System.Boolean")
-(def num-type "Cleat.Core.Runtime.Num")   ; 不装箱的未定类型数（cleat-102）
+(def num-type "Cleat.Core.Runtime.Num")
+(def long-box-type "Cleat.Core.Runtime.LongBox")   ; 小整数装箱缓存（cleat-109）   ; 不装箱的未定类型数（cleat-102）
 (def char-type "System.Char")
 (def string-type "System.String")
 (def void-type "System.Void")
@@ -71,6 +72,8 @@
 (def opt-loopspec? (not (opt-off? "loopspec")))   ; 循环的 long / double 推测：快慢两份循环（cleat-103）
 (def opt-typed? (not (opt-off? "typed")))         ; 无提示函数的类型化入口（cleat-104）
 (def opt-joinraw? (not (opt-off? "joinraw")))     ; 原始用途穿过 if / begin 的尾位置（cleat-108）
+(def opt-boxcache? (not (opt-off? "boxcache")))   ; long 装箱走 LongBox（cleat-109）
+(defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
 (def opt-num? (not (opt-off? "num")))     ; Num：未定类型数的局部 / 循环变量 / 形参（cleat-102）   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
 
 ;; —— 编译单元（原版 unit）——
@@ -1059,7 +1062,7 @@
 (defn- box-raw! [mc t]
   (case t
     :fl (emit! mc (i 'box double-type))
-    :l64 (emit! mc (i 'box int64-type))
+    :l64 (emit! mc (box-long))
     :num (emit! mc (i 'call num-type "Box" (i num-type) obj))
     (emit! mc (i 'box int32-type))))
 
@@ -1071,7 +1074,7 @@
 
 (defn- box-from-sig! [mc c]
   (case c
-    \L (emit! mc (i 'box int64-type))
+    \L (emit! mc (box-long))
     \D (emit! mc (i 'box double-type))
     nil))
 
@@ -1289,7 +1292,8 @@
       :else (do (cond (= ret "System.Void") (emit! mc (i 'ldnull))
                       (= ret "System.Object") (emit! mc (i 'call static-calls-type "RetObject" (i obj) obj))
                       (= ret "System.Int32") (emit! mc (i 'call static-calls-type "RetInt32" (i int32-type) obj))
-                      (#{"System.Int64" "System.Double" "System.Char"} ret) (emit! mc (i 'box ret))
+                      (= ret "System.Int64") (emit! mc (box-long))
+                      (#{"System.Double" "System.Char"} ret) (emit! mc (i 'box ret))
                       :else nil)
                 (finish-value! mc ctx)))))
 
@@ -1973,7 +1977,7 @@
                  (apply i 'body (concat [(i 'ldarg 0)]
                                         (mapcat (fn [j c] (if (sig-char-raw c) [(i 'ldarg j) (i 'unbox.any (sig-char-type c))] [(i 'ldarg j)])) args cs)
                                         [(i 'call cname "invokeStaticTyped" (apply i (cons obj (sig-param-types sig))) (sig-char-type rc))
-                                         (i 'box (sig-char-type rc))
+                                         (if (= rc \L) (box-long) (i 'box (sig-char-type rc)))
                                          (i 'stloc tmp)]))
                  (i 'catch typed-bailout-type (i 'pop))))
     (emit! mc (i 'ldloc tmp) (i 'brfalse gen) (i 'ldloc tmp))

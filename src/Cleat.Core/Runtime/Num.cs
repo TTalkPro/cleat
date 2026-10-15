@@ -54,7 +54,7 @@ public readonly struct Num
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static object Box(Num n)
     {
-        if (n.Tag is null) return n.Bits;
+        if (n.Tag is null) return LongBox.Get(n.Bits);
         if (ReferenceEquals(n.Tag, FlTag)) return n.Fl;
         return ReferenceEquals(n.Tag, NullTag) ? null : n.Tag;
     }

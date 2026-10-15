@@ -161,6 +161,23 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-109：小整数装箱缓存（LongBox，-128 ~ 1023）与运行时数值的快路径（Util.equiv / Numbers.ops / category / ConvertToLong 先判 long、double，
+    /// empty? 经 Colls.IsEmpty 先用类检查）。用例 tests/Cleat.Host.Tests/data/boxcache_semantics.clj 的输出与 .out 逐字相同（与 JVM Clojure 1.12 对照过：
+    /// 只有类型名、异常消息与 CLR 按值的 identical? 不同），CLEAT_NO_OPT=boxcache（生成的代码用 box）时也相同。
+    /// </summary>
+    [Test]
+    public void BoxCacheAndNumericFastPaths()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "boxcache_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "boxcache") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
+        Assert.That(off.Out, Is.EqualTo(expected), off.ToString());
+    }
+
+    /// <summary>
     /// cleat-108：回边实参是 if / begin 时，两支里对原始类型循环变量的引用算原始用途，汇合处原始发射（不装箱）。语义用例
     /// （tests/Cleat.Host.Tests/data/joinraw_semantics.clj：计数器、嵌套 if、带副作用的 do、throw 与提前退出的分支、溢出、两支类型不同、Ratio、double、
     /// 无提示初值、循环里另有装箱用途）在 CLEAT_NO_OPT=joinraw 与开两种设置下输出逐字相同；计数器循环里只剩返回值处一次 Int64 装箱。
