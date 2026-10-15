@@ -78,7 +78,6 @@
   {:suite "exceptions / ex-info" :label "catch binds thrown value" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "forms / fn" :label "no param vector" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :strictness)"}
   {:suite "clojure.core / leaf batch (complement fnil munge etc.)" :label "supers empty set" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
-  {:suite "clojure.core / leaf batch 4" :label "shuffle non-coll throws" :category :strictness :reason "shuffle of a non-collection answers [] (ClojureCLR copies (seq coll)); the JVM's ArrayList constructor throws"}
   {:suite "interop / String methods" :label "instance? CharSequence" :category :host/jvm-api :reason "JVM class CharSequence (java.lang implicit import)"}
   {:suite "interop / String methods" :label "instance? CharSequence non-str" :category :host/jvm-api :reason "JVM class CharSequence (java.lang implicit import)"}
   {:suite "host-interop / ring-codec surface" :label "extend-protocol Map" :category :host/jvm-api :reason "JVM class Map (java.lang implicit import)"}
@@ -244,7 +243,6 @@
   {:suite "regex / escapes in and out of a character class" :label "\\b inside a class is a pattern error" :category :host/regex :reason "java.util.regex semantics differ from System.Text.RegularExpressions"}
   {:suite "regex / escapes in and out of a character class" :label "\\R is a linebreak outside a class and an error inside" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '\\\\R': Unrecognized escape sequence \\\\R."}
   {:suite "regex / \\p property classes" :label "(?u) accepted" :category :host/regex :reason "java.util.regex syntax the .NET engine rejects: '(?u)^hi$': Unrecognized grouping construct."}
-  {:suite "seq / strictness round 3" :label "shuffle on number" :category :strictness :reason "shuffle of a non-collection answers [] (ClojureCLR copies (seq coll)); the JVM's ArrayList constructor throws"}
   {:suite "sorted / predicates" :label "sorted-map? true" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "sorted / predicates" :label "sorted-map? false" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}
   {:suite "sorted / predicates" :label "sorted-set? true" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt profile :uncertifiable :host/jvm-interop)"}

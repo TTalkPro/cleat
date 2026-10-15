@@ -7747,6 +7747,9 @@ clojure.lang.IKVReduce
   {:added "1.1"
    :static true}
   [^System.Collections.ICollection coll]                           ;;; ^java.util.Collection
+  ;; CLEAT (cleat-097): 不是集合的参数（如 1）会被 ArrayList(int capacity) 接受而返回 []，这里照 JVM 抛类型转换错误
+  (when-not (instance? System.Collections.ICollection coll)
+    (throw (System.InvalidCastException. (str "Cannot cast " (.FullName (class coll)) " to System.Collections.ICollection"))))
   (let [al (System.Collections.ArrayList. coll)]                         ;;; java.util.ArrayList.
     (clojure.lang.Util/Shuffle al)                                 ;;; java.util.Collections/shuffle
     (clojure.lang.RT/vector (.ToArray al))))                       ;;; .toArray

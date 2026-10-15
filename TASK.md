@@ -103,8 +103,9 @@
 | [cleat-094](tasks/cleat-094-republish-self-hosted.md) | 自寄宿后的新版本（Cleat.Runtime / Cli 1.1.0 等）重推 BaGetter，cleat.nanopass 用户文档 | M8 | cleat-093 | 完成 |
 | [cleat-095](tasks/cleat-095-nanopass-user-layer.md) | cleat.nanopass 第二层：显式 catamorphism、多层省略号的单项、define-parser、trace、上游测试（取代 cleat-056；不阻塞阶段 B / C） | M8 | cleat-084 | 完成 |
 | [cleat-096](tasks/cleat-096-defn-name-return-hint.md) | defn 名字上的原始返回类型提示：调用点与函数类的 primifs 签名一致（JVM 在此 AbstractMethodError） | M9 | cleat-095 | 完成 |
-| [cleat-097](tasks/cleat-097-refresh-baselines.md) | 刷新 clojure-test-suite 与 test_clojure 基线，分类剩余失败 | M9 | cleat-095 | 未开始 |
+| [cleat-097](tasks/cleat-097-refresh-baselines.md) | 刷新 clojure-test-suite 与 test_clojure 基线，分类剩余失败 | M9 | cleat-095 | 完成 |
 | [cleat-098](tasks/cleat-098-divergence-cleanup.md) | 偏离表清理：error-model / numeric / boxing / strictness / printf / not-yet 逐条判断；nREPL middleware 测试改回上游写法 | M9 | cleat-095 | 未开始 |
+| [cleat-099](tasks/cleat-099-reflection-warnings.md) | 反射警告：*warn-on-reflection* 为真时分析器按 ClojureCLR 的措辞报出决议不了的宿主调用（test_clojure rt 的 18 条） | M9 | cleat-097 | 未开始 |
 
 ## 里程碑
 
@@ -123,12 +124,12 @@
 | M7 工程 | cleat-033 ~ cleat-035（036 替换） | AOT、发布、REPL、嵌入 |
 | 后续 | cleat-042、043、054、056、058 ~ 080（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
-| M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-098 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
+| M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-099 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-**M9（2026-10-15 起，现行）**：096 → 097 → 098（互不依赖，按此顺序做）。
+**M9（2026-10-15 起，现行）**：096 → 097 → 098 → 099（互不依赖，按此顺序做）。
 
 **M8（2026-10-14 ~ 15，完成）**：081 → 082 → 083 → 084 → 085 → 086 → 087 → 088 → 089 → 090 → 091 → 092 → 093 → 094；095 不在关键路径上（[19 §5](designs/19-clojure-self-hosting.md)）。
 双轨纪律（19 D9）：从 cleat-085 起到 cleat-091 默认切换为止，Scheme 编译器只修缺陷、不加功能，修的缺陷同时在 Clojure 编译器里修并补差分用例；cleat-093 删除 Scheme 编译器后结束。

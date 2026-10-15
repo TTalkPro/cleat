@@ -193,7 +193,7 @@
               (cond
                 (= nm "new") (apply list 'new tsym (rest items))
                 (and (> (count nm) 1) (= \. (nth nm 0)))
-                (do (when (< (count items) 2) (err where ctx (str "Malformed member expression, expecting (" op " target ...)")))
+                (do (when (< (count items) 2) (err where ctx (str "Malformed method expression, expecting (" op " target ...)")))   ; 措辞同 ClojureCLR
                     (let [tgt (nth items 1)
                           tgt (if (instance? IObj tgt) (with-meta tgt (assoc (meta tgt) :tag (symbol (.FullName ^Type t)))) tgt)]
                       (apply list '. tgt (symbol (subs nm 1)) (drop 2 items))))
