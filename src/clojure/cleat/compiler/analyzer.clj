@@ -942,6 +942,209 @@
       (let [x (if (empty? catches) b (L0-out (try-catch ~b (~(map first hs) ~(map second hs)) ...)))]
         (if fin (L0-out (try-finally ~x ~fin)) x)))))
 
+;; —— 反射警告（cleat-099）：*warn-on-reflection* 为真且宿主成员按分析期已知的类型决议不了时向 *err* 报一行，措辞照 ClojureCLR
+;; （test_clojure 的 rt.clj 以正则核对）。"决议不了"照 ClojureCLR / JVM 的编译期语义：目标类型未知；成员名 / 实参个数对不上
+;; （no such method）；有多个候选而按实参的静态类型选不出一个（argument types: …）。实参类型来自提示、局部的 :tag、字面量、
+;; Var 的 :tag 与 :inline 展开、嵌套宿主调用的返回类型（host-arg-type）。
+;; 这不等于 codegen 会不会发静态调用（ClojureStaticCalls.Resolve 另有发射器的限制：非 core 的引用类型形参、泛型、属性、值类型目标
+;; 都交给运行时的 Reflector）——那是 codegen 的差距，加提示解决不了，不作为反射警告报给用户。
+;; 不报的：deftype 桩类型（this）、无实参的静态成员、proxy-super 的内部成员；只有泛型 / params / by-ref 候选时也不报。
+
+(declare expr-type parse-dot host-form-type)
+
+(def reflection-warnings? (atom true))   ; 镜像构建时关掉（driver/compile-boot）
+
+(defn- warn-reflection [form ctx msg]
+  (let [pos (position form ctx)
+        file (or (nth pos 2 nil) (not-empty (source-path)) "NO_SOURCE_PATH")]
+    (.WriteLine ^System.IO.TextWriter (RT/errPrintWriter)
+                (str "Reflection warning, " file ":" (if pos (first pos) 0) ":" (if pos (second pos) 0) " - " msg))))
+
+(defn- warn-reflection? [] (and @reflection-warnings? (boolean *warn-on-reflection*)))
+
+(defn- host-arg-type
+  "宿主调用实参 / 目标的静态类型（Type）或 nil（未知）：带提示的符号与形式、局部的 :tag、字面量、(quote x)，
+  以及 host-form-type 能看出来的调用形式。"
+  [ctx a]
+  (cond
+    (nil? a) nil
+    (symbol? a) (expr-type ctx a)
+    (clj-list? a) (or (expr-type ctx a) (host-form-type ctx a))
+    (instance? IPersistentVector a) IPersistentVector
+    (instance? IPersistentMap a) IPersistentMap
+    (instance? IPersistentSet a) IPersistentSet
+    :else (class a)))
+
+(def ^:private numeric-widening
+  "C# 的隐式数值转换（规范 §10.2.3）：源类型 → 能隐式转到的类型。"
+  {System.SByte #{System.Int16 System.Int32 System.Int64 System.Single System.Double System.Decimal}
+   System.Byte #{System.Int16 System.UInt16 System.Int32 System.UInt32 System.Int64 System.UInt64 System.Single System.Double System.Decimal}
+   System.Int16 #{System.Int32 System.Int64 System.Single System.Double System.Decimal}
+   System.UInt16 #{System.Int32 System.UInt32 System.Int64 System.UInt64 System.Single System.Double System.Decimal}
+   System.Int32 #{System.Int64 System.Single System.Double System.Decimal}
+   System.UInt32 #{System.Int64 System.UInt64 System.Single System.Double System.Decimal}
+   System.Int64 #{System.Single System.Double System.Decimal}
+   System.UInt64 #{System.Single System.Double System.Decimal}
+   System.Char #{System.UInt16 System.Int32 System.UInt32 System.Int64 System.UInt64 System.Single System.Double System.Decimal}
+   System.Single #{System.Double}
+   System.Double #{}
+   System.Decimal #{}})
+
+(defn- implicit-conversion?
+  "静态类型 a 的实参能否隐式转成形参类型 p：同型、引用拓宽 / 装箱、数值拓宽。"
+  [^Type p ^Type a]
+  (or (= p a) (.IsAssignableFrom p a) (contains? (numeric-widening a) p)))
+
+(defn- accepts-arg?
+  "形参 p 接受静态类型 a（nil 未知）的实参：未知什么都接受（DLR NarrowingLevel.All），已知要能隐式转换或数值间显式转换。"
+  [^Type p ^Type a]
+  (or (nil? a) (implicit-conversion? p a) (and (contains? numeric-widening p) (contains? numeric-widening a))))
+
+(defn- better-param?
+  "对静态类型 a 的实参，形参 p1 是否严格优于 p2（C# 的更优转换：同型最优；都隐式时能单向隐式转到对方者优；
+  隐式优于显式）。未知实参按 object 算：object 形参优于其他，其余平手——ClojureCLR 的 DLR 决议大致如此。"
+  [^Type p1 ^Type p2 ^Type a]
+  (cond
+    (= p1 p2) false
+    (nil? a) (= p1 System.Object)
+    (= p1 a) true
+    (= p2 a) false
+    :else (let [i1 (implicit-conversion? p1 a) i2 (implicit-conversion? p2 a)]
+            (cond (and i1 (not i2)) true
+                  (and i2 (not i1)) false
+                  (and i1 i2) (and (implicit-conversion? p2 p1) (not (implicit-conversion? p1 p2)))
+                  :else false))))
+
+(defn- param-types [^System.Reflection.MethodBase m]
+  (mapv (fn [^System.Reflection.ParameterInfo p] (.ParameterType p)) (.GetParameters m)))
+
+(defn- select-overload
+  "候选成员（同名、同实参个数的方法或构造器）里按实参静态类型选出的那个，选不出 nil：
+  一个候选直接用（JVM 的 InstanceMethodExpr 同）；多个时取各形参都接受实参、且每一位都不劣于其余候选并至少一位严格更优的那个。"
+  [members types]
+  (let [members (vec members)]
+    (cond
+      (empty? members) nil
+      (= 1 (count members)) (first members)
+      :else
+      (let [applicable (filterv (fn [m] (every? identity (map accepts-arg? (param-types m) types))) members)
+            better? (fn [m o]
+                      (let [ps (param-types m) qs (param-types o)]
+                        (and (not-any? identity (map (fn [p q a] (better-param? q p a)) ps qs types))
+                             (boolean (some identity (map (fn [p q a] (better-param? p q a)) ps qs types))))))
+            best (filter (fn [m] (every? (fn [o] (or (identical? m o) (better? m o))) applicable)) applicable)]
+        (cond (= 1 (count applicable)) (first applicable)
+              (= 1 (count best)) (first best)
+              :else nil)))))
+
+(defn- plain-method?
+  "编译期重载决议会考虑的方法：非泛型、形参没有 by-ref / 指针 / params（其余的只能运行时决议，提示帮不上）。"
+  [^System.Reflection.MethodInfo m]
+  (and (not (.ContainsGenericParameters m)) (not (.IsGenericMethodDefinition m))
+       (not-any? (fn [^System.Reflection.ParameterInfo p]
+                   (or (.IsByRef (.ParameterType p)) (.IsPointer (.ParameterType p))
+                       (.IsDefined p System.ParamArrayAttribute false)))
+                 (.GetParameters m))))
+
+(defn- type-and-interfaces
+  "t 自己，接口时再加上它继承的接口（GetMethods / GetProperty 不含父接口的成员）。"
+  [^Type t]
+  (if (.IsInterface t) (cons t (seq (.GetInterfaces t))) [t]))
+
+(defn- host-methods
+  "t 的公共方法里名为 nm、n 个形参、静态性为 static? 的（含泛型、params、by-ref 的）。"
+  [^Type t ^String nm n static?]
+  (filter (fn [^System.Reflection.MethodInfo m]
+            (and (= nm (.Name m)) (= (boolean static?) (.IsStatic m)) (= n (alength (.GetParameters m)))))
+          (mapcat (fn [^Type x] (.GetMethods x)) (type-and-interfaces t))))
+
+(defn- host-field-or-property? [^Type t ^String nm]
+  (boolean (some (fn [^Type x] (or (.GetField x nm) (.GetProperty x nm))) (type-and-interfaces t))))
+
+(defn- host-call-return-type
+  "(. target member args…) 能决议时的返回类型（方法的返回类型、属性 / 字段的类型），否则 nil。"
+  [ctx dot]
+  (let [{:keys [static member args type-args ^Type type]} (parse-dot dot ctx)]
+    (when (and type (not type-args) (not (HostSyntax/IsStub type)))
+      (let [types (mapv #(host-arg-type ctx %) args)
+            ^System.Reflection.MethodInfo m (select-overload (filter plain-method? (host-methods type member (count args) (boolean static))) types)]
+        (if m
+          (let [rt (.ReturnType m)] (when (not= rt System.Void) rt))
+          (when (empty? args)
+            (some (fn [^Type x] (or (some-> (.GetProperty x ^String member) .PropertyType)
+                                    (some-> (.GetField x ^String member) .FieldType)))
+                  (type-and-interfaces type))))))))
+
+(defn- host-form-type
+  "(f …) 形式的静态类型：(quote x) 的 x 的类、(new T …) / (T. …) 的 T、(var x) / (def …) 的 Var、宿主调用 (. x m …) / (.m x …) / (T/m …) 的返回类型、
+  其余调用按 Var 的 :tag（JVM 的 InvokeExpr 也据此）或 :inline 展开后的形式；看不出来 nil。"
+  [ctx a]
+  (let [op (first a)]
+    (try
+      (cond
+        (not (symbol? op)) nil
+        (and (nil? (namespace op)) (find-local ctx op)) nil
+        (sym-is? op "quote") (let [d (second a)] (when (some? d) (class d)))
+        (sym-is? op "new") (maybe-type ctx (second a))
+        (sym-is? op ".") (host-call-return-type ctx a)
+        (or (sym-is? op "var") (sym-is? op "def")) Var
+        (special-head op) nil
+        (or (host-sugar? op) (and (namespace op) (static-member-of ctx op)))
+        (when-let [dot (rewrite-to-dot ctx a a)]
+          (if (sym-is? (first dot) "new") (maybe-type ctx (second dot)) (host-call-return-type ctx dot)))
+        :else
+        (let [[o _ _] (resolve-in (current-ns) op)]
+          (when (and (instance? Var o) (not (.IsMacro ^Var o)))
+            (let [vm (meta o) inline (:inline vm) arities (:inline-arities vm) n (count (rest a))]
+              (or (tag-type (:tag vm))
+                  ;; :inline 的调用在 var-call 里展开成宿主调用（(int x) → (. RT (intCast x))），类型看展开后的形式
+                  (when (and inline (instance? clojure.lang.IFn inline) (or (not arities) (arities n)))
+                    (host-arg-type ctx (.applyTo ^clojure.lang.IFn inline (next a)))))))))
+      (catch Exception _ nil))))
+
+(defn- arg-types-string [types]
+  (str/join ", " (map #(if % (.FullName ^Type %) "unknown") types)))
+
+(defn- check-host-call
+  "(. target member args…) 的反射警告（parse-dot 的结果）。"
+  [form ctx {:keys [static member args method? ^Type type]}]
+  (when (warn-reflection?)
+    (let [n (count args) nm (when type (.FullName type))]
+      (cond
+        (nil? type)
+        (warn-reflection form ctx (if (and (zero? n) (not method?))
+                                    (str "reference to field/property " member " can't be resolved (target class is unknown).")
+                                    (str "call to method " member " can't be resolved (target class is unknown).")))
+        (HostSyntax/IsStub type) nil
+        (and static (zero? n)) nil
+        (str/starts-with? member "proxy$super$") nil   ; proxy-super（core_proxy）：生成的代理类上的方法，父类上自然没有
+        :else
+        (let [types (mapv #(host-arg-type ctx %) args)
+              methods (host-methods type member n (boolean static))
+              plain (filter plain-method? methods)]
+          (cond
+            (and (seq methods) (empty? plain)) nil
+            (select-overload plain types) nil
+            static
+            (warn-reflection form ctx (str "call to static method " member " on " nm " can't be resolved "
+                                           (if (empty? methods) "(no such method)." (str "(argument types: " (arg-types-string types) ")."))))
+            (and (zero? n) (not method?))
+            (when-not (host-field-or-property? type member)
+              (warn-reflection form ctx (str "reference to field/property " member " on " nm " can't be resolved.")))
+            (empty? methods)
+            (warn-reflection form ctx (str "call to method " member " on " nm " can't be resolved (no such method)."))
+            :else
+            (warn-reflection form ctx (str "call to method " member " on " nm " can't be resolved (argument types: " (arg-types-string types) ")."))))))))
+
+(defn- check-host-ctor
+  "(new T args…) 的反射警告：没有该实参个数的公共构造器，或按实参类型选不出一个。"
+  [form ctx ^Type t args]
+  (when (and (warn-reflection?) (not (HostSyntax/IsStub t)))
+    (let [n (count args)
+          ctors (filter (fn [^System.Reflection.ConstructorInfo c] (= n (alength (.GetParameters c)))) (.GetConstructors t))]
+      (when-not (select-overload ctors (mapv #(host-arg-type ctx %) args))
+        (warn-reflection form ctx (str "call to " (.FullName t) " ctor can't be resolved."))))))
+
 ;; 宿主互操作：. / new / set!
 
 (defn- host-args [form ctx args]
@@ -972,13 +1175,14 @@
         prop? (and (not method?) (> (count nm) 1) (= \- (nth nm 0)))
         member (munge* (if prop? (subs nm 1) nm))]
     {:static static :target (when-not static td) :member member :prop? prop? :args args :type-args type-args
-     :method? method? :type (or static (expr-type ctx td))}))
+     :method? method? :type (or static (host-arg-type ctx td))}))
 
 (defn- sp-dot [form ctx]
-  (let [{:keys [static target member prop? args type-args method? type]} (parse-dot form ctx)
+  (let [{:keys [static target member prop? args type-args method? type] :as parsed} (parse-dot form ctx)
         nt (ctx-nontail (ctx-clear ctx))
         t type
         gen (when type-args (object-array type-args))]
+    (when-not type-args (check-host-call form ctx parsed))
     (cond
       (and static (empty? args) (not method?))
       (if prop? (clj-call "GetStaticField" false (q t) (q member)) (clj-call "CallStatic" 3 (q t) (q member) (q gen)))
@@ -993,6 +1197,7 @@
   (when (< (count form) 2) (err form ctx "wrong number of arguments, expecting: (new Classname args...)"))
   (let [td (second form) t (maybe-type ctx td)]
     (when-not t (err form ctx (str "Unable to resolve classname: " td)))
+    (check-host-ctor form ctx t (drop 2 form))
     (apply clj-call "NewOf" 1 (q t) (host-args form ctx (drop 2 form)))))
 
 (defn- sp-set! [form ctx]

@@ -1798,7 +1798,7 @@
           default   (get options :default :default)
           hierarchy (get options :hierarchy #'global-hierarchy)]
 	 (check-valid-options options :default :hierarchy)
-     `(let [v# (def ~mm-name)]
+     `(let [^clojure.lang.Var v# (def ~mm-name)]   ; 提示：分析期知道 v# 是 Var（反射警告，cleat-099）
          (when-not (and (.hasRoot v#) (instance? clojure.lang.MultiFn (deref v#)))
            (def ~mm-name
                 (new clojure.lang.MultiFn ~(name mm-name) ~dispatch-fn ~default ~hierarchy)))))))
@@ -6110,7 +6110,7 @@ Note that read can execute code (controlled by *read-eval*),
   else expr is unevaluated"
   {:added "1.0"}
   [name expr]
-  `(let [v# (def ~name)]
+  `(let [^clojure.lang.Var v# (def ~name)]   ; 提示：分析期知道 v# 是 Var（反射警告，cleat-099）
      (when-not (.hasRoot v#)
        (def ~name ~expr))))
 

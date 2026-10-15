@@ -76,6 +76,73 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-099：*warn-on-reflection* 为真时，按分析期已知的类型决议不了的宿主调用向 *err* 报一行，措辞照 ClojureCLR（test_clojure rt 的正则）：
+    /// 目标类型未知、成员不存在（no such method）、多个重载按实参类型选不出（argument types: …）、构造器。能决议的不报：提示、字面量、
+    /// Var 的 :tag（str）、:inline 展开（int）、嵌套宿主调用与属性的返回类型（.Name）、接口继承的方法（valAt）、泛型方法（aclone）；
+    /// defonce / defmulti / defprotocol 等核心宏也不报。*warn-on-reflection* 为假时什么都不报。
+    /// </summary>
+    [Test]
+    public void ReflectionWarnings()
+    {
+        File.WriteAllText(Path.Combine(_dir, "w.clj"), string.Join("\n", new[]
+        {
+            "(set! *warn-on-reflection* true)",
+            "(defn a1 [x] (.blah x))",
+            "(defn a2 [^String x] (.blah x))",
+            "(defn a3 [^String x] (.zap x 1))",
+            "(defn a4 [^String x] (.IndexOf x 12.1 'a))",
+            "(defn a5 [^String x y] (.IndexOf x y))",
+            "(defn a6 [x] (.zap x 1))",
+            "(defn a7 [] (String/Format #\"boom\" 12))",
+            "(defn a8 [] (String. 1 2 3))",
+            "(println \"--silent\")",
+            "(defn b1 [^String x] (.IndexOf x \"a\"))",
+            "(defn b2 [^System.IO.TextWriter w x] (.Write w (str x)))",
+            "(defn b3 [^Type t] (.IndexOf (.Name t) \".\"))",
+            "(defn b4 [^System.Array a ^System.Array b] (System.Array/Copy a b (int 3)))",
+            "(defn b5 [^objects a i v] (aset a i v) (aclone a))",
+            "(defn b6 [^clojure.lang.IPersistentMap m k] (.valAt m k))",
+            "(defn b7 [^String s] [(.ToUpper \"abc\") (.Substring s 1) (System.Text.StringBuilder. \"x\")])",
+            "(defonce d1 1) (defmulti d2 identity) (defprotocol D3 (d3 [x]))",
+            "(binding [*warn-on-reflection* false] (eval '(defn c1 [x] (.blah x))))",
+            "(println :done)",
+        }));
+        var r = HostProcessTests.CleatIn(_dir, null, null, Path.Combine(_dir, "w.clj"));
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Is.EqualTo("--silent\n:done\n"), r.ToString());
+        var lines = r.Err.Split('\n').Where(l => l.StartsWith("Reflection warning")).ToArray();
+        Assert.That(lines.Length, Is.EqualTo(8), r.ToString());
+        string[] expected =
+        {
+            @"w\.clj:2:\d+ - reference to field/property blah can't be resolved \(target class is unknown\)\.",
+            @"w\.clj:3:\d+ - reference to field/property blah on System\.String can't be resolved\.",
+            @"w\.clj:4:\d+ - call to method zap on System\.String can't be resolved \(no such method\)\.",
+            @"w\.clj:5:\d+ - call to method IndexOf on System\.String can't be resolved \(argument types: System\.Double, clojure\.lang\.Symbol\)\.",
+            @"w\.clj:6:\d+ - call to method IndexOf on System\.String can't be resolved \(argument types: unknown\)\.",
+            @"w\.clj:7:\d+ - call to method zap can't be resolved \(target class is unknown\)\.",
+            @"w\.clj:8:\d+ - call to static method Format on System\.String can't be resolved \(argument types: System\.Text\.RegularExpressions\.Regex, System\.Int64\)\.",
+            @"w\.clj:9:\d+ - call to System\.String ctor can't be resolved\.",
+        };
+        for (int i = 0; i < expected.Length; i++)
+            Assert.That(lines[i], Does.Match("^Reflection warning, .*" + expected[i] + "$"), r.ToString());
+    }
+
+    /// <summary>
+    /// cleat-099：镜像里的文件再 RT.load 是空操作（JVM 里 AOT 库已初始化的 __init 类同）：(use 'clojure.core)、(require 'clojure.string)、
+    /// (load "/clojure/string") 都不从源码重载，改过的 Var 保留；镜像文件的清单由加载器在镜像初始化时记下。
+    /// </summary>
+    [Test]
+    public void LoadingAnImageFileAgainIsANoOp()
+    {
+        var r = HostProcessTests.CleatIn(_dir, null, null,
+            "-e", "(alter-var-root #'clojure.string/blank? (constantly (fn [_] :patched))) nil",
+            "-e", "(use 'clojure.core) (require 'clojure.string) (load \"/clojure/string\") (require 'clojure.string :reload)",
+            "-e", "[(Cleat.Core.Runtime.Loader/IsImageFile \"clojure/core\") (Cleat.Core.Runtime.Loader/IsImageFile \"clojure/string\") (Cleat.Core.Runtime.Loader/IsImageFile \"clojure/nope\") (clojure.string/blank? \"\")]");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.EndWith("[true true false :patched]\n"), r.ToString());
+    }
+
+    /// <summary>
     /// cleat-090：eval / load / compile 走 Clojure 写的驱动（cleat.compiler.driver）：简单形式解释、其余编译执行（DriverOps 的计数），
     /// 用户代码里不成对的 pushThreadBindings 不被驱动弹掉，*compile-files* 编出的包程序集在新进程里加载运行。
     /// </summary>

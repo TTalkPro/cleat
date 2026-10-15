@@ -319,12 +319,14 @@ public static class Program
         var core = Namespace.find(Symbol.intern("clojure.core"));
         var loadedLibs = core?.FindInternedVar(Symbol.intern("*loaded-libs*"));
         if (loadedLibs != null) Var.pushThreadBindings(RT.map(loadedLibs, new Ref(PersistentTreeSet.EMPTY)));
+        Cleat.Core.Runtime.Loader.ReloadImageFiles = true;   // 镜像里的文件要从源码重新加载（平时 RT.load 它们是空操作）
         try
         {
             CompileHook(Cleat.Core.Compiler.DriverOps.CompileBootHook).invoke(forms, dll);
         }
         finally
         {
+            Cleat.Core.Runtime.Loader.ReloadImageFiles = false;
             if (loadedLibs != null) Var.popThreadBindings();
         }
         Console.Error.WriteLine($"cleat: compiled the Clojure boot image ({forms.Count} entries) in {sw.ElapsedMilliseconds} ms -> {dll}");

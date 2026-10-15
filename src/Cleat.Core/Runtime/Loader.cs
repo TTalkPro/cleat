@@ -289,6 +289,18 @@ public static class Loader
     /// </summary>
     public static bool BootImageInitializing { get; private set; }
 
+    /// <summary>
+    /// 镜像里的文件：初始化期间 RT.load 经过的相对路径（core.clj 的 (load "core_print")、各库的 require）。之后再 RT.load 它们是空操作
+    /// ——JVM 里 AOT 库的 __init 类已初始化、RT.load 不再做事，(use 'clojure.core) 因此不会从源码重载整个 core（cleat-099）。
+    /// </summary>
+    private static readonly HashSet<string> s_imageFiles = new();
+
+    /// <summary>构建下一级镜像时（Program.CompileBootImage）要从源码真正加载镜像里的文件：置真。</summary>
+    public static bool ReloadImageFiles { get; set; }
+
+    /// <summary>rel 是否镜像里的文件（见 <see cref="s_imageFiles"/>）。</summary>
+    public static bool IsImageFile(string rel) { lock (s_imageFiles) return s_imageFiles.Contains(rel); }
+
     /// <summary>加载 Clojure 镜像并设置 <see cref="BootInterface.CurrentImageId"/>；返回程序集。</summary>
     public static Assembly LoadBootImage(string path)
     {
@@ -300,6 +312,15 @@ public static class Loader
         finally
         {
             BootImageInitializing = false;
+        }
+        // 镜像里的库：初始化结束时 *loaded-libs* 里的（各文件的 ns 形式登记的，require 因此没经过 RT.load），加上初始化期间 RT.load 经过的
+        // （core.clj 里 (load "core_print") 一类与 (RT/load "clojure/core") 本身）
+        if (Namespace.find(Symbol.intern("clojure.core"))?.FindInternedVar(Symbol.intern("*loaded-libs*"))?.deref() is IDeref libsRef
+            && libsRef.deref() is IPersistentSet libs)
+        {
+            lock (s_imageFiles)
+                for (ISeq s = RT.seq(libs); s != null; s = s.next())
+                    if (s.first() is Symbol lib) s_imageFiles.Add(lib.Name.Replace('.', '/').Replace('-', '_'));
         }
         var asm = Loaded.TryGetValue(Path.GetFileNameWithoutExtension(path), out var a) ? a : null;
         if (asm != null) BootInterface.CurrentImageId = asm.ManifestModule.ModuleVersionId;
@@ -351,7 +372,12 @@ public static class Loader
         }
 
         string rel = relativePath.TrimStart('/');
-        if (BootImageInitializing) return true;
+        if (BootImageInitializing)
+        {
+            lock (s_imageFiles) s_imageFiles.Add(rel);
+            return true;
+        }
+        if (!ReloadImageFiles && IsImageFile(rel)) return true;
         if (!RT.booleanCast(RT.CompileFilesVar.deref()) && PackageIndex.Contains(rel))
         {
             WithLoadBindings(() => PackageIndex.TryRun(rel, out object r) ? r : null);
