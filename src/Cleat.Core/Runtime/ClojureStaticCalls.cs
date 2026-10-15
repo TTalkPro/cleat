@@ -31,12 +31,12 @@ public static class ClojureStaticCalls
         && !(t is System.Reflection.Emit.TypeBuilder);
 
     /// <summary>
-    /// 形参类型：object、五种原始类型，引用类型发 castclass——Cleat.Core 的方法任何引用类型都可以（JVM 的 checkcast）；其余只允许 String 与 Core 的类型，
-    /// 不碰委托等 Reflector 会转换的形参（IFn → 委托）
+    /// 形参类型：object、五种原始类型，能按名字引用的引用类型（发 castclass，JVM 的 checkcast；cleat-101 起不再限于 String 与 Core 的类型）；
+    /// 不碰委托（Reflector 把 IFn 转成委托）、数组（Reflector 做元素类型的协变）、枚举与 Nullable（值类型，Reflector 按名字 / 数字转换）
     /// </summary>
     private static bool ParamOk(Type p, bool core) =>
         p == typeof(object) || ValueParamOk(p)
-        || (!p.IsValueType && Nameable(p) && !typeof(Delegate).IsAssignableFrom(p) && (core || p == typeof(string) || p.Assembly == s_core));
+        || (!p.IsValueType && Nameable(p) && !typeof(Delegate).IsAssignableFrom(p));   // cleat-101：任何能按名字引用的引用类型都 castclass
 
     private static bool ReturnOk(Type r) =>
         r == typeof(void) || r == typeof(object) || ValueParamOk(r) || (!r.IsValueType && Nameable(r));
@@ -109,10 +109,18 @@ public static class ClojureStaticCalls
                 .All(i => matching.Select(m => m.GetParameters()[i].ParameterType).Distinct().Count() == 1);
             if (exact.Count == 1 && unknownAgree) chosen = exact[0];
         }
-        // 没有相符的方法、无实参时：公共字段（Reflector 的顺序：方法优先，再字段 / 属性；属性由 get_X 方法覆盖）
+        // 没有相符的方法、无实参时：公共字段，再公共属性的 getter（Reflector 的顺序：方法优先，再字段 / 属性）。
+        // 属性（cleat-101）：getter 当作普通方法决议，codegen 发 call / callvirt get_X——此前属性读一律走运行时的 Reflector（约 80 ns 一次）
         if (chosen == null && n == 0 && matching.Count == 0 && stubIfaces == null)
         {
-            return FieldSig(type.GetField(member, BindingFlags.Public | (st ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.FlattenHierarchy));
+            var fflags = BindingFlags.Public | (st ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.FlattenHierarchy;
+            var field = type.GetField(member, fflags);
+            if (field != null) return FieldSig(field);
+            var prop = type.GetProperty(member, fflags);
+            if (prop == null && type.IsInterface) prop = type.GetInterfaces().Select(i => i.GetProperty(member, fflags)).FirstOrDefault(p => p != null);
+            var getter = prop?.GetGetMethod();
+            if (getter == null || getter.GetParameters().Length != 0 || getter.IsStatic != st) return Array.Empty<object>();
+            chosen = getter;
         }
         if (chosen == null || !Nameable(chosen.DeclaringType)) return Array.Empty<object>();
         var pts = chosen.GetParameters().Select(p => p.ParameterType).ToArray();
@@ -125,6 +133,63 @@ public static class ClojureStaticCalls
             !chosen.IsStatic && !chosen.DeclaringType.IsValueType,
             "method",
         };
+    }
+
+    /// <summary>
+    /// 构造器的编译期决议（cleat-101）：<c>(new T a …)</c> 此前一律经 <see cref="ClojureOps.NewOf"/> → <see cref="Reflector.New"/>（每次分配 CallKey 与
+    /// 类型数组，约 80 ns）。规则同 <see cref="Resolve"/> 的方法：该实参个数的公共构造器（无 ref / params）只有一个时选它（实参按 Reflector 的规则转换），
+    /// 多个时按实参静态类型选唯一相容的。可决议时返回 [类型名, "", 形参类型名数组, 类型名, 是否值类型, "ctor"]，否则空数组。
+    /// 不决议：委托类型（Reflector 用 IFn 建委托）、抽象类型、桩类型、不能按名字引用的类型。
+    /// </summary>
+    public static object[] ResolveCtor(object t, object argTypes)
+    {
+        if (t is Type stub && HostSyntax.IsStub(stub)) return StubCtor(stub, ((object[])argTypes).Length);
+        if (t is not Type type || !Nameable(type) || type.IsAbstract || type.IsInterface || typeof(Delegate).IsAssignableFrom(type)) return Array.Empty<object>();
+        var key = (type, ".ctor", string.Join(",", ((object[])argTypes).Select(a => a as string ?? "?")), false);
+        return s_resolved.GetOrAdd(key, _ => ResolveCtorUncached(type, (object[])argTypes));
+    }
+
+    /// <summary>
+    /// 正在编译的 deftype / defrecord 的桩（同一个顶层形式里的 new，典型是 defrecord 展开出的工厂 ->R / map->R）：桩的字段就是全部字段，
+    /// 生成的类有全字段的构造器；记录（末四个字段 __meta __extmap __hash __hasheq）另有基本字段与基本字段 + meta + extmap 两个。
+    /// 类型名写成不带程序集的全名，发射器按名字找到本单元正在定义的类型。
+    /// </summary>
+    private static object[] StubCtor(Type stub, int n)
+    {
+        var fields = stub.GetFields(BindingFlags.Public | BindingFlags.Instance).Select(f => f.Name).ToArray();
+        int all = fields.Length;
+        bool record = all >= 4 && fields[^4] == "__meta" && fields[^3] == "__extmap" && fields[^2] == "__hash" && fields[^1] == "__hasheq";
+        if (n != all && !(record && (n == all - 4 || n == all - 2))) return Array.Empty<object>();
+        return new object[] { stub.FullName, "", Enumerable.Repeat((object)"System.Object", n).ToArray(), stub.FullName, false, "ctor" };
+    }
+
+    private static object[] ResolveCtorUncached(Type type, object[] argTypes)
+    {
+        Type[] ats = argTypes.Select(a => a is string s ? Type.GetType(s) : null).ToArray();
+        int n = ats.Length;
+        bool core = type.Assembly == s_core;
+        var fit = type.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c =>
+            {
+                var ps = c.GetParameters();
+                return ps.Length == n && !ps.Any(p => p.ParameterType.IsByRef || p.ParameterType.IsPointer || p.IsDefined(typeof(ParamArrayAttribute), false));
+            })
+            .ToList();
+        var matching = fit.Where(c => c.GetParameters().Select((p, i) => Match(p.ParameterType, ats[i], core)).All(x => x)).ToList();
+        ConstructorInfo chosen = null;
+        if (fit.Count == 1 && (core || matching.Count == 1)) chosen = fit[0];
+        else if (matching.Count == 1) chosen = matching[0];
+        else if (matching.Count > 1 && ats.Any(a => a != null))
+        {
+            var exact = matching.Where(c => c.GetParameters().Select((p, i) => ats[i] == null || p.ParameterType == ats[i]).All(x => x)).ToList();
+            bool unknownAgree = Enumerable.Range(0, n).Where(i => ats[i] == null)
+                .All(i => matching.Select(c => c.GetParameters()[i].ParameterType).Distinct().Count() == 1);
+            if (exact.Count == 1 && unknownAgree) chosen = exact[0];
+        }
+        if (chosen == null) return Array.Empty<object>();
+        var pts = chosen.GetParameters().Select(p => p.ParameterType).ToArray();
+        if (!pts.All(p => ParamOk(p, core))) return Array.Empty<object>();
+        return new object[] { HostSyntax.TypeName(type), "", pts.Select(p => (object)HostSyntax.TypeName(p)).ToArray(), HostSyntax.TypeName(type), type.IsValueType, "ctor" };
     }
 
     /// <summary>

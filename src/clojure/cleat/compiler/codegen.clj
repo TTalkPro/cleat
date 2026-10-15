@@ -65,6 +65,7 @@
 (def opt-034? (not (opt-off? "known")))
 (def opt-inline? (not (opt-off? "inline")))
 (def opt-infer? (not (opt-off? "infer")))
+(def opt-host? (not (opt-off? "host")))   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
 
 ;; —— 编译单元（原版 unit）——
 
@@ -441,6 +442,7 @@
   "[static? 实例或nil 实参]，不是 CallStatic / CallInstance / GetStaticField / GetInstanceField 时 nil。"
   [d0 d1 e*]
   (cond (and (= d0 "CallStatic") (= d1 3) (>= (count e*) 3)) [true nil (drop 3 e*)]
+        (and (= d0 "NewOf") (= d1 1) (>= (count e*) 1)) [true nil (rest e*)]   ; 构造器（cleat-101）
         (and (= d0 "CallInstance") (= d1 4) (>= (count e*) 4)) [false (nth e* 2) (drop 4 e*)]
         (and (= d0 "GetStaticField") (false? d1) (= (count e*) 2)) [true nil ()]
         (and (= d0 "GetInstanceField") (false? d1) (= (count e*) 3)) [false (nth e* 2) ()]
@@ -452,26 +454,27 @@
   "静态决议：[签名 static? 实例 实参] / :pending / nil。签名为 ClojureStaticCalls.Resolve 的结果 object[]。env 缺省用 sound-types。"
   ([d0 d1 e*] (host-call-signature d0 d1 e* nil))
   ([d0 d1 e* env]
-   (let [layout (host-call-layout d0 d1 e*)
+   (let [layout (when opt-host? (host-call-layout d0 d1 e*))
          env (if (or (nil? env) (identical? env var-types)) sound-types env)]
      (when layout
        (let [t (quoted-datum (first e*))
-             nm (quoted-datum (second e*))
+             ctor? (= d0 "NewOf")
+             nm (if ctor? "" (quoted-datum (second e*)))
              gen (if (#{"CallStatic" "CallInstance"} d0) (quoted-datum (nth e* (if (first layout) 2 3))) nil)]
          (when (and (instance? Type t) (string? nm) (empty-gen? gen))
            (let [ats (mapv #(static-arg-type % env) (nth layout 2))]
              (if (some #{:pending} ats)
                :pending
-               (let [^objects sig (if (#{"CallStatic" "CallInstance"} d0)
-                                    (Cleat.Core.Runtime.ClojureStaticCalls/Resolve t nm (object-array ats) (first layout))
-                                    (Cleat.Core.Runtime.ClojureStaticCalls/ResolveField t nm (first layout)))]
+               (let [^objects sig (cond ctor? (Cleat.Core.Runtime.ClojureStaticCalls/ResolveCtor t (object-array ats))
+                                        (#{"CallStatic" "CallInstance"} d0) (Cleat.Core.Runtime.ClojureStaticCalls/Resolve t nm (object-array ats) (first layout))
+                                        :else (Cleat.Core.Runtime.ClojureStaticCalls/ResolveField t nm (first layout)))]
                  (when (pos? (alength sig)) (into [sig] layout)))))))))))
 
 (defn- host-call-type [d0 d1 e* env]
   (let [sl (host-call-signature d0 d1 e* env)]
     (cond (= sl :pending) :top
           (nil? sl) nil
-          :else (case (str (aget ^objects (first sl) 3)) "System.Int64" :l64 "System.Double" :fl nil))))
+          :else (case (str (aget ^objects (first sl) 3)) "System.Int64" :l64 "System.Int32" :l64 "System.Double" :fl nil))))   ; Int32 结果按 l64（conv.i8，cleat-101）
 
 (defn- static-arg-type [e env]
   (let [by-type #(case (expr-type e env) :l64 "System.Int64" :fl "System.Double" :top :pending nil)]
@@ -724,7 +727,7 @@
     (nanopass-case [L3 Expr] e
       [(clj-call ~d0 ~d1 ~e* ...)
        (let [sl (host-call-signature d0 d1 e*)]
-         (when (and (vector? sl) (= (str (aget ^objects (first sl) 3)) (if (= t :l64) "System.Int64" "System.Double")))
+         (when (and (vector? sl) (contains? (if (= t :l64) #{"System.Int64" "System.Int32"} #{"System.Double"}) (str (aget ^objects (first sl) 3))))
            sl))]
       [else nil])))
 
@@ -807,12 +810,15 @@
         (doseq [[t pt raw?] (map vector temps types raws)] (emit! mc (i 'ldloc t)) (conv! pt raw?)))
       (doseq [[c pt raw?] (map vector codes types raws)] (emit-code! mc c) (conv! pt raw?)))
     (let [kind (str (aget sig 5))]
-      (if (= kind "method")
-        (emit! mc (i (if virt? 'callvirt 'call) decl nm (apply i pts) ret))
+      (case kind
+        "method" (emit! mc (i (if virt? 'callvirt 'call) decl nm (apply i pts) ret))
+        ;; 构造器（cleat-101）：newobj；值类型的结果装箱（sig 第 5 项为真时）
+        "ctor" (do (emit! mc (i 'newobj decl (apply i pts))) (when virt? (emit! mc (i 'box decl))))
         (do (when (= kind "volatile-field") (emit! mc (i 'volatile.)))
             (emit! mc (if static? (i 'ldsfld decl nm) (i 'ldfld decl nm))))))
     (cond
-      (= ctx :raw) nil
+      (= ctx :raw) (when (= ret "System.Int32") (emit! mc (i 'conv.i8)))   ; Int32 结果的原始用途是 l64（cleat-101）
+      (= (str (aget sig 5)) "ctor") (finish-value! mc ctx)
       (= ret "System.Boolean") (finish-bool! mc ctx)
       :else (do (cond (= ret "System.Void") (emit! mc (i 'ldnull))
                       (= ret "System.Object") (emit! mc (i 'call static-calls-type "RetObject" (i obj) obj))

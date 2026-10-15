@@ -70,7 +70,9 @@ cleat-099 的结论记下了 `ClojureStaticCalls.Resolve` 相对 ClojureCLR 编�
 4. **非 core 的引用类型形参**：任何公共、可按名字引用的类型都 `castclass`（JVM 的 checkcast）；委托形参仍交给 Reflector（IFn → 委托转换）。
 5. **泛型方法**：实参类型都已知且能唯一推断类型实参时 `call` 实例化后的方法；否则照旧。
 
-每项都有开关（`CLEAT_NO_OPT` 含 `ctor` / `prop` / …），语料门禁与两套基线不许变化（这些都是行为不变的优化）。
+开关 `CLEAT_NO_OPT=host` 关掉全部宿主调用的编译期决议（语义对照用）；语料门禁与两套基线不许变化（这些都是行为不变的优化）。
+
+**cleat-101 结果（2026-10-15）**：1、2、4 完成，另加桩类型的构造器（defrecord 工厂）与 Int32 返回值按 l64；3（值类型目标）、5（泛型方法）等有基准证据再做。ctor 305 → 80 ms，property 155 → 20 ms。
 
 ## §3 Num 与双局部变量（cleat-102）
 

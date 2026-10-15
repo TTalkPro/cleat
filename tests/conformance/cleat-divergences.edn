@@ -2,7 +2,7 @@
 ;; 门禁：cleat tools/conformance.clj --gate（Conformance 测试）——失败行不在表中（新失败）或表中的行已通过 / 不在语料中（过期）都失败。
 ;; 改动后按实际结果有意地更新本表（每条要有 :category 与具体的 :reason）。 `:flaky true` 的条目可过可不过（结果取决于进程内的偶然顺序），门禁不算它过期。
 {:doc "Rows of tests/conformance/corpus.edn (:common) that fail on cleat, each classified. tools/conformance.clj --gate fails on a NEW failing row and on a STALE entry."
- :counts {:corpus/jolt-value 97, :error-model 6, :host/boxing 3, :host/class-name 17, :host/defaults 1, :host/exception-type 28, :host/hash 3, :host/jvm-api 310, :host/message 2, :host/numeric-types 10, :host/reader-features 4, :host/regex 39, :host/strings 1, :not-yet 27, :numeric 2, :printf 2, :strictness 2, :upstream/clojureclr 7}
+ :counts {:corpus/jolt-value 97, :error-model 6, :host/boxing 3, :host/class-name 17, :host/defaults 1, :host/exception-type 27, :host/hash 3, :host/jvm-api 310, :host/message 2, :host/numeric-types 10, :host/reader-features 4, :host/regex 39, :host/strings 1, :not-yet 27, :numeric 2, :printf 2, :strictness 2, :upstream/clojureclr 7}
  :legend
  {:host/jvm-api
   "the row calls a Java API: java.* / javax.* classes, java.lang statics (Long/MAX_VALUE, Integer/parseInt, Double/isNaN, System/getProperty), Java method names (.getMessage, .length, .getName, .substring), java.io / clojure.java.io, or clojure.lang members by their JVM names. cleat runs on the CLR and does not emulate the Java class library (designs/03 §4); the CLR spelling (.Message, Int64/MaxValue, clojure.clr.io …) works"
@@ -429,7 +429,6 @@
   {:suite "resolution / file load" :label "loading file with unresolved symbol throws" :category :corpus/jolt-value :reason "loads a file from jolt's repository (test/chez/…)"}
   {:suite "errors / host operations carry a JVM class" :label "format rejects a non-number with the JVM class and message" :category :host/jvm-api :reason "Java member RuntimeType.getName (no CLR counterpart under that name)"}
   {:suite "errors / host operations carry a JVM class" :label "a Math static rejects a non-number" :category :host/jvm-api :reason "Java member Math.sqrt (no CLR counterpart under that name)"}
-  {:suite "errors / host operations carry a JVM class" :label "re-seq rejects a non-string" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
   {:suite "errors / host operations carry a JVM class" :label "split rejects a non-string" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
   {:suite "errors / host operations carry a JVM class" :label "a System static rejects a non-string" :category :host/jvm-api :reason "JVM class statics: System/…"}
   {:suite "errors / host operations carry a JVM class" :label "format rejects a non-string format" :category :host/exception-type :reason "a wrong argument type fails as a Reflector overload miss (InvalidOperationException \"No matching …\"), not ClassCastException"}
