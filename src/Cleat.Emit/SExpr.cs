@@ -5,7 +5,7 @@ using System.Text;
 
 namespace Cleat.Emit;
 
-// Lcil 的极简 S 表达式读取器（designs/05-cil-backend.md，格式见 LCIL.md §1），不依赖 Clojure reader。从 IronScheme（BSD）的 SExpr.cs 移植。
+// Lcil 的极简 S 表达式读取器（designs/05-cil-backend.md，格式见 LCIL.md §1），不依赖 Clojure reader。从作者自己的 IronScheme.Emit（TTalkPro/IronScheme 分支，同一作者，无上游代码）的 SExpr.cs 移植。
 // 每个节点带源位置，供校验报错。
 
 public abstract class SNode

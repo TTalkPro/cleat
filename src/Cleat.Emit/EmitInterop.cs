@@ -6,7 +6,7 @@ using System.Reflection.Emit;
 
 namespace Cleat.Emit;
 
-// 互操作指令的决议（designs/05-cil-backend.md §5；从 IronScheme 移植）。
+// 互操作指令的决议（designs/05-cil-backend.md §5；从作者自己的 IronScheme.Emit 移植）。
 // 运行时 clojure（LCIL.md §2 的 runtime 子句）：类型名经 Cleat.Core.Runtime.TypeResolver 解析，运行时决议与值转换由
 // Cleat.Core.Runtime.Reflector 完成（void → nil）。
 // 成员唯一时静态生成调用，参数经 Convert<T>、返回值经 ConvertFrom 转换；

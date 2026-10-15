@@ -53,7 +53,7 @@ cleat -I src... --compile-package out/Name.dll [--root dir]... ns...    编包�
 | 目录 | 内容 |
 |---|---|
 | `src/Cleat.Core/` | 运行时（C#）：`clojure.lang` 的集合、数值、Var、Namespace、reader、互操作与静态决议、加载器、包程序集索引；`clojure.lang/` 下的部分改写自 ClojureCLR（EPL） |
-| `src/Cleat.Emit/` | Lcil 发射器：Lcil 文本（[LCIL.md](src/Cleat.Emit/LCIL.md)）→ Reflection.Emit → 内存程序集或 dll；移植自 IronScheme（BSD） |
+| `src/Cleat.Emit/` | Lcil 发射器：Lcil 文本（[LCIL.md](src/Cleat.Emit/LCIL.md)）→ Reflection.Emit → 内存程序集或 dll（作者先在自己的 IronScheme 分支里写的 IronScheme.Emit，移植过来） |
 | `src/Cleat.Host/` | 宿主 `cleat`：命令行、REPL、`-M/-X/-T`、镜像与编译器的加载、`--compile-boot` / `--compile-package` |
 | `src/Cleat.Runtime/`、`src/Cleat.Hosting/` | NuGet 包 `Cleat.Runtime` 与惰性启动的 `CleatRuntime`：C# / F# 项目直接引用 cleat 编出的程序集（[designs/17](designs/17-lazy-runtime-startup.md)） |
 | `src/clojure/clojure/` | `clojure.core` 与随附命名空间（string、set、walk、edn、pprint、test、repl、main、zip、data、instant、clr.io …），改写自 Clojure / ClojureCLR（EPL） |
@@ -106,7 +106,7 @@ JVM 异常类名有一张别名表（`ClassCastException` → `InvalidCastExcept
 ## 许可
 
 本仓库 Apache-2.0（[LICENSE](LICENSE)）。几部分改写自其他项目并保留各自的许可：`src/Cleat.Core/clojure.lang/` 与 `src/clojure/` 来自 ClojureCLR / Clojure（EPL-1.0），
-`src/Cleat.Emit/` 来自 IronScheme（BSD-3），`src/clojure/cleat/nanopass/` 是 nanopass 框架的移植（MIT），测试资产来自 jolt、jank、ClojureCLR。全部列在 [NOTICE](NOTICE)。
+`src/clojure/cleat/nanopass/` 是 nanopass 框架的移植（MIT），测试资产来自 jolt、jank、ClojureCLR。全部列在 [NOTICE](NOTICE)。
 
 ## 文档
 

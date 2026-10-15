@@ -22,7 +22,7 @@ public enum EmitMode
 }
 
 /// <summary>
-/// Lcil → 程序集（designs/05-cil-backend.md；规格 LCIL.md）。从 IronScheme（BSD）的 Emitter.cs 移植。不引用 Cleat.Core 项目：
+/// Lcil → 程序集（designs/05-cil-backend.md；规格 LCIL.md）。从作者自己的 IronScheme.Emit（TTalkPro/IronScheme 分支，同一作者，无上游代码）的 Emitter.cs 移植。不引用 Cleat.Core 项目：
 /// 运行时类型按名字从已加载或 references 中的程序集解析；互操作规则调用 Core 的 TypeResolver / Reflector。
 /// </summary>
 public sealed partial class LcilEmitter

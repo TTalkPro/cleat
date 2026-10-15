@@ -6,7 +6,7 @@ using System.Reflection.Emit;
 
 namespace Cleat.Emit;
 
-// Lcil 对象模型（LCIL.md §2 ~ §4）与解析、校验。从 IronScheme（BSD）的 Model.cs 移植并扩展：接口实现、volatile 字段、程序集属性、runtime 子句。
+// Lcil 对象模型（LCIL.md §2 ~ §4）与解析、校验。从作者自己的 IronScheme.Emit 的 Model.cs 移植并扩展：接口实现、volatile 字段、程序集属性、runtime 子句。
 
 public sealed class LcilAssembly
 {

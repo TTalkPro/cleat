@@ -7,7 +7,7 @@ using System.Runtime.CompilerServices;
 
 namespace Cleat.Emit;
 
-// 常量表（designs/05 §3；从 IronScheme 移植）：编码成 fasl、用 Deflate 压缩后作为 "$Constants" 类型的初始化数据（RVA 静态数据）嵌入程序集，
+// 常量表（designs/05 §3；从作者自己的 IronScheme.Emit 移植）：编码成 fasl、用 Deflate 压缩后作为 "$Constants" 类型的初始化数据（RVA 静态数据）嵌入程序集，
 // 类型初始化器把它复制到 byte[]（RuntimeHelpers.InitializeArray），由 Cleat.Core.Runtime.Fasl.ReadPackedTable 解压读回。
 // object[] 存入静态字段 c；ldconst k 即 c[k]。原先以 base64 字符串存放（UTF-16，约为原始字节的 2.7 倍，iron-037 改）。
 // 不用托管资源：内存模式（eval）的程序集不能带资源；初始化数据两种模式都可用。
