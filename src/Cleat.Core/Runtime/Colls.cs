@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using clojure.lang;
 
 namespace Cleat.Core.Runtime;
@@ -10,6 +11,7 @@ public static class Colls
     /// 但先用类检查排除最常见的情形——ASeq（Cons、非空的 PersistentList、Range……）总是非空，LazySeq 看 seq；
     /// .NET 对没实现 Counted 的类型做接口检查要扫完整张接口表（nqueens 里 counted? 占 4%）。
     /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool IsEmpty(object coll)
     {
         if (coll is null) return true;

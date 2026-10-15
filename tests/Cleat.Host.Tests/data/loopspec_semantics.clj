@@ -32,3 +32,8 @@
 ;; nested loops: only the inner one is copied
 (defn grid [n x] (loop [i 0 acc x] (if (< i n) (recur (inc i) (loop [j 0 a acc] (if (< j n) (recur (inc j) (+ a j)) a))) acc)))
 (show (grid 4 0) (grid 4 0.5) (grid 3 1/3))
+;; cleat-113: Num variables are speculated too (entry double, double steps; entry long turning double)
+(defn sumfp [n] (loop [i n sum 0.0] (if (< i 0.0) sum (recur (- i 1.0) (+ i sum)))))
+(show (sumfp 10.0) (sumfp 10) (sumfp 5/2) (sumfp -1.0) (r #(sumfp nil)))
+(defn halve [x] (loop [v x k 0] (if (< v 1.0) [v k] (recur (/ v 2.0) (inc k)))))
+(show (halve 100.0) (halve 100) (halve 1/3))

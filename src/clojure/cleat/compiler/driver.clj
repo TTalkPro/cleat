@@ -104,7 +104,10 @@
         clj-def (let [[d _ _ e0 e1] fs] (and (instance? clojure.lang.Var d) (simple? e0 scope) (simple? e1 scope)))
         clj-invoke (and (simple? (first fs) scope) (every? #(simple? % scope) (second fs)))
         clj-keyword-invoke (let [[d e e*] fs] (and (keyword? d) (<= (count e*) 1) (simple? e scope) (every? #(simple? % scope) e*)))
-        clj-call (let [[d0 d1 e*] fs] (and (some? (ops-method d0 d1 (count e*))) (every? #(simple? % scope) e*)))
+        clj-call (let [[d0 d1 e*] fs]
+                   (if (= d0 "KnownCall")   ; 用户函数的已知调用（cleat-110）：解释时就是 IFn 调用
+                     (every? #(simple? % scope) (rest e*))
+                     (and (some? (ops-method d0 d1 (count e*))) (every? #(simple? % scope) e*))))
         call (let [[e0 e*] fs]
                 (when-let [[x* body] (let-head e0)]
                   (and (= (count x*) (count e*)) (every? #(simple? % scope) e*) (simple? body (into scope x*)))))
@@ -137,13 +140,15 @@
         clj-keyword-invoke (let [[kw e e*] fs
                                   target (seval e env)]
                               (if (empty? e*) (get target kw) (get target kw (seval (first e*) env))))
-        clj-call (let [[d0 d1 e*] fs
+        clj-call (if (= (first fs) "KnownCall")
+                   (let [[_ _ e*] fs] (apply (seval (second e*) env) (map #(seval % env) (drop 2 e*))))
+                   (let [[d0 d1 e*] fs
                         m (ops-method d0 d1 (count e*))
                         vals (mapv #(seval % env) e*)
                         args (if (false? d1)
                                (object-array vals)
                                (let [n (long d1)] (object-array (conj (subvec vals 0 n) (object-array (subvec vals n))))))]
-                    (unwrap-invoke m args))
+                    (unwrap-invoke m args)))
         call (let [[e0 e*] fs
                     [x* body] (let-head e0)
                     vals (mapv #(seval % env) e*)]

@@ -180,6 +180,17 @@ public static partial class HostSyntax
 
     internal static Type[] StubInterfaces(Type stub) => s_stubInterfaces.TryGetValue(stub, out var ifs) ? ifs : null;
 
+    /// <summary>cleat-112：字段带类型（null 为 object；"System.Int64" / "System.Double" 为原始字段）——外部 (.-f x) 的静态决议看到与真正类型相同的字段类型</summary>
+    public static Type DefineStub(string name, object fieldNames, object fieldTypes, string tagName, object interfaces)
+    {
+        var t = DefineStub(name, fieldNames, fieldTypes);
+        lock (s_pendingStubs) s_pendingStubs[name] = t;
+        if (CurrentNs != null && !string.IsNullOrEmpty(tagName))
+            lock (s_stubTags) s_stubTags[CurrentNs.Name.Name + "/" + tagName] = t;
+        if (interfaces is object[] ifs) s_stubInterfaces.AddOrUpdate(t, ifs.OfType<Type>().ToArray());
+        return t;
+    }
+
     public static Type DefineStub(string name, object fieldNames, string tagName, object interfaces)
     {
         var t = DefineStub(name, fieldNames, tagName);
@@ -196,13 +207,30 @@ public static partial class HostSyntax
         return t;
     }
 
-    public static Type DefineStub(string name, object fieldNames)
+    public static Type DefineStub(string name, object fieldNames) => DefineStub(name, fieldNames, (object)null);
+
+    public static Type DefineStub(string name, object fieldNames, object fieldTypes)
     {
         var asmName = new AssemblyName("cleat$stub$" + Guid.NewGuid().ToString("N"));
         var ab = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(asmName, System.Reflection.Emit.AssemblyBuilderAccess.RunAndCollect);
         var tb = ab.DefineDynamicModule(asmName.Name).DefineType(name, TypeAttributes.Public | TypeAttributes.Sealed);
         var fields = ((object[])fieldNames).Cast<string>().ToArray();
-        foreach (var f in fields) tb.DefineField(f, typeof(object), FieldAttributes.Public);
+        var types = fieldTypes is object[] fts ? fts : null;
+        var ftypes = new Type[fields.Length];
+        for (int k = 0; k < fields.Length; k++)
+        {
+            ftypes[k] = types != null && types[k] is string tn ? (tn == "System.Int64" ? typeof(long) : tn == "System.Double" ? typeof(double) : typeof(object)) : typeof(object);
+            tb.DefineField(fields[k], ftypes[k], FieldAttributes.Public);
+        }
+        if (ftypes.Any(t => t != typeof(object)))
+        {
+            // 与 codegen 一致：按字段类型的第二个构造器（cleat-112）
+            var tctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, ftypes);
+            var til = tctor.GetILGenerator();
+            til.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);
+            til.Emit(System.Reflection.Emit.OpCodes.Call, typeof(object).GetConstructor(Type.EmptyTypes));
+            til.Emit(System.Reflection.Emit.OpCodes.Ret);
+        }
         var ctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, fields.Select(_ => typeof(object)).ToArray());
         var il = ctor.GetILGenerator();
         il.Emit(System.Reflection.Emit.OpCodes.Ldarg_0);

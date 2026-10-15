@@ -1,0 +1,7 @@
+[4.0 6.0] [1.0 2.0] [5.0 6.5] :error :error
+(System.Double System.Double) 1.5
+[5 10.0] (System.Int64 System.Double)
+:error [1 0.5]
+#user.P{:x 1, :y 2.0, :z :z} #user.P{:x 3, :y 4.5, :z nil, :w 9} 1 2.0 System.Double true #user.P{:x 10, :y 2.0, :z :z} 3 {:x 1, :y 2.0, :z :z} {:x 1, :y 2.0} #user.P{:x 1, :y 7.0, :z :z} :error
+:error #user.P{:x 1, :y 2.0, :z nil}
+true true {:m 1} 2

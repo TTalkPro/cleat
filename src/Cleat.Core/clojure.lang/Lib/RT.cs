@@ -773,6 +773,8 @@ namespace clojure.lang
 
         public static object first(object x)
         {
+            // cleat-111：ASeq（Cons、PersistentList……）先判——类检查加虚调用，避开接口转换与接口分派的存根
+            if (x is ASeq a) return a.first();
             ISeq seq = x as ISeq ?? RT.seq(x);
 
             if (seq == null)
@@ -802,6 +804,7 @@ namespace clojure.lang
 
         public static ISeq next(object x)
         {
+            if (x is ASeq a) return a.next();   // cleat-111
             ISeq seq = (x as ISeq) ?? RT.seq(x);
 
             if (seq == null)
@@ -813,6 +816,7 @@ namespace clojure.lang
 
         public static ISeq more(object x)
         {
+            if (x is ASeq a) return a.more();   // cleat-111
             ISeq seq = x as ISeq ?? RT.seq(x);
 
             if (seq == null)

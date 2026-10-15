@@ -36,8 +36,12 @@ public static class ClojureOps
         return r;
     }
 
-    public static object NotNil(object instance, object name) =>
-      instance ?? throw new NullReferenceException($"Cannot invoke member {name} on nil");
+    // 每次宿主成员访问都调用（字段读取前的空检查）：抛出部分放到不内联的方法里，本身内联进生成的代码（cleat-112）
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public static object NotNil(object instance, object name) => instance ?? ThrowNil(name);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static object ThrowNil(object name) => throw new NullReferenceException($"Cannot invoke member {name} on nil");
 
     // —— 编译后代码直接调用的静态方法（cleat-051 的 $clj-call 节点：参数与返回都是 object，尾部实参可打包成 object[]）——
     // 与上面同名操作的过程语义相同；编译器生成 call ClojureOps::方法。

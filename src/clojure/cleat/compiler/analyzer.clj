@@ -430,6 +430,20 @@
                 (prim-sig v (seq v) (var-rettag vm))))
             al))))
 
+(def ^:private opt-known-calls? (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "known")))   ; cleat-110
+
+(defn- known-call-class
+  "用户函数的已知调用（cleat-110）：非动态的 Var、当前值是 AFunction 子类、该类有参数个数为 n 的公开静态 invokeStatic（self 加 n 个 object，
+  即没有闭包字段的固定子句）、类型能按名字引用时返回该类，否则 nil。调用时由 isinst 守卫，重定义照常生效。"
+  [^Var v n]
+  (when (and opt-known-calls? (not (.isDynamic v)) (.hasRoot v))
+    (let [r (.getRawRoot v)]
+      (when (instance? clojure.lang.AFunction r)
+        (let [^Type t (class r)
+              m (.GetMethod t "invokeStatic" ^|System.Type[]| (into-array Type (repeat (inc n) Object)))]
+          (when (and m (.IsStatic m) (.IsPublic t) (not (.IsNested t)) (not (.IsGenericType t)))
+            t))))))
+
 (defn- direct-link-target [v n]
   (let [r (AotPaths/DirectLinkTarget v n)] (when (string? r) r)))
 
@@ -520,7 +534,10 @@
       :else
       (if-let [cls (direct-link-target v n)]
         (L0-out (clj-static-call ~cls ~n ~(var-reference v) ~@(mapv #(analyze % (assoc nt :pos pos)) args)))
-        (invoke-node (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))))))
+        (if-let [kc (known-call-class v n)]
+          ;; cleat-110：Var 的当前值是有 invokeStatic 的函数类——codegen 在可以引用该类时生成 isinst 守卫后的直接调用
+          (apply clj-call "KnownCall" false (q kc) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
+          (invoke-node (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args)))))))
 
 (declare analyze-special)
 
@@ -684,8 +701,15 @@
         (when (sym-is? sym "&") (err form ctx "Can't use & as a local binding"))
         [sym init])))
 
+(declare host-form-type)
+
+(defn- prim-field-type
+  "deftype / defrecord 字段的原始类型（cleat-112）：^long / ^double 提示的字段编成 Int64 / Double 字段（JVM 同样），其余 nil（object）。"
+  [f]
+  (when (#{"System.Int64" "System.Double"} (:type f)) (:type f)))
+
 (defn- init-tag
-  "没有提示的 let 局部取初值的类（(new T …)、(T. …) 或带 ^T 提示的初值，只取引用类型）。"
+  "没有提示的 let 局部取初值的类（(new T …)、(T. …)、带 ^T 提示的初值，以及 host-form-type 看得出的调用形式；只取引用类型）。"
   [ctx d]
   (let [t (cond
             (tag-of d) (tag-type (tag-of d))
@@ -695,9 +719,12 @@
                 (sym-is? h "new") (when (> (count d) 1) (maybe-type ctx (second d)))
                 (and (symbol? h) (nil? (namespace h)))
                 (let [n (name h) k (count n)]
-                  (when (and (> k 1) (= \. (nth n (dec k))) (not= \. (nth n 0)) (not (find-local ctx h)))
-                    (maybe-type ctx (symbol (subs n 0 (dec k))))))
-                :else nil))
+                  (if (and (> k 1) (= \. (nth n (dec k))) (not= \. (nth n 0)) (not (find-local ctx h)))
+                    (maybe-type ctx (symbol (subs n 0 (dec k))))
+                    ;; cleat-112：其余调用形式取 host-form-type（宿主调用的返回类型、Var 的 :tag、:inline 展开后的形式——JVM 的 LocalBinding 同样取初值的类），
+                    ;; 例如 (let [a (object-array n)] (aset a i v)) 的 a 是 Object[]，其后的 aset 静态决议
+                    (host-form-type ctx d)))
+                :else (host-form-type ctx d)))
             :else nil)]
     (when (and t (not (.IsValueType ^Type t)) (not (.ContainsGenericParameters ^Type t)))
       (symbol (.FullName ^Type t)))))
@@ -1277,7 +1304,8 @@
           (err form ctx (str "Duplicate field name \"" (name (:sym (first fs))) "\" in " class-name)))
         (recur (rest fs))))
     (when-not reify?
-      (HostSyntax/DefineStub ^String class-name (object-array (map #(munge* (name (:sym %))) fields)) ^String tagname ifaces))
+      (HostSyntax/DefineStub ^String class-name (object-array (map #(munge* (name (:sym %))) fields))
+                             (object-array (map prim-field-type fields)) ^String tagname ifaces))
     (let [ms (mapv (fn [m]
                      (when-not (and (clj-list? m) (symbol? (first m))) (err form ctx (str "Method name must be a symbol: " (first m))))
                      (let [[mname params & mbody] m
@@ -1310,7 +1338,7 @@
           basis (take (- (count fields) drops) fields)
           ;; 描述（Clojure 向量，cleat-092）：[类名 reify? 字段 接口 方法 桩 basis 记录键 drops]，见 codegen 的 deftype-info-*
           info [class-name reify?
-                (mapv (fn [f] [(munge* (name (:sym f))) (:mutable f) (:volatile f)]) fields)
+                (mapv (fn [f] [(munge* (name (:sym f))) (:mutable f) (:volatile f) (or (prim-field-type f) false)]) fields)
                 (vec (nth layout 0))
                 (mapv :spec ms)
                 stubs

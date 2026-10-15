@@ -7,3 +7,5 @@ true true true true false false true false true true true
 [true true false true false true false true false true false true false true false true false false true true true true false true true false true true]
 "System.ArgumentException: Don't know how to create ISeq from: System.Int64" "System.ArgumentException: Don't know how to create ISeq from: clojure.lang.Keyword"
 123 1024 -1 1023 1024 -129 System.Int64 1024 2 -137604029 1075576832
+12 -12 :ovf -9223372036854775808 :ovf 9223372030926249001 :ovf :ovf 0 -9223372036854775807 -9223372036854775807 -9223372036854775808 :ovf
+:ovf -9223372036854775808 :ovf -42

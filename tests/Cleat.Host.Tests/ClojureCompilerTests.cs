@@ -161,6 +161,55 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-112：deftype / defrecord 的 ^long / ^double 字段编成 Int64 / Double 字段（构造器形参仍是 object，另有按字段类型的构造器），方法体里原始读写，
+    /// 外部 (.-f x) 静态决议到原始字段。tests/Cleat.Host.Tests/data/primfield_semantics.clj 的输出与 .out 逐字相同
+    /// （与 JVM Clojure 1.12 对照过：类型名之外只有 map->P 给 ^long 字段 1.5 时 JVM 报错、cleat 按 longCast 截断）。
+    /// </summary>
+    [Test]
+    public void PrimitiveTypeFields()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "primfield_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var r = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Is.EqualTo(expected), r.ToString());
+    }
+
+    /// <summary>
+    /// cleat-111 / 112：较窄的数值宿主结果（(byte x) 的 RT.byteCast、byte[] / short[] / float[] 的 aset）静态决议并与运行时路径一样加宽，同类型的值类型实参原生直传；
+    /// 符号 / 关键字 / 字符串的 = 走快路径；无提示的 let 局部取初值的宿主类型（(object-array n)、(str x)、(StringBuilder.)）。
+    /// tests/Cleat.Host.Tests/data/narrow_semantics.clj 在 CLEAT_NO_OPT=host 与开两种设置下输出相同，开时没有反射警告。
+    /// </summary>
+    [Test]
+    public void NarrowHostResultsAndLetTypes()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "narrow_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "host") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "host on:\n" + on.Out + "\nhost off:\n" + off.Out);
+        Assert.That(on.Out, Does.Contain("[:x :x :x] 5 \"x\""), on.ToString());
+        Assert.That(on.Err, Does.Not.Contain("Reflection warning"), on.ToString());
+    }
+
+    /// <summary>
+    /// cleat-110：经 Var 调用、分析时 Var 的值是有 invokeStatic 的函数类时，isinst 守卫后直接 call（内存模式；编成包时不用，求值期间的类运行时不存在）。
+    /// 用例 tests/Cleat.Host.Tests/data/knowncall_semantics.clj（重定义成别的函数 / 变长函数 / 多参数个数 / 关键字 / map、with-redefs、动态 Var、闭包、
+    /// 抛异常的被调函数、实参的求值顺序、长惰性序列作实参不被调用方抓住（256 MB 堆）、跨命名空间与其重定义）在 CLEAT_NO_OPT=known 与开两种设置下输出逐字相同。
+    /// </summary>
+    [Test]
+    public void KnownCallsToUserFunctions()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "knowncall_semantics.clj");
+        var limit = ("DOTNET_GCHeapHardLimit", "0x10000000");
+        var on = HostProcessTests.CleatIn(_dir, null, new[] { limit }, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { limit, ("CLEAT_NO_OPT", "known") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "known on:\n" + on.Out + "\nknown off:\n" + off.Out);
+        Assert.That(on.Out, Does.Contain("3000000\n42\n63\n"), on.ToString());
+    }
+
+    /// <summary>
     /// cleat-109：小整数装箱缓存（LongBox，-128 ~ 1023）与运行时数值的快路径（Util.equiv / Numbers.ops / category / ConvertToLong 先判 long、double，
     /// empty? 经 Colls.IsEmpty 先用类检查）。用例 tests/Cleat.Host.Tests/data/boxcache_semantics.clj 的输出与 .out 逐字相同（与 JVM Clojure 1.12 对照过：
     /// 只有类型名、异常消息与 CLR 按值的 identical? 不同），CLEAT_NO_OPT=boxcache（生成的代码用 box）时也相同。

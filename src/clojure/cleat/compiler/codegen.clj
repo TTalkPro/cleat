@@ -33,8 +33,9 @@
 (def int64-type "System.Int64")
 (def double-type "System.Double")
 (def bool-type "System.Boolean")
-(def num-type "Cleat.Core.Runtime.Num")
-(def long-box-type "Cleat.Core.Runtime.LongBox")   ; 小整数装箱缓存（cleat-109）   ; 不装箱的未定类型数（cleat-102）
+(def num-type "Cleat.Core.Runtime.Num")   ; 不装箱的未定类型数（cleat-102）
+(def long-box-type "Cleat.Core.Runtime.LongBox")   ; 小整数装箱缓存（cleat-109）
+(def ^:private narrow-value-types #{"System.Byte" "System.SByte" "System.Int16" "System.UInt16" "System.Single"})   ; 较窄的数值类型（cleat-111）
 (def char-type "System.Char")
 (def string-type "System.String")
 (def void-type "System.Void")
@@ -520,7 +521,8 @@
        (if (= d0 "CallStatic")
          (let [sl (host-call-signature d0 d1 e* env)]
            (cond (= sl :pending) :pending
-                 (and sl (#{"System.Int32" "System.Boolean" "System.Char" "System.String"} (str (aget ^objects (first sl) 3))))
+                 (and sl (or (#{"System.Int32" "System.Boolean" "System.Char" "System.String"} (str (aget ^objects (first sl) 3)))
+                             (narrow-value-types (str (aget ^objects (first sl) 3)))))   ; cleat-111
                  (str (aget ^objects (first sl) 3))
                  :else (by-type)))
          (by-type))]
@@ -530,7 +532,7 @@
 
 (defn- inlined-binding? [x] (str/ends-with? (str x) "$inl"))
 
-(declare fix-clause-params!)
+(declare fix-clause-params! dinfo-kind dinfo-fields field-raw)
 
 (define-pass infer-walk L3 [ir add-def! exclude! labels candidate? use! param!] -> * []
   (MaybeTyped Expr [ir] -> * []
@@ -598,7 +600,12 @@
     [(clj-static-call ~d0 ~d1 ~e* ...) (run! Expr e*)]
     [(check-initialized ~e) (Expr e)]
     [(clj-case ~d ~e0 ~e1 ~e* ...) (Expr e0) (Expr e1) (run! Expr e*)]
-    [(clj-deftype ~d (~x* ...) ~le* ...) (run! exclude! x*) (run! Expr le*)]
+    [(clj-deftype ~d (~x* ...) ~le* ...)
+     ;; ^long / ^double 字段（cleat-112）：固定类型，方法体里的算术按原始类型算；其余字段不参与推断
+     (let [fts (if (false? (dinfo-kind d)) (map #(nth % 3 false) (dinfo-fields d)) [])]   ; 只有 deftype*（reify / proxy / 接口 / gen-class 的描述布局不同）
+       (doseq [[x ft] (map vector x* (concat fts (repeat false)))]
+         (if-let [r (field-raw ft)] (hput! fixed-types x r) (exclude! x))))
+     (run! Expr le*)]
     [else nil])
   (Expr ir))
 
@@ -875,7 +882,9 @@
       (fn [args]
         (let [cands (filter (fn [k] (let [a (nth args k)]
                                       (and (not (spec-const? a)) (not (#{:l64 :fl :fx} (expr-type a sound-types)))
-                                           (not (hhas? var-types (nth x* k)))   ; 第一遍已定成原始类型或 Num
+                                           ;; 第一遍已定成原始类型的不推测；Num 变量照样推测（cleat-113：Num 的比较与混合运算仍走 Numbers.ops，
+                                           ;; sumfp 每轮 3.7 ns，快份全程原始 double）
+                                           (not (#{:l64 :fl} (hget var-types (nth x* k))))
                                            (spec-numeric-use? body1 (nth x* k)))))
                             (range (count args)))
               guess (if (seq cands) (spec-guess x x* body1 args cands) {})]
@@ -1104,7 +1113,7 @@
            sl))]
       [else nil])))
 
-(declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry!)
+(declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry! cg-known-call!)
 
 (defn- typed-self-ret
   "(clj-call \"TypedSelf\" …) 的返回类型（:l64 / :fl），别的节点 nil。"
@@ -1122,9 +1131,12 @@
              (and (= t :l64) (instance? Int64 d)) (emit! mc (i 'ldc.i8 d))
              :else (fallback))]
       [~x (let [loc (hget (:vars mc) x)]
-            (if (and loc (#{:tlocal :targ} (first loc)) (= (nth loc 2) t))
+            (cond
+              (and loc (#{:tlocal :targ} (first loc)) (= (nth loc 2) t))
               (do (ref-var! mc x false) (emit! mc (if (= :targ (first loc)) (i 'ldarg (second loc)) (i 'ldloc (second loc)))))
-              (fallback)))]
+              (and loc (= :dfield (first loc)) (= (nth loc 2 nil) t))   ; 原始字段直接读（cleat-112）
+              (emit! mc (i 'ldarg 0) (i 'ldfld (:class mc) (second loc)))
+              :else (fallback)))]
       [else (fallback)])))
 
 (declare var-raw-type cg-raw-join! branch-ref-counts adjust-uses!)
@@ -1246,6 +1258,22 @@
       (box-from-sig! mc rc)
       (finish-value! mc ctx))))
 
+(defn- native-host-call
+  "x 是静态决议、返回类型为 pt（pt 为 nil 时不限）的宿主调用时返回它的决议结果 sl，否则 nil（cleat-111）。"
+  [x pt]
+  (nanopass-case [L3 Expr] x
+    [(clj-call ~d0 ~d1 ~e* ...)
+     (let [sl (host-call-signature d0 d1 e*)]
+       (when (and (vector? sl) (= "method" (str (aget ^objects (first sl) 5)))
+                  (or (nil? pt) (= pt (str (aget ^objects (first sl) 3)))))
+         sl))]
+    [else nil]))
+
+(def ^:private value-arg-helpers
+  {"System.Int32" "ArgInt32" "System.Int64" "ArgInt64" "System.Double" "ArgDouble" "System.Boolean" "ArgBoolean" "System.Char" "ArgChar"
+   ;; cleat-111：较窄的数值类型
+   "System.Byte" "ArgByte" "System.SByte" "ArgSByte" "System.Int16" "ArgInt16" "System.UInt16" "ArgUInt16" "System.Single" "ArgSingle"})
+
 (defn- cg-static-host-call!
   "静态决议的宿主调用（原版 cg-static-host-call!）。sl：[签名 static? 实例 实参]。"
   [sl mc ctx]
@@ -1253,27 +1281,29 @@
         decl (aget sig 0) nm (aget sig 1) pts (vec (aget sig 2)) ret (str (aget sig 3)) virt? (aget sig 4)
         convert! (fn [pt]
                    (cond (= pt "System.Object") nil
-                         ({"System.Int32" "ArgInt32" "System.Int64" "ArgInt64" "System.Double" "ArgDouble"
-                           "System.Boolean" "ArgBoolean" "System.Char" "ArgChar"} pt)
-                         (emit! mc (i 'call static-calls-type ({"System.Int32" "ArgInt32" "System.Int64" "ArgInt64" "System.Double" "ArgDouble"
-                                                                "System.Boolean" "ArgBoolean" "System.Char" "ArgChar"} pt) (i obj) pt))
+                         (value-arg-helpers pt)
+                         (emit! mc (i 'call static-calls-type (value-arg-helpers pt) (i obj) pt))
                          :else (emit! mc (i 'castclass pt))))
         raw-long? (fn [x pt]
                     (let [t (expr-type x var-types)]
                       (cond (and (= t :l64) (#{"System.Int64" "System.Int32"} pt)) :l64
                             (and (= t :fl) (= pt "System.Double")) :fl
+                            ;; cleat-111：实参本身是返回类型正好为 pt 的静态宿主调用（(aset ^bytes b i (byte x))）：原生值直接留在栈上
+                            (and (contains? narrow-value-types pt) (native-host-call x pt)) :native
                             :else nil)))
         opnds (concat (if static? [] [inst]) args)
         types (concat (if static? [] [:instance]) pts)
         raws (mapv (fn [x pt] (when-not (= pt :instance) (raw-long? x pt))) opnds types)
-        codes (mapv (fn [x raw?] (with-buffer mc #(if raw? (cg-raw x mc raw?) (cg x mc :value)))) opnds raws)
+        codes (mapv (fn [x raw?] (with-buffer mc #(cond (= raw? :native) (cg-static-host-call! (native-host-call x nil) mc :native)
+                                                         raw? (cg-raw x mc raw?)
+                                                         :else (cg x mc :value)))) opnds raws)
         conv! (fn [pt raw?]
                 (cond (= pt :instance) (emit! mc (i 'ldstr nm) (i 'call static-calls-type "Instance" (i obj obj) obj) (i 'castclass decl))
                       (and raw? (= pt "System.Int32")) (emit! mc (i 'call "clojure.lang.RT" "intCast" (i int64-type) int32-type))
                       raw? nil
                       :else (convert! pt)))]
     (if (and (seq codes) (some contains-try? (rest codes)))
-      (let [temps (mapv (fn [c raw?] (let [t (new-local! mc (if raw? (type-clr raw?) obj))] (emit-code! mc c) (emit! mc (i 'stloc t)) t)) codes raws)]
+      (let [temps (mapv (fn [c raw? pt] (let [t (new-local! mc (cond (= raw? :native) pt raw? (type-clr raw?) :else obj))] (emit-code! mc c) (emit! mc (i 'stloc t)) t)) codes raws types)]
         (doseq [[t pt raw?] (map vector temps types raws)] (emit! mc (i 'ldloc t)) (conv! pt raw?)))
       (doseq [[c pt raw?] (map vector codes types raws)] (emit-code! mc c) (conv! pt raw?)))
     (let [kind (str (aget sig 5))]
@@ -1285,6 +1315,7 @@
             (emit! mc (if static? (i 'ldsfld decl nm) (i 'ldfld decl nm))))))
     (cond
       (= ctx :raw) (when (= ret "System.Int32") (emit! mc (i 'conv.i8)))   ; Int32 结果的原始用途是 l64（cleat-101）
+      (= ctx :native) nil   ; 原生的返回值留在栈上（cleat-111，传给同类型的值类型形参）
       ;; 丢弃的结果不装箱（(aset arr i v) 在循环里每轮 box 一个 long 再 pop）
       (= ctx :effect) (when-not (= ret "System.Void") (emit! mc (i 'pop)))
       (= (str (aget sig 5)) "ctor") (finish-value! mc ctx)
@@ -1294,6 +1325,10 @@
                       (= ret "System.Int32") (emit! mc (i 'call static-calls-type "RetInt32" (i int32-type) obj))
                       (= ret "System.Int64") (emit! mc (box-long))
                       (#{"System.Double" "System.Char"} ret) (emit! mc (i 'box ret))
+                      ;; cleat-111：较窄的数值结果与运行时决议（Reflector.ConvertFrom）一样加宽成 long / double
+                      (#{"System.Byte" "System.UInt16"} ret) (emit! mc (i 'conv.u8) (box-long))
+                      (#{"System.SByte" "System.Int16"} ret) (emit! mc (i 'conv.i8) (box-long))
+                      (= ret "System.Single") (emit! mc (i 'conv.r8) (i 'box double-type))
                       :else nil)
                 (finish-value! mc ctx)))))
 
@@ -1407,7 +1442,9 @@
       :tlocal (do (emit! mc (i 'ldloc (second loc))) (box-raw! mc (nth loc 2)))
       :targ (do (emit! mc (i 'ldarg (second loc))) (box-raw! mc (nth loc 2)))
       :numarg (emit! mc (i 'ldarg (second loc)))   ; Num 形参的装箱用途读原来的实参（cleat-102）
-      (:field :dfield) (emit! mc (i 'ldarg 0) (i 'ldfld (:class mc) (second loc)))
+      :field (emit! mc (i 'ldarg 0) (i 'ldfld (:class mc) (second loc)))
+      :dfield (do (emit! mc (i 'ldarg 0) (i 'ldfld (:class mc) (second loc)))
+                  (when-let [r (nth loc 2 nil)] (box-raw! mc r)))   ; 原始字段按值用时装箱（cleat-112）
       :self (emit! mc (i 'ldarg 0)))))
 
 (defn- store-var! [mc x]
@@ -1418,7 +1455,12 @@
       :tlocal (emit! mc (i 'stloc (second loc)))
       :numarg (emit! mc (i 'stloc (nth loc 2)))   ; 别名的 jump 写回（值就是形参本身）
       :dfield (let [t (new-local! mc obj)]
-                (emit! mc (i 'stloc t) (i 'ldarg 0) (i 'ldloc t) (i 'stfld (:class mc) (second loc))))
+                (emit! mc (i 'stloc t) (i 'ldarg 0) (i 'ldloc t))
+                (case (nth loc 2 nil)   ; 原始字段：同构造器的转换（cleat-112）
+                  :l64 (emit! mc (i 'call static-calls-type "PrimArgLong" (i obj) int64-type))
+                  :fl (emit! mc (i 'call static-calls-type "PrimArgDouble" (i obj) double-type))
+                  nil)
+                (emit! mc (i 'stfld (:class mc) (second loc))))
       (throw (ex-info (str "codegen: cannot assign captured variable " x) {:var x})))))
 
 (defn- bind-local-object! [mc x]
@@ -1443,6 +1485,7 @@
   (let [loc (hget (:vars mc) x)]
     (cond (nil? loc) nil
           (#{:tlocal :targ} (first loc)) (nth loc 2)
+          (= :dfield (first loc)) (nth loc 2 nil)   ; 原始字段（cleat-112）
           (= :numarg (first loc)) :num
           :else nil)))
 
@@ -1660,6 +1703,7 @@
        (= d0 "Speculated") (cg (second e*) mc ctx)   ; 推测的实参：值就是检查过的对象；原始用途由 cg-raw-default 的 unbox.any 取（cleat-103）
        (= d0 "TypedSelf") (do (cg-typed-self! e mc) (box-raw! mc (typed-self-ret e)) (finish-value! mc ctx))   ; cleat-104
        (= d0 "TypedEntry") (cg-typed-entry! e* mc ctx)
+       (= d0 "KnownCall") (cg-known-call! e* mc ctx)   ; cleat-110
        (and (= d0 "IsInstanceOf") (= 2 (count e*))
             (let [t (quoted-datum (first e*))]
               (and (instance? Type t) (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))))
@@ -1987,6 +2031,37 @@
     (cg body mc ctx)
     (when-not (= ctx :tail) (emit! mc (i 'label end)))))
 
+(def ^:private live-unit? (atom false))   ; 当前编译单元是内存模式（eval）：生成的代码与先前求值生成的类在同一进程（cleat-110）
+
+(defn- known-call-target-ok?
+  "KnownCall 的目标类能被这个单元引用：内存模式，或类在从文件加载的程序集里（编成包时，求值期间生成的类在运行时不存在）。"
+  [^Type t]
+  (or @live-unit?
+      (let [a (.Assembly t)] (and (not (.IsDynamic a)) (not (str/blank? (.Location a)))))))
+
+(defn- cg-known-call!
+  "(clj-call \"KnownCall\" #f '类 Var读 实参 …)（cleat-110）：先求函数值再求实参（同 IFn 调用的顺序），isinst 类时 call 类.invokeStatic(f, 实参 …)，
+  否则 IFn.invoke。临时变量按局部变量清除的规则读（不让实参在调用期间被临时变量抓住）。目标类不能引用时就是普通的 IFn 调用。"
+  [e* mc ctx]
+  (let [t (quoted-datum (first e*)) f (second e*) args (drop 2 e*) n (count args)]
+    (if-not (and (instance? Type t) (known-call-target-ok? t) (<= n 20)
+                 (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))
+      (cg* (with-output-language [L3 Expr] (out (clj-invoke ~f ~args ...))) mc ctx)
+      (let [cname (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t)
+            root (new-local! mc obj)
+            _ (do (cg f mc :value) (emit! mc (i 'stloc root)))
+            temps (mapv (fn [a] (cg a mc :value) (let [l (new-local! mc obj)] (emit! mc (i 'stloc l)) l)) args)
+            slow (new-label! mc) end (new-label! mc)]
+        (emit! mc (i 'ldloc root) (i 'isinst cname) (i 'brfalse slow))
+        (ldloc-clear! mc root)
+        (doseq [l temps] (ldloc-clear! mc l))
+        (emit! mc (i 'call cname "invokeStatic" (apply i (objs (inc n))) obj) (i 'br end) (i 'label slow))
+        (ldloc-clear! mc root)
+        (emit! mc (i 'castclass ifn-type))
+        (doseq [l temps] (ldloc-clear! mc l))
+        (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj) (i 'label end))
+        (finish-value! mc ctx)))))
+
 (defn- clj-typed-entry-method
   "invokeStaticTyped(self, T…) → R：类型化子句的体（cleat-104）。"
   [u class {:keys [sig params body]}]
@@ -2062,7 +2137,8 @@
 (defn- spec-ret [sp] (nth (sl sp) 2))
 (defn- spec-params [sp] (sl (nth (sl sp) 3)))
 (defn- dinfo-class [d] (dinfo d 0))
-(defn- dinfo-fields [d] (mapv sl (sl (dinfo d 2))))   ; [名字 可变? volatile?]
+(defn- dinfo-fields [d] (mapv sl (sl (dinfo d 2))))   ; [名字 可变? volatile? 原始类型（"System.Int64" / "System.Double" / #f，cleat-112）]
+(defn- field-raw "字段的原始类型 → :l64 / :fl / nil（cleat-112）" [ft] (case ft "System.Int64" :l64 "System.Double" :fl nil))
 (defn- dinfo-ifaces [d] (sl (dinfo d 3)))
 (defn- dinfo-methods [d] (sl (dinfo d 4)))
 (defn- dinfo-stubs [d] (mapv sl (sl (dinfo d 5))))
@@ -2323,7 +2399,7 @@
 
 (defn- deftype-method
   "方法体：this 为 ldarg 0；原始类型的参数在入口装箱进局部变量；字段读写 this 的字段；返回值转换为声明类型"
-  [u class le spec mname fvars fnames caps cnames]
+  [u class le spec mname fvars fnames ftypes caps cnames]
   (nanopass-case [L3 LambdaExpr] le
     [(lambda ~nm (~x1* ...) ~cl* ...)
      (nanopass-case [L3 Clause] (first cl*)
@@ -2339,7 +2415,7 @@
                               (emit! mc (i 'ldarg j) (i 'box (tname t)) (i 'call clojure-ops-type "BoxArg" (i obj) obj) (i 'stloc l))
                               (hput! (:vars mc) p [:local l]))
                             (hput! (:vars mc) p [:arg j])))
-                        (doseq [[f n] (map vector fvars fnames)] (hput! (:vars mc) f [:dfield n]))
+                        (doseq [[f n ft] (map vector fvars fnames ftypes)] (hput! (:vars mc) f (if-let [r (field-raw ft)] [:dfield n r] [:dfield n])))
                         (doseq [[c n] (map vector caps cnames)] (hput! (:vars mc) c [:field n]))))]
           (emit-code! mc entry)
           (reset! (:big? mc) (bigger-than? body big-body-nodes))
@@ -2407,12 +2483,26 @@
              (concat
                (if reify?
                  (map #(i 'field % obj) ctor-fields)
-                 (map (fn [[f _ vol?]] (apply i 'field f obj (when (truthy? vol?) ['volatile]))) fields))
+                 (map (fn [[f _ vol? ft]] (apply i 'field f (if (string? ft) ft obj) (when (truthy? vol?) ['volatile]))) fields))
+               ;; 构造器的形参都是 object（工厂与反射照旧）；^long / ^double 字段按原始签名的转换语义存（cleat-112）
                [(i 'method ".ctor" (i 'attrs 'ctor) (apply i 'params (objs (count ctor-fields)))
                    (apply i 'body (concat [(i 'ldarg 0) (i 'call obj ".ctor" () void-type)]
-                                          (mapcat (fn [f j] [(i 'ldarg 0) (i 'ldarg j) (i 'stfld name f)]) ctor-fields (iterate inc 1))
+                                          (mapcat (fn [f j ft] (concat [(i 'ldarg 0) (i 'ldarg j)]
+                                                                       (case (field-raw ft)
+                                                                         :l64 [(i 'call static-calls-type "PrimArgLong" (i obj) int64-type)]
+                                                                         :fl [(i 'call static-calls-type "PrimArgDouble" (i obj) double-type)]
+                                                                         [])
+                                                                       [(i 'stfld name f)]))
+                                                  ctor-fields (iterate inc 1) (if reify? (repeat false) (map #(nth % 3 false) fields)))
                                           [(i 'ret)])))]
-               (map (fn [le sp mn] (deftype-method u name le sp mn x* fnames caps cnames)) le* specs mnames)
+               ;; 有原始字段时另有一个按字段类型的构造器：(Complex. x y) 的实参已知是 double 时静态决议选它，不装箱（cleat-112）
+               (let [fts (map #(nth % 3 false) fields)]
+                 (when (and (not reify?) (some string? fts))
+                   [(i 'method ".ctor" (i 'attrs 'ctor) (apply i 'params (map #(if (string? %) % obj) fts))
+                       (apply i 'body (concat [(i 'ldarg 0) (i 'call obj ".ctor" () void-type)]
+                                              (mapcat (fn [f j] [(i 'ldarg 0) (i 'ldarg j) (i 'stfld name f)]) ctor-fields (iterate inc 1))
+                                              [(i 'ret)])))]))
+               (map (fn [le sp mn] (deftype-method u name le sp mn x* fnames (if reify? (repeat false) (map #(nth % 3 false) fields)) caps cnames)) le* specs mnames)
                (map (fn [st] (deftype-stub name st specs mnames)) (dinfo-stubs d))
                (if reify?
                  [(i 'method "meta" (i 'params) (i 'ret pmap-type) (i 'implements "clojure.lang.IMeta" "meta")
@@ -2533,6 +2623,7 @@
   live?：内存模式（eval）——常量不编码，Lcil 里写 (live-constants n)，常量对象交给发射器。"
   [forms assembly-name module-name loop-flags live?]
   (let [u (make-unit assembly-name module-name)]
+    (reset! live-unit? (boolean live?))
     (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases spec-entries])
     (let [infer! (fn [forms]
                    (run! collect-assigned! forms)

@@ -1,0 +1,17 @@
+(defn show [& xs] (println (apply pr-str xs)))
+(defn r [e] (try (e) (catch Exception ex (str (.GetType ex) ": " (.Message ex)))))
+(set! *warn-on-reflection* true)
+;; cleat-111: narrow numeric host results (byte / short / float …) resolve statically and widen like the runtime path
+(defn f [x] [(byte x) (short x) (float x) (unchecked-byte x) (class (byte x)) (class (short x)) (class (float x))])
+(show (f 5) (f 200) (f 1.5) (r #(f 300)) (r #(f -1)) (r #(f nil)))
+(defn g [n] (let [^bytes bv (byte-array n)] (dotimes [i n] (aset bv i (byte (mod i 200)))) (vec bv)))
+(show (g 5) (class (aget (byte-array [1 2]) 0)))
+(defn h [n] (let [^shorts a (short-array n) ^floats fa (float-array n)] (dotimes [i n] (aset a i (short i)) (aset fa i (float i))) [(vec a) (vec fa)]))
+(show (h 3))
+;; equality of symbols, keywords and strings
+(show (= 'a 'a) (= 'a/b 'a/b) (= 'a 'b) (= :a :a) (= :a :b) (= "x" (str "x")) (= 'a :a) (= "a" \a) (= 'a [1]) (= "" []) (= :a nil) (= (with-meta 'a {:m 1}) 'a))
+;; cleat-112: an unhinted let local takes its init's host type (no reflection below)
+(defn mv [n fill] (let [a (object-array n)] (dotimes [i n] (aset a i fill)) (vec a)))
+(defn s1 [x] (let [s (str x)] (.Length s)))
+(defn sb [] (let [b (StringBuilder.)] (.Append b "x") (str b)))
+(show (mv 3 :x) (s1 12345) (sb))

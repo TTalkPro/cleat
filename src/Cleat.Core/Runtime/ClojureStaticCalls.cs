@@ -23,7 +23,9 @@ public static class ClojureStaticCalls
 
     /// <summary>codegen 能直接写出转换的值类型形参</summary>
     private static bool ValueParamOk(Type p) =>
-        p == typeof(int) || p == typeof(long) || p == typeof(double) || p == typeof(bool) || p == typeof(char);
+        p == typeof(int) || p == typeof(long) || p == typeof(double) || p == typeof(bool) || p == typeof(char)
+        // cleat-111：较窄的数值类型（(byte x) 的 RT.byteCast、byte[] 的 aset 等）；值类型形参只匹配静态类型完全相同的实参，转换同 Reflector
+        || p == typeof(byte) || p == typeof(sbyte) || p == typeof(short) || p == typeof(ushort) || p == typeof(float);
 
     /// <summary>能按名字（HostSyntax.TypeName）在 Lcil 中引用的类型：非泛型、非嵌套的公共类型，不是 deftype 的桩</summary>
     private static bool Nameable(Type t) =>
@@ -261,6 +263,11 @@ public static class ClojureStaticCalls
     public static double ArgDouble(object v) => v is double d ? d : Reflector.Convert<double>(v);
     public static bool ArgBoolean(object v) => v is bool b ? b : Reflector.Convert<bool>(v);
     public static char ArgChar(object v) => v is char c ? c : Reflector.Convert<char>(v);
+    public static byte ArgByte(object v) => v is byte b ? b : Reflector.Convert<byte>(v);
+    public static sbyte ArgSByte(object v) => v is sbyte b ? b : Reflector.Convert<sbyte>(v);
+    public static short ArgInt16(object v) => v is short b ? b : Reflector.Convert<short>(v);
+    public static ushort ArgUInt16(object v) => v is ushort b ? b : Reflector.Convert<ushort>(v);
+    public static float ArgSingle(object v) => v is float b ? b : Reflector.Convert<float>(v);
 
     // —— 原始签名的 fn（cleat-042）：JVM 的转换语义 ——
     // 实参（invoke(Object) → invokePrim）：RT.longCast / doubleCast（越界抛 IllegalArgument），只收数字——字符串、字符、关键字是
@@ -330,5 +337,6 @@ public static class ClojureStaticCalls
     public static object RetInt32(int v) => (long)v;
 
     /// <summary>实例调用的实例为 nil 时与 ClojureOps.CallInstance 同样报错</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public static object Instance(object inst, object name) => ClojureOps.NotNil(inst, name);
 }

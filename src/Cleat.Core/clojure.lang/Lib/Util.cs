@@ -86,6 +86,10 @@ namespace clojure.lang
             }
             else if (k1 is double d1 && k2 is double d2)
                 return d1 == d2;
+            // cleat-111：符号、关键字、字符串直接 Equals（原路径先 IsNumeric 的 GetTypeCode、再两次接口检查，结果相同：它们不是数也不是集合，
+            // 集合的 equiv 对它们为假）——符号相等 27 ns 对 JVM 8 ns
+            else if (k1 is Symbol || k1 is Keyword || k1 is string)
+                return k1.Equals(k2);
             if (k1 != null)
             {
                 if (IsNumeric(k1) && IsNumeric(k2))
@@ -266,10 +270,14 @@ namespace clojure.lang
         {
             // I would prefer simpler version below, but it can't handle simple true/false (boxed booleans)
 
-            if (k1 is ValueType)
-                return k1.Equals(k2);
-            else
-                return k1 == k2;
+            // cleat-110：先比引用（最常见），再只对同一值类型比值——原来先做 `k1 is ValueType`，对引用类型要沿继承链走到 object（browse 里占 5%）。
+            // 结果相同：同一对象的值类型 Equals 也为真（含装箱的 NaN）；类型不同的值类型 Equals 本来就为假
+            if (ReferenceEquals(k1, k2))
+                return true;
+            if (k1 is null || k2 is null)
+                return false;
+            Type t = k1.GetType();
+            return t.IsValueType && t == k2.GetType() && k1.Equals(k2);
 
             //return k1 == k2;
         }

@@ -345,9 +345,11 @@ namespace clojure.lang
         public static object add(object x, object y) { return ops(x).combine(ops(y)).add(x, y); }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static double add(double x, double y) { return x + y; }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static long add(long x, long y)
         {
             long ret = x + y;
@@ -620,8 +622,10 @@ namespace clojure.lang
                 return xyops.add(x, yops.negate(y));
         }
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static double minus(double x, double y) { return x - y; }
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static long minus(long x, long y)
         {
             long ret = x - y;
@@ -882,15 +886,16 @@ namespace clojure.lang
         public static object multiply(object x, object y) { return ops(x).combine(ops(y)).multiply(x, y); }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static double multiply(double x, double y) { return x * y; }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         public static long multiply(long x, long y)
         {
-            if (x == Int64.MinValue && y < 0)
-                return ThrowIntOverflow();
-            long ret = x * y;
-            if (y != 0 && ret / y != x)
+            // cleat-113：128 位乘积的高 64 位判断溢出（原来每次乘法都做一次 ret / y 的除法）；结果相同（含 MinValue * -1 溢出）
+            long high = Math.BigMul(x, y, out long ret);
+            if (high != (ret >> 63))
                 return ThrowIntOverflow();
             return ret;
         }
@@ -1252,6 +1257,7 @@ namespace clojure.lang
 
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static long inc(long x)
         {
             if (x == Int64.MaxValue)
@@ -1305,6 +1311,7 @@ namespace clojure.lang
         public static double dec(double x) { return x - 1; }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static long dec(long x)
         {
             if (x == Int64.MinValue)
@@ -1475,9 +1482,11 @@ namespace clojure.lang
         public static bool lt(object x, object y) { return ops(x).combine(ops(y)).lt(x, y); }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool lt(double x, double y) { return x < y; }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool lt(long x, long y) { return x < y; }
 
 
@@ -1528,9 +1537,11 @@ namespace clojure.lang
         public static bool lte(object x, object y) { return ops(x).combine(ops(y)).lte(x, y); }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool lte(double x, double y) { return x <= y; }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool lte(long x, long y) { return x <= y; }
 
 
@@ -1581,9 +1592,11 @@ namespace clojure.lang
         public static bool gt(object x, object y) { return ops(x).combine(ops(y)).lt(y, x); }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool gt(double x, double y) { return x > y; }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool gt(long x, long y) { return x > y; }
 
 
@@ -1633,9 +1646,11 @@ namespace clojure.lang
         public static bool gte(object x, object y) { return ops(x).combine(ops(y)).gte(x, y); }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool gte(double x, double y) { return x >= y; }
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
         public static bool gte(long x, long y) { return x >= y; }
 
 

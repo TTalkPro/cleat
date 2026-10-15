@@ -14,3 +14,8 @@
 (show (mapv empty? [nil [] [1] '() '(1) (lazy-seq nil) (lazy-seq [1]) (range 0) (range 3) "" "a" {} {:a 1} #{} #{1} (object-array 0) (object-array 1) (cons 1 nil) (seq []) (rest [1]) (next [1]) (map inc []) (map inc [1]) (sorted-map) (System.Collections.ArrayList.) (iterate inc 0) (repeat 0 :x) (subvec [1 2] 1 1)]))
 (show (r #(empty? 5)) (r #(empty? :k)))
 (show (+ 100 23) (* 32 32) (- 5 6) (inc 1022) (inc 1023) (dec -128) (type (inc 1023)) (quot 4096 4) (mod -7 3) (hash 7) (hash 7.0))
+;; cleat-113: long multiply overflow checked with the 128-bit product
+(defn m [a b] (try (* a b) (catch ArithmeticException _ :ovf)))
+(show (m 3 4) (m -3 4) (m Int64/MinValue -1) (m Int64/MinValue 1) (m Int64/MaxValue 2) (m 3037000499 3037000499) (m 3037000500 3037000500) (m -3037000500 3037000500) (m 0 Int64/MinValue) (m -1 Int64/MaxValue) (m Int64/MaxValue -1) (m 4294967296 -2147483648) (m 4294967296 2147483648))
+(defn mp [^long a ^long b] (try (* a b) (catch ArithmeticException _ :ovf)))
+(show (mp Int64/MinValue -1) (mp 4294967296 -2147483648) (mp 4294967296 2147483648) (mp -7 6))
