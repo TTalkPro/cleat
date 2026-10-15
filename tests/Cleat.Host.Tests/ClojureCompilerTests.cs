@@ -161,6 +161,20 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-114：Numbers 的 object 版本（+ - * inc dec < <= > >= ==）先判 long / double。tests/Cleat.Host.Tests/data/arith_semantics.cljc
+    /// （long、负数、零、double、负零、NaN、Ratio、BigInt、MaxValue 两两组合）的输出与 .out 逐字相同——.out 与 JVM Clojure 1.12 的输出逐行一致。
+    /// </summary>
+    [Test]
+    public void ObjectArithmeticMatchesJvm()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "arith_semantics.cljc");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var r = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Is.EqualTo(expected), r.ToString());
+    }
+
+    /// <summary>
     /// cleat-114：eval 的代码发射成 PE 字节装进不可回收的上下文（分层编译、动态 PGO）；只调用一次、没有循环的函数仍直接按优化编译，
     /// tier-0 的临时变量不在调用期间抓住惰性序列。tests/Cleat.Host.Tests/data/lazy_head_semantics.clj 在 512 MB 堆下跑完（顶层形式、
     /// 只调用一次的函数把 3000 万元素的惰性序列交给长时间运行的被调用者、-main 一类）；CLEAT_NO_OPT=tiered（原来的 RunAndCollect）输出相同。
@@ -224,6 +238,9 @@ public class ClojureCompilerTests
         Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
         Assert.That(on.Out, Is.EqualTo(off.Out), "known on:\n" + on.Out + "\nknown off:\n" + off.Out);
         Assert.That(on.Out, Does.Contain("3000000\n42\n63\n"), on.ToString());
+        // cleat-116：eval 定义的小函数登记可内联子句，之后的调用点在类型守卫后内联——重定义后同样生效
+        var noInline = HostProcessTests.CleatIn(_dir, null, new[] { limit, ("CLEAT_NO_INLINE", "1") }, script);
+        Assert.That(on.Out, Is.EqualTo(noInline.Out), "inline on:\n" + on.Out + "\ninline off:\n" + noInline.Out);
     }
 
     /// <summary>

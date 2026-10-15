@@ -93,7 +93,7 @@ dotnet run tools/build.cs -- selfhost        # 只验证不动点，不写种子
 |---|---|---|
 | Cleat.Core.Tests / Cleat.Host.Tests | 117 / 265 | `dotnet test Cleat.slnx -c Release` |
 | jolt 语料（`:common` 行） | 失败行全部登记在 [cleat-divergences.edn](tests/conformance/cleat-divergences.edn)（521 行，各带类别与原因） | `dotnet run tools/build.cs -- conformance --run --gate` |
-| clojure-test-suite | 247 个命名空间，断言 6866 通过 / 31 失败 / 6 错误 | `cleat tools/cts.clj cts` |
+| clojure-test-suite | 247 个命名空间，断言 6868 通过 / 29 失败 / 6 错误 | `cleat tools/cts.clj cts` |
 | test_clojure（ClojureCLR） | 357 个测试，断言 3688 通过 / 18 失败 | `cleat tools/cts.clj test-clojure` |
 
 后两套逐命名空间与基线比较，差异即失败；有意改变时用 `--write` 重写基线，失败的分类写在对应任务文件里（[cleat-097](tasks/cleat-097-refresh-baselines.md)）。

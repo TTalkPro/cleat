@@ -1,6 +1,6 @@
 # cleat-115 运行时与 Var 访问：Numbers 的 object 快路径、$Vars 的 static readonly 字段、Symbol 密封
 
-- 里程碑：M11　依赖：cleat-114　状态：进行中
+- 里程碑：M11　依赖：cleat-114　状态：完成（2026-10-16）
 - 设计依据：[21](../designs/21-r7rs-gaps.md)
 
 ## 工作内容
@@ -13,3 +13,8 @@
 ## 验收标准
 - 语义：`tests/Cleat.Host.Tests/data/arith_semantics.cljc` 的输出与 JVM Clojure 逐行相同；全量、门禁、基线不变；种子不动点。
 - r7rs 受影响项前后数字。
+
+## 结果（2026-10-16）
+- 语义：`ClojureCompilerTests.ObjectArithmeticMatchesJvm`（data/arith_semantics.cljc，132 行：long / double / 混合 / BigInt / Ratio / 溢出 / NaN / ±0.0 的
+  + - * inc dec < <= > >= ==）输出与 JVM Clojure 1.12 逐行相同。
+- 与 cleat-116 一起提交（同一批文件交错修改，在 linux01 上一起验证）；r7rs 的数字见 cleat-116。

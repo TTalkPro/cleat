@@ -342,7 +342,13 @@ namespace clojure.lang
         #region add, addP, unchecked_add
 
 
-        public static object add(object x, object y) { return ops(x).combine(ops(y)).add(x, y); }
+        public static object add(object x, object y)
+        {
+            // cleat-114：两边都是 long / double（或一 long 一 double）先算，不经 ops / combine / 虚调用；结果与原路径相同（long 溢出照常抛，混合按 double）
+            if (x is long a) { if (y is long b) return num(add(a, b)); if (y is double d) return a + d; }
+            else if (x is double c) { if (y is double d) return c + d; if (y is long b) return c + b; }
+            return ops(x).combine(ops(y)).add(x, y);
+        }
 
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
@@ -606,6 +612,9 @@ namespace clojure.lang
 
         public static object minus(object x, object y)
         {
+            if (x is long a) { if (y is long b) return num(minus(a, b)); if (y is double d) return a - d; }   // cleat-114
+            // double 减 long 按 JVM 的 x + negate(y) 算（(- -0.0 0) 为 0.0）；MinValue 的取负交回原路径
+            else if (x is double c) { if (y is double d) return c - d; if (y is long b && b != long.MinValue) return c + (double)(-b); }
             Ops yops = ops(y);
             Ops xyops = ops(x).combine(yops);
 
@@ -883,7 +892,12 @@ namespace clojure.lang
         #region multiply, multiplyP, unchecked_multiply
 
 
-        public static object multiply(object x, object y) { return ops(x).combine(ops(y)).multiply(x, y); }
+        public static object multiply(object x, object y)
+        {
+            if (x is long a) { if (y is long b) return num(multiply(a, b)); if (y is double d) return a * d; }   // cleat-114
+            else if (x is double c) { if (y is double d) return c * d; if (y is long b) return c * b; }
+            return ops(x).combine(ops(y)).multiply(x, y);
+        }
 
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
@@ -1250,7 +1264,7 @@ namespace clojure.lang
         #region inc, incP, unchecked_inc, dec, decP, unchecked_dec
 
 
-        public static object inc(object x) { return ops(x).inc(x); }
+        public static object inc(object x) { if (x is long a) return num(inc(a)); if (x is double d) return d + 1; return ops(x).inc(x); }   // cleat-114
 
 
         public static double inc(double x) { return x + 1; }
@@ -1305,7 +1319,7 @@ namespace clojure.lang
         }
 
 
-        public static object dec(object x) { return ops(x).dec(x); }
+        public static object dec(object x) { if (x is long a) return num(dec(a)); if (x is double d) return d - 1; return ops(x).dec(x); }   // cleat-114
 
 
         public static double dec(double x) { return x - 1; }
@@ -1426,7 +1440,12 @@ namespace clojure.lang
         #region equiv, lt, lte, gt, gte
 
 
-        public static bool equiv(object x, object y) { return ops(x).combine(ops(y)).equiv(x, y); }
+        public static bool equiv(object x, object y)
+        {
+            if (x is long a) { if (y is long b) return a == b; if (y is double d) return a == d; }   // cleat-114（混合按 double，同 DoubleOps）
+            else if (x is double c) { if (y is double d) return c == d; if (y is long b) return c == b; }
+            return ops(x).combine(ops(y)).equiv(x, y);
+        }
 
 
         public static bool equiv(double x, double y) { return x == y; }
@@ -1479,7 +1498,12 @@ namespace clojure.lang
 
 
 
-        public static bool lt(object x, object y) { return ops(x).combine(ops(y)).lt(x, y); }
+        public static bool lt(object x, object y)
+        {
+            if (x is long a) { if (y is long b) return a < b; if (y is double d) return a < d; }   // cleat-114（混合按 double，同 DoubleOps）
+            else if (x is double c) { if (y is double d) return c < d; if (y is long b) return c < b; }
+            return ops(x).combine(ops(y)).lt(x, y);
+        }
 
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
@@ -1534,7 +1558,12 @@ namespace clojure.lang
 
 
 
-        public static bool lte(object x, object y) { return ops(x).combine(ops(y)).lte(x, y); }
+        public static bool lte(object x, object y)
+        {
+            if (x is long a) { if (y is long b) return a <= b; if (y is double d) return a <= d; }   // cleat-114（混合按 double，同 DoubleOps）
+            else if (x is double c) { if (y is double d) return c <= d; if (y is long b) return c <= b; }
+            return ops(x).combine(ops(y)).lte(x, y);
+        }
 
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
@@ -1589,7 +1618,12 @@ namespace clojure.lang
 
 
 
-        public static bool gt(object x, object y) { return ops(x).combine(ops(y)).lt(y, x); }
+        public static bool gt(object x, object y)
+        {
+            if (x is long a) { if (y is long b) return a > b; if (y is double d) return a > d; }   // cleat-114（混合按 double，同 DoubleOps）
+            else if (x is double c) { if (y is double d) return c > d; if (y is long b) return c > b; }
+            return ops(x).combine(ops(y)).lt(y, x);
+        }
 
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码
@@ -1643,7 +1677,12 @@ namespace clojure.lang
 
 
 
-        public static bool gte(object x, object y) { return ops(x).combine(ops(y)).gte(x, y); }
+        public static bool gte(object x, object y)
+        {
+            if (x is long a) { if (y is long b) return a >= b; if (y is double d) return a >= d; }   // cleat-114（混合按 double，同 DoubleOps）
+            else if (x is double c) { if (y is double d) return c >= d; if (y is long b) return c >= b; }
+            return ops(x).combine(ops(y)).gte(x, y);
+        }
 
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：原始运算内联进生成的代码

@@ -63,7 +63,8 @@ public static class AotPaths
         catch (Exception) { return s_false; }   // 不是参数个数的直接放弃直连
         // IFn.invoke 只有 1 ~ 20 个固定参数的签名：更多参数的调用不做直连
         var e = InterfaceFile.FindKnown(clojure.lang.Symbol.intern(v.Namespace.Name.Name, v.Symbol.Name));
-        return e is { HasStatic: true } && n is >= 1 and <= 20 && Array.IndexOf(e.Arities, n) >= 0 ? e.ClassName : s_false;
+        // eval 登记的函数（cleat-116，没有接口文件）只用于内联：eval 单元里对它们的调用走 KnownCall，顶层调用照旧简单解释
+        return e is { HasStatic: true, Owner: not null } && n is >= 1 and <= 20 && Array.IndexOf(e.Arities, n) >= 0 ? e.ClassName : s_false;
     }
 
 }

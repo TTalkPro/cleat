@@ -121,9 +121,10 @@
 | [cleat-112](tasks/cleat-112-result-types-to-inference.md) | 结果类型交给推断：宿主调用返回的数组类型给无提示局部、deftype 原始字段读取的类型进算术 | M11 | cleat-111 | 完成 |
 | [cleat-113](tasks/cleat-113-float-loops.md) | 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围 | M11 | cleat-112 | 进行中 |
 | [cleat-114](tasks/cleat-114-tiered-eval.md) | eval 代码分层编译与动态 PGO（不可回收的装载上下文、tier-0 的 GC 报告） | M11 | cleat-113 | 完成 |
-| [cleat-115](tasks/cleat-115-runtime-and-vars.md) | 运行时与 Var 访问：Numbers 的 object 快路径、$Vars 的 static readonly 字段、Symbol 密封 | M11 | cleat-114 | 进行中 |
-| [cleat-116](tasks/cleat-116-typed-call-sites.md) | 类型化调用点与小函数 | M11 | cleat-115 | 未开始 |
-| [cleat-117](tasks/cleat-117-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-116 | 未开始 |
+| [cleat-115](tasks/cleat-115-runtime-and-vars.md) | 运行时与 Var 访问：Numbers 的 object 快路径、$Vars 的 static readonly 字段、Symbol 密封 | M11 | cleat-114 | 完成 |
+| [cleat-116](tasks/cleat-116-eval-inline.md) | eval 的小函数内联与运行时快路径（double 装箱、Cons 的 first / next） | M11 | cleat-115 | 完成 |
+| [cleat-117](tasks/cleat-117-typed-call-sites.md) | 类型化调用点；镜像与包的分层编译 | M11 | cleat-116 | 未开始 |
+| [cleat-118](tasks/cleat-118-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-117 | 未开始 |
 
 ## 里程碑
 
@@ -144,7 +145,7 @@
 | M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
 | M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-099 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
 | M10 性能（2026-10-15 起） | cleat-100 ~ cleat-107 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
-| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-117 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
+| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-118 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径

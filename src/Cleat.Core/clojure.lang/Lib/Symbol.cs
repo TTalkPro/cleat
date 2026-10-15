@@ -19,24 +19,24 @@ namespace clojure.lang
     /// </summary>
     /// <remarks>See the Clojure documentation for more information.</remarks>
     [Serializable]
-    public class Symbol: AFn, IObj, Named, IComparable, ISerializable, IHashEq
+    public sealed class Symbol: AFn, IObj, Named, IComparable, ISerializable, IHashEq   // sealed（cleat-114）：symbol? 的类型检查内联成一次方法表比较
     {
         #region Instance variables
 
         /// <summary>
         /// The name of the namespace for this symbol (if namespace-qualified).
         /// </summary>
-        protected readonly  string _ns;
+        private readonly  string _ns;
 
         /// <summary>
         /// The name of the symbol.
         /// </summary>
-        protected readonly string _name;
+        private readonly string _name;
 
         /// <summary>
         /// The cached hashcode.
         /// </summary>
-        protected int _hasheq = 0;
+        private int _hasheq = 0;
 
         readonly IPersistentMap _meta;
 
@@ -128,7 +128,7 @@ namespace clojure.lang
         /// </summary>
         /// <param name="info"></param>
         /// <param name="context"></param>
-        protected Symbol (SerializationInfo info, StreamingContext context)
+        private Symbol (SerializationInfo info, StreamingContext context)
         {
             _name = String.Intern(info.GetString("_name"));
 
@@ -378,7 +378,7 @@ namespace clojure.lang
         #region ISerializable Members
 
         [System.Security.SecurityCritical]
-        public virtual void GetObjectData(SerializationInfo info, StreamingContext context)
+        public void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             info.AddValue("_name",_name);
             info.AddValue("_ns", _ns);

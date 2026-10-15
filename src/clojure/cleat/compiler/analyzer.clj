@@ -529,7 +529,9 @@
       (clj-call "IsInstanceOf" false (q (maybe-type ctx (first args))) (analyze (second args) (assoc nt :pos pos)))
       (and (<= 1 n 4) (var-prim-sig vm n))
       (apply clj-call "PrimInvoke" false (q (var-prim-sig vm n)) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
-      (and @inline-calls? (inline-target v n))
+      ;; 只在 fn 体里内联（顶层形式只运行一次：留给简单解释，调用帧也照旧）；实参是 NaN 字面量时不内联——形参本是对象，
+      ;; 同一个常量对象 (= a b) 为真，内联后常量传播成原始 double 的比较就为假（cleat-116）
+      (and @inline-calls? (:fn-name ctx) (not (some #(and (instance? Double %) (Double/IsNaN %)) args)) (inline-target v n))
       (inline-call (inline-target v n) v (mapv #(analyze % (assoc nt :pos pos)) args))
       :else
       (if-let [cls (direct-link-target v n)]

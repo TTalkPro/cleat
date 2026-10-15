@@ -171,7 +171,7 @@ namespace clojure.lang
         /// Gets the first item.
         /// </summary>
         /// <returns>The first item.</returns>
-        public override object first()
+        public sealed override object first()
         {
             return _first;
         }
@@ -180,7 +180,7 @@ namespace clojure.lang
         /// Return a seq of the items after the first.  Calls <c>seq</c> on its argument.  If there are no more items, returns nil."
         /// </summary>
         /// <returns>A seq of the items after the first, or <c>nil</c> if there are no more items.</returns>
-        public override ISeq next()
+        public sealed override ISeq next()
         {
             if ( _count == 1 )
                 return null;

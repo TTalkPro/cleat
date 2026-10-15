@@ -774,6 +774,9 @@ namespace clojure.lang
         public static object first(object x)
         {
             // cleat-111：ASeq（Cons、PersistentList……）先判——类检查加虚调用，避开接口转换与接口分派的存根
+            // Cons 是 sealed、PersistentList 按精确类型：一次方法表比较，first() 直接调用可内联；ASeq 不是 sealed，isinst 要走 CastHelpers
+            if (x is Cons c) return c.first();
+            if (x != null && x.GetType() == typeof(PersistentList)) return Unsafe.As<PersistentList>(x).first();
             if (x is ASeq a) return a.first();
             ISeq seq = x as ISeq ?? RT.seq(x);
 
@@ -804,6 +807,9 @@ namespace clojure.lang
 
         public static ISeq next(object x)
         {
+            // Cons 是 sealed、PersistentList 按精确类型：一次方法表比较，next() 直接调用可内联；ASeq 不是 sealed，isinst 要走 CastHelpers
+            if (x is Cons c) return c.next();
+            if (x != null && x.GetType() == typeof(PersistentList)) return Unsafe.As<PersistentList>(x).next();
             if (x is ASeq a) return a.next();   // cleat-111
             ISeq seq = (x as ISeq) ?? RT.seq(x);
 
@@ -816,6 +822,8 @@ namespace clojure.lang
 
         public static ISeq more(object x)
         {
+            // Cons 是 sealed：一次方法表比较，more() 直接调用可内联；ASeq 不是 sealed，isinst 要走 CastHelpers
+            if (x is Cons c) return c.more();
             if (x is ASeq a) return a.more();   // cleat-111
             ISeq seq = x as ISeq ?? RT.seq(x);
 

@@ -39,6 +39,27 @@
 
 (def ^:private eval-counter (atom 0))
 
+(declare fn-node fn-class fn-arities inline-clauses lcil-types prod-of)
+
+(defn- register-eval-inlines!
+  "eval 的顶层 (def v (fn* …))（cleat-116）：登记已知函数与可内联的小子句，之后的调用点在类型守卫后内联（与接口文件里的同样）。
+  只认顶层形式本身（嵌在 let 里的 defn 可能引用外层局部变量）；宏与动态 Var 不登记。"
+  [l0 asm lcil]
+  (when (r/node? l0)
+    (let [[k fs] (prod-of l0)]
+      (when (= 'clj-def k)
+        (let [[^clojure.lang.Var v _ _ e0] fs]
+          (when-let [le (and (instance? clojure.lang.Var v) (not (.isDynamic v)) (not (.IsMacro v)) (fn-node e0))]
+            (let [cls (fn-class le)]
+              (when ((lcil-types lcil) cls)
+                (let [e (InterfaceFile+Entry.)]
+                  (set! (.-Var e) (symbol (str (.-Name (.-Namespace v))) (str (.-Symbol v))))
+                  (set! (.-ClassName e) (str cls ", " asm))
+                  (set! (.-Arities e) (int-array (fn-arities le)))
+                  (set! (.-HasStatic e) true)
+                  (doseq [[n bytes] (inline-clauses e0)] (DriverOps/AddInline e n bytes))
+                  (InterfaceFile/RegisterEntry e))))))))))
+
 (defn- run-compiled
   "L0 → 内存程序集 → 执行，值经 HoldResult 取回。"
   [l0]
@@ -47,6 +68,8 @@
                                    nm "#Module" true (fn [_ _ _]))
         asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil nm (object-array cs))]
     (run-module asm)
+    ;; 构建镜像 / 包时不登记：产物里的调用点不能链接到 eval 程序集里的类
+    (when-not (or (:boot (st)) (:package (st))) (register-eval-inlines! l0 nm lcil))
     (take-result)))
 
 ;; —— 简单形式的解释（原版 Driver.TryEvalSimple，designs/04 §9：Chez 的 compile-interpret-simple）——
@@ -324,7 +347,8 @@
         (vec (keep (fn [cl]
                      (let [[_ [x*]] (prod-of cl)
                            sexpr (np/unparse cl)]
-                       (when (inline-ok? sexpr)
+                       ;; 有原始签名的子句（^long / ^double 形参或返回）不内联：子句体里没有入口与返回的转换（cleat-116）
+                       (when (and (not (some (fn [[k _]] (= (long k) (count x*))) (:prims nm))) (inline-ok? sexpr))
                          (try [(count x*) (Cleat.Core.Runtime.Fasl/Write [:cleat/l0 sexpr])]
                               (catch Exception _ nil)))))   ; 常量里有 fasl 写不了的对象：不内联
                    (take last-fixed cl*)))))))

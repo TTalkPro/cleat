@@ -22,4 +22,11 @@ public static class LongBox
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static object Get(long x) => (ulong)(x - Lo) <= (ulong)(Hi - Lo) ? s_cache[x - Lo] : x;
+
+    /// <summary>
+    /// double 装箱（生成的代码用）：故意不内联。内联的 box 先调用分配再存值，值跨过调用存活；SysV 上 xmm 寄存器都由调用方保存，
+    /// RyuJIT 于是把整个循环里的 double 变量放在栈槽上（sumfp 的循环每次迭代多一次存取，慢 4 倍）。作为实参传进来就没有这个问题。
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static object Double(double x) => x;
 }

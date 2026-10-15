@@ -135,6 +135,9 @@ public sealed class InterfaceFile
     /// <summary>已加载产物中的已知函数（编译器跨单元直接链接用）。</summary>
     public static Entry FindKnown(Symbol var) => s_known.TryGetValue(var, out var e) ? e : null;
 
+    /// <summary>eval 定义的函数（cleat-116）：没有接口文件，求值后直接登记已知函数与可内联子句（重定义时覆盖；调用点有类型守卫）。</summary>
+    public static void RegisterEntry(Entry e) => s_known[e.Var] = e;
+
     public static int KnownCount => s_known.Count;
 
     /// <summary>登记接口文件；程序集的 MVID 与文件记录的不符时不登记并返回 false（镜像重建后的旧文件）。</summary>

@@ -76,6 +76,10 @@
 (def ^:private live-unit? (atom false))   ; 当前编译单元是内存模式（eval）：生成的代码与先前求值生成的类在同一进程（cleat-110）；分层编译时 if 的值经局部变量汇合（cleat-114）
 (def opt-boxcache? (not (opt-off? "boxcache")))   ; long 装箱走 LongBox（cleat-109）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
+;; double 经不内联的 LongBox.Double 装箱：内联的 box 在值存活期间调用分配，SysV 的 xmm 寄存器都由调用方保存，
+;; RyuJIT 于是把循环里的 double 变量整个放在栈上（每次迭代一次存取，sumfp 慢 4 倍）
+(def opt-boxdouble? (not (opt-off? "boxdouble")))
+(defn- box-double [] (if opt-boxdouble? (i 'call long-box-type "Double" (i double-type) obj) (i 'box double-type)))
 (def opt-num? (not (opt-off? "num")))     ; Num：未定类型数的局部 / 循环变量 / 形参（cleat-102）   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
 
 ;; —— 编译单元（原版 unit）——
@@ -83,9 +87,36 @@
 (defn- make-unit [assembly-name module-name]
   {:name assembly-name :module module-name
    :classes (atom []) :consts (atom []) :nconsts (atom 0) :const-index (ht)
-   :namespaces (atom []) :references (atom []) :counter (atom 0) :type-names (ht)})
+   :namespaces (atom []) :references (atom []) :counter (atom 0) :type-names (ht)
+   :var-fields (atom [])})   ; eval 单元里 Var 的 static readonly 字段：[Var 字段名] 的有序表（cleat-114）
 
 (defn- add-class! [u c] (swap! (:classes u) conj c))
+
+(def ^:private vars-type "$Vars")
+
+(declare constant-index! emit!)
+
+(defn- load-var-object!
+  "Var 对象压栈（类型为 Var）。eval 单元（cleat-114）：$Vars 的 static readonly 字段（JIT 在类型初始化后当常量，没有常量表的数组读与 castclass，
+  JVM 的 fn 类同样把 Var 放在 static final 字段里）；镜像与包照旧 ldconst + castclass（字节不变）。"
+  [mc d]
+  (if @live-unit?
+    (let [u (:unit mc)
+          f (or (some (fn [[v n]] (when (identical? v d) n)) @(:var-fields u))
+                (let [n (str "v" (count @(:var-fields u)))] (swap! (:var-fields u) conj [d n]) n))]
+      (emit! mc (i 'ldsfld vars-type f)))
+    (emit! mc (i 'ldconst (constant-index! (:unit mc) d)) (i 'castclass clj-var-type))))
+
+(defn- vars-class
+  "$Vars：各 Var 的 static readonly 字段与填充它们的类型初始化器（从常量表取）；没有 Var 时 nil。"
+  [u]
+  (let [vfs @(:var-fields u)]
+    (when (seq vfs)
+      (apply i 'type vars-type (i 'attrs 'abstract 'sealed)
+             (concat (map (fn [[_ n]] (i 'field n clj-var-type 'static 'readonly)) vfs)
+                     [(i 'method ".cctor" (i 'attrs 'cctor) (i 'params)
+                         (apply i 'body (concat (mapcat (fn [[v n]] [(i 'ldconst (constant-index! u v)) (i 'castclass clj-var-type) (i 'stsfld vars-type n)]) vfs)
+                                                [(i 'ret)])))])))))
 
 (defn- next-id! [u] (let [n @(:counter u)] (swap! (:counter u) inc) n))
 
@@ -1071,7 +1102,7 @@
 
 (defn- box-raw! [mc t]
   (case t
-    :fl (emit! mc (i 'box double-type))
+    :fl (emit! mc (box-double))
     :l64 (emit! mc (box-long))
     :num (emit! mc (i 'call num-type "Box" (i num-type) obj))
     (emit! mc (i 'box int32-type))))
@@ -1085,7 +1116,7 @@
 (defn- box-from-sig! [mc c]
   (case c
     \L (emit! mc (box-long))
-    \D (emit! mc (i 'box double-type))
+    \D (emit! mc (box-double))
     nil))
 
 (defn- numbers-raw-emit-args! [args op mc]
@@ -1326,11 +1357,12 @@
                                                 (emit! mc (i 'call static-calls-type "RetObject" (i obj) obj)))
                       (= ret "System.Int32") (emit! mc (i 'call static-calls-type "RetInt32" (i int32-type) obj))
                       (= ret "System.Int64") (emit! mc (box-long))
-                      (#{"System.Double" "System.Char"} ret) (emit! mc (i 'box ret))
+                      (= ret "System.Double") (emit! mc (box-double))
+                      (= ret "System.Char") (emit! mc (i 'box ret))
                       ;; cleat-111：较窄的数值结果与运行时决议（Reflector.ConvertFrom）一样加宽成 long / double
                       (#{"System.Byte" "System.UInt16"} ret) (emit! mc (i 'conv.u8) (box-long))
                       (#{"System.SByte" "System.Int16"} ret) (emit! mc (i 'conv.i8) (box-long))
-                      (= ret "System.Single") (emit! mc (i 'conv.r8) (i 'box double-type))
+                      (= ret "System.Single") (emit! mc (i 'conv.r8) (box-double))
                       :else nil)
                 (finish-value! mc ctx)))))
 
@@ -1652,15 +1684,15 @@
     ;; —— Clojure 节点 ——
     [(clj-var-ref ~d ~st)
      (when-not (= ctx :effect)
-       (load-constant! mc d)
-       (emit! mc (i 'castclass clj-var-type) (i 'callvirt clj-var-type (if st "get" "getRawRoot") () obj))
+       (load-var-object! mc d)
+       (emit! mc (i 'callvirt clj-var-type (if st "get" "getRawRoot") () obj))
        (finish-value! mc ctx))]
     [(clj-var-set! ~d ~e)
-     (operands! mc [#(do (load-constant! mc d) (emit! mc (i 'castclass clj-var-type))) #(cg e mc :value)])
+     (operands! mc [#(load-var-object! mc d) #(cg e mc :value)])
      (emit! mc (i 'callvirt clj-var-type "set" (i obj) obj))
      (finish-value! mc ctx)]
     [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
-     (let [var! #(do (load-constant! mc d) (emit! mc (i 'castclass clj-var-type)))]
+     (let [var! #(load-var-object! mc d)]
        (when st1
          (var!)
          (emit! mc (i 'callvirt clj-var-type "setDynamic" () clj-var-type) (i 'pop)))
@@ -1743,13 +1775,19 @@
        (emit! mc (i 'ldloc root) (i 'isinst d0) (i 'brfalse slow))
        (ldloc-clear! mc root)
        (doseq [l defs] (ldloc-clear! mc l))
-       (emit! mc (i 'call d0 "invokeStatic" (apply i (objs (inc n))) obj) (i 'br end))
-       (emit! mc (i 'label slow))
-       (ldloc-clear! mc root)
-       (emit! mc (i 'castclass ifn-type))
-       (doseq [l defs] (ldloc-clear! mc l))
-       (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj))
-       (emit! mc (i 'label end))
+       ;; eval 单元（分层编译）：结果不留在栈上跨过汇合点（同 if，cleat-114）
+       (let [merge (when @live-unit? (new-local! mc obj))]
+         (emit! mc (i 'call d0 "invokeStatic" (apply i (objs (inc n))) obj))
+         (when merge (emit! mc (i 'stloc merge)))
+         (emit! mc (i 'br end))
+         (emit! mc (i 'label slow))
+         (ldloc-clear! mc root)
+         (emit! mc (i 'castclass ifn-type))
+         (doseq [l defs] (ldloc-clear! mc l))
+         (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj))
+         (when merge (emit! mc (i 'stloc merge)))
+         (emit! mc (i 'label end))
+         (when merge (emit! mc (i 'ldloca merge)) (take-slot! mc)))
        (finish-value! mc ctx))]
     [(clj-case ~d ~e0 ~e1 ~e* ...)
      ;; CaseExpr（ClojureCLR 的语义），见 原版的注释
@@ -1990,8 +2028,9 @@
 (def ^:private tier-classes (ht))   ; 分层编译的函数类（:class）：有循环或自递归的顶层 defn（cleat-114，只在 eval 单元）
 
 (defn- l3-some?
-  "e（含嵌套 lambda 的子句体）里有满足 pred 的节点。"
-  [pred e]
+  "e（含嵌套 lambda 的子句体；own? 为真时不进嵌套的 lambda）里有满足 pred 的节点。"
+  [pred e & [own?]]
+  (let [top e]
   (letfn [(walk [e]
             (or (pred e)
                 (nanopass-case [L3 Expr] e
@@ -2002,7 +2041,8 @@
                   [(label ~x (~x* ...) ~body0 ~body1) (or (walk body0) (walk body1))]
                   [(jump ~x ~e* ...) (some walk e*)]
                   [(lambda ~nm (~x* ...) ~cl* ...)
-                   (some (fn [cl] (nanopass-case [L3 Clause] cl [(clause (~y* ...) ~y ~body) (walk body)])) cl*)]
+                   (when-not (and own? (not (identical? e top)))
+                     (some (fn [cl] (nanopass-case [L3 Clause] cl [(clause (~y* ...) ~y ~body) (walk body)])) cl*))]
                   [(call ~e ~e* ...) (or (walk e) (some walk e*))]
                   [(throw ~e) (walk e)]
                   [(try-finally ~e0 ~e1) (or (walk e0) (walk e1))]
@@ -2018,7 +2058,7 @@
                   [(set-box! ~x ~e) (walk e)]
                   [(check-initialized ~e) (walk e)]
                   [else false])))]
-    (boolean (walk e))))
+    (boolean (walk e)))))
 
 (defn- real-loop?
   "节点是真正的循环：label 的循环体里有跳回自己的 jump（每个子句都有的 arity 标签，没有 recur 时不算）。"
@@ -2037,7 +2077,8 @@
     (l3-some?
       (fn [e]
         (nanopass-case [L3 Expr] e
-          [(lambda ~nm (~x* ...) ~cl* ...) (when (l3-some? real-loop? e) (mark! e)) false]
+          ;; 只看 lambda 自己的体（不进嵌套的 lambda）：-main 里嵌套一个带循环的闭包时，-main 本身只运行一次，不能停在 tier-0
+          [(lambda ~nm (~x* ...) ~cl* ...) (when (l3-some? real-loop? e true) (mark! e)) false]
           [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
            (when (l3-some? (fn [n] (nanopass-case [L3 Expr] n [(clj-var-ref ~d2 ~st) (identical? d2 d)] [else false])) e0)
              (nanopass-case [L3 Expr] e0 [(lambda ~nm (~x* ...) ~cl* ...) (mark! e0)] [else nil]))
@@ -2101,7 +2142,7 @@
                  (apply i 'body (concat [(i 'ldarg 0)]
                                         (mapcat (fn [j c] (if (sig-char-raw c) [(i 'ldarg j) (i 'unbox.any (sig-char-type c))] [(i 'ldarg j)])) args cs)
                                         [(i 'call cname "invokeStaticTyped" (apply i (cons obj (sig-param-types sig))) (sig-char-type rc))
-                                         (if (= rc \L) (box-long) (i 'box (sig-char-type rc)))
+                                         (if (= rc \L) (box-long) (box-double))
                                          (i 'stloc tmp)]))
                  (i 'catch typed-bailout-type (i 'pop))))
     (emit! mc (i 'ldloc tmp) (i 'brfalse gen) (i 'ldloc tmp))
@@ -2743,6 +2784,7 @@
                               :else (concat (mapcat (fn [k] [(i 'call module-name (init-name k) () obj) (i 'pop)]) (range (dec n)))
                                             [(i 'call module-name (init-name (dec n)) () obj) (i 'ret)]))))
             module (apply i 'type module-name (i 'attrs 'abstract 'sealed) (concat inits [entry]))
+            vars (vars-class u)   ; 在取常量表之前：它把各 Var 登记进常量表
             cs @(:consts u)
             lcil (apply i 'lcil 1
                         (i 'assembly assembly-name (apply i 'references core-assembly @(:references u)) (i 'runtime 'clojure)
@@ -2753,5 +2795,5 @@
                             live? [(i 'live-constants (count cs))]
                             ;; 原版在 canonical-gensyms 时（boot 镜像）把编码里的 gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
                             :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
-                          (cons module @(:classes u))))]
+                          (cons module (if vars (conj @(:classes u) vars) @(:classes u)))))]
         [lcil cs]))))
