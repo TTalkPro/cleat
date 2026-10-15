@@ -26,6 +26,10 @@
 | `(.-a p)` 字段读 | 46 ms | 静态决议 |
 | `(conj v i)` 持久向量 | 329 ms（165 ns/次） | 另一个方向，不在本文 |
 
+`bench/baseline.edn`（M10 起点，cleat-100，3 轮 min）：assoc_map 58、ctor 305、fib 9、keyword_invoke 21、lazy_chain 84、mbrot 52、nested_arith 311、
+prim_fib 4、property 155、protocol 34、reduce_vec 36、sum_loop 13、untyped_loop 49 ms。分配采样（`tools/alloc.cs`）：nested_arith 的分配 94% 是
+`System.Double` 装箱（5 轮 2.3 GB，gen0 GC 204 次）；ctor 的大头是 `Reflector.New` 每次新建的 `CallKey`（1.0 GB）、`System.Type[]`（0.55 GB）与实参数组。
+
 cleat 已有的（cleat-042 与 M8 从 Scheme 层带入）：类型格与收窄（iron-071 的格）、`infer-var-types-into!`（iron-034c 工作表法）、
 `:l64` / `:fl` 的原始发射（`cg-raw`）、`^long` / `^double` 原始签名（JVM 的 `IFn$LL`）、宿主调用静态决议（`ClojureStaticCalls.Resolve`）、
 `.inl` 小函数内联（iron-070 的子集）、cp0-lite、局部变量清除、letrec 直接调用、`loop/recur` → `label/jump`（lower-loops D9）。

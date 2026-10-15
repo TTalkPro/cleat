@@ -425,7 +425,7 @@ void Bench(string[] a)
     {
         var lines = names.Where(n => results[n].Count > 0)
             .Select(n => $"{{:name {n} :min {results[n][0]} :median {results[n][results[n].Count / 2]}}}");
-        File.WriteAllLines(basePath, [";; cleat-042 基准基线（tools/build.cs bench --write 生成；优化对照用）", .. lines]);
+        File.WriteAllLines(basePath, [";; 基准基线（tools/build.cs bench --write 生成；优化对照用）。M10 起点：2026-10-15，cleat-100", .. lines]);
         Console.WriteLine("wrote " + basePath);
     }
     else if (baseline.Count > 0 && failed) throw new CommandFailed("bench: some benchmarks produced no samples");

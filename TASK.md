@@ -106,8 +106,8 @@
 | [cleat-097](tasks/cleat-097-refresh-baselines.md) | 刷新 clojure-test-suite 与 test_clojure 基线，分类剩余失败 | M9 | cleat-095 | 完成 |
 | [cleat-098](tasks/cleat-098-divergence-cleanup.md) | 偏离表清理：error-model / numeric / boxing / strictness / printf / not-yet 逐条判断；nREPL middleware 测试改回上游写法 | M9 | cleat-095 | 完成 |
 | [cleat-099](tasks/cleat-099-reflection-warnings.md) | 反射警告：*warn-on-reflection* 为真时分析器按 ClojureCLR 的措辞报出决议不了的宿主调用（test_clojure rt 的 18 条）；顺带修复镜像文件被 require 重载 | M9 | cleat-097 | 完成 |
-| [cleat-100](tasks/cleat-100-perf-measurement.md) | 性能测量基建：分配采样器（搬 skeg alloc.cs）、装箱探针、基准补充（无提示循环、嵌套算术、构造、属性、mbrot） | M10 | cleat-099 | 进行中 |
-| [cleat-101](tasks/cleat-101-static-resolution-scope.md) | codegen 静态决议范围：构造器、属性、值类型目标、任意引用形参、泛型方法（现在全走 Reflector） | M10 | cleat-100 | 未开始 |
+| [cleat-100](tasks/cleat-100-perf-measurement.md) | 性能测量基建：分配采样器（搬 skeg alloc.cs）、装箱探针、基准补充（无提示循环、嵌套算术、构造、属性、mbrot） | M10 | cleat-099 | 完成 |
+| [cleat-101](tasks/cleat-101-static-resolution-scope.md) | codegen 静态决议范围：构造器、属性、值类型目标、任意引用形参、泛型方法（现在全走 Reflector） | M10 | cleat-100 | 进行中 |
 | [cleat-102](tasks/cleat-102-num-and-dual-locals.md) | Num：不装箱的未定类型数（skeg iron-080，Clojure 语义）；嵌套算术与 let 变量的双局部表示（082 / 083） | M10 | cleat-101 | 未开始 |
 | [cleat-103](tasks/cleat-103-loop-speculation.md) | 循环的 long / double 推测：快慢两份循环（skeg iron-071 / 080B） | M10 | cleat-102 | 未开始 |
 | [cleat-104](tasks/cleat-104-typed-entries.md) | 无提示已知函数的类型化入口（skeg iron-075 / 076，溢出抛异常不重算） | M10 | cleat-103 | 未开始 |
