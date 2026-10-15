@@ -9,7 +9,8 @@
   (:require [clojure.string :as str]
             [cleat.nanopass :refer [nanopass-case define-pass with-output-language out]]
             [cleat.nanopass.records :as r]
-            [cleat.compiler.languages :as l :refer [L3]])
+            [cleat.compiler.languages :as l :refer [L3]]
+            [cleat.compiler.loops :as loops])
   (:import [System.Collections Hashtable]))
 
 ;; —— 小工具 ——
@@ -67,6 +68,7 @@
 (def opt-inline? (not (opt-off? "inline")))
 (def opt-infer? (not (opt-off? "infer")))
 (def opt-host? (not (opt-off? "host")))
+(def opt-loopspec? (not (opt-off? "loopspec")))   ; 循环的 long / double 推测：快慢两份循环（cleat-103）
 (def opt-num? (not (opt-off? "num")))     ; Num：未定类型数的局部 / 循环变量 / 形参（cleat-102）   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
 
 ;; —— 编译单元（原版 unit）——
@@ -432,6 +434,7 @@
     [(clj-call ~d0 ~d1 ~e* ...)
      (cond
        (= d0 "Tagged") (expr-type (second e*) env)   ; 静态类型标注（cleat-101 的延续）：透明
+       (= d0 "Speculated") (quoted-datum (first e*))   ; 推测循环的快份入口：isinst 检查过的实参（cleat-103）
        (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
        :else
@@ -642,8 +645,9 @@
 (defn- bigger-than? [body n] (count-nodes body n))
 
 (defn- infer-var-types-into!
-  "原版 infer-var-types-into!（seeds 只用于推测循环，Clojure 输入没有，固定为 nil）。"
-  [form out]
+  "原版 infer-var-types-into!。seeds：推测循环（cleat-103）的试算用——体外变量的已知类型（第一遍推断的 sound-types），放进环境、不参与不动点。"
+  ([form out] (infer-var-types-into! form out nil))
+  ([form out seeds]
   (let [defs (ht) excluded (ht) labels (ht) raw-uses (ht) boxed-uses (ht) params (ht)
         defs-order (atom [])]
     (infer-walk form
@@ -685,6 +689,7 @@
                             (and t (not (#{:top :l64} t))) (hput! var-facts x t))))]
       (doseq [k (keys-of fixed-types)]
         (let [v (hget fixed-types k)] (hput! env k v) (hput! var-types k v) (hput! sound-types k v)))
+      (when seeds (doseq [k (keys-of seeds)] (hput! env k (hget seeds k))))
       (doseq [x cands] (hput! env x :top))
       (doseq [x cands e (or (hget defs x) ())]
         (doseq [v (deps e)] (hput! users v (cons x (or (hget users v) ())))))
@@ -723,7 +728,163 @@
                                   (do (hput! env x :num) (hput! out x :num) true)
                                   changed))))
                           false cands)
-              (recur))))))))
+              (recur)))))))))
+
+;; —— 循环推测（cleat-103，skeg iron-071 / 080B）——
+;; 最内层 label 循环里初值类型未定的形参：在"它们是 long（double）"的前提下推断能把它们定成原始类型时，生成快慢两份循环——
+;; 入口按实参 isinst，成立进快份（形参的初值是 (clj-call "Speculated" #f 'l64 t)，其余由推断完成：原始局部、回边不检查），
+;; 否则进原来的循环（object / Num）。Clojure 的 long 溢出抛异常，两份一致，不需要 skeg 的哨兵与重算。
+
+(def ^:private spec-max-nodes 300)
+(def ^:dynamic ^:private *spec-changed* (volatile! false))
+
+(defn- spec-simple?
+  "可以复制的循环体：没有 lambda / letrec / label / try / 赋值 / box / deftype / def，节点不超过 spec-max-nodes。"
+  [e]
+  (let [n (volatile! 0)]
+    (letfn [(ok? [e]
+              (and (<= (vswap! n inc) spec-max-nodes)
+                   (nanopass-case [L3 Expr] e
+                     [~x true]
+                     [(quote ~d) true]
+                     [(if ~e0 ~e1 ~e2) (and (ok? e0) (ok? e1) (ok? e2))]
+                     [(begin ~e* ... ~e) (and (every? ok? e*) (ok? e))]
+                     [(let ([~x* ~e*] ...) ~body) (and (every? ok? e*) (ok? body))]
+                     [(call ~e ~e* ...) (and (ok? e) (every? ok? e*))]
+                     [(throw ~e) (ok? e)]
+                     [(jump ~x ~e* ...) (every? ok? e*)]
+                     [(check-initialized ~e) (ok? e)]
+                     [(clj-var-ref ~d ~st) true]
+                     [(clj-invoke ~e ~e* ...) (and (ok? e) (every? ok? e*))]
+                     [(clj-keyword-invoke ~d ~e ~e* ...) (and (ok? e) (every? ok? e*))]
+                     [(clj-call ~d0 ~d1 ~e* ...) (every? ok? e*)]
+                     [(clj-static-call ~d0 ~d1 ~e* ...) (every? ok? e*)]
+                     [(clj-case ~d ~e0 ~e1 ~e* ...) (and (ok? e0) (ok? e1) (every? ok? e*))]
+                     [else false])))]
+      (ok? e))))
+
+(defn- spec-binders
+  "复制体里的绑定名（let 变量、label 名与形参）。"
+  [e]
+  (let [acc (volatile! [])]
+    (letfn [(walk [e]
+              (nanopass-case [L3 Expr] e
+                [(if ~e0 ~e1 ~e2) (run! walk [e0 e1 e2])]
+                [(begin ~e* ... ~e) (run! walk e*) (walk e)]
+                [(let ([~x* ~e*] ...) ~body) (vswap! acc into x*) (run! walk e*) (walk body)]
+                [(call ~e ~e* ...) (walk e) (run! walk e*)]
+                [(throw ~e) (walk e)]
+                [(jump ~x ~e* ...) (run! walk e*)]
+                [(check-initialized ~e) (walk e)]
+                [(clj-invoke ~e ~e* ...) (walk e) (run! walk e*)]
+                [(clj-keyword-invoke ~d ~e ~e* ...) (walk e) (run! walk e*)]
+                [(clj-call ~d0 ~d1 ~e* ...) (run! walk e*)]
+                [(clj-static-call ~d0 ~d1 ~e* ...) (run! walk e*)]
+                [(clj-case ~d ~e0 ~e1 ~e* ...) (walk e0) (walk e1) (run! walk e*)]
+                [else nil]))]
+      (walk e)
+      @acc)))
+
+(define-pass spec-rename L3 [ir m] -> L3 []
+  (Expr [ir] -> Expr []
+    [~x (get m x x)]
+    [(let ([~x* ~[e*]] ...) ~[body]) (out (let ([~(mapv #(get m % %) x*) ~e*] ...) ~body))]
+    [(jump ~x ~[e*] ...) (out (jump ~(get m x x) ~e* ...))]))
+
+(defn- spec-final-jump
+  "body0 是 let / begin 套着的一个 (jump lbl 实参 …)：用 (f 实参) 替换那个 jump；别的形状 nil。"
+  [e lbl f]
+  (nanopass-case [L3 Expr] e
+    [(let ([~x* ~e*] ...) ~body)
+     (when-let [b (spec-final-jump body lbl f)] (with-output-language [L3 Expr] (out (let ([~x* ~e*] ...) ~b))))]
+    [(begin ~e* ... ~e)
+     (when-let [b (spec-final-jump e lbl f)] (with-output-language [L3 Expr] (out (begin ~e* ... ~b))))]
+    [(jump ~x ~e* ...) (when (= x lbl) (f e*))]
+    [else nil]))
+
+(defn- spec-trivial? [e] (nanopass-case [L3 Expr] e [~x true] [(quote ~d) true] [else false]))
+(defn- spec-const? [e] (nanopass-case [L3 Expr] e [(quote ~d) true] [else false]))
+
+(defn- spec-numeric-use?
+  "v 在 e 里是 Numbers 算术 / 比较的操作数。"
+  [e v]
+  (letfn [(walk [e]
+            (nanopass-case [L3 Expr] e
+              [(if ~e0 ~e1 ~e2) (or (walk e0) (walk e1) (walk e2))]
+              [(begin ~e* ... ~e) (or (some walk e*) (walk e))]
+              [(let ([~x* ~e*] ...) ~body) (or (some walk e*) (walk body))]
+              [(call ~e ~e* ...) (or (walk e) (some walk e*))]
+              [(throw ~e) (walk e)]
+              [(jump ~x ~e* ...) (some walk e*)]
+              [(check-initialized ~e) (walk e)]
+              [(clj-invoke ~e ~e* ...) (or (walk e) (some walk e*))]
+              [(clj-keyword-invoke ~d ~e ~e* ...) (or (walk e) (some walk e*))]
+              [(clj-call ~d0 ~d1 ~e* ...)
+               (or (and (numbers-arith-op d0 d1 e*) (some #(nanopass-case [L3 Expr] % [~x (= x v)] [else false]) (drop 3 e*)))
+                   (some walk e*))]
+              [(clj-static-call ~d0 ~d1 ~e* ...) (some walk e*)]
+              [(clj-case ~d ~e0 ~e1 ~e* ...) (or (walk e0) (walk e1) (some walk e*))]
+              [else false]))]
+    (boolean (walk e))))
+
+(defn- spec-copy
+  "快份：(label x' (p' …) (jump x' 实参' …) body1')，推测的位置包 Speculated。"
+  [x x* body1 args guess]
+  (let [m (into {} (map (fn [v] [v (loops/fresh (str v))]) (cons x (concat x* (spec-binders body1)))))
+        x' (m x)
+        args' (map-indexed (fn [k a] (if-let [t (guess k)] (with-output-language [L3 Expr] (out (clj-call "Speculated" false (quote ~t) ~a))) a)) args)]
+    [(with-output-language [L3 Expr]
+       (out (label ~x' (~(mapv m x*) ...) (jump ~x' ~args' ...) ~(spec-rename body1 m))))
+     (mapv m x*)]))
+
+(defn- spec-guess
+  "推测：位置 → :l64 / :fl。先都猜 long，试算推断定不成的改猜 double，再不成的放弃；空表示不推测。"
+  [x x* body1 args cands]
+  (loop [guess (into {} (map (fn [k] [k :l64]) cands)) n 0]
+    (if (or (empty? guess) (> n 2))
+      {}
+      (let [[copy ps'] (spec-copy x x* body1 args guess)
+            scratch (ht)
+            _ (infer-var-types-into! copy scratch sound-types)
+            bad (filter (fn [[k t]] (not= t (hget scratch (nth ps' k)))) guess)]
+        (if (empty? bad)
+          guess
+          (recur (reduce (fn [g [k t]] (if (= t :l64) (assoc g k :fl) (dissoc g k))) guess bad) (inc n)))))))
+
+(defn- spec-label
+  "(label x (x* …) body0 body1) 的推测形式，不推测时 nil。"
+  [x x* body0 body1]
+  (when (spec-simple? body1)
+    (spec-final-jump
+      body0 x
+      (fn [args]
+        (let [cands (filter (fn [k] (let [a (nth args k)]
+                                      (and (not (spec-const? a)) (not (#{:l64 :fl :fx} (expr-type a sound-types)))
+                                           (not (hhas? var-types (nth x* k)))   ; 第一遍已定成原始类型或 Num
+                                           (spec-numeric-use? body1 (nth x* k)))))
+                            (range (count args)))
+              guess (if (seq cands) (spec-guess x x* body1 args cands) {})]
+          (when (seq guess)
+            (vreset! *spec-changed* true)
+            (let [temps (mapv (fn [a] (if (spec-trivial? a) a (loops/fresh "spec"))) args)
+                  binds (keep-indexed (fn [k a] (when-not (spec-trivial? a) [(temps k) a])) args)
+                  [fast _] (spec-copy x x* body1 temps guess)
+                  check (fn [k] (let [t (temps k)]
+                                  (with-output-language [L3 Expr]
+                                    (out (clj-call "IsInstanceOf" false (quote ~(if (= :l64 (guess k)) Int64 Double)) ~t)))))
+                  ks (sort (keys guess))
+                  test (reduce (fn [acc k] (with-output-language [L3 Expr] (out (if ~acc ~(check k) (quote false)))))
+                               (check (first ks)) (rest ks))
+                  sel (with-output-language [L3 Expr] (out (if ~test ~fast (jump ~x ~temps ...))))]
+              (if (empty? binds)
+                sel
+                (with-output-language [L3 Expr] (out (let ([~(mapv first binds) ~(mapv second binds)] ...) ~sel)))))))))))
+
+(define-pass speculate-loops L3 [ir] -> L3 []
+  (Expr [ir] -> Expr []
+    [(label ~x (~x* ...) ~[body0] ~[body1])
+     (let [b0 (spec-label x x* body0 body1)]
+       (out (label ~x (~x* ...) ~(or b0 body0) ~body1)))]))
 
 ;; —— deftype* 描述的访问（向量，见原版 deftype-info-*）——
 (defn- dinfo [d k] (nth d k))
@@ -1311,6 +1472,7 @@
                 (i 'call support "ResultOf" (i task) obj))
          (finish-value! mc ctx))
        (= d0 "Tagged") (cg (second e*) mc ctx)   ; 静态类型标注：生成代码时透明
+       (= d0 "Speculated") (cg (second e*) mc ctx)   ; 推测的实参：值就是检查过的对象；原始用途由 cg-raw-default 的 unbox.any 取（cleat-103）
        (and (= d0 "IsInstanceOf") (= 2 (count e*))
             (let [t (quoted-datum (first e*))]
               (and (instance? Type t) (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))))
@@ -2120,29 +2282,44 @@
   [forms assembly-name module-name loop-flags live?]
   (let [u (make-unit assembly-name module-name)]
     (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
-    (run! collect-assigned! forms)
-    (when opt-infer?
-      (if (and loop-flags (= (count loop-flags) (count forms)))
-        (doseq [[f lp?] (map vector forms loop-flags)] (when lp? (infer-var-types-into! f var-types)))
-        (doseq [f forms] (infer-var-types-into! f var-types))))
-    (let [inits (mapv (fn [f k] (top-level-method u f k)) forms (range))
-          n (count inits)
-          entry (i 'method "Initialize" (i 'attrs 'static) (i 'params) (i 'ret obj)
-                   (apply i 'body
+    (let [infer! (fn [forms]
+                   (run! collect-assigned! forms)
+                   (when opt-infer?
+                     (if (and loop-flags (= (count loop-flags) (count forms)))
+                       (doseq [[f lp?] (map vector forms loop-flags)] (when lp? (infer-var-types-into! f var-types)))
+                       (doseq [f forms] (infer-var-types-into! f var-types)))))
+          _ (infer! forms)
+          ;; 循环推测（cleat-103）按第一遍推断的结果挑候选；改写了循环就清表重推（快份的形参由推断定成原始类型）
+          forms (if (and opt-infer? opt-loopspec?)
+                  (let [changed (volatile! false)
+                        forms' (binding [*spec-changed* changed]
+                                 (if (and loop-flags (= (count loop-flags) (count forms)))
+                                   (mapv (fn [f lp?] (if lp? (speculate-loops f) f)) forms loop-flags)
+                                   (mapv speculate-loops forms)))]
+                    (if @changed
+                      (do (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
+                          (infer! forms')
+                          forms')
+                      forms))
+                  forms)]
+      (let [inits (mapv (fn [f k] (top-level-method u f k)) forms (range))
+            n (count inits)
+            entry (i 'method "Initialize" (i 'attrs 'static) (i 'params) (i 'ret obj)
+                     (apply i 'body
+                            (cond
+                              (zero? n) [(i 'ldnull) (i 'ret)]
+                              :else (concat (mapcat (fn [k] [(i 'call module-name (init-name k) () obj) (i 'pop)]) (range (dec n)))
+                                            [(i 'call module-name (init-name (dec n)) () obj) (i 'ret)]))))
+            module (apply i 'type module-name (i 'attrs 'abstract 'sealed) (concat inits [entry]))
+            cs @(:consts u)
+            lcil (apply i 'lcil 1
+                        (i 'assembly assembly-name (apply i 'references core-assembly @(:references u)) (i 'runtime 'clojure)
+                           (i 'entry module-name "Initialize"))
+                        (concat
                           (cond
-                            (zero? n) [(i 'ldnull) (i 'ret)]
-                            :else (concat (mapcat (fn [k] [(i 'call module-name (init-name k) () obj) (i 'pop)]) (range (dec n)))
-                                          [(i 'call module-name (init-name (dec n)) () obj) (i 'ret)]))))
-          module (apply i 'type module-name (i 'attrs 'abstract 'sealed) (concat inits [entry]))
-          cs @(:consts u)
-          lcil (apply i 'lcil 1
-                      (i 'assembly assembly-name (apply i 'references core-assembly @(:references u)) (i 'runtime 'clojure)
-                         (i 'entry module-name "Initialize"))
-                      (concat
-                        (cond
-                          (empty? cs) []
-                          live? [(i 'live-constants (count cs))]
-                          ;; 原版在 canonical-gensyms 时（boot 镜像）把编码里的 gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
-                          :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
-                        (cons module @(:classes u))))]
-      [lcil cs])))
+                            (empty? cs) []
+                            live? [(i 'live-constants (count cs))]
+                            ;; 原版在 canonical-gensyms 时（boot 镜像）把编码里的 gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
+                            :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
+                          (cons module @(:classes u))))]
+        [lcil cs]))))

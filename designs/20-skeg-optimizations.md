@@ -119,6 +119,9 @@ skeg iron-071 + 080B：最内层 `label` 循环里类型未定的形参，回边
 针对：`(defn f [n x] (loop [i 0 s x] …))`——初值来自无提示参数的循环。验收：§0 的 param-double 降到与 typed-double 同级；
 两份循环的 IL 快照；语义用例（入口是 long / double / Ratio / BigInt / 非数、NaN、两个形参一起推测）。
 
+**cleat-103 结果（2026-10-15）**：long 推测完成（第一遍推断挑候选、试算推断确认、改写后重推）；double 项 cleat-102 的 Num 已与有提示的同级，Num 变量不再推测。
+sum-long 13 → 2 ~ 3 ms（有提示 1 ms，余下是体外 Num 变量 `n` 的比较），untyped_loop 22 → 11 ms（linux01）；boot 镜像 8 处循环被改写。
+
 ## §5 无提示已知函数的类型化入口（cleat-104）
 
 skeg iron-075 / 076：单元内已知过程（cleat：直接链接的顶层 `defn`，单固定子句，≤ 4 形参，体不大），每个形参与返回值独立推测

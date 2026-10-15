@@ -60,7 +60,7 @@ cleat -I src... --compile-package out/Name.dll [--root dir]... ns...    编包�
 | `src/clojure/clojure/` | `clojure.core` 与随附命名空间（string、set、walk、edn、pprint、test、repl、main、zip、data、instant、clr.io …），改写自 Clojure / ClojureCLR（EPL） |
 | `src/clojure/cleat/compiler/` | 编译器（Clojure）：`analyzer`（Clojure 形式 → L0）、`languages`（L0 ~ L3）、`loops` / `front` / `closures` 各遍、`codegen`（L3 → Lcil）、`pipeline`、`driver`（eval / load / compile 钩子） |
 | `src/clojure/cleat/nanopass*` | `cleat.nanopass`：nanopass 框架的 Clojure 移植，编译器用它写（[用户文档](src/clojure/cleat/nanopass/README.md)，MIT） |
-| `src/boot/` | `boot-order.edn`（镜像的加载顺序）、`seed/*.gz`（Lcil 文本种子，信任根，约 1.85 MB）；构建生成的 `cleat.boot.dll` / `cleat.compiler.dll` 不入库 |
+| `src/boot/` | `boot-order.edn`（镜像的加载顺序）、`seed/*.gz`（Lcil 文本种子，信任根，约 1.93 MB）；构建生成的 `cleat.boot.dll` / `cleat.compiler.dll` 不入库 |
 | `packages/` | 移植的库：`tools.build`、`tools.namespace`、`nrepl`、`neorepl`，各自是 cleat 项目，打成 NuGet 包 |
 | `tests/` | `Cleat.Core.Tests`、`Cleat.Host.Tests`（NUnit）；`conformance/`（jolt 语料与偏离表）、`clojure-test-suite/`（子模块）、`test_clojure/`、两份基线 `cts-baseline.edn` / `test-clojure-baseline.edn`、`nanopass/`（nanopass 的上游测试翻译） |
 | `tools/` | `build.cs`（维护命令，见下）、`cts.clj`（两套测试的基线运行器）、`conformance.clj`（语料运行与门禁） |
@@ -91,7 +91,7 @@ dotnet run tools/build.cs -- selfhost        # 只验证不动点，不写种子
 
 | 套件 | 规模（2026-10-15） | 怎么跑 |
 |---|---|---|
-| Cleat.Core.Tests / Cleat.Host.Tests | 117 / 257 | `dotnet test Cleat.slnx -c Release` |
+| Cleat.Core.Tests / Cleat.Host.Tests | 117 / 258 | `dotnet test Cleat.slnx -c Release` |
 | jolt 语料（`:common` 行） | 失败行全部登记在 [cleat-divergences.edn](tests/conformance/cleat-divergences.edn)（522 行，各带类别与原因） | `dotnet run tools/build.cs -- conformance --run --gate` |
 | clojure-test-suite | 247 个命名空间，断言 6866 通过 / 31 失败 / 6 错误 | `cleat tools/cts.clj cts` |
 | test_clojure（ClojureCLR） | 357 个测试，断言 3688 通过 / 18 失败 | `cleat tools/cts.clj test-clojure` |

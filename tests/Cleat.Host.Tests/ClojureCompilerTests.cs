@@ -161,6 +161,44 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-103：初值来自无提示形参的最内层循环生成快慢两份（入口 isinst，快份原始局部）。语义用例（tests/Cleat.Host.Tests/data/loopspec_semantics.clj：
+    /// 入口是 long / double / Ratio / BigInt / BigDecimal / Int32 / 非数 / nil、溢出、NaN、两个变量一起推测、会变成 double 的变量、循环里装箱使用、
+    /// 初值是调用（求值一次、按顺序）、unchecked-math、嵌套循环）在 CLEAT_NO_OPT=loopspec 与开两种设置下输出逐字相同；
+    /// 无提示的 sum-long 有 long 的快份（循环体里是 Numbers.add(long, long)，没有 Object 版的 add），有 ^long 提示的不复制。
+    /// </summary>
+    [Test]
+    public void LoopSpeculation()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "loopspec_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "loopspec") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "loopspec on:\n" + on.Out + "\nloopspec off:\n" + off.Out);
+        Assert.That(on.Out, Does.Contain("45 45.5 7/2 13N 4.0M 7"), on.ToString());
+        Assert.That(on.Out.Split('\n').Length, Is.GreaterThan(10), on.ToString());
+
+        string src = Path.Combine(_dir, "spec.clj");
+        File.WriteAllText(src, "(ns spec)\n(defn sum-long [n x] (loop [i 0 s x] (if (< i n) (recur (inc i) (+ s i)) s)))\n"
+            + "(defn tsum [^long n ^long x] (loop [i 0 s x] (if (< i n) (recur (inc i) (+ s i)) s)))\n");
+        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
+            "-I", _dir, "--compile-package", Path.Combine(_dir, "spec.dll"), "--package", "spec", "--root", _dir, "spec");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        string lcil = File.ReadAllText(Path.Combine(_dir, "spec.dll.lcil"));
+        string Type(string name)
+        {
+            int start = lcil.IndexOf("(type \"spec$" + name + "\"", StringComparison.Ordinal);
+            int end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
+            return lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
+        }
+        string sum = Type("sum_long"), tsum = Type("tsum");
+        Assert.That(sum, Does.Contain("(isinst \"System.Int64\")"), sum);
+        Assert.That(sum, Does.Contain("(call \"clojure.lang.Numbers\" \"add\" (\"System.Int64\" \"System.Int64\") \"System.Int64\")"), sum);
+        Assert.That(sum, Does.Contain("(call \"clojure.lang.Numbers\" \"add\" (\"System.Object\" \"System.Int64\") \"System.Object\")"), sum);   // 慢份
+        Assert.That(tsum, Does.Not.Contain("isinst"), tsum);
+    }
+
+    /// <summary>
     /// cleat-106：带数组提示的 aget / aset / alength 静态决议到类型化的 RT 重载（分析器给宿主调用实参带上引用类型的标注，决议器接受一维数组；
     /// 元素是 long / double / object / bool / char 时 agetOnArray 改用类型化的 aget）。语义用例（tests/Cleat.Host.Tests/data/array_semantics.clj：
     /// 各种元素类型的读写与结果类型、越界、错误的值类型、无提示的数组、amap）在 CLEAT_NO_OPT=host 与开两种设置下输出逐字相同；
