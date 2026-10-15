@@ -108,8 +108,8 @@
 | [cleat-099](tasks/cleat-099-reflection-warnings.md) | 反射警告：*warn-on-reflection* 为真时分析器按 ClojureCLR 的措辞报出决议不了的宿主调用（test_clojure rt 的 18 条）；顺带修复镜像文件被 require 重载 | M9 | cleat-097 | 完成 |
 | [cleat-100](tasks/cleat-100-perf-measurement.md) | 性能测量基建：分配采样器（搬 skeg alloc.cs）、装箱探针、基准补充（无提示循环、嵌套算术、构造、属性、mbrot） | M10 | cleat-099 | 完成 |
 | [cleat-101](tasks/cleat-101-static-resolution-scope.md) | codegen 静态决议范围：构造器、属性、值类型目标、任意引用形参、泛型方法（现在全走 Reflector） | M10 | cleat-100 | 完成 |
-| [cleat-102](tasks/cleat-102-num-and-dual-locals.md) | Num：不装箱的未定类型数（skeg iron-080，Clojure 语义）；嵌套算术与 let 变量的双局部表示（082 / 083） | M10 | cleat-101 | 进行中 |
-| [cleat-103](tasks/cleat-103-loop-speculation.md) | 循环的 long / double 推测：快慢两份循环（skeg iron-071 / 080B） | M10 | cleat-102 | 未开始 |
+| [cleat-102](tasks/cleat-102-num-and-dual-locals.md) | Num：不装箱的未定类型数（skeg iron-080，Clojure 语义）；嵌套算术与 let 变量的双局部表示（082 / 083） | M10 | cleat-101 | 完成 |
+| [cleat-103](tasks/cleat-103-loop-speculation.md) | 循环的 long / double 推测：快慢两份循环（skeg iron-071 / 080B） | M10 | cleat-102 | 进行中 |
 | [cleat-104](tasks/cleat-104-typed-entries.md) | 无提示已知函数的类型化入口（skeg iron-075 / 076，溢出抛异常不重算） | M10 | cleat-103 | 未开始 |
 | [cleat-105](tasks/cleat-105-closure-and-inlining-budget.md) | 量化后决定：封闭局部 fn 提升、闭包直接 Invoke、内联预算（skeg iron-085 / 070） | M10 | cleat-104 | 未开始 |
 

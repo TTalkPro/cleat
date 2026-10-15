@@ -32,6 +32,7 @@
 (def int64-type "System.Int64")
 (def double-type "System.Double")
 (def bool-type "System.Boolean")
+(def num-type "Cleat.Core.Runtime.Num")   ; 不装箱的未定类型数（cleat-102）
 (def char-type "System.Char")
 (def string-type "System.String")
 (def void-type "System.Void")
@@ -65,7 +66,8 @@
 (def opt-034? (not (opt-off? "known")))
 (def opt-inline? (not (opt-off? "inline")))
 (def opt-infer? (not (opt-off? "infer")))
-(def opt-host? (not (opt-off? "host")))   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
+(def opt-host? (not (opt-off? "host")))
+(def opt-num? (not (opt-off? "num")))     ; Num：未定类型数的局部 / 循环变量 / 形参（cleat-102）   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
 
 ;; —— 编译单元（原版 unit）——
 
@@ -346,6 +348,7 @@
 (def ^:private sound-types (ht))    ; 推断收敛后的类型（宿主调用按它选重载）
 (def ^:private fixed-types (ht))    ; 原始签名子句的 L / D 形参
 (def ^:private var-facts (ht))      ; 变量的已知类型（不改变存储）
+(def ^:private num-aliases (ht))    ; 只是 Num 形参副本的变量 → 形参（cleat-102：共用形参的位置，装箱用途仍读原实参）
 (def ^:private assigned-vars (ht))  ; 被 set! 的局部变量
 
 ;; —— 类型格（原版 iron-071 的格元素；Clojure 输入只用到其中几种，加上 cleat-042 的 :l64）——
@@ -378,6 +381,10 @@
 ;; Numbers 的 int64 算术（cleat-042）
 (def ^:private numbers-long-ops #{"add" "minus" "multiply" "inc" "dec"})
 (def ^:private numbers-bool-ops #{"lt" "lte" "gt" "gte" "equiv"})
+;; Num 路径的算术（cleat-102）：long-ops 加 divide（两个 long 相除可能是 Ratio，没有 long 的原始路径）
+(def ^:private numbers-num-ops #{"add" "minus" "multiply" "divide" "inc" "dec"})
+(def ^:private num-methods {"add" "Add" "minus" "Subtract" "multiply" "Multiply" "divide" "Divide" "inc" "Inc" "dec" "Dec"
+                            "lt" "LessThan" "lte" "LessOrEqual" "gt" "GreaterThan" "gte" "GreaterOrEqual" "equiv" "Equiv"})
 
 (defn- numbers-type? [tp]
   (or (= tp "clojure.lang.Numbers") (and (instance? Type tp) (= (.FullName ^Type tp) "clojure.lang.Numbers"))))
@@ -390,6 +397,7 @@
       (when (and (string? op) (empty-gen? gen)
                  (cond (#{"inc" "dec"} op) (= argc 1)
                        (= op "minus") true
+                       (= op "divide") (= argc 2)
                        (numbers-long-ops op) (= argc 2)
                        (numbers-bool-ops op) (= argc 2)
                        :else false))
@@ -401,7 +409,8 @@
   (nanopass-case [L3 Expr] e
     [(clj-call ~d0 ~d1 ~e* ...)
      (let [op (numbers-arith-op d0 d1 e*)]
-       (when (and op (every? #(= :l64 (expr-type % env)) (drop 3 e*)))
+       ;; 只有 long 的原始重载存在的运算（divide 两个 long 可能是 Ratio，没有 long → long 的重载；它只走 Num 路径）
+       (when (and op (or (numbers-long-ops op) (numbers-bool-ops op)) (every? #(= :l64 (expr-type % env)) (drop 3 e*)))
          (cons op (drop 3 e*))))]
     [else nil]))
 
@@ -424,9 +433,10 @@
      (if (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
        (let [op (numbers-arith-op d0 d1 e*)
-             ts (when (and op (numbers-long-ops op)) (map #(expr-type % env) (drop 3 e*)))]
-         (cond (and ts (every? #(= :l64 %) ts)) :l64
-               (and ts (every? #{:l64 :top} ts)) :top
+             ts (when (and op (numbers-num-ops op)) (map #(expr-type % env) (drop 3 e*)))]
+         (cond (and ts (some #(= :num %) ts)) :num   ; 有 Num 操作数的算术按 Num 算（cleat-102）
+               (and ts (numbers-long-ops op) (every? #(= :l64 %) ts)) :l64
+               (and ts (numbers-long-ops op) (every? #{:l64 :top} ts)) :top
                :else (host-call-type d0 d1 e* env))))]
     [~x (if (hhas? env x) (hget env x) (hget var-facts x))]
     [(if ~e0 ~e1 ~e2) (type-join (expr-type e1 env) (expr-type e2 env))]
@@ -500,7 +510,7 @@
 
 (declare fix-clause-params!)
 
-(define-pass infer-walk L3 [ir add-def! exclude! labels candidate? use!] -> * []
+(define-pass infer-walk L3 [ir add-def! exclude! labels candidate? use! param!] -> * []
   (MaybeTyped Expr [ir] -> * []
     [(quote ~d) (or (instance? Int64 d) (boolean (datum-type d)))]
     [~x (candidate? x)]
@@ -512,7 +522,7 @@
     [(throw ~e) true]
     [else false])
   (Body Clause [ir] -> * []
-    [(clause (~x* ...) ~x ~body) (Expr body)])
+    [(clause (~x* ...) ~x ~body) (run! param! x*) (Expr body)])
   (Raw Expr [ir] -> * []
     [~x (use! x true)]
     [else (Expr ir)])
@@ -622,7 +632,7 @@
 (defn- infer-var-types-into!
   "原版 infer-var-types-into!（seeds 只用于推测循环，Clojure 输入没有，固定为 nil）。"
   [form out]
-  (let [defs (ht) excluded (ht) labels (ht) raw-uses (ht) boxed-uses (ht)
+  (let [defs (ht) excluded (ht) labels (ht) raw-uses (ht) boxed-uses (ht) params (ht)
         defs-order (atom [])]
     (infer-walk form
                 (fn [x e]
@@ -631,7 +641,8 @@
                 (fn [v] (hput! excluded v true))
                 labels
                 (fn [x] (hhas? defs x))
-                (fn [x raw?] (when (hhas? defs x) (hupdate! (if raw? raw-uses boxed-uses) x inc 0))))
+                (fn [x raw?] (when (or (hhas? defs x) (hhas? params x)) (hupdate! (if raw? raw-uses boxed-uses) x inc 0)))
+                (fn [p] (hput! params p true)))
     (let [env (ht) users (ht)
           cands (filterv #(not (hget excluded %)) @defs-order)   ; 不动点与顺序无关（单调，从 top 出发）
           deps (fn deps [e]
@@ -665,7 +676,41 @@
       (doseq [x cands e (or (hget defs x) ())]
         (doseq [v (deps e)] (hput! users v (cons x (or (hget users v) ())))))
       (propagate! cands)
-      (run! decide! cands))))
+      (run! decide! cands)
+      ;; Num（cleat-102）：没定成 :fx / :fl / :l64 的——
+      ;;   形参：有原始用途（Numbers 算术 / 比较的操作数）就放进 Num（入口 FromObject 一次；装箱用途读原来的实参，不另花钱）；
+      ;;   let 变量与 label 形参：全部定义都是数值类型的表达式（含 Num 变量、形参）且原始用途不少于装箱用途——只增不减的不动点。
+      ;; 这是表示，不是类型事实：不进 var-facts。
+      (when opt-num?
+        (let [numeric? (fn [t] (contains? #{:fx :fl :int :real :num :l64} t))
+              fresh? (fn [x] (and (not (hhas? out x)) (not (hhas? fixed-types x)) (not (hget excluded x))))]
+          (doseq [x (keys-of params)]
+            (when (and (fresh? x) (pos? (or (hget raw-uses x) 0)))
+              (hput! env x :num) (hput! out x :num)))
+          ;; 形参的副本（fn 的 arity 循环把形参复制进标签变量；(let [x p] …)）：全部定义都是对同一个 Num 形参（或其别名）的引用时
+          ;; 做别名——否则副本的装箱用途每次 Num.Box 新建对象，还丢掉 NaN 的同一性相等
+          (let [ref-of (fn [e] (nanopass-case [L3 Expr] e [~x x] [else nil]))
+                root (fn root [q] (if-let [r (hget num-aliases q)] (root r) q))]
+            (loop []
+              (when (reduce (fn [changed x]
+                              (let [ds (or (hget defs x) ())
+                                    qs (distinct (map ref-of ds))]
+                                (if (and (fresh? x) (seq ds) (= 1 (count qs)) (first qs)
+                                         (let [q (first qs)] (and (= :num (hget out q)) (or (hget params (root q)) (hhas? num-aliases q)))))
+                                  (do (hput! num-aliases x (root (first qs))) (hput! env x :num) (hput! out x :num) true)
+                                  changed)))
+                            false cands)
+                (recur))))
+          (loop []
+            (when (reduce (fn [changed x]
+                            (if (or (not (fresh? x)) (empty? (or (hget defs x) ())))
+                              changed
+                              (let [ts (map #(expr-type % env) (hget defs x))]
+                                (if (and (every? numeric? ts) (<= (or (hget boxed-uses x) 0) (or (hget raw-uses x) 0)))
+                                  (do (hput! env x :num) (hput! out x :num) true)
+                                  changed))))
+                          false cands)
+              (recur))))))))
 
 ;; —— deftype* 描述的访问（向量，见原版 deftype-info-*）——
 (defn- dinfo [d k] (nth d k))
@@ -685,12 +730,13 @@
 
 (declare cg cg* load-var! cg-raw)
 
-(defn- type-clr [t] (case t :fl double-type :l64 int64-type int32-type))
+(defn- type-clr [t] (case t :fl double-type :l64 int64-type :num num-type int32-type))
 
 (defn- box-raw! [mc t]
   (case t
     :fl (emit! mc (i 'box double-type))
     :l64 (emit! mc (i 'box int64-type))
+    :num (emit! mc (i 'call num-type "Box" (i num-type) obj))
     (emit! mc (i 'box int32-type))))
 
 (defn- unbox-to-sig! [mc c]
@@ -747,11 +793,74 @@
               (fallback)))]
       [else (fallback)])))
 
+(declare var-raw-type)
+
+(defn- num-arith
+  "有 Num 操作数的 Numbers 算术 / 比较：[方法名 实参 bool?]，否则 nil（cleat-102）。"
+  [e]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...)
+     (let [op (numbers-arith-op d0 d1 e*) args (drop 3 e*)]
+       (when (and op opt-num? (or (numbers-num-ops op) (numbers-bool-ops op))
+                  (not (and (= op "minus") (= 1 (count args))))
+                  (some #(= :num (expr-type % var-types)) args))
+         [(num-methods op) args (boolean (numbers-bool-ops op))]))]
+    [else nil]))
+
+(defn- cg-raw-num
+  "把 e 的值以 Num 压栈：常量直接构造；Num 变量 ldloc；l64 / fl 变量转换；有 Num 操作数的算术递归按 Num 算；其余求值后 FromObject。"
+  [e mc]
+  (let [from-object! #(do (cg e mc :value) (emit! mc (i 'call num-type "FromObject" (i obj) num-type)))
+        ;; 推断为 double / long 的子表达式（宿主调用、原始算术）：原始路径算出再包进 Num，不装箱
+        from-typed! #(case (expr-type e var-types)
+                       :fl (do (cg-raw e mc :fl) (emit! mc (i 'call num-type "FromDouble" (i double-type) num-type)))
+                       :l64 (do (cg-raw e mc :l64) (emit! mc (i 'call num-type "FromInt64" (i int64-type) num-type)))
+                       (from-object!))]
+    (nanopass-case [L3 Expr] e
+      [(quote ~d)
+       (cond (instance? Int64 d) (emit! mc (i 'ldc.i8 d) (i 'call num-type "FromInt64" (i int64-type) num-type))
+             (and (instance? Double d) (not (Double/IsNaN d)) (not (Double/IsInfinity d)))
+             (emit! mc (i 'ldc.r8 d) (i 'call num-type "FromDouble" (i double-type) num-type))
+             :else (from-object!))]
+      [~x (let [loc (hget (:vars mc) x)]
+            (case (when loc (first loc))
+              :numarg (do (ref-var! mc x false) (emit! mc (i 'ldloc (nth loc 2))))
+              (:tlocal :targ) (case (nth loc 2)
+                                :num (do (ref-var! mc x false) (emit! mc (i 'ldloc (second loc))))
+                                :l64 (do (cg-raw e mc :l64) (emit! mc (i 'call num-type "FromInt64" (i int64-type) num-type)))
+                                :fl (do (cg-raw e mc :fl) (emit! mc (i 'call num-type "FromDouble" (i double-type) num-type)))
+                                (from-object!))
+              (from-object!)))]
+      [(clj-call ~d0 ~d1 ~e* ...)
+       (if-let [[m args bool?] (num-arith e)]
+         (if bool?
+           (from-object!)
+           (do (doseq [a args] (cg-raw-num a mc))
+               (emit! mc (i 'call num-type m (apply i (map (fn [_] num-type) args)) num-type))))
+         (from-typed!))]
+      [(if ~e0 ~e1 ~e2) (from-typed!)]
+      [(let ([~x* ~e*] ...) ~body) (from-typed!)]
+      [(begin ~e* ... ~e) (from-typed!)]
+      [else (from-object!)])))
+
+(defn- num-emit!
+  "有 Num 操作数的 Numbers 算术 / 比较：按 Num 算，返回 :num 或 :bool；不是时 nil。"
+  [e mc]
+  (when-let [[m args bool?] (num-arith e)]
+    (doseq [a args] (cg-raw-num a mc))
+    (emit! mc (i 'call num-type m (apply i (map (fn [_] num-type) args)) (if bool? bool-type num-type)))
+    (if bool? :bool :num)))
+
 (defn cg-raw
-  "把 e 的值以 t（:fx :fl :l64）的原始形式压栈。"
+  "把 e 的值以 t（:fx :fl :l64 :num）的原始形式压栈。"
   [e mc t]
-  (let [oa (when (= t :l64) (numbers-arith-args e var-types))]
+  (let [oa (when (= t :l64) (numbers-arith-args e var-types))
+        na (when (#{:fl :l64} t) (num-arith e))]
     (cond
+      (= t :num) (cg-raw-num e mc)
+      ;; 含 Num 操作数的算术要 double / long 原始值（推断把 (+ double-var num) 定成 double）：整棵按 Num 算再取值，不装箱
+      (and na (not (nth na 2)))
+      (do (cg-raw-num e mc) (emit! mc (i 'call num-type (if (= t :fl) "ToDouble" "ToInt64") (i num-type) (type-clr t))))
       (and oa (numbers-long-ops (first oa))) (numbers-raw-emit-args! (rest oa) (first oa) mc)
       (raw-prim-invoke e t) (cg-prim-invoke! (raw-prim-invoke e t) mc :raw)
       (raw-host-call e t) (cg-static-host-call! (raw-host-call e t) mc :raw)
@@ -936,6 +1045,7 @@
       :local (emit! mc (i 'ldloc (second loc)))
       :tlocal (do (emit! mc (i 'ldloc (second loc))) (box-raw! mc (nth loc 2)))
       :targ (do (emit! mc (i 'ldarg (second loc))) (box-raw! mc (nth loc 2)))
+      :numarg (emit! mc (i 'ldarg (second loc)))   ; Num 形参的装箱用途读原来的实参（cleat-102）
       (:field :dfield) (emit! mc (i 'ldarg 0) (i 'ldfld (:class mc) (second loc)))
       :self (emit! mc (i 'ldarg 0)))))
 
@@ -945,6 +1055,7 @@
       :arg (emit! mc (i 'starg (second loc)))
       :local (emit! mc (i 'stloc (second loc)))
       :tlocal (emit! mc (i 'stloc (second loc)))
+      :numarg (emit! mc (i 'stloc (nth loc 2)))   ; 别名的 jump 写回（值就是形参本身）
       :dfield (let [t (new-local! mc obj)]
                 (emit! mc (i 'stloc t) (i 'ldarg 0) (i 'ldloc t) (i 'stfld (:class mc) (second loc))))
       (throw (ex-info (str "codegen: cannot assign captured variable " x) {:var x})))))
@@ -952,15 +1063,27 @@
 (defn- bind-local-object! [mc x]
   (let [n (new-local! mc obj)] (hput! (:vars mc) x [:local n]) n))
 
+(defn- num-alias-loc
+  "x 是 Num 形参的别名且形参已绑定为 :numarg 时，形参的位置；否则 nil。"
+  [mc x]
+  (when-let [p (hget num-aliases x)]
+    (let [loc (hget (:vars mc) p)] (when (and loc (= :numarg (first loc))) loc))))
+
 (defn- bind-local! [mc x]
-  (if-let [t (and (not @(:big? mc)) (hget var-types x))]
-    (let [n (new-local! mc (type-clr t))] (hput! (:vars mc) x [:tlocal n t]) n)
-    (bind-local-object! mc x)))
+  (if-let [loc (num-alias-loc mc x)]
+    (do (hput! (:vars mc) x loc) nil)
+    (if-let [t (and (not @(:big? mc)) (hget var-types x))]
+      (let [n (new-local! mc (type-clr t))] (hput! (:vars mc) x [:tlocal n t]) n)
+      (bind-local-object! mc x))))
 
 (defn- bind-value! [mc x] (bind-local! mc x) (store-var! mc x))
 
 (defn- var-raw-type [mc x]
-  (let [loc (hget (:vars mc) x)] (when (and loc (#{:tlocal :targ} (first loc))) (nth loc 2))))
+  (let [loc (hget (:vars mc) x)]
+    (cond (nil? loc) nil
+          (#{:tlocal :targ} (first loc)) (nth loc 2)
+          (= :numarg (first loc)) :num
+          :else nil)))
 
 (defn- binding-code [mc x e]
   (with-buffer mc #(let [t (and (not @(:big? mc)) (hget var-types x))]
@@ -1017,13 +1140,16 @@
      (let [entry (or (hget (:labels mc) x) (throw (ex-info (str "codegen: jump to unknown label " x) {})))
            ;; 实参先全部求值到临时变量再写入形参（并行赋值）；有类型的形参用原始值的临时变量
            temps (mapv (fn [p a]
-                         (let [rt (var-raw-type mc p)]
-                           (if rt (cg-raw a mc rt) (cg a mc :value))
-                           (let [t (new-local! mc (if rt (type-clr rt) obj))] (emit! mc (i 'stloc t)) t)))
+                         (if (num-alias-loc mc p)
+                           nil   ; Num 形参的别名：实参就是形参本身，不用算也不用写
+                           (let [rt (var-raw-type mc p)]
+                             (if rt (cg-raw a mc rt) (cg a mc :value))
+                             (let [t (new-local! mc (if rt (type-clr rt) obj))] (emit! mc (i 'stloc t)) t))))
                        (second entry) e*)]
        (doseq [[p t] (map vector (second entry) temps)]
-         (if (var-raw-type mc p) (emit! mc (i 'ldloc t)) (ldloc-clear! mc t))
-         (store-var! mc p))
+         (when t
+           (if (var-raw-type mc p) (emit! mc (i 'ldloc t)) (ldloc-clear! mc t))
+           (store-var! mc p)))
        (emit! mc (i 'br (first entry)))
        (case ctx :value (emit! mc (i 'ldnull)) :test (emit! mc (i 'ldc.i4 0)) nil))]
     [(quote ~d)
@@ -1070,8 +1196,9 @@
        (cg body mc ctx))]
     [(let ([~x* ~e*] ...) ~body)
      ;; 右边依次求值（看不到同一 let 的变量），再依次存入新变量
-     (let [codes (mapv (fn [x e] (binding-code mc x e)) x* e*)]
-       (doseq [[x code] (map vector x* codes)] (emit-code! mc code) (bind-value! mc x))
+     (let [codes (mapv (fn [x e] (if (num-alias-loc mc x) [] (binding-code mc x e))) x* e*)]
+       (doseq [[x code] (map vector x* codes)]
+         (if (num-alias-loc mc x) (bind-local! mc x) (do (emit-code! mc code) (bind-value! mc x))))
        (cg body mc ctx))]
     [(call ~e0 ~e* ...) (cg-call e0 e* mc ctx)]
     [(throw ~e)
@@ -1175,9 +1302,10 @@
            (emit! mc (i 'isinst (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName (quoted-datum (first e*)))) (i 'ldnull) (i 'cgt.un))
            (finish-bool! mc ctx))
        :else
-       (case (numbers-raw-emit! e mc)
+       (case (or (num-emit! e mc) (numbers-raw-emit! e mc))
          :bool (finish-bool! mc ctx)
          :l64 (do (box-raw! mc :l64) (finish-value! mc ctx))
+         :num (do (box-raw! mc :num) (finish-value! mc ctx))
          (let [sig (host-call-signature d0 d1 e*)]
            (if (vector? sig)
              (cg-static-host-call! sig mc ctx)
@@ -1357,6 +1485,17 @@
       (recur (next ps) (inc j) (rest cs))))
   (when sig (reset! (:ret-type mc) (sig-char-raw (sig-ret sig)))))
 
+(defn- bind-num-params!
+  "推断为 Num 的 object 形参（cleat-102）：方法入口 FromObject 一次存进 Num 局部变量，原始用途读它，装箱用途仍读实参。在 big? 决定之后调用。"
+  [mc x*]
+  (when-not @(:big? mc)
+    (doseq [p x*]
+      (let [loc (hget (:vars mc) p)]
+        (when (and (= :num (hget var-types p)) (= :arg (first loc)))
+          (let [t (new-local! mc num-type)]
+            (emit! mc (i 'ldarg (second loc)) (i 'call num-type "FromObject" (i obj) num-type) (i 'stloc t))
+            (hput! (:vars mc) p [:numarg (second loc) t])))))))
+
 (defn- clj-clause-method [u class cl fields field-names self mname & [sig]]
   (nanopass-case [L3 Clause] cl
     [(clause (~x* ...) ~x ~body)
@@ -1365,6 +1504,7 @@
        (doseq [[f fname] (map vector fields field-names)] (hput! (:vars mc) f [:field fname]))
        (when self (hput! (:vars mc) self [:self]))
        (reset! (:big? mc) (bigger-than? body big-body-nodes))
+       (bind-num-params! mc x*)
        (init-clearing! mc body)
        (cg body mc :tail)
        (if sig
@@ -1392,6 +1532,7 @@
        (when self (hput! (:vars mc) self [:arg 0]))
        (bind-clause-params! mc x* 1 sig)
        (reset! (:big? mc) (bigger-than? body big-body-nodes))
+       (bind-num-params! mc x*)
        (init-clearing! mc body)
        (cg body mc :tail)
        (if sig
@@ -1962,7 +2103,7 @@
   live?：内存模式（eval）——常量不编码，Lcil 里写 (live-constants n)，常量对象交给发射器。"
   [forms assembly-name module-name loop-flags live?]
   (let [u (make-unit assembly-name module-name)]
-    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars])
+    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
     (run! collect-assigned! forms)
     (when opt-infer?
       (if (and loop-flags (= (count loop-flags) (count forms)))
