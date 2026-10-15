@@ -139,7 +139,10 @@ cleat 已有 `^long` / `^double` 的 `invokeStaticPrim` 与 `PrimInvoke` 调用�
 
 - 068 / 084 / 081：Clojure 没有 call/cc；`throw` 被同一方法的 `catch` 接住编成跳转这种事 JVM 也不做，实际代码罕见。
 - 087：`IFn` 有 20 个 arity。
-- 085（封闭局部 fn 提升、闭包直接 `Invoke`）与 070 预算放宽：cleat-100 的测量之后再决定（cleat-105）。
+- 085（封闭局部 fn 提升、闭包直接 `Invoke`）与 070 预算放宽：cleat-105 量化后不做——闭包对象被 JIT 消化，开销在跨调用的装箱
+  （经装箱的调用 16 ~ 19 ns、72 字节，invokePrim 4.5 ns、0 字节）。
+- 候选：类型已知的调用点直调（cleat-104 第 2 项未做的部分）——非递归的纯数值函数也有类型化入口，调用点实参类型已知时直调，结果用 Num 承接；
+  let 绑定的已知 lambda 不需要 Var 检查。优先级由 cleat-107（r7rs 基准对 JVM）决定。
 
 ## §7 任务与顺序
 
