@@ -106,6 +106,12 @@
 | [cleat-097](tasks/cleat-097-refresh-baselines.md) | 刷新 clojure-test-suite 与 test_clojure 基线，分类剩余失败 | M9 | cleat-095 | 完成 |
 | [cleat-098](tasks/cleat-098-divergence-cleanup.md) | 偏离表清理：error-model / numeric / boxing / strictness / printf / not-yet 逐条判断；nREPL middleware 测试改回上游写法 | M9 | cleat-095 | 完成 |
 | [cleat-099](tasks/cleat-099-reflection-warnings.md) | 反射警告：*warn-on-reflection* 为真时分析器按 ClojureCLR 的措辞报出决议不了的宿主调用（test_clojure rt 的 18 条）；顺带修复镜像文件被 require 重载 | M9 | cleat-097 | 完成 |
+| [cleat-100](tasks/cleat-100-perf-measurement.md) | 性能测量基建：分配采样器（搬 skeg alloc.cs）、装箱探针、基准补充（无提示循环、嵌套算术、构造、属性、mbrot） | M10 | cleat-099 | 进行中 |
+| [cleat-101](tasks/cleat-101-static-resolution-scope.md) | codegen 静态决议范围：构造器、属性、值类型目标、任意引用形参、泛型方法（现在全走 Reflector） | M10 | cleat-100 | 未开始 |
+| [cleat-102](tasks/cleat-102-num-and-dual-locals.md) | Num：不装箱的未定类型数（skeg iron-080，Clojure 语义）；嵌套算术与 let 变量的双局部表示（082 / 083） | M10 | cleat-101 | 未开始 |
+| [cleat-103](tasks/cleat-103-loop-speculation.md) | 循环的 long / double 推测：快慢两份循环（skeg iron-071 / 080B） | M10 | cleat-102 | 未开始 |
+| [cleat-104](tasks/cleat-104-typed-entries.md) | 无提示已知函数的类型化入口（skeg iron-075 / 076，溢出抛异常不重算） | M10 | cleat-103 | 未开始 |
+| [cleat-105](tasks/cleat-105-closure-and-inlining-budget.md) | 量化后决定：封闭局部 fn 提升、闭包直接 Invoke、内联预算（skeg iron-085 / 070） | M10 | cleat-104 | 未开始 |
 
 ## 里程碑
 
@@ -125,11 +131,14 @@
 | 后续 | cleat-042、043、054、056、058 ~ 080（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
 | M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-099 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
+| M10 性能（2026-10-15 起） | cleat-100 ~ cleat-105 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-**M9（2026-10-15，完成）**：096 → 097 → 098 → 099（互不依赖，按此顺序做完）。所有任务行已关闭；下一里程碑待定（候选：性能与 codegen 静态决议范围、CI 与公开发布、LLVM 后端再评估、defsyntax）。
+**M10（2026-10-15 起，现行）**：100 → 101 → 102 → 103 → 104 → 105（[20 §7](designs/20-skeg-optimizations.md)）。
+
+**M9（2026-10-15，完成）**：096 → 097 → 098 → 099（互不依赖，按此顺序做完）。
 
 **M8（2026-10-14 ~ 15，完成）**：081 → 082 → 083 → 084 → 085 → 086 → 087 → 088 → 089 → 090 → 091 → 092 → 093 → 094；095 不在关键路径上（[19 §5](designs/19-clojure-self-hosting.md)）。
 双轨纪律（19 D9）：从 cleat-085 起到 cleat-091 默认切换为止，Scheme 编译器只修缺陷、不加功能，修的缺陷同时在 Clojure 编译器里修并补差分用例；cleat-093 删除 Scheme 编译器后结束。
