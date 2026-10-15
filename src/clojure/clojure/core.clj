@@ -7448,6 +7448,55 @@ clojure.lang.IKVReduce
   [& exprs]
   `(pcalls ~@(map #(list `fn [] %) exprs)))
 
+(defn seque
+  "Creates a queued seq on another (presumably lazy) seq s. The queued
+  seq will produce a concrete seq in the background, and can get up to
+  n items ahead of the consumer. n-or-q can be an integer n buffer
+  size, or an instance of System.Collections.Concurrent.BlockingCollection.
+  Note that reading from a seque can block if the reader gets ahead of
+  the producer."
+  {:added "1.0"
+   :static true}
+  ([s] (seque 100 s))
+  ([n-or-q s]
+   ;; CLEAT (cleat-098)：照 JVM 版，LinkedBlockingQueue → BlockingCollection（offer → TryAdd 0 ms，put → Add，take → Take）
+   (let [^|System.Collections.Concurrent.BlockingCollection`1[System.Object]| q
+         (if (instance? |System.Collections.Concurrent.BlockingCollection`1[System.Object]| n-or-q)
+           n-or-q
+           (|System.Collections.Concurrent.BlockingCollection`1[System.Object]|. (int n-or-q)))
+         NIL (Object.) ;nil sentinel since the queue doesn't support nils
+         agt (agent (lazy-seq s)) ; never start with nil; that signifies we've already put eos
+         log-error (fn [q e]
+                     (if (.TryAdd q q 0)
+                       (throw e)
+                       e))
+         fill (fn [s]
+                (when s
+                  (if (instance? Exception s)
+                    (log-error q s)
+                    (try
+                      (loop [[x & xs :as s] (seq s)]
+                        (if s
+                          (if (.TryAdd q (if (nil? x) NIL x) 0)
+                            (recur xs)
+                            s)
+                          (do
+                            (.Add q q) ; q itself is eos sentinel
+                            nil)))
+                      (catch Exception e
+                        (log-error q e))))))
+         drain (fn drain []
+                 (lazy-seq
+                  (let [x (.Take q)]
+                    (if (identical? x q) ;q itself is eos sentinel
+                      (do @agt nil)  ;touch agent just to propagate errors
+                      (do
+                        (send-off agt fill)
+                        (release-pending-sends)
+                        (cons (if (identical? x NIL) nil x) (drain)))))))]
+     (send-off agt fill)
+     (drain))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; clojure version number ;;;;;;;;;;;;;;;;;;;;;;
 ;;; THIS EXPOSES WAY TOO MUCH JVM INTERNALS!

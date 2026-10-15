@@ -104,7 +104,7 @@
 | [cleat-095](tasks/cleat-095-nanopass-user-layer.md) | cleat.nanopass 第二层：显式 catamorphism、多层省略号的单项、define-parser、trace、上游测试（取代 cleat-056；不阻塞阶段 B / C） | M8 | cleat-084 | 完成 |
 | [cleat-096](tasks/cleat-096-defn-name-return-hint.md) | defn 名字上的原始返回类型提示：调用点与函数类的 primifs 签名一致（JVM 在此 AbstractMethodError） | M9 | cleat-095 | 完成 |
 | [cleat-097](tasks/cleat-097-refresh-baselines.md) | 刷新 clojure-test-suite 与 test_clojure 基线，分类剩余失败 | M9 | cleat-095 | 完成 |
-| [cleat-098](tasks/cleat-098-divergence-cleanup.md) | 偏离表清理：error-model / numeric / boxing / strictness / printf / not-yet 逐条判断；nREPL middleware 测试改回上游写法 | M9 | cleat-095 | 未开始 |
+| [cleat-098](tasks/cleat-098-divergence-cleanup.md) | 偏离表清理：error-model / numeric / boxing / strictness / printf / not-yet 逐条判断；nREPL middleware 测试改回上游写法 | M9 | cleat-095 | 完成 |
 | [cleat-099](tasks/cleat-099-reflection-warnings.md) | 反射警告：*warn-on-reflection* 为真时分析器按 ClojureCLR 的措辞报出决议不了的宿主调用（test_clojure rt 的 18 条） | M9 | cleat-097 | 未开始 |
 
 ## 里程碑

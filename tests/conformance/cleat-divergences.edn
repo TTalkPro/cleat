@@ -353,7 +353,6 @@
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "memfn with args" :category :host/jvm-api :reason "Java member String.indexOf (no CLR counterpart under that name)"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "memfn length" :category :host/jvm-api :reason "Java member String.length (no CLR counterpart under that name)"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "iterator-seq" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
-  {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label "seque passthrough" :category :not-yet :reason "seque (a BlockingQueue-backed seq) is not in ClojureCLR's core; target cleat-043"}
   {:suite "untested / JVM-shape stubs (documented jolt behavior)" :label ".. threads members" :category :host/jvm-api :reason "Java member String.toUpperCase (no CLR counterpart under that name)"}
   {:suite "untested / protocols: extend + extends?" :label "extend registers" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}
   {:suite "untested / protocols: extend + extends?" :label "extend two methods" :category :corpus/jolt-value :reason "expected is jolt's value, not reference Clojure (jolt known-divergence :host-model)"}

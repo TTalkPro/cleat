@@ -7,14 +7,7 @@
    [nrepl.server :refer [default-middleware]]
    [nrepl.test-helpers :refer [is+]]))
 
-;; cleat: metadata on a constant collection literal isn't evaluated yet (a
-;; known cleat divergence, see TASK.md), so the middleware maps below get their
-;; descriptors through with-meta rather than ^{...}.
-
 (defn- wonky-resolve [s] (if (symbol? s) (resolve s) s))
-
-(defn- mw [descriptor m]
-  (with-meta m {::middleware/descriptor descriptor}))
 
 (defn- indexed-stack
   [x]
@@ -36,10 +29,10 @@
       'interruptible-eval 'session
       'interruptible-eval 'wrap-print))
 
-  (let [n (mw {:expects #{"clone"} :requires #{}} {:dummy :middleware2})
-        m (mw {:expects #{"eval"} :requires #{n #'nrepl.middleware.print/wrap-print}}
-              {:dummy :middleware})
-        q (mw {:expects #{} :requires #{"describe" "eval"}} {:dummy :middleware3})
+  (let [n ^{::middleware/descriptor {:expects #{"clone"} :requires #{}}} {:dummy :middleware2}
+        m ^{::middleware/descriptor {:expects #{"eval"} :requires #{n #'nrepl.middleware.print/wrap-print}}}
+              {:dummy :middleware}
+        q ^{::middleware/descriptor {:expects #{} :requires #{"describe" "eval"}}} {:dummy :middleware3}
         stack (indexed-stack (concat default-middleware [m q n]))]
     ;(->> stack clojure.set/map-invert (into (sorted-map)) vals println)
     (are [before after] (< (stack before) (stack after))
@@ -53,7 +46,7 @@
       'interruptible-eval 'wrap-print)))
 
 (deftest append-dependency-free-middleware
-  (let [m (mw {:expects #{} :requires #{}} {:dummy :middleware})
+  (let [m ^{::middleware/descriptor {:expects #{} :requires #{}}} {:dummy :middleware}
         n {:dummy "This not-middleware is supposed to be sans-descriptor, don't panic!"}
         stack (->> (concat default-middleware [m n])
                    shuffle
@@ -84,11 +77,11 @@
   (is (= [0 1 2]
          (map :id
               (linearize-middleware-stack
-               [(mw {:expects #{} :requires #{"1"}}
-                    {:id 0})
+               [^{::middleware/descriptor {:expects #{} :requires #{"1"}}}
+                    {:id 0}
 
-                (mw {:expects #{} :requires #{} :handles {"1" {}}}
-                    {:id 1})
+                ^{::middleware/descriptor {:expects #{} :requires #{} :handles {"1" {}}}}
+                    {:id 1}
 
-                (mw {:expects #{"1"} :requires #{}}
-                    {:id 2})])))))
+                ^{::middleware/descriptor {:expects #{"1"} :requires #{}}}
+                    {:id 2}])))))
