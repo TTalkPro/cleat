@@ -20,9 +20,11 @@
 | 运行时通用路径：`Util.equiv(Object, long)`（nqueens 的 equiv 占比高）、`empty?` 的 `counted?` 接口检查、`(byte x)` 与 `byte[]` 的 aset、符号相等 | nqueens、deriv、bv2string、peval | cleat-111 |
 | 宿主调用 / deftype 原始字段的结果类型不进推断（`(object-array n)` 的局部、`^double` 字段的算术） | array1、scheme、matrix、mbrotZ 78 | cleat-112 |
 | 浮点循环的装箱（数组取出的 double、generic 算术） | fft 16、ray 15、sumfp、simplex | cleat-113（先量化） |
-| 类型化调用点与小函数（designs/20 §6 的候选） | browse、destruc、lattice、puzzle | cleat-114 |
-| 全部重测 | | cleat-115 |
+| eval 代码由 RunAndCollect 发射：不分层、没有动态 PGO（JVM 内联缓存的对应物） | 编成包加载时同一份代码快 20% ~ 37% | cleat-114（几何平均 3.26 → 2.64） |
+| 无类型算术的 Numbers.ops / combine / 虚调用、Var 读取的常量表与 castclass、symbol? 的类型检查 | cpstak、browse、scheme | cleat-115 |
+| 类型化调用点与小函数（designs/20 §6 的候选；eval 的小函数没有接口文件，不内联） | fft、browse、destruc、lattice | cleat-116 |
+| 全部重测 | | cleat-117 |
 
 ## §2 顺序
-108 → 109 → 110 → 111 → 112 → 113 → 114 → 115。109（装箱缓存）与 110（已知调用）影响所有通用代码，先做；111 是 C# 侧快路径；112 / 113 是"类型交给推断"；114 改动最大，放最后。
+108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117。109（装箱缓存）与 110（已知调用）影响所有通用代码，先做；111 是 C# 侧快路径；112 / 113 是"类型交给推断"；114 改动最大，放最后。
 剖析注意：`dotnet-trace` 的线程时间采样在安全点上取样，会把时间多算到运行时辅助函数（如 ChkCastInterface）上；排优先级以对照实验与分配量为准。

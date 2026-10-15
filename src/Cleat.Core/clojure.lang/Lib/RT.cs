@@ -1424,6 +1424,7 @@ namespace clojure.lang
 
         #region int casting
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         public static int intCast(object x)
         {
             if (x is int i)
@@ -1486,15 +1487,18 @@ namespace clojure.lang
         }
 
 
+        // cleat-113：每次数组下标都调用（array1 里占 17%）：抛出部分放到不内联的方法里，本身内联进生成的代码
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         static public int intCast(long x)
         {
             int i = (int)x;
-
             if (i != x)
-                throw new ArgumentException("Value out of range for int: " + x);
-
+                return ThrowIntRange(x);
             return i;
         }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        static int ThrowIntRange(long x) => throw new ArgumentException("Value out of range for int: " + x);
 
 
         static public int intCast(ulong x)

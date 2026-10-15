@@ -120,8 +120,10 @@
 | [cleat-111](tasks/cleat-111-runtime-fast-paths.md) | 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等 | M11 | cleat-110 | 完成 |
 | [cleat-112](tasks/cleat-112-result-types-to-inference.md) | 结果类型交给推断：宿主调用返回的数组类型给无提示局部、deftype 原始字段读取的类型进算术 | M11 | cleat-111 | 完成 |
 | [cleat-113](tasks/cleat-113-float-loops.md) | 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围 | M11 | cleat-112 | 进行中 |
-| [cleat-114](tasks/cleat-114-typed-call-sites.md) | 类型化调用点与小函数 | M11 | cleat-113 | 未开始 |
-| [cleat-115](tasks/cleat-115-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-114 | 未开始 |
+| [cleat-114](tasks/cleat-114-tiered-eval.md) | eval 代码分层编译与动态 PGO（不可回收的装载上下文、tier-0 的 GC 报告） | M11 | cleat-113 | 完成 |
+| [cleat-115](tasks/cleat-115-runtime-and-vars.md) | 运行时与 Var 访问：Numbers 的 object 快路径、$Vars 的 static readonly 字段、Symbol 密封 | M11 | cleat-114 | 进行中 |
+| [cleat-116](tasks/cleat-116-typed-call-sites.md) | 类型化调用点与小函数 | M11 | cleat-115 | 未开始 |
+| [cleat-117](tasks/cleat-117-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-116 | 未开始 |
 
 ## 里程碑
 
@@ -142,12 +144,12 @@
 | M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
 | M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-099 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
 | M10 性能（2026-10-15 起） | cleat-100 ~ cleat-107 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
-| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-115 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
+| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-117 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-**M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115（[21 §2](designs/21-r7rs-gaps.md)）。
+**M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117（[21 §2](designs/21-r7rs-gaps.md)）。
 
 **M10（2026-10-15，完成）**：100 → 101 → 102 → 106 → 103 → 104 → 105 → 107（[20 §7](designs/20-skeg-optimizations.md)）。
 

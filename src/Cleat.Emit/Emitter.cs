@@ -27,6 +27,10 @@ public enum EmitMode
 /// </summary>
 public sealed partial class LcilEmitter
 {
+    // cleat-114：eval 装载的程序集（EmitLoaded）不加 AggressiveOptimization——它跳过分层编译，也就没有动态 PGO。
+    // 写成文件的镜像与包照旧加：去掉它会改变 dll 的字节，镜像 id 跟着变，种子里编译器包记的 id 就对不上（要两步重建种子，另做）。
+    private bool _tiered;
+
     public const string CoreAssemblyName = "Cleat.Core";
 
     /// <summary>额外的程序集查找目录（命令行 -r）；默认含发射器所在目录。</summary>
@@ -69,10 +73,55 @@ public sealed partial class LcilEmitter
     {
         if (a.LiveConstants >= 0 && (liveConstants == null || liveConstants.Length != a.LiveConstants))
             throw new LcilException($"{a.File}: expected {a.LiveConstants} live constants");
+        // 只对 eval 单元（eval$cN）：编译镜像 / 包期间求值的单元与正在运行的镜像同名，装进默认上下文会按名字绑错
+        if (s_tieredEval && a.Name != null && a.Name.StartsWith("eval$", StringComparison.Ordinal)) return EmitLoaded(a, liveConstants);
         var ab = AssemblyBuilder.DefineDynamicAssembly(new AssemblyName(a.Name), AssemblyBuilderAccess.RunAndCollect);
         var e = new LcilEmitter(a, ab.DefineDynamicModule(a.Name), false) { _live = liveConstants, _chunked = true };
         e.Build();
         return ab;
+    }
+
+    // cleat-114：eval 的代码默认发射成 PE 字节、装载进默认的 AssemblyLoadContext（不可回收）——RunAndCollect 的动态程序集不参与分层编译，
+    // 没有动态 PGO（有守卫的去虚拟化，JVM 内联缓存的对应物），静态字段还要多一层间接；编成包从文件加载的同一份代码快 20% ~ 37%。
+    // 代价是求值生成的类型不再被回收。CLEAT_NO_OPT 含 tiered 时用原来的 RunAndCollect。
+    private static readonly bool s_tieredEval = !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("tiered");
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Assembly> s_loaded = new();
+
+    /// <summary>
+    /// eval 程序集的装载上下文（不可回收，代码照常分层编译）：依赖先取进程里已经装载的同名程序集（正在用的镜像与编译器包，
+    /// 不按名字从磁盘另找一份——编译镜像期间磁盘上的同名包是对别的镜像编译的），eval 程序集之间按登记表。
+    /// </summary>
+    private sealed class EvalLoadContext : AssemblyLoadContext
+    {
+        public EvalLoadContext() : base("cleat-eval", isCollectible: false) { }
+
+        protected override Assembly Load(AssemblyName name)
+        {
+            if (name.Name == null) return null;
+            if (s_loaded.TryGetValue(name.Name, out var e)) return e;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                if (!asm.IsDynamic && asm.GetName().Name == name.Name) return asm;
+            return null;   // 其余（框架）交给默认上下文
+        }
+    }
+
+    private static readonly EvalLoadContext s_evalContext = new();
+
+    private static Assembly EmitLoaded(LcilAssembly a, object[] liveConstants)
+    {
+        var ab = new PersistedAssemblyBuilder(new AssemblyName(a.Name), typeof(object).Assembly);
+        var e = new LcilEmitter(a, ab.DefineDynamicModule(a.Name), false) { _live = liveConstants, _tiered = true };
+        e.Build();
+        MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
+        var pe = new ManagedPEBuilder(new PEHeaderBuilder(imageCharacteristics: Characteristics.Dll | Characteristics.ExecutableImage),
+                                      new MetadataRootBuilder(metadata), ilStream, fieldData);
+        var blob = new BlobBuilder();
+        pe.Serialize(blob);
+        if (s_loaded.ContainsKey(a.Name) && Environment.GetEnvironmentVariable("CLEAT_DEBUG_EVAL") == "1") Console.Error.WriteLine("eval: duplicate assembly name " + a.Name);
+        var loaded = s_evalContext.LoadFromStream(new MemoryStream(blob.ToArray()));
+        s_loaded[a.Name] = loaded;
+        return loaded;
     }
 
     /// <summary>发射并保存为 dll；pdb 为真时同时生成 Portable PDB（同名 .pdb）。</summary>
@@ -389,7 +438,12 @@ public sealed partial class LcilEmitter
             // 只调用一次的长调用里抓着惰性序列的头（cleat-042 第 5 项）；优化代码按活跃区间报告
             // (attrs async)：运行时 async 方法（MethodImplAttributes.Async = 0x2000，cleat-043）——声明返回 Task<T>，体返回 T，
             // 体里的 AsyncHelpers.Await 由运行时挂起 / 恢复
-            var impl = (m.Attrs.Contains("optimize") ? MethodImplAttributes.AggressiveOptimization : 0)
+            // 分层编译时（eval）：模块入口类型（顶层形式的 Init 方法）仍直接按优化编译——它们只运行一次，停在 tier-0 会把临时变量报告为整个方法内活着，
+            // (reduce + (map inc (range 3e7))) 抓住惰性序列的头（512 MB 堆下 OutOfMemory）；函数类的方法分层编译
+            // 分层编译只给带 (attrs tiered) 的方法（codegen：函数体有循环或自递归的顶层 defn）：只调用一次、没有循环的方法停在 tier-0 时，
+            // JIT 为调用实参建的临时变量在调用期间抓着惰性序列（实参无法在 IL 里清掉）；有循环的经 OSR 进入优化代码
+            bool optimize = _tiered ? (t.Name == _asm.EntryType || !m.Attrs.Contains("tiered")) : m.Attrs.Contains("optimize");
+            var impl = (optimize ? MethodImplAttributes.AggressiveOptimization : 0)
                      | (m.Attrs.Contains("async") ? (MethodImplAttributes)0x2000 : 0);
             if (impl != 0) mb.SetImplementationFlags(impl);
             if (m.ImplementsType != null)
@@ -495,7 +549,65 @@ public sealed partial class LcilEmitter
         public string Runtime;
         // 互操作用的临时局部变量（object），按需分配、可复用
         public List<LocalBuilder> Temps = new List<LocalBuilder>();
+        /// <summary>分层编译时改成"取出并清空"（ldloca + Locals.Take）的 ldloc（cleat-114）</summary>
+        public HashSet<Instr> TakeLoads;
     }
+
+    /// <summary>ldloc / stloc / ldloca 的种类与下标；别的指令 null。</summary>
+    private static (char Kind, int Index)? LocalOp(Instr ins)
+    {
+        if (ins.Kind != InstrKind.Cil) return null;
+        string n = ins.OpCode.Name;
+        char k = n.StartsWith("ldloca", StringComparison.Ordinal) ? 'a' : n.StartsWith("ldloc", StringComparison.Ordinal) ? 'l' : n.StartsWith("stloc", StringComparison.Ordinal) ? 's' : '\0';
+        if (k == '\0') return null;
+        int dot = n.IndexOf('.');
+        if (dot > 0 && n.Length > dot + 1 && char.IsDigit(n[dot + 1])) return (k, n[dot + 1] - '0');
+        return ins.Operand switch { int i => (k, i), long l => (k, (int)l), _ => null };
+    }
+
+    /// <summary>
+    /// cleat-114：分层编译的方法先以 tier-0 运行，tier-0 把所有局部变量报告为整个方法内活着——codegen 只写一次、读一次的 object 临时变量
+    /// （内联展开、实参临时变量……）在读过之后仍抓着值；只调用一次的方法（-main 一类）把惰性序列交给长时间运行的被调用者时，头被抓住（512 MB 堆下 OutOfMemory）。
+    /// 顶层指令列表里只写一次、读一次、不取地址、读在写之后且中间没有标签与 try 的 object 局部变量，读改成取出并清空（优化代码里 Take 内联成两条指令）。
+    /// </summary>
+    private static HashSet<Instr> TakeLoadsFor(LcilMethod m)
+    {
+        var stores = new Dictionary<int, int>(); var loads = new Dictionary<int, int>(); var addr = new HashSet<int>();
+        void Count(List<Instr> list)
+        {
+            foreach (var ins in list)
+            {
+                if (ins.Kind == InstrKind.Try)
+                {
+                    Count(ins.TryBody);
+                    foreach (var c in ins.Catches) Count(c.Body);
+                    if (ins.Finally != null) Count(ins.Finally);
+                    continue;
+                }
+                if (LocalOp(ins) is (char k, int i))
+                {
+                    if (k == 'a') addr.Add(i);
+                    else if (k == 's') stores[i] = stores.GetValueOrDefault(i) + 1;
+                    else loads[i] = loads.GetValueOrDefault(i) + 1;
+                }
+            }
+        }
+        Count(m.Body);
+        var result = new HashSet<Instr>();
+        var storeAt = new Dictionary<int, int>();
+        for (int p = 0; p < m.Body.Count; p++)
+        {
+            var ins = m.Body[p];
+            if (ins.Kind == InstrKind.Label || ins.Kind == InstrKind.Try) { storeAt.Clear(); continue; }   // 标签 / try 之后不再是直线
+            if (LocalOp(ins) is not (char k, int i)) continue;
+            if (i >= m.Locals.Count || m.Locals[i] != "System.Object" || addr.Contains(i) || stores.GetValueOrDefault(i) != 1 || loads.GetValueOrDefault(i) != 1) continue;
+            if (k == 's') storeAt[i] = p;
+            else if (k == 'l' && storeAt.ContainsKey(i)) result.Add(ins);
+        }
+        return result;
+    }
+
+    private static System.Reflection.MethodInfo s_take;
 
     private void EmitBody(LcilType t, LcilMethod m, MethodBase b)
     {
@@ -522,6 +634,11 @@ public sealed partial class LcilEmitter
             }
         }
         DefineLabels(m.Body);
+        if (_tiered && t.Name != _asm.EntryType)
+        {
+            cx.TakeLoads = TakeLoadsFor(m);
+            s_take ??= LoadReference(CoreAssemblyName).GetType("Cleat.Core.Runtime.Locals", true).GetMethod("Take");
+        }
         Instrs(cx, m.Body);
     }
 
@@ -576,6 +693,12 @@ public sealed partial class LcilEmitter
             case InstrKind.Clr: Clr(cx, ins); return;
         }
 
+        if (cx.TakeLoads != null && cx.TakeLoads.Contains(ins) && LocalOp(ins) is (_, int ti))
+        {
+            EmitVar(il, OpCodes.Ldloca, ti);
+            il.Emit(OpCodes.Call, s_take);
+            return;
+        }
         var op = ins.OpCode;
         switch (op.OperandType)
         {

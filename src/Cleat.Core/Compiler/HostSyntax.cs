@@ -95,7 +95,9 @@ public static partial class HostSyntax
     }
 
     /// <summary>Lcore 里的类型名：全名；动态程序集里的类型加程序集名。</summary>
-    public static string TypeName(Type t) => t.Assembly.IsDynamic ? t.FullName + ", " + t.Assembly.GetName().Name : t.FullName;
+    // 求值生成的程序集（动态的，或 cleat-114 起从字节装载、没有文件位置的）里的类型带程序集名：重定义后同名的类在不同的求值程序集里
+    public static string TypeName(Type t) =>
+        t.Assembly.IsDynamic || string.IsNullOrEmpty(t.Assembly.Location) ? t.FullName + ", " + t.Assembly.GetName().Name : t.FullName;
 
     public static string Munge(string name) => clojure.lang.Munge.munge(name);
 

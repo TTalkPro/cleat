@@ -82,6 +82,9 @@ public static class ClojureStaticCalls
 
     private static readonly Type[] s_agetElements = { typeof(long), typeof(double), typeof(object), typeof(bool), typeof(char) };
 
+    /// <summary>求值生成的程序集：动态程序集（RunAndCollect），或从字节装载、没有文件位置的（cleat-114 的分层编译）</summary>
+    private static bool IsEvalAssembly(System.Reflection.Assembly a) => a.IsDynamic || string.IsNullOrEmpty(a.Location);
+
     private static object[] ResolveUncached(object t, object name, object argTypes, object isStatic)
     {
         if (t is not Type type || name is not string member) return Array.Empty<object>();
@@ -162,6 +165,9 @@ public static class ClojureStaticCalls
             HostSyntax.TypeName(chosen.ReturnType),
             !chosen.IsStatic && !chosen.DeclaringType.IsValueType,
             "method",
+            // cleat-113：声明类型是 Clojure 代码定义的（求值生成的动态程序集里的 deftype / definterface，或桩）：返回值本来就是 Clojure 的表示，
+            // 生成的代码不必再经 RetObject（对引用类型的 `is not ValueType` 要沿继承链走一遍）
+            chosen.ReturnType == typeof(object) && (IsEvalAssembly(chosen.DeclaringType.Assembly) || HostSyntax.IsStub(chosen.DeclaringType)),
         };
     }
 
@@ -332,9 +338,17 @@ public static class ClojureStaticCalls
     // —— 返回值（Reflector.ToClojure）——
     // 绝大多数返回值已是 Clojure 的表示（long、double、引用类型）：先排除这些，只有 int 等少见的值类型才走 ConvertFrom 的类型分派（cleat-042：
     // fib 的剖析里 ConvertFrom 占 35%）
+    // cleat-113：每次返回 object 的宿主调用都经过这里——内联进生成的代码，转换放到不内联的方法里
+    // （long / double / bool 是密封类型，判断就是一次方法表比较；GetType().IsValueType 在这里是两次真正的调用，更慢）
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public static object RetObject(object v) =>
-      v is null || v is long || v is double || v is bool || v is not ValueType ? v : Reflector.ConvertFrom(v, typeof(object));
-    public static object RetInt32(int v) => (long)v;
+        v is null || v is long || v is double || v is bool || v is not ValueType ? v : RetValue(v);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static object RetValue(object v) => Reflector.ConvertFrom(v, typeof(object));
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public static object RetInt32(int v) => LongBox.Get(v);
 
     /// <summary>实例调用的实例为 nil 时与 ClojureOps.CallInstance 同样报错</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]

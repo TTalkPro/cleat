@@ -273,7 +273,7 @@ public static class LcilParser
                 {
                     case "attrs":
                         foreach (var a in cl.Items.Skip(1))
-                            m.Attrs.Add(Check(a, "method attribute", "static", "virtual", "override", "abstract", "public", "private", "protected", "ctor", "cctor", "optimize", "async"));
+                            m.Attrs.Add(Check(a, "method attribute", "static", "virtual", "override", "abstract", "public", "private", "protected", "ctor", "cctor", "optimize", "async", "tiered"));
                         break;
                     case "params": m.Params = Strings(cl, 1, "parameter type"); break;
                     case "ret": Arity(cl, 1, 1); m.Ret = Str(cl[1], "return type"); break;

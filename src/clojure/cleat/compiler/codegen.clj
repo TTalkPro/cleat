@@ -73,6 +73,7 @@
 (def opt-loopspec? (not (opt-off? "loopspec")))   ; 循环的 long / double 推测：快慢两份循环（cleat-103）
 (def opt-typed? (not (opt-off? "typed")))         ; 无提示函数的类型化入口（cleat-104）
 (def opt-joinraw? (not (opt-off? "joinraw")))     ; 原始用途穿过 if / begin 的尾位置（cleat-108）
+(def ^:private live-unit? (atom false))   ; 当前编译单元是内存模式（eval）：生成的代码与先前求值生成的类在同一进程（cleat-110）；分层编译时 if 的值经局部变量汇合（cleat-114）
 (def opt-boxcache? (not (opt-off? "boxcache")))   ; long 装箱走 LongBox（cleat-109）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
 (def opt-num? (not (opt-off? "num")))     ; Num：未定类型数的局部 / 循环变量 / 形参（cleat-102）   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
@@ -1321,7 +1322,8 @@
       (= (str (aget sig 5)) "ctor") (finish-value! mc ctx)
       (= ret "System.Boolean") (finish-bool! mc ctx)
       :else (do (cond (= ret "System.Void") (emit! mc (i 'ldnull))
-                      (= ret "System.Object") (emit! mc (i 'call static-calls-type "RetObject" (i obj) obj))
+                      (= ret "System.Object") (when-not (and (> (alength sig) 6) (true? (aget sig 6)))   ; Clojure 定义的类型的方法：已是 Clojure 表示（cleat-113）
+                                                (emit! mc (i 'call static-calls-type "RetObject" (i obj) obj)))
                       (= ret "System.Int32") (emit! mc (i 'call static-calls-type "RetInt32" (i int32-type) obj))
                       (= ret "System.Int64") (emit! mc (box-long))
                       (#{"System.Double" "System.Char"} ret) (emit! mc (i 'box ret))
@@ -1562,7 +1564,10 @@
        :test (emit! mc (i 'ldc.i4 (if (and (some? d) (not (false? d))) 1 0)))
        (do (load-constant! mc d) (finish-value! mc ctx)))]
     [(if ~e0 ~e1 ~e2)
-     (let [else-l (new-label! mc) end-l (new-label! mc)]
+     (let [else-l (new-label! mc) end-l (new-label! mc)
+           ;; 分层编译的 eval 单元（cleat-114）：值不留在求值栈上跨过汇合点——JIT 把跨块的栈值溢出到临时变量，tier-0 把它报告为整个方法内活着，
+           ;; 只调用一次的方法里惰性序列的头被抓住；两支各存进同一个局部变量，汇合后取出并清空
+           merge (when (and @live-unit? (= ctx :value)) (new-local! mc obj))]
        (cg e0 mc :test)
        (emit! mc (i 'brfalse else-l))
        ;; 局部变量清除按分支：生成 then 支时先扣掉 else 支的引用数，生成 else 支前加回
@@ -1570,10 +1575,13 @@
          (adjust-uses! mc c2 -)
          (cg e1 mc ctx)
          (adjust-uses! mc c2 +))
+       (when merge (emit! mc (i 'stloc merge)))
        (when-not (= ctx :tail) (emit! mc (i 'br end-l)))
        (emit! mc (i 'label else-l))
        (cg e2 mc ctx)
-       (when-not (= ctx :tail) (emit! mc (i 'label end-l))))]
+       (when merge (emit! mc (i 'stloc merge)))
+       (when-not (= ctx :tail) (emit! mc (i 'label end-l)))
+       (when merge (emit! mc (i 'ldloca merge)) (take-slot! mc)))]
     [(begin ~e* ... ~e)
      (run! #(cg % mc :effect) e*)
      (cg e mc ctx)]
@@ -1979,6 +1987,78 @@
                                (mapcat (fn [j] [(i 'ldarga j) (i 'call "Cleat.Core.Runtime.Locals" "Take" (i (str obj "&")) obj)]) (range 1 (inc (count x*))))
                                [(i 'call class "invokeStatic" (apply i (objs (inc (count x*)))) obj) (i 'ret)])))]))
 
+(def ^:private tier-classes (ht))   ; 分层编译的函数类（:class）：有循环或自递归的顶层 defn（cleat-114，只在 eval 单元）
+
+(defn- l3-some?
+  "e（含嵌套 lambda 的子句体）里有满足 pred 的节点。"
+  [pred e]
+  (letfn [(walk [e]
+            (or (pred e)
+                (nanopass-case [L3 Expr] e
+                  [(if ~e0 ~e1 ~e2) (or (walk e0) (walk e1) (walk e2))]
+                  [(begin ~e* ... ~e) (or (some walk e*) (walk e))]
+                  [(let ([~x* ~e*] ...) ~body) (or (some walk e*) (walk body))]
+                  [(letrec ([~x* ~le*] ...) ~body) (or (some walk le*) (walk body))]
+                  [(label ~x (~x* ...) ~body0 ~body1) (or (walk body0) (walk body1))]
+                  [(jump ~x ~e* ...) (some walk e*)]
+                  [(lambda ~nm (~x* ...) ~cl* ...)
+                   (some (fn [cl] (nanopass-case [L3 Clause] cl [(clause (~y* ...) ~y ~body) (walk body)])) cl*)]
+                  [(call ~e ~e* ...) (or (walk e) (some walk e*))]
+                  [(throw ~e) (walk e)]
+                  [(try-finally ~e0 ~e1) (or (walk e0) (walk e1))]
+                  [(try-catch ~e (~d* ~e*) ...) (or (walk e) (some walk e*))]
+                  [(clj-invoke ~e ~e* ...) (or (walk e) (some walk e*))]
+                  [(clj-keyword-invoke ~d ~e ~e* ...) (or (walk e) (some walk e*))]
+                  [(clj-call ~d0 ~d1 ~e* ...) (some walk e*)]
+                  [(clj-static-call ~d0 ~d1 ~e* ...) (some walk e*)]
+                  [(clj-case ~d ~e0 ~e1 ~e* ...) (or (walk e0) (walk e1) (some walk e*))]
+                  [(clj-def ~d ~st0 ~st1 ~e0 ~e1) (or (walk e0) (walk e1))]
+                  [(box ~e) (walk e)]
+                  [(set! ~x ~e) (walk e)]
+                  [(set-box! ~x ~e) (walk e)]
+                  [(check-initialized ~e) (walk e)]
+                  [else false])))]
+    (boolean (walk e))))
+
+(defn- real-loop?
+  "节点是真正的循环：label 的循环体里有跳回自己的 jump（每个子句都有的 arity 标签，没有 recur 时不算）。"
+  [n]
+  (nanopass-case [L3 Expr] n
+    [(label ~x (~x* ...) ~body0 ~body1)
+     (l3-some? (fn [j] (nanopass-case [L3 Expr] j [(jump ~x2 ~e* ...) (= x2 x)] [else false])) body1)]
+    [else false]))
+
+(defn- mark-tier-classes!
+  "eval 单元里会被反复调用或长时间循环的函数类分层编译（cleat-114）：体里有循环的任何 fn、引用自己 Var 的 defn（自递归）、
+  letfn 里引用同组绑定的 fn（局部递归 / 互递归）。只调用一次、没有循环的 fn（-main 一类）照旧直接按优化编译。形式外面可能套着 HoldResult。"
+  [form]
+  (let [mark! (fn [le] (nanopass-case [L3 LambdaExpr] le
+                         [(lambda ~nm (~x* ...) ~cl* ...) (when (l/clj-fn-name? nm) (hput! tier-classes (:class nm) true))]))]
+    (l3-some?
+      (fn [e]
+        (nanopass-case [L3 Expr] e
+          [(lambda ~nm (~x* ...) ~cl* ...) (when (l3-some? real-loop? e) (mark! e)) false]
+          [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
+           (when (l3-some? (fn [n] (nanopass-case [L3 Expr] n [(clj-var-ref ~d2 ~st) (identical? d2 d)] [else false])) e0)
+             (nanopass-case [L3 Expr] e0 [(lambda ~nm (~x* ...) ~cl* ...) (mark! e0)] [else nil]))
+           false]
+          [(letrec ([~x* ~le*] ...) ~body)
+           (let [names (set x*)]
+             (doseq [le le*]
+               (when (l3-some? (fn [n] (nanopass-case [L3 Expr] n [~x (contains? names x)] [else false])) le)
+                 (mark! le))))
+           false]
+          [else false]))
+      form))
+  nil)
+
+(defn- add-tiered-attr
+  "方法形式 (method 名 (attrs …) …) 的 attrs 里加 tiered。"
+  [m]
+  (if (and (seq? m) (= 'method (first m)))
+    (apply i (map (fn [x] (if (and (seq? x) (= 'attrs (first x))) (apply i (concat x ['tiered])) x)) m))
+    m))
+
 (def ^:private typed-bailout-type "Cleat.Core.Runtime.TypedBailout")
 
 (defn- cg-typed-self!
@@ -2031,7 +2111,6 @@
     (cg body mc ctx)
     (when-not (= ctx :tail) (emit! mc (i 'label end)))))
 
-(def ^:private live-unit? (atom false))   ; 当前编译单元是内存模式（eval）：生成的代码与先前求值生成的类在同一进程（cleat-110）
 
 (defn- known-call-target-ok?
   "KnownCall 的目标类能被这个单元引用：内存模式，或类在从文件加载的程序集里（编成包时，求值期间生成的类在运行时不存在）。"
@@ -2055,11 +2134,13 @@
         (emit! mc (i 'ldloc root) (i 'isinst cname) (i 'brfalse slow))
         (ldloc-clear! mc root)
         (doseq [l temps] (ldloc-clear! mc l))
-        (emit! mc (i 'call cname "invokeStatic" (apply i (objs (inc n))) obj) (i 'br end) (i 'label slow))
-        (ldloc-clear! mc root)
-        (emit! mc (i 'castclass ifn-type))
-        (doseq [l temps] (ldloc-clear! mc l))
-        (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj) (i 'label end))
+        (let [merge (new-local! mc obj)]   ; 结果不留在栈上跨过汇合点（同 if，cleat-114）
+          (emit! mc (i 'call cname "invokeStatic" (apply i (objs (inc n))) obj) (i 'stloc merge) (i 'br end) (i 'label slow))
+          (ldloc-clear! mc root)
+          (emit! mc (i 'castclass ifn-type))
+          (doseq [l temps] (ldloc-clear! mc l))
+          (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj) (i 'stloc merge) (i 'label end) (i 'ldloca merge))
+          (take-slot! mc))
         (finish-value! mc ctx)))))
 
 (defn- clj-typed-entry-method
@@ -2123,7 +2204,7 @@
       (add-class! u (apply i 'type cname (i 'base base) (i 'attrs 'sealed)
                            (concat (if (seq sigs) [(apply i 'interfaces (map #(str primifs-prefix %) sigs))] [])
                                    (map #(i 'field % obj) field-names)
-                                   @methods))))
+                                   (if (and @live-unit? (hget tier-classes (:class nm))) (map add-tiered-attr @methods) @methods)))))
     [static? cname "Instance"]))
 
 ;; —— deftype* / reify* / gen-interface / proxy-class* / gen-class* → CLR 类型（cleat-089，原版 cleat-051 / 043 / 053）——
@@ -2624,7 +2705,8 @@
   [forms assembly-name module-name loop-flags live?]
   (let [u (make-unit assembly-name module-name)]
     (reset! live-unit? (boolean live?))
-    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases spec-entries])
+    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases spec-entries tier-classes])
+    (when live? (run! mark-tier-classes! forms))
     (let [infer! (fn [forms]
                    (run! collect-assigned! forms)
                    (when opt-infer?

@@ -161,6 +161,23 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-114：eval 的代码发射成 PE 字节装进不可回收的上下文（分层编译、动态 PGO）；只调用一次、没有循环的函数仍直接按优化编译，
+    /// tier-0 的临时变量不在调用期间抓住惰性序列。tests/Cleat.Host.Tests/data/lazy_head_semantics.clj 在 512 MB 堆下跑完（顶层形式、
+    /// 只调用一次的函数把 3000 万元素的惰性序列交给长时间运行的被调用者、-main 一类）；CLEAT_NO_OPT=tiered（原来的 RunAndCollect）输出相同。
+    /// </summary>
+    [Test]
+    public void TieredEvalKeepsLazySeqsCollectable()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "lazy_head_semantics.clj");
+        var limit = ("DOTNET_GCHeapHardLimit", "0x20000000");
+        var on = HostProcessTests.CleatInWithTimeout(_dir, null, new[] { limit }, 600_000, script);
+        var off = HostProcessTests.CleatInWithTimeout(_dir, null, new[] { limit, ("CLEAT_NO_OPT", "tiered") }, 600_000, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), on + "\n" + off);
+        Assert.That(on.Out, Does.Contain("450000015000000 450000015000000 450000015000000 450000015000000 15000000"), on.ToString());
+    }
+
+    /// <summary>
     /// cleat-112：deftype / defrecord 的 ^long / ^double 字段编成 Int64 / Double 字段（构造器形参仍是 object，另有按字段类型的构造器），方法体里原始读写，
     /// 外部 (.-f x) 静态决议到原始字段。tests/Cleat.Host.Tests/data/primfield_semantics.clj 的输出与 .out 逐字相同
     /// （与 JVM Clojure 1.12 对照过：类型名之外只有 map->P 给 ^long 字段 1.5 时 JVM 报错、cleat 按 longCast 截断）。

@@ -266,6 +266,7 @@ namespace clojure.lang
         //}
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // eq? 的热路径（cleat-113）
         public static bool identical(object k1, object k2)
         {
             // I would prefer simpler version below, but it can't handle simple true/false (boxed booleans)
@@ -276,8 +277,12 @@ namespace clojure.lang
                 return true;
             if (k1 is null || k2 is null)
                 return false;
-            Type t = k1.GetType();
-            return t.IsValueType && t == k2.GetType() && k1.Equals(k2);
+            // 常见的值类型先按类型比（密封类型的判断是一次方法表比较；GetType().IsValueType 在这里是两次真正的调用，更慢）
+            if (k1 is long l1) return k2 is long l2 && l1 == l2;
+            if (k1 is double d1) return k2 is double d2 && d1.Equals(d2);
+            if (k1 is bool b1) return k2 is bool b2 && b1 == b2;
+            if (k1 is char c1) return k2 is char c2 && c1 == c2;
+            return k1 is ValueType && k1.Equals(k2);
 
             //return k1 == k2;
         }
