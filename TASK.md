@@ -115,11 +115,13 @@
 | [cleat-106](tasks/cleat-106-array-resolution.md) | 数组访问的静态决议：引用类型提示带到决议器、数组形参、类型化 aget（skeg 的 array1：long-array 版 10.7 s → 0.5 s） | M10 | cleat-102 | 完成 |
 | [cleat-107](tasks/cleat-107-r7rs-vs-jvm.md) | r7rs-benchmarks 的 Clojure 移植：cleat 对 JVM Clojure（linux01，同一份 .cljc，只计内部时间；56 项，几何平均 cleat / JVM = 4.52） | M10 | cleat-105 | 完成 |
 | [cleat-108](tasks/cleat-108-branch-join-raw-uses.md) | 推断的原始用途穿过分支汇合：if / let / begin 尾位置里的引用算原始用途 | M11 | cleat-107 | 完成 |
-| [cleat-109](tasks/cleat-109-runtime-fast-paths.md) | 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等 | M11 | cleat-108 | 未开始 |
-| [cleat-110](tasks/cleat-110-result-types-to-inference.md) | 结果类型交给推断：宿主调用返回的数组类型给无提示局部、deftype 原始字段读取的类型进算术 | M11 | cleat-109 | 未开始 |
-| [cleat-111](tasks/cleat-111-float-loops.md) | 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围 | M11 | cleat-110 | 未开始 |
-| [cleat-112](tasks/cleat-112-typed-call-sites.md) | 类型化调用点与小函数 | M11 | cleat-111 | 未开始 |
-| [cleat-113](tasks/cleat-113-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-112 | 未开始 |
+| [cleat-109](tasks/cleat-109-small-int-box-cache.md) | 小整数装箱缓存：Int64 的装箱走预先分配的缓存（codegen 的 box、Num.Box、运行时 Numbers.num 等） | M11 | cleat-108 | 未开始 |
+| [cleat-110](tasks/cleat-110-user-known-calls.md) | 用户函数的已知调用：经 Var 调用、分析时 Var 的值是有 invokeStatic 的函数类时，isinst 守卫后直接 call | M11 | cleat-109 | 未开始 |
+| [cleat-111](tasks/cleat-111-runtime-fast-paths.md) | 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等 | M11 | cleat-110 | 未开始 |
+| [cleat-112](tasks/cleat-112-result-types-to-inference.md) | 结果类型交给推断：宿主调用返回的数组类型给无提示局部、deftype 原始字段读取的类型进算术 | M11 | cleat-111 | 未开始 |
+| [cleat-113](tasks/cleat-113-float-loops.md) | 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围 | M11 | cleat-112 | 未开始 |
+| [cleat-114](tasks/cleat-114-typed-call-sites.md) | 类型化调用点与小函数 | M11 | cleat-113 | 未开始 |
+| [cleat-115](tasks/cleat-115-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-114 | 未开始 |
 
 ## 里程碑
 
@@ -140,12 +142,12 @@
 | M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
 | M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-099 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
 | M10 性能（2026-10-15 起） | cleat-100 ~ cleat-107 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
-| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-113 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
+| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-115 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-**M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113（[21 §2](designs/21-r7rs-gaps.md)）。
+**M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115（[21 §2](designs/21-r7rs-gaps.md)）。
 
 **M10（2026-10-15，完成）**：100 → 101 → 102 → 106 → 103 → 104 → 105 → 107（[20 §7](designs/20-skeg-optimizations.md)）。
 

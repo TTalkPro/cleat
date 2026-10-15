@@ -1,6 +1,6 @@
-# cleat-109 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等（cleat-107 原因 5、8、9）
+# cleat-111 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等（cleat-107 原因 5、8、9）
 
-- 里程碑：M11　依赖：cleat-108　状态：未开始
+- 里程碑：M11　依赖：cleat-110　状态：未开始
 - 设计依据：[21](../designs/21-r7rs-gaps.md)
 
 ## 工作内容

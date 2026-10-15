@@ -10,14 +10,19 @@
 
 ## §1 原因 → 任务
 
-| 原因（cleat-107 编号） | 典型项 | 任务 |
+（cleat-108 之后按剖析与对照重排：cleat-107 里子代理的复现定位了现象，但 r7rs 热路径上的主因是装箱分配与跨函数调用，见 tasks/cleat-108 的"重新定位"。）
+
+| 原因 | 依据 / 典型项 | 任务 |
 |---|---|---|
-| 4 分支汇合：`(recur (if c (inc n) n))` 的 n 推断为 long，但 if 两支里的引用算装箱用途，装箱用途多于原始用途就存成 object | quicksort、primes、diviter、计数器 / 累加器循环 | cleat-108 |
-| 5 `(= x 0)` → `Util.equiv(Object, long)` 走通用路径（23 ns 对 3 ns），`zero?` 等 11 ns；8 `(byte x)` 77 ns、`byte[]` 的 aset 108 ns；9 符号 `=` 27 ns | maze、bv2string、peval、dynamic、scheme | cleat-109（C# 运行时快路径） |
-| 6 `(object-array n)` 等宿主调用的结果类型不交给无提示局部，其后 aset 走运行时决议；2 deftype 原始字段读取的类型不进推断，算术装箱 | array1、scheme、matrix、mbrotZ 78 | cleat-110 |
-| 3 从对象数组 / 向量取出的 double、浮点循环的装箱（Num 只覆盖形参与循环变量） | fft 16、ray 15、sumfp 8.7、simplex 8、nucleic 6 | cleat-111（先量化） |
-| 7 小函数跨调用的装箱与虚调用（可变序对访问 12 ns 对 1.5 ns）；designs/20 §6 的类型化调用点 | browse 15、destruc、lattice、puzzle、takl | cleat-112 |
-| 全部完成后重测 56 项 | | cleat-113 |
+| 分支汇合：`(recur (if c (inc n) n))` 的 n 推断为 long 却存成 object | e5 36 → 17 ms；r7rs 无变化（热路径上少见） | cleat-108（完成） |
+| 小整数装箱每次分配（JVM 的 Long 缓存 -128 ~ 127 不分配） | nqueens(12) cleat 1289 MB / JVM 163 MB；所有通用数值代码 | cleat-109 |
+| 经 Var 调用用户函数：castclass IFn、接口分派、invoke 转发（核心函数已有已知调用） | browse、takl、deriv、nqueens | cleat-110 |
+| 运行时通用路径：`Util.equiv(Object, long)`（nqueens 的 equiv 占比高）、`empty?` 的 `counted?` 接口检查、`(byte x)` 与 `byte[]` 的 aset、符号相等 | nqueens、deriv、bv2string、peval | cleat-111 |
+| 宿主调用 / deftype 原始字段的结果类型不进推断（`(object-array n)` 的局部、`^double` 字段的算术） | array1、scheme、matrix、mbrotZ 78 | cleat-112 |
+| 浮点循环的装箱（数组取出的 double、generic 算术） | fft 16、ray 15、sumfp、simplex | cleat-113（先量化） |
+| 类型化调用点与小函数（designs/20 §6 的候选） | browse、destruc、lattice、puzzle | cleat-114 |
+| 全部重测 | | cleat-115 |
 
 ## §2 顺序
-108 → 109 → 110 → 111 → 112 → 113。108 影响面最广且只动推断；109 是 C# 侧、不动编译器；110 / 111 都是"类型交给推断"；112 改动最大，放最后。
+108 → 109 → 110 → 111 → 112 → 113 → 114 → 115。109（装箱缓存）与 110（已知调用）影响所有通用代码，先做；111 是 C# 侧快路径；112 / 113 是"类型交给推断"；114 改动最大，放最后。
+剖析注意：`dotnet-trace` 的线程时间采样在安全点上取样，会把时间多算到运行时辅助函数（如 ChkCastInterface）上；排优先级以对照实验与分配量为准。
