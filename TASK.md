@@ -114,7 +114,7 @@
 | [cleat-105](tasks/cleat-105-closure-and-inlining-budget.md) | 量化后决定：封闭局部 fn 提升、闭包直接 Invoke、内联预算（skeg iron-085 / 070） | M10 | cleat-104 | 完成（量化后不实现） |
 | [cleat-106](tasks/cleat-106-array-resolution.md) | 数组访问的静态决议：引用类型提示带到决议器、数组形参、类型化 aget（skeg 的 array1：long-array 版 10.7 s → 0.5 s） | M10 | cleat-102 | 完成 |
 | [cleat-107](tasks/cleat-107-r7rs-vs-jvm.md) | r7rs-benchmarks 的 Clojure 移植：cleat 对 JVM Clojure（linux01，同一份 .cljc，只计内部时间；56 项，几何平均 cleat / JVM = 4.52） | M10 | cleat-105 | 完成 |
-| [cleat-108](tasks/cleat-108-branch-join-raw-uses.md) | 推断的原始用途穿过分支汇合：if / let / begin 尾位置里的引用算原始用途 | M11 | cleat-107 | 未开始 |
+| [cleat-108](tasks/cleat-108-branch-join-raw-uses.md) | 推断的原始用途穿过分支汇合：if / let / begin 尾位置里的引用算原始用途 | M11 | cleat-107 | 完成 |
 | [cleat-109](tasks/cleat-109-runtime-fast-paths.md) | 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等 | M11 | cleat-108 | 未开始 |
 | [cleat-110](tasks/cleat-110-result-types-to-inference.md) | 结果类型交给推断：宿主调用返回的数组类型给无提示局部、deftype 原始字段读取的类型进算术 | M11 | cleat-109 | 未开始 |
 | [cleat-111](tasks/cleat-111-float-loops.md) | 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围 | M11 | cleat-110 | 未开始 |

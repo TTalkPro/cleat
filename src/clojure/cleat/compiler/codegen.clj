@@ -70,6 +70,7 @@
 (def opt-host? (not (opt-off? "host")))
 (def opt-loopspec? (not (opt-off? "loopspec")))   ; 循环的 long / double 推测：快慢两份循环（cleat-103）
 (def opt-typed? (not (opt-off? "typed")))         ; 无提示函数的类型化入口（cleat-104）
+(def opt-joinraw? (not (opt-off? "joinraw")))     ; 原始用途穿过 if / begin 的尾位置（cleat-108）
 (def opt-num? (not (opt-off? "num")))     ; Num：未定类型数的局部 / 循环变量 / 形参（cleat-102）   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
 
 ;; —— 编译单元（原版 unit）——
@@ -543,6 +544,9 @@
     [(clause (~x* ...) ~x ~body) (run! param! x*) (Expr body)])
   (Raw Expr [ir] -> * []
     [~x (use! x true)]
+    ;; 分支汇合（cleat-108）：if 两支、begin 最后一项的值就是整个表达式的值，原始发射（cg-raw-join!）直接在各支里原始求值
+    [(if ~e0 ~e1 ~e2) (if opt-joinraw? (do (Expr e0) (Raw e1) (Raw e2)) (Expr ir))]
+    [(begin ~e* ... ~e) (if opt-joinraw? (do (run! Expr e*) (Raw e)) (Expr ir))]
     [else (Expr ir)])
   (Expr [ir] -> * []
     [~x (use! x false)]
@@ -1120,7 +1124,7 @@
               (fallback)))]
       [else (fallback)])))
 
-(declare var-raw-type)
+(declare var-raw-type cg-raw-join! branch-ref-counts adjust-uses!)
 
 (defn- num-arith
   "有 Num 操作数的 Numbers 算术 / 比较：[方法名 实参 bool?]，否则 nil（cleat-102）。"
@@ -1192,7 +1196,30 @@
       (and oa (numbers-long-ops (first oa))) (numbers-raw-emit-args! (rest oa) (first oa) mc)
       (raw-prim-invoke e t) (cg-prim-invoke! (raw-prim-invoke e t) mc :raw)
       (raw-host-call e t) (cg-static-host-call! (raw-host-call e t) mc :raw)
+      (and opt-joinraw? (cg-raw-join! e mc t)) nil
       :else (cg-raw-default e mc t))))
+
+(defn- cg-raw-join!
+  "if / begin 的原始发射（cleat-108）：各支 / 最后一项原始求值，汇合处不装箱。是这两种节点时生成并返回 true，否则 nil。"
+  [e mc t]
+  (nanopass-case [L3 Expr] e
+    [(if ~e0 ~e1 ~e2)
+     (let [else-l (new-label! mc) end-l (new-label! mc)]
+       (cg e0 mc :test)
+       (emit! mc (i 'brfalse else-l))
+       (let [c2 (branch-ref-counts mc e2)]   ; 局部变量清除按分支，同 cg* 的 if
+         (adjust-uses! mc c2 -)
+         (cg-raw e1 mc t)
+         (adjust-uses! mc c2 +))
+       (emit! mc (i 'br end-l) (i 'label else-l))
+       (cg-raw e2 mc t)
+       (emit! mc (i 'label end-l))
+       true)]
+    [(begin ~e* ... ~e)
+     (run! #(cg % mc :effect) e*)
+     (cg-raw e mc t)
+     true]
+    [else nil]))
 
 (defn- cg-prim-invoke!
   "($clj-call \"PrimInvoke\" #f '签名 f 实参 …)：f 转为 primifs.<签名>、callvirt invokePrim（原版 cg-prim-invoke!）。"

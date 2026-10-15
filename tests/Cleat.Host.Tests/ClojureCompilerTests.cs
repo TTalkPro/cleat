@@ -161,6 +161,35 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-108：回边实参是 if / begin 时，两支里对原始类型循环变量的引用算原始用途，汇合处原始发射（不装箱）。语义用例
+    /// （tests/Cleat.Host.Tests/data/joinraw_semantics.clj：计数器、嵌套 if、带副作用的 do、throw 与提前退出的分支、溢出、两支类型不同、Ratio、double、
+    /// 无提示初值、循环里另有装箱用途）在 CLEAT_NO_OPT=joinraw 与开两种设置下输出逐字相同；计数器循环里只剩返回值处一次 Int64 装箱。
+    /// </summary>
+    [Test]
+    public void JoinRawUses()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "joinraw_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "joinraw") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "joinraw on:\n" + on.Out + "\njoinraw off:\n" + off.Out);
+        Assert.That(on.Out, Does.Contain("5 0 4 System.Int64"), on.ToString());
+        Assert.That(on.Out.Split('\n').Length, Is.GreaterThan(10), on.ToString());
+
+        File.WriteAllText(Path.Combine(_dir, "jr.clj"), "(ns jr)\n(defn e5 [x] (loop [i 0 n 0] (if (< i 10000) (recur (inc i) (if (< i 5000) (inc n) n)) n)))\n");
+        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
+            "-I", _dir, "--compile-package", Path.Combine(_dir, "jr.dll"), "--package", "jr", "--root", _dir, "jr");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        string lcil = File.ReadAllText(Path.Combine(_dir, "jr.dll.lcil"));
+        int start = lcil.IndexOf("(type \"jr$e5\"", StringComparison.Ordinal);
+        int end = lcil.IndexOf("(method \"invoke\"", start, StringComparison.Ordinal);
+        string e5 = lcil.Substring(start, end - start);
+        Assert.That(System.Text.RegularExpressions.Regex.Matches(e5, "\\(box \"System.Int64\"\\)").Count, Is.LessThanOrEqualTo(1), e5);
+        Assert.That(e5, Does.Not.Contain("ArgInt64"), e5);
+    }
+
+    /// <summary>
     /// cleat-104：无提示的纯数值函数有类型化入口（invokeStaticTyped，通用入口实参相符时转调，自调用在 Var 未被重定义时直调）。
     /// 语义用例（tests/Cleat.Host.Tests/data/typed_semantics.clj：long / double / Ratio / BigInt / BigDecimal / Int32 / 非数 / nil 实参、long 进 double 出、
     /// 溢出、= / zero? / recur、unchecked-math、重定义后旧函数的类型化体看到新的 Var 值（结果是 long、double 与非数）、经 map / apply / partial 调用）
