@@ -152,7 +152,7 @@ void Publish(string[] a)
     Console.WriteLine("published " + Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat"));
 }
 
-// 运行时的 NuGet 包（cleat-067）：Release 构建（镜像随之生成到 src/boot/）、随附库的包程序集，再打包 src/Cleat.Runtime。
+// 运行时的 NuGet 包（cleat-067）：Release 构建（镜像随之生成到 src/boot/）、随附库的包程序集，再打包 src/Cleat.Runtime.Package（包 id Cleat.Runtime）。
 void Pack(string[] a)
 {
     string outDir = Path.Combine(root, "artifacts", "nuget"), version = null;
@@ -168,7 +168,7 @@ void Pack(string[] a)
     BuildCSharp();
     CompileLibs([]);
     CompileToolLibs();
-    var args = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Runtime", "Cleat.Runtime.csproj"), "-c", "Release", "-o", outDir,
+    var args = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Runtime.Package", "Cleat.Runtime.Package.csproj"), "-c", "Release", "-o", outDir,
                                   "-v", "quiet", "-nologo", "-p:BuildBootImage=false" };
     // PackageVersion, not Version: a global -p:Version reaches every referenced project and changes the assembly versions
     // (Cleat.Core 1.0.1.0 …), and package assemblies compiled against those then require them (cleat-071)

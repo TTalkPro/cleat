@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- cleat 运行时的 NuGet 包（cleat-067，designs/17 §3）：没有自己的代码，只打包。
-       lib/net10.0/：Cleat.Core、Cleat.Hosting、宿主 cleat 与发射器 cleat-emit 等程序集；
+  <!-- cleat 运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）：没有自己的代码，只打包（项目因此叫 Cleat.Runtime.Package；运行时代码在 Cleat.Core）。
+       lib/net10.0/：Cleat.Core、Cleat.Hosting 与发射器 cleat-emit 程序集（不含命令行宿主 cleat）；
        runtime/：Clojure 镜像（与接口文件、内联体）、编译器包 cleat.compiler.dll、随附库的包程序集，经
        buildTransitive/Cleat.Runtime.targets 复制到引用方的输出目录（运行时按 AppContext.BaseDirectory 找到它们）。
        先 dotnet build（生成镜像）与 tools/build.cs compile-libs；tools/build.cs pack 按这个顺序做。 -->

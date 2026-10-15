@@ -5,7 +5,6 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Cleat.Core.Runtime;
-using Cleat.Host;
 using clojure.lang;
 
 namespace Cleat.Core.Hosting;
@@ -25,7 +24,7 @@ public sealed class CleatOptions
 
 /// <summary>
 /// C# 程序嵌入 cleat 的入口（cleat-035）。类名沿用 IronScheme 的 SchemeRuntime 叫 CleatRuntime——
-/// 名为 Cleat 的类无法在 Cleat.* 命名空间树之外引用（会被根命名空间 Cleat 遮住）：<see cref="Init"/> 加载 Clojure 镜像与编译器并登记钩子（与宿主完全同一路径），
+/// 名为 Cleat 的类无法在 Cleat.* 命名空间树之外引用（会被根命名空间 Cleat 遮住）：<see cref="Init"/> 加载 Clojure 镜像与编译器并登记钩子（与宿主 cleat 走同一个 Startup.Start，与宿主完全同一路径），
 /// <see cref="Eval"/> 求值源码、<see cref="Require"/> 加载命名空间、<see cref="Var"/> 取命名空间里的函数调用。
 /// 展开器与编译器不是线程安全的、需要大栈：所有调用经锁排到一条 512 MB 栈的工作线程上串行执行（Kestrel 的并发请求因此安全）。
 /// Clojure 的异常原样传出（ex-info 是 ExceptionInfo，错误位置在 Data["cleat.error/location"]）。
@@ -73,7 +72,7 @@ public static class CleatRuntime
     public static object Eval(string code)
     {
         ArgumentNullException.ThrowIfNull(code);
-        return Marshal(() => Program.EvalReader(new StringReader(code), "embedded"));
+        return Marshal(() => Startup.EvalReader(new StringReader(code), "embedded"));
     }
 
     /// <summary>require 一个命名空间（不在加载路径上时抛 FileNotFoundException）。</summary>
@@ -157,12 +156,12 @@ public static class CleatRuntime
     /// <summary>在启动时调用，发出 Init 未完成的信号（Marshal 的 s_initialized 检查只在完成后为真，嵌套调用走不到）。</summary>
     private static void InitBody(CleatOptions o)
     {
-        var hostOptions = new Program.Options { Boot = o.ClojureBoot };
-        foreach (var p in o.LoadPaths) hostOptions.IncludeDirs.Add(Path.GetFullPath(p));
-        Program.Start(hostOptions);
+        var so = new StartupOptions { Boot = o.ClojureBoot };
+        foreach (var p in o.LoadPaths) so.IncludeDirs.Add(Path.GetFullPath(p));
+        Startup.Start(so);
         // Eval / Require 的环境：user 命名空间（refer clojure.core）+ *command-line-args*；绑定推给工作线程的余生
         var ns = Namespace.findOrCreate(Symbol.intern("user"));
-        Program.ReferClojureCore(ns);
+        Startup.ReferClojureCore(ns);
         clojure.lang.Var.pushThreadBindings(RT.map(
             RT.CurrentNSVar, ns,
             RT.CmdLineArgsVar, RT.seq(o.CommandLine)));

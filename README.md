@@ -52,10 +52,11 @@ cleat -I src... --compile-package out/Name.dll [--root dir]... ns...    编包�
 
 | 目录 | 内容 |
 |---|---|
-| `src/Cleat.Core/` | 运行时（C#）：`clojure.lang` 的集合、数值、Var、Namespace、reader、互操作与静态决议、加载器、包程序集索引；`clojure.lang/` 下的部分改写自 ClojureCLR（EPL） |
+| `src/Cleat.Core/` | 运行时（C#），一个程序集三个命名空间：`clojure.lang`（集合、数值、Var、Namespace、reader，改写自 ClojureCLR，EPL）、`Cleat.Core.Runtime`（加载器、互操作与静态决议、Fasl、包程序集索引、启动）、`Cleat.Core.Compiler`（类型提示决议、驱动入口） |
 | `src/Cleat.Emit/` | Lcil 发射器：Lcil 文本（[LCIL.md](src/Cleat.Emit/LCIL.md)）→ Reflection.Emit → 内存程序集或 dll（作者先在自己的 IronScheme 分支里写的 IronScheme.Emit，移植过来） |
 | `src/Cleat.Host/` | 宿主 `cleat`：命令行、REPL、`-M/-X/-T`、镜像与编译器的加载、`--compile-boot` / `--compile-package` |
-| `src/Cleat.Runtime/`、`src/Cleat.Hosting/` | NuGet 包 `Cleat.Runtime` 与惰性启动的 `CleatRuntime`：C# / F# 项目直接引用 cleat 编出的程序集（[designs/17](designs/17-lazy-runtime-startup.md)） |
+| `src/Cleat.Hosting/` | 嵌入 API `Cleat.Core.Hosting.CleatRuntime`（Init / Eval / Require / Var，惰性启动）：C# / F# 程序宿主 cleat 时用；与命令行宿主共用 `Cleat.Core.Runtime.Startup` 启动（[designs/17](designs/17-lazy-runtime-startup.md)） |
+| `src/Cleat.Runtime.Package/` | NuGet 包 `Cleat.Runtime` 的打包项目（无代码）：Core、Hosting、Emit 程序集加镜像、编译器包与随附库，给 C# / F# 项目引用 |
 | `src/clojure/clojure/` | `clojure.core` 与随附命名空间（string、set、walk、edn、pprint、test、repl、main、zip、data、instant、clr.io …），改写自 Clojure / ClojureCLR（EPL） |
 | `src/clojure/cleat/compiler/` | 编译器（Clojure）：`analyzer`（Clojure 形式 → L0）、`languages`（L0 ~ L3）、`loops` / `front` / `closures` 各遍、`codegen`（L3 → Lcil）、`pipeline`、`driver`（eval / load / compile 钩子） |
 | `src/clojure/cleat/nanopass*` | `cleat.nanopass`：nanopass 框架的 Clojure 移植，编译器用它写（[用户文档](src/clojure/cleat/nanopass/README.md)，MIT） |

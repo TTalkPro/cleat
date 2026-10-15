@@ -1,12 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- C# 程序嵌入 cleat 的入口（cleat-035，IronScheme designs/07 §5 的 Hosting 对应物）：初始化镜像与编译器、
-       求值源码、require 命名空间、取 Var 调用。引用宿主程序集是为了复用同一个初始化路径（Program.Start）。 -->
+       求值源码、require 命名空间、取 Var 调用。启动走 Cleat.Core.Runtime.Startup（宿主 cleat 也走它），不引用宿主程序集；
+       引用 Cleat.Emit 是为了把发射器带到输出目录（编译器包 cleat.compiler.dll 在运行时发射程序集要用它）。 -->
   <PropertyGroup>
     <RootNamespace>Cleat.Core.Hosting</RootNamespace>
     <AssemblyName>Cleat.Hosting</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Cleat.Host\Cleat.Host.csproj" />
+    <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
+    <ProjectReference Include="..\Cleat.Emit\Cleat.Emit.csproj" />
   </ItemGroup>
 </Project>

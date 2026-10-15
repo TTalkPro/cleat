@@ -87,7 +87,7 @@ Clojure 的包（如 `Cleat.Nrepl`）的 nupkg 依赖 `Cleat.Runtime`（版本�
 ### 4.2 `RuntimeBootstrap`（Cleat.Core）
 
 - `EnsureStarted(Assembly caller)`：已启动或正在启动（宿主 / Hosting 的启动过程、镜像初始化期间）时返回；否则加锁只启动一次。
-- Cleat.Core 不引用 Hosting（依赖方向 Hosting → Host → Core），所以按名字 `Assembly.Load("Cleat.Hosting")` 并反射调用
+- Cleat.Core 不引用 Hosting（依赖方向 Hosting → Core 与 Host → Core；二者共用 Cleat.Core.Runtime.Startup），所以按名字 `Assembly.Load("Cleat.Hosting")` 并反射调用
   `CleatRuntime.Init`；宿主与 Hosting 启动时登记"已启动"。找不到 Hosting 或镜像时抛出说明清楚的异常（缺什么、在哪里找过）。
 - `CleatRuntime.Var` / `Require` / `Eval` 未初始化时自动以缺省选项 `Init`。
 
