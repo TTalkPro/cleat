@@ -24,6 +24,7 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（`
 | [17-lazy-runtime-startup.md](17-lazy-runtime-startup.md) | **实现**：包程序集（每包一个、命名空间索引、去掉源码旁 `.clj.dll`）、运行时 NuGet 包 `Cleat.Runtime`、生成类型惰性启动 CleatRuntime，让 C# / F# 直接引用 cleat 的 NuGet 包（cleat-067） |
 | [19-clojure-self-hosting.md](19-clojure-self-hosting.md) | **现行方向**（2026-10-14 起，M8 完成）：Clojure 版 nanopass 与编译器、分级差分门控、自举不动点与 Lcil 文本种子、生成代码去 Scheme、删除 Scheme 元层；任务 cleat-081 ~ 095，收口 cleat-096 ~ 099（M9） |
 | [18-tools-build.md](18-tools-build.md) | **实现**：tools.build 包（`cleat.edn` 的 NuGet / 本地依赖、`dotnet restore` 解析的 basis、编包程序集、`dotnet-build`、`pack` / `install` / `push`、可部署目录）与 tools.namespace 的部分移植（cleat-066） |
-| [20-skeg-optimizations.md](20-skeg-optimizations.md) | **现行方向**（2026-10-15 起，M10）：skeg iron-060 ～ 087 逐条对照、cleat 实测差距（反射构造 / 属性、无提示算术装箱）、Num 与双局部的 Clojure 语义改法、循环推测、类型化入口；任务 cleat-100 ～ 105 |
+| [20-skeg-optimizations.md](20-skeg-optimizations.md) | M10（完成）：skeg iron-060 ～ 087 逐条对照、cleat 实测差距（反射构造 / 属性、无提示算术装箱）、Num 与双局部的 Clojure 语义改法、循环推测、类型化入口；任务 cleat-100 ～ 105 |
+| [21-r7rs-gaps.md](21-r7rs-gaps.md) | **现行方向**（2026-10-15 起，M11）：cleat-107 的 r7rs 对比（cleat / JVM 几何平均 4.52）找出的慢区与任务 cleat-108 ～ 113 |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。
