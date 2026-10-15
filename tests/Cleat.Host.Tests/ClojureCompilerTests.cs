@@ -161,6 +161,46 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-104：无提示的纯数值函数有类型化入口（invokeStaticTyped，通用入口实参相符时转调，自调用在 Var 未被重定义时直调）。
+    /// 语义用例（tests/Cleat.Host.Tests/data/typed_semantics.clj：long / double / Ratio / BigInt / BigDecimal / Int32 / 非数 / nil 实参、long 进 double 出、
+    /// 溢出、= / zero? / recur、unchecked-math、重定义后旧函数的类型化体看到新的 Var 值（结果是 long、double 与非数）、经 map / apply / partial 调用）
+    /// 在 CLEAT_NO_OPT=typed 与开两种设置下输出逐字相同；fib 有 invokeStaticTyped(Int64) → Int64，有 ^long 提示的不另生成。
+    /// </summary>
+    [Test]
+    public void TypedEntries()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "typed_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "typed") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "typed on:\n" + on.Out + "\ntyped off:\n" + off.Out);
+        Assert.That(on.Out, Does.Contain("6765 6765.0 1/2 610N 99.5M 144"), on.ToString());
+        Assert.That(on.Out, Does.Contain("2.5 2.5 1.5"), on.ToString());
+        Assert.That(on.Out.Split('\n').Length, Is.GreaterThan(14), on.ToString());
+
+        string src = Path.Combine(_dir, "typed.clj");
+        File.WriteAllText(src, "(ns typed)\n(defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\n"
+            + "(defn pfib ^long [^long n] (if (< n 2) n (+ (pfib (- n 1)) (pfib (- n 2)))))\n"
+            + "(defn noisy [n] (println n) (if (< n 1) 0 (noisy (dec n))))\n");
+        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
+            "-I", _dir, "--compile-package", Path.Combine(_dir, "typed.dll"), "--package", "typed", "--root", _dir, "typed");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        string lcil = File.ReadAllText(Path.Combine(_dir, "typed.dll.lcil"));
+        string Type(string name)
+        {
+            int start = lcil.IndexOf("(type \"typed$" + name + "\"", StringComparison.Ordinal);
+            int end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
+            return lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
+        }
+        string fib = Type("fib");
+        Assert.That(fib, Does.Contain("(call \"typed$fib\" \"invokeStaticTyped\" (\"System.Object\" \"System.Int64\") \"System.Int64\")"), fib);
+        Assert.That(fib, Does.Contain("(call \"clojure.lang.Numbers\" \"add\" (\"System.Int64\" \"System.Int64\") \"System.Int64\")"), fib);
+        Assert.That(Type("pfib"), Does.Not.Contain("invokeStaticTyped"));
+        Assert.That(Type("noisy"), Does.Not.Contain("invokeStaticTyped"));   // 有副作用的体不特化
+    }
+
+    /// <summary>
     /// cleat-103：初值来自无提示形参的最内层循环生成快慢两份（入口 isinst，快份原始局部）。语义用例（tests/Cleat.Host.Tests/data/loopspec_semantics.clj：
     /// 入口是 long / double / Ratio / BigInt / BigDecimal / Int32 / 非数 / nil、溢出、NaN、两个变量一起推测、会变成 double 的变量、循环里装箱使用、
     /// 初值是调用（求值一次、按顺序）、unchecked-math、嵌套循环）在 CLEAT_NO_OPT=loopspec 与开两种设置下输出逐字相同；

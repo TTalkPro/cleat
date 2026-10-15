@@ -69,6 +69,7 @@
 (def opt-infer? (not (opt-off? "infer")))
 (def opt-host? (not (opt-off? "host")))
 (def opt-loopspec? (not (opt-off? "loopspec")))   ; 循环的 long / double 推测：快慢两份循环（cleat-103）
+(def opt-typed? (not (opt-off? "typed")))         ; 无提示函数的类型化入口（cleat-104）
 (def opt-num? (not (opt-off? "num")))     ; Num：未定类型数的局部 / 循环变量 / 形参（cleat-102）   ; 宿主调用（方法 / 字段 / 属性 / 构造器）的编译期静态决议（cleat-042 / 101）
 
 ;; —— 编译单元（原版 unit）——
@@ -435,6 +436,8 @@
      (cond
        (= d0 "Tagged") (expr-type (second e*) env)   ; 静态类型标注（cleat-101 的延续）：透明
        (= d0 "Speculated") (quoted-datum (first e*))   ; 推测循环的快份入口：isinst 检查过的实参（cleat-103）
+       (= d0 "TypedSelf") (sig-char-raw (sig-ret (first (quoted-datum (first e*)))))   ; 类型化体里的自调用（cleat-104）
+       (= d0 "TypedEntry") (expr-type (second e*) env)
        (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
        :else
@@ -529,7 +532,7 @@
   (MaybeTyped Expr [ir] -> * []
     [(quote ~d) (or (instance? Int64 d) (boolean (datum-type d)))]
     [~x (candidate? x)]
-    [(clj-call ~d0 ~d1 ~e* ...) (or (= d0 "PrimInvoke") (boolean (host-call-layout d0 d1 e*)))]
+    [(clj-call ~d0 ~d1 ~e* ...) (or (#{"PrimInvoke" "TypedSelf"} d0) (boolean (host-call-layout d0 d1 e*)))]
     [(if ~e0 ~e1 ~e2) (or (MaybeTyped e1) (MaybeTyped e2))]
     [(begin ~e* ... ~e) (MaybeTyped e)]
     [(let ([~x* ~e*] ...) ~body) (MaybeTyped body)]
@@ -579,6 +582,9 @@
        (= d0 "PrimInvoke") (do (Expr (second e*))
                                (doseq [[a c] (map vector (drop 2 e*) (sig-params (quoted-datum (first e*))))]
                                  (if (sig-char-raw c) (Raw a) (Expr a))))
+       (= d0 "TypedSelf") (do (Expr (second e*))
+                              (doseq [[a c] (map vector (drop 2 e*) (sig-params (first (quoted-datum (first e*)))))]
+                                (if (sig-char-raw c) (Raw a) (Expr a))))
        :else (if-let [lay (host-call-layout d0 d1 e*)]
                (do (when (second lay) (Expr (second lay))) (run! Raw (nth lay 2)))
                (run! Expr e*)))]
@@ -772,6 +778,7 @@
                 [(if ~e0 ~e1 ~e2) (run! walk [e0 e1 e2])]
                 [(begin ~e* ... ~e) (run! walk e*) (walk e)]
                 [(let ([~x* ~e*] ...) ~body) (vswap! acc into x*) (run! walk e*) (walk body)]
+                [(label ~x (~x* ...) ~body0 ~body1) (vswap! acc conj x) (vswap! acc into x*) (walk body0) (walk body1)]
                 [(call ~e ~e* ...) (walk e) (run! walk e*)]
                 [(throw ~e) (walk e)]
                 [(jump ~x ~e* ...) (run! walk e*)]
@@ -789,6 +796,7 @@
   (Expr [ir] -> Expr []
     [~x (get m x x)]
     [(let ([~x* ~[e*]] ...) ~[body]) (out (let ([~(mapv #(get m % %) x*) ~e*] ...) ~body))]
+    [(label ~x (~x* ...) ~[body0] ~[body1]) (out (label ~(get m x x) (~(mapv #(get m % %) x*) ...) ~body0 ~body1))]
     [(jump ~x ~[e*] ...) (out (jump ~(get m x x) ~e* ...))]))
 
 (defn- spec-final-jump
@@ -886,6 +894,144 @@
      (let [b0 (spec-label x x* body0 body1)]
        (out (label ~x (~x* ...) ~(or b0 body0) ~body1)))]))
 
+;; —— 无提示函数的类型化入口（cleat-104，skeg iron-075 / 076）——
+;; 顶层 (def f (fn [形参…] 体))：单固定子句、≤ 4 形参、没有闭包字段、没有原始签名提示，体是纯的（只有 Numbers / Util.equiv 的运算、
+;; if / let / begin / 循环与经 Var 的自调用，且至少有一次自调用），不超过 spec-entry-max-nodes 个节点。形参（在 Numbers 运算里用到的）与返回值推测
+;; long / double：类型化的一份体（绑定换新名，自调用换成 (clj-call "TypedSelf" …)）在这些固定类型下推断出的返回类型就是猜的类型、
+;; 自调用的实参也是，就生成 invokeStaticTyped(self, T…) → R；通用入口 invokeStatic 包成 (clj-call "TypedEntry" …)：实参类型相符时
+;; 转调它，否则（或类型化体里自调用发现 Var 被重定义、新函数的结果不是 R，抛 TypedBailout）走通用体。long 溢出照常抛异常，不重算。
+
+(def ^:private spec-entry-max-nodes 200)
+(def ^:private spec-entries (ht))   ; fn 的类名（名字记录的 :class）→ {:sig 签名 :clause 类型化子句}；每个编译单元清空
+
+(defn- spec-self-ref? [e v]
+  (nanopass-case [L3 Expr] e [(clj-var-ref ~d ~st) (identical? d v)] [else false]))
+
+(defn- spec-pure-call? [d0 d1 e*]
+  (or (numbers-arith-op d0 d1 e*)
+      (and (= d0 "CallStatic") (= d1 3) (>= (count e*) 3)
+           (let [t (quoted-datum (first e*)) nm (quoted-datum (second e*))]
+             (or (numbers-type? t)
+                 (and (instance? Type t) (= (.FullName ^Type t) "clojure.lang.Util") (#{"equiv" "equals"} nm)))))))
+
+(defn- spec-pure?
+  "类型化入口的体：纯运算与自调用。"
+  [e v]
+  (let [n (volatile! 0)]
+    (letfn [(ok? [e]
+              (and (<= (vswap! n inc) spec-entry-max-nodes)
+                   (nanopass-case [L3 Expr] e
+                     [~x true]
+                     [(quote ~d) true]
+                     [(if ~e0 ~e1 ~e2) (and (ok? e0) (ok? e1) (ok? e2))]
+                     [(begin ~e* ... ~e) (and (every? ok? e*) (ok? e))]
+                     [(let ([~x* ~e*] ...) ~body) (and (every? ok? e*) (ok? body))]
+                     [(label ~x (~x* ...) ~body0 ~body1) (and (ok? body0) (ok? body1))]
+                     [(jump ~x ~e* ...) (every? ok? e*)]
+                     [(clj-invoke ~e ~e* ...) (and (spec-self-ref? e v) (every? ok? e*))]
+                     [(clj-call ~d0 ~d1 ~e* ...) (and (spec-pure-call? d0 d1 e*) (every? ok? e*))]
+                     [else false])))]
+      (ok? e))))
+
+(define-pass spec-typed-copy L3 [ir m v info] -> L3 []
+  (Expr [ir] -> Expr []
+    [~x (get m x x)]
+    [(let ([~x* ~[e*]] ...) ~[body]) (out (let ([~(mapv #(get m % %) x*) ~e*] ...) ~body))]
+    [(label ~x (~x* ...) ~[body0] ~[body1]) (out (label ~(get m x x) (~(mapv #(get m % %) x*) ...) ~body0 ~body1))]
+    [(jump ~x ~[e*] ...) (out (jump ~(get m x x) ~e* ...))]
+    [(clj-invoke ~e ~[e*] ...)
+     (if (spec-self-ref? e v)
+       (out (clj-call "TypedSelf" false (quote ~info) ~e ~e* ...))
+       (out (clj-invoke ~(Expr e) ~e* ...)))]))
+
+(defn- spec-typed-selves
+  "类型化体里的 TypedSelf：[实参 …] 的序列。"
+  [e]
+  (let [acc (volatile! [])]
+    (letfn [(walk [e]
+              (nanopass-case [L3 Expr] e
+                [(if ~e0 ~e1 ~e2) (run! walk [e0 e1 e2])]
+                [(begin ~e* ... ~e) (run! walk e*) (walk e)]
+                [(let ([~x* ~e*] ...) ~body) (run! walk e*) (walk body)]
+                [(label ~x (~x* ...) ~body0 ~body1) (walk body0) (walk body1)]
+                [(jump ~x ~e* ...) (run! walk e*)]
+                [(clj-call ~d0 ~d1 ~e* ...) (when (= d0 "TypedSelf") (vswap! acc conj (drop 2 e*))) (run! walk e*)]
+                [else nil]))]
+      (walk e)
+      @acc)))
+
+(defn- spec-body-type
+  "返回类型：expr-type 加上 label（体与循环体的类型之并，jump 是 :top）；只用于类型化入口的判定。"
+  [e env]
+  (nanopass-case [L3 Expr] e
+    [(label ~x (~x* ...) ~body0 ~body1) (type-join (spec-body-type body0 env) (spec-body-type body1 env))]
+    [(if ~e0 ~e1 ~e2) (type-join (spec-body-type e1 env) (spec-body-type e2 env))]
+    [(begin ~e* ... ~e) (spec-body-type e env)]
+    [(let ([~x* ~e*] ...) ~body) (spec-body-type body env)]
+    [else (expr-type e env)]))
+
+(defn- spec-entry-try
+  "猜测 guess（形参 → :l64 / :fl / nil）与返回 r：成立时 {:sig :params :body}，否则 nil。"
+  [x* body v guess r]
+  (let [sig (str (apply str (map #(case % :l64 "L" :fl "D" "O") guess)) (case r :l64 "L" :fl "D"))
+        m (into {} (map (fn [b] [b (loops/fresh (str b))]) (concat x* (spec-binders body))))
+        ps (mapv m x*)
+        tb (spec-typed-copy body m v [sig])
+        scratch (ht)]
+    (doseq [[p t] (map vector ps guess)] (when t (hput! fixed-types p t)))
+    (infer-var-types-into! tb scratch sound-types)
+    (let [env (ht)]
+      (doseq [k (keys-of scratch)] (hput! env k (hget scratch k)))
+      (doseq [[p t] (map vector ps guess)] (when t (hput! env p t)))
+      (when (and (= r (spec-body-type tb env))
+                 (seq (spec-typed-selves tb))   ; 只有递归函数：好处来自类型化体里的自调用，非递归的通用入口只多一次检查与 try
+                 (every? (fn [args] (every? (fn [[a t]] (or (nil? t) (= t (expr-type a env)))) (map vector args guess)))
+                         (spec-typed-selves tb)))
+        {:sig sig :params ps :body tb :guess guess}))))
+
+(defn- spec-entry
+  "clj-def 的 fn 能否有类型化入口：成立时 {:sig :params :body :guess}。"
+  [v nm fv* cl*]
+  (when (and (l/clj-fn-name? nm) (empty? fv*) (= 1 (count cl*)) (false? (:variadic nm)) (not (:async? nm))
+             (empty? (:prims nm)))
+    (nanopass-case [L3 Clause] (first cl*)
+      [(clause (~x* ...) ~x ~body)
+       (when (and (not x) (<= 1 (count x*) 4) (spec-pure? body v))
+         (let [;; fn 的 arity 循环把形参复制进标签变量：(label recur (p' …) (jump recur p …) 体)——看标签变量的用途
+               arity (nanopass-case [L3 Expr] body
+                       [(label ~x1 (~x1* ...) ~body0 ~body1)
+                        (nanopass-case [L3 Expr] body0
+                          [(jump ~x2 ~e* ...) (when (and (= x2 x1) (= (count e*) (count x1*))) [e* x1* body1])]
+                          [else nil])]
+                       [else nil])
+               num (mapv (fn [p]
+                           (or (spec-numeric-use? body p)
+                               (when-let [[a* l* b1] arity]
+                                 (some (fn [[a q]] (and (nanopass-case [L3 Expr] a [~x (= x p)] [else false]) (spec-numeric-use? b1 q)))
+                                       (map vector a* l*)))))
+                         x*)]
+           (when (some true? num)
+             (some (fn [[t r]] (spec-entry-try x* body v (mapv #(when % t) num) r))
+                   [[:l64 :l64] [:l64 :fl] [:fl :fl]]))))])))
+
+(define-pass speculate-entries L3 [ir] -> L3 []
+  (Expr [ir] -> Expr []
+    [(clj-def ~d ~st0 ~st1 ~[e0] ~[e1])
+     (let [e0' (nanopass-case [L3 Expr] e0
+                 [(lambda ~nm (~x* ...) ~cl* ...)
+                  (when-let [se (and (instance? clojure.lang.Var d) (not (hhas? spec-entries (:class nm))) (spec-entry d nm x* cl*))]
+                    (vreset! *spec-changed* true)
+                    (hput! spec-entries (:class nm) se)
+                    (let [cl (nanopass-case [L3 Clause] (first cl*)
+                               [(clause (~y* ...) ~y ~body)
+                                (with-output-language [L3 Clause]
+                                  (out (clause (~y* ...) ~y
+                                         ~(with-output-language [L3 Expr]
+                                            (out (clj-call "TypedEntry" false (quote ~[(:sig se) y*]) ~body))))))])]
+                      (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))]
+                 [else nil])]
+       (out (clj-def ~d ~st0 ~st1 ~(or e0' e0) ~e1)))]))
+
 ;; —— deftype* 描述的访问（向量，见原版 deftype-info-*）——
 (defn- dinfo [d k] (nth d k))
 (defn- dinfo-kind [d] (dinfo d 1))   ; true reify*、false deftype*、:interface、:proxy、:genclass
@@ -951,7 +1097,14 @@
            sl))]
       [else nil])))
 
-(declare cg-prim-invoke! cg-static-host-call! ref-var!)
+(declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry!)
+
+(defn- typed-self-ret
+  "(clj-call \"TypedSelf\" …) 的返回类型（:l64 / :fl），别的节点 nil。"
+  [e]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...) (when (= d0 "TypedSelf") (sig-char-raw (sig-ret (first (quoted-datum (first e*))))))]
+    [else nil]))
 
 (defn- cg-raw-default [e mc t]
   (let [fallback #(do (cg e mc :value) (emit! mc (i 'unbox.any (type-clr t))))]
@@ -1032,6 +1185,7 @@
         na (when (#{:fl :l64} t) (num-arith e))]
     (cond
       (= t :num) (cg-raw-num e mc)
+      (and (#{:l64 :fl} t) (= t (typed-self-ret e))) (cg-typed-self! e mc)
       ;; 含 Num 操作数的算术要 double / long 原始值（推断把 (+ double-var num) 定成 double）：整棵按 Num 算再取值，不装箱
       (and na (not (nth na 2)))
       (do (cg-raw-num e mc) (emit! mc (i 'call num-type (if (= t :fl) "ToDouble" "ToInt64") (i num-type) (type-clr t))))
@@ -1473,6 +1627,8 @@
          (finish-value! mc ctx))
        (= d0 "Tagged") (cg (second e*) mc ctx)   ; 静态类型标注：生成代码时透明
        (= d0 "Speculated") (cg (second e*) mc ctx)   ; 推测的实参：值就是检查过的对象；原始用途由 cg-raw-default 的 unbox.any 取（cleat-103）
+       (= d0 "TypedSelf") (do (cg-typed-self! e mc) (box-raw! mc (typed-self-ret e)) (finish-value! mc ctx))   ; cleat-104
+       (= d0 "TypedEntry") (cg-typed-entry! e* mc ctx)
        (and (= d0 "IsInstanceOf") (= 2 (count e*))
             (let [t (quoted-datum (first e*))]
               (and (instance? Type t) (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))))
@@ -1748,6 +1904,69 @@
                                (mapcat (fn [j] [(i 'ldarga j) (i 'call "Cleat.Core.Runtime.Locals" "Take" (i (str obj "&")) obj)]) (range 1 (inc (count x*))))
                                [(i 'call class "invokeStatic" (apply i (objs (inc (count x*)))) obj) (i 'ret)])))]))
 
+(def ^:private typed-bailout-type "Cleat.Core.Runtime.TypedBailout")
+
+(defn- cg-typed-self!
+  "类型化体里的自调用（cleat-104）：Var 的值还是本函数的类时直接 call invokeStaticTyped，否则经 IFn.invoke 调用、结果按签名取回
+  （不是推测的类型时 TypedBailout）。原始值留在栈上。"
+  [e mc]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...)
+     (let [sig (first (quoted-datum (first e*))) f (second e*) args (drop 2 e*)
+           cs (sig-params sig) rc (sig-ret sig) cname (:class mc)
+           root (new-local! mc obj)
+           _ (do (cg f mc :value) (emit! mc (i 'stloc root)))
+           temps (mapv (fn [a c]
+                         (let [r (sig-char-raw c)]
+                           (if r (cg-raw a mc r) (cg a mc :value))
+                           (let [t (new-local! mc (if r (type-clr r) obj))] (emit! mc (i 'stloc t)) t)))
+                       args cs)
+           slow (new-label! mc) end (new-label! mc)]
+       (emit! mc (i 'ldloc root) (i 'isinst cname) (i 'brfalse slow) (i 'ldloc root))
+       (doseq [t temps] (emit! mc (i 'ldloc t)))
+       (emit! mc (i 'call cname "invokeStaticTyped" (apply i (cons obj (sig-param-types sig))) (sig-char-type rc)) (i 'br end))
+       (emit! mc (i 'label slow) (i 'ldloc root) (i 'castclass ifn-type))
+       (doseq [[t c] (map vector temps cs)] (emit! mc (i 'ldloc t)) (box-from-sig! mc c))
+       (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs (count args))) obj)
+              (i 'call typed-bailout-type (if (= rc \L) "Long" "Double") (i obj) (sig-char-type rc))
+              (i 'label end)))]))
+
+(defn- cg-typed-entry!
+  "通用入口（cleat-104）：实参的类型与签名相符时在 try 里调 invokeStaticTyped（TypedBailout 时落回），否则生成通用体。"
+  [e* mc ctx]
+  (let [[sig ps] (quoted-datum (first e*)) body (second e*)
+        cs (sig-params sig) rc (sig-ret sig) cname (:class mc)
+        args (mapv (fn [p] (second (hget (:vars mc) p))) ps)
+        gen (new-label! mc) end (new-label! mc)
+        tmp (new-local! mc obj)]
+    (doseq [[j c] (map vector args cs)]
+      (when (sig-char-raw c)
+        (emit! mc (i 'ldarg j) (i 'isinst (if (= c \L) int64-type double-type)) (i 'brfalse gen))))
+    (emit! mc (i 'try
+                 (apply i 'body (concat [(i 'ldarg 0)]
+                                        (mapcat (fn [j c] (if (sig-char-raw c) [(i 'ldarg j) (i 'unbox.any (sig-char-type c))] [(i 'ldarg j)])) args cs)
+                                        [(i 'call cname "invokeStaticTyped" (apply i (cons obj (sig-param-types sig))) (sig-char-type rc))
+                                         (i 'box (sig-char-type rc))
+                                         (i 'stloc tmp)]))
+                 (i 'catch typed-bailout-type (i 'pop))))
+    (emit! mc (i 'ldloc tmp) (i 'brfalse gen) (i 'ldloc tmp))
+    (finish-value! mc ctx)
+    (when-not (= ctx :tail) (emit! mc (i 'br end)))
+    (emit! mc (i 'label gen))
+    (cg body mc ctx)
+    (when-not (= ctx :tail) (emit! mc (i 'label end)))))
+
+(defn- clj-typed-entry-method
+  "invokeStaticTyped(self, T…) → R：类型化子句的体（cleat-104）。"
+  [u class {:keys [sig params body]}]
+  (let [mc (make-method-ctx u class true nil nil nil)]
+    (bind-clause-params! mc params 1 sig)
+    (reset! (:big? mc) (bigger-than? body big-body-nodes))
+    (bind-num-params! mc params)
+    (init-clearing! mc body)
+    (cg body mc :tail)
+    (finish-method mc "invokeStaticTyped" ['static 'optimize] (cons obj (sig-param-types sig)) (sig-char-type (sig-ret sig)))))
+
 (defn- clj-fn-class!
   "fn* → AFunction / RestFn 的子类（原版 clj-fn-class!）。"
   [mc nm x1* cl* self]
@@ -1770,7 +1989,9 @@
           (add! (clj-static-clause-method u cname cl self sig))
           (when sig
             (add! (clj-prim-bridge u cname cl sig :static))
-            (add! (clj-prim-bridge u cname cl sig :prim))))))
+            (add! (clj-prim-bridge u cname cl sig :prim)))))
+      (when-let [se (hget spec-entries (:class nm))]
+        (add! (clj-typed-entry-method u cname se))))
     (doseq [[cl j] (map vector cl* (range))]
       (let [last-variadic? (and variadic (= j (dec n)))]
         (cond
@@ -2281,7 +2502,7 @@
   live?：内存模式（eval）——常量不编码，Lcil 里写 (live-constants n)，常量对象交给发射器。"
   [forms assembly-name module-name loop-flags live?]
   (let [u (make-unit assembly-name module-name)]
-    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
+    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases spec-entries])
     (let [infer! (fn [forms]
                    (run! collect-assigned! forms)
                    (when opt-infer?
@@ -2290,15 +2511,22 @@
                        (doseq [f forms] (infer-var-types-into! f var-types)))))
           _ (infer! forms)
           ;; 循环推测（cleat-103）按第一遍推断的结果挑候选；改写了循环就清表重推（快份的形参由推断定成原始类型）
-          forms (if (and opt-infer? opt-loopspec?)
+          forms (if (and opt-infer? (or opt-loopspec? opt-typed?))
                   (let [changed (volatile! false)
                         forms' (binding [*spec-changed* changed]
-                                 (if (and loop-flags (= (count loop-flags) (count forms)))
-                                   (mapv (fn [f lp?] (if lp? (speculate-loops f) f)) forms loop-flags)
-                                   (mapv speculate-loops forms)))]
+                                 (cond->> forms
+                                   opt-typed? (mapv speculate-entries)
+                                   opt-loopspec? ((fn [fs] (if (and loop-flags (= (count loop-flags) (count fs)))
+                                                             (mapv (fn [f lp?] (if lp? (speculate-loops f) f)) fs loop-flags)
+                                                             (mapv speculate-loops fs))))))]
                     (if @changed
                       (do (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
                           (infer! forms')
+                          ;; 类型化入口的体（不在形式里）：形参按签名固定类型后推断
+                          (doseq [k (keys-of spec-entries)]
+                            (let [{:keys [params guess body]} (hget spec-entries k)]
+                              (doseq [[p t] (map vector params guess)] (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t)))
+                              (infer-var-types-into! body var-types)))
                           forms')
                       forms))
                   forms)]

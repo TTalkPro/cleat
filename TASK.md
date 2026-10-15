@@ -110,7 +110,7 @@
 | [cleat-101](tasks/cleat-101-static-resolution-scope.md) | codegen 静态决议范围：构造器、属性、值类型目标、任意引用形参、泛型方法（现在全走 Reflector） | M10 | cleat-100 | 完成 |
 | [cleat-102](tasks/cleat-102-num-and-dual-locals.md) | Num：不装箱的未定类型数（skeg iron-080，Clojure 语义）；嵌套算术与 let 变量的双局部表示（082 / 083） | M10 | cleat-101 | 完成 |
 | [cleat-103](tasks/cleat-103-loop-speculation.md) | 循环的 long / double 推测：快慢两份循环（skeg iron-071 / 080B） | M10 | cleat-102 | 完成 |
-| [cleat-104](tasks/cleat-104-typed-entries.md) | 无提示已知函数的类型化入口（skeg iron-075 / 076，溢出抛异常不重算） | M10 | cleat-103 | 未开始 |
+| [cleat-104](tasks/cleat-104-typed-entries.md) | 无提示已知函数的类型化入口（skeg iron-075 / 076，溢出抛异常不重算） | M10 | cleat-103 | 完成 |
 | [cleat-105](tasks/cleat-105-closure-and-inlining-budget.md) | 量化后决定：封闭局部 fn 提升、闭包直接 Invoke、内联预算（skeg iron-085 / 070） | M10 | cleat-104 | 未开始 |
 | [cleat-106](tasks/cleat-106-array-resolution.md) | 数组访问的静态决议：引用类型提示带到决议器、数组形参、类型化 aget（skeg 的 array1：long-array 版 10.7 s → 0.5 s） | M10 | cleat-102 | 完成 |
 

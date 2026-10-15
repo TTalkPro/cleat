@@ -132,6 +132,9 @@ cleat 已有 `^long` / `^double` 的 `invokeStaticPrim` 与 `PrimInvoke` 调用�
 - 不做：过程级 Num 签名（skeg 已证明负收益）。
 验收：`bench/fib`（无提示）接近 `prim_fib`；体有副作用 / 分配 / 组外调用的函数不特化（句法检查）。
 
+**cleat-104 结果（2026-10-15）**：类型化入口完成（递归的纯数值 defn，签名 long / double 推测，通用入口 isinst 转调，自调用在 Var 未被重定义时直调，
+重定义且结果类型不符时 TypedBailout 落回通用体重算）。fib(32) 82 → 13 ms（`^long` 提示 23 ms），fibfp(30.0) 41 → 5 ms（linux01）；boot 镜像不变。
+
 ## §6 不借的与待量化的
 
 - 068 / 084 / 081：Clojure 没有 call/cc；`throw` 被同一方法的 `catch` 接住编成跳转这种事 JVM 也不做，实际代码罕见。

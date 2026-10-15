@@ -1,0 +1,41 @@
+(defn show [& xs] (println (apply pr-str xs)))
+(defn r [e] (try (e) (catch Exception ex (str (.GetType ex) ": " (.Message ex)))))
+;; cleat-104: unhinted functions with a typed entry, called with every kind of argument
+(defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
+(show (fib 20) (fib 20.0) (fib 1/2) (fib 15N) (fib 10.5M) (fib (int 12)) (r #(fib "a")) (r #(fib nil)) (fib -3) (type (fib 10)) (type (fib 10.0)))
+(defn fibfp [n] (if (< n 2.0) n (+ (fibfp (- n 1.0)) (fibfp (- n 2.0)))))
+(show (fibfp 20.0) (fibfp 20) (fibfp 3/2) (fibfp 0.5) (fibfp ##-Inf) (pr-str (- (fibfp -0.0))) (type (fibfp 5.0)) (type (fibfp 5)))
+;; long params, double result
+(defn pow2 [n] (if (zero? n) 1.0 (* 2.0 (pow2 (dec n)))))
+(show (pow2 10) (pow2 10.0) (pow2 0) (r #(pow2 nil)) (type (pow2 3)))
+;; overflow throws in both entries
+(defn fact [n] (if (< n 2) 1 (* n (fact (dec n)))))
+(show (fact 20) (r #(fact 21)) (fact 21N) (fact 21.0) (fact 5/2))
+(defn tri [n] (if (= n 0) 0 (+ n (tri (- n 1)))))
+(show (tri 100) (tri 4N) (r #(tri nil)))
+;; several params, recur through the arity loop
+(defn gcd [a b] (if (zero? b) a (recur b (rem a b))))
+(show (gcd 1071 462) (gcd 1071.0 462) (gcd 10N 4) (r #(gcd 1 0.0)))
+(defn ack [m n] (cond (zero? m) (inc n) (zero? n) (ack (dec m) 1) :else (ack (dec m) (ack m (dec n)))))
+(show (ack 2 3) (ack 2.0 3) (ack 2 3.0))
+(defn sumsq [a b c] (if (<= a 0) (+ b c) (sumsq (dec a) (+ b (* a a)) (- c a))))
+(show (sumsq 10 0 0) (sumsq 10 0.5 0) (sumsq 10 0 1/2) (r #(sumsq 3 Int64/MaxValue 0)))
+;; unchecked math
+(set! *unchecked-math* true)
+(defn wrap [n] (if (< n 1) Int64/MaxValue (inc (wrap (dec n)))))
+(show (wrap 3) (wrap 3.0))
+(set! *unchecked-math* false)
+;; redefinition: the old function's typed body sees the new root
+(defn cnt [n] (if (< n 1) 0 (+ 1 (cnt (dec n)))))
+(def old-cnt cnt)
+(show (old-cnt 5))
+(defn cnt [n] 100)
+(show (old-cnt 5) (old-cnt 5.0))
+(defn cnt [n] 1.5)
+(show (old-cnt 5) (old-cnt 5.0) (cnt 3))
+(defn cnt [n] :k)
+(show (r #(old-cnt 5)) (r #(old-cnt 0)))
+(alter-var-root #'cnt (constantly old-cnt))
+(show (cnt 7) (old-cnt 7))
+;; a typed function called from other code, through apply / map / partial
+(show (map fib (range 8)) (apply fib [9]) ((partial fib) 10) (reduce + (map fibfp [1.0 2.0 3.0])))
