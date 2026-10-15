@@ -4,7 +4,7 @@
 > 用户决定（2026-10-14）：现行两段自举已经成立（Scheme 镜像 → Clojure 镜像），下一步**用 Clojure 实现 nanopass 与编译器，由它自举，然后把 Scheme 全部移除**。
 > 三个前提问题的答复：移除范围 = 全部（src/scheme、Cleat.Scheme、Cleat.Stage0、Scheme 镜像，生成代码不再引用任何 Scheme 类型）；
 > 信任根 = 入库的 Lcil 文本种子；门控 = 分级门控（只有自编译不动点要求逐字节）。
-> 背景与旧评估：[07](07-nanopass-port.md)（表面设计 D1 ~ D6 仍有效）、[评估笔记](../notes/clojure-nanopass-plan-review.md)、[自寄宿路径笔记](../notes/bootstrap-stage0-and-selfhosting-path.md)（"第三段"）。
+> 背景与旧评估：[07](07-nanopass-port.md)（表面设计 D1 ~ D6 仍有效）、评估笔记 notes/clojure-nanopass-plan-review.md（已删除，见 git 历史）、自寄宿路径笔记 notes/bootstrap-stage0-and-selfhosting-path.md（已删除，见 git 历史）（"第三段"）。
 
 ## §0 事实（2026-10-14 调研）
 

@@ -5,7 +5,7 @@
 > **状态（2026-10-12）：搁置，部分失效。** 本文为"Clojure 编译器在 stage0 上解释运行"的旧路线而写，该路线随 cleat-023 搁置，
 > 现行方向是原生 Scheme nanopass 一行不改（[15 §4](15-scheme-core-vendoring.md)）。凡以"stage0 解释运行本库"为前提的内容
 > （文首目标的最后一句、§1 D7、§3 第二条、§4 后两条）已失效，下文以 **【失效】** 标注；§0 事实与 D1 ~ D6 的表面设计仍可作参考。
-> 若在编译后的 Clojure 镜像上重做（"第三段"），见 [评估笔记](../notes/clojure-nanopass-plan-review.md)。
+> 若在编译后的 Clojure 镜像上重做（"第三段"），见评估笔记 notes/clojure-nanopass-plan-review.md（已删除，见 git 历史）。
 
 > 蓝本：`~/workspace/nanopass-framework-scheme`（R6RS，约 4900 行核心 + 每宿主约 200 行适配）与 IronScheme 对它的使用（`src/scheme/lib/cleat/scheme/compiler/`：4 个语言、10 个 `define-pass`、58 个 `nanopass-case`）。
 > 目标：用 Clojure 重写一个**语义等价、表面按 Clojure 习惯调整**的 nanopass，供 [04](04-compiler.md) 的编译器使用；~~它必须能在 stage0 解释器上展开并运行（[08](08-bootstrap.md)）。~~ **【失效】** 第三段路线下本库编译后在镜像上运行。
@@ -123,4 +123,4 @@
 - [04](04-compiler.md) 的 L0 ~ L3 用本库定义；04 §9 的"应用产生式带关键字"规则来自上游陷阱。
 - **【失效】** [08 §4](08-bootstrap.md)：stage0 必须支持本库用到的核心形式。
 - **【失效】** [03](03-language-core.md)：本库是 "核心语法 + `clojure.core` 子集" 的第一个真实用户，决定 stage0 必须覆盖的 core 范围。
-- [16](16-nanopass-host-survey.md)：宿主语言调研与可行性背书；[评估笔记](../notes/clojure-nanopass-plan-review.md)：第三段路线的范围、门控与迁移建议。
+- [16](16-nanopass-host-survey.md)：宿主语言调研与可行性背书；评估笔记 notes/clojure-nanopass-plan-review.md（已删除，见 git 历史）：第三段路线的范围、门控与迁移建议。

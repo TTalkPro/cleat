@@ -65,7 +65,7 @@ cleat -I src... --compile-package out/Name.dll [--root dir]... ns...    编包�
 | `tests/` | `Cleat.Core.Tests`、`Cleat.Host.Tests`（NUnit）；`conformance/`（jolt 语料与偏离表）、`clojure-test-suite/`（子模块）、`test_clojure/`、两份基线 `cts-baseline.edn` / `test-clojure-baseline.edn`、`nanopass/`（nanopass 的上游测试翻译） |
 | `tools/` | `build.cs`（维护命令，见下）、`cts.clj`（两套测试的基线运行器）、`conformance.clj`（语料运行与门禁） |
 | `designs/`、`tasks/`、`TASK.md` | 设计文档（[索引](designs/README.md)）、任务文件、任务与里程碑索引 |
-| `bench/`、`notes/`、`spikes/` | 基准集（[bench/README.md](bench/README.md)）、调研笔记、早期验证 |
+| `bench/` | 基准集（[bench/README.md](bench/README.md)） |
 
 ## 构建与自举
 

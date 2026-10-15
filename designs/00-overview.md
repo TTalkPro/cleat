@@ -106,7 +106,7 @@ tests/
   clojure-test-suite/              ; 子模块（jank）
   test_clojure/                    ; 从 ClojureCLR 移植
 tools/build.cs                     ; stage1 / selfhost / clojure-seed / ilverify / conformance 等维护命令
-spikes/                            ; 每个验证任务一个目录
+spikes/                            ; 每个验证任务一个目录（2026-10-15 已删除，连同 notes/，见 git 历史）
 ```
 
 （以上为 cleat-093 之后的布局；LLVM 后端的 `native/` 目录随 06 搁置。）

@@ -1,8 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <AssemblyName>Spike</AssemblyName>
-    <RootNamespace>Cleat.Spike</RootNamespace>
-    <TieredPGO>true</TieredPGO>
-  </PropertyGroup>
-</Project>
