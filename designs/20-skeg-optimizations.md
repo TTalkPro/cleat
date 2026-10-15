@@ -1,7 +1,7 @@
 # 20 M10 性能：从 skeg 借鉴的优化与 cleat 自己的差距
 
 > 状态：**现行方向**（2026-10-15 起）。来源：skeg（~/workspace/skeg，同一作者的 Scheme 实现）M10 ～ M12 的性能工作 iron-060 ～ 087，
-> 与 cleat 在 cleat-042 / cleat-099 之后的实测。任务 cleat-100 ～ 105。
+> 与 cleat 在 cleat-042 / cleat-099 之后的实测。任务 cleat-100 ～ 106。
 > 只读 skeg 的 git 历史与源码，不改它的工作树。
 
 ## §0 事实（2026-10-15 实测，Release，本机）
@@ -74,6 +74,8 @@ cleat-099 的结论记下了 `ClojureStaticCalls.Resolve` 相对 ClojureCLR 编�
 
 **cleat-101 结果（2026-10-15）**：1、2、4 完成，另加桩类型的构造器（defrecord 工厂）与 Int32 返回值按 l64；3（值类型目标）、5（泛型方法）等有基准证据再做。ctor 305 → 80 ms，property 155 → 20 ms。
 
+**cleat-106（2026-10-15）**：§2 的延续——引用类型提示经 `Tagged` 标注带到决议器、一维数组形参可决议、类型化 `aget`、丢弃上下文不装箱。array1 的 long-array 版 18.6 s → 0.41 s（linux01，50 轮）。
+
 ## §3 Num 与双局部变量（cleat-102）
 
 skeg 的设计：`readonly struct Num { long Bits; object Tag; }`——`Tag == null` 精确整数、`Tag == FlTag` double 的位、其余是装箱对象本身。
@@ -135,5 +137,5 @@ cleat 已有 `^long` / `^double` 的 `invokeStaticPrim` 与 `PrimInvoke` 调用�
 
 ## §7 任务与顺序
 
-cleat-100（测量基建）→ 101（静态决议范围）→ 102（Num + 双局部）→ 103（循环推测）→ 104（类型化入口）→ 105（量化后定）。
+cleat-100（测量基建）→ 101（静态决议范围）→ 102（Num + 双局部）→ 106（数组访问的静态决议，array1）→ 103（循环推测）→ 104（类型化入口）→ 105（量化后定）。
 每个任务：Release 构建、`bench`（新增基准在内）、语义用例开 / 关对照、语料门禁、两套基线、Host / Core 全量；改了 `src/clojure` 的要重生成种子。

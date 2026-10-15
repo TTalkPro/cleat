@@ -430,8 +430,11 @@
   (nanopass-case [L3 Expr] e
     [(quote ~d) (if (instance? Int64 d) :l64 (datum-type d))]
     [(clj-call ~d0 ~d1 ~e* ...)
-     (if (= d0 "PrimInvoke")
+     (cond
+       (= d0 "Tagged") (expr-type (second e*) env)   ; 静态类型标注（cleat-101 的延续）：透明
+       (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
+       :else
        (let [op (numbers-arith-op d0 d1 e*)
              ts (when (and op (numbers-num-ops op)) (map #(expr-type % env) (drop 3 e*)))]
          (cond (and ts (some #(= :num %) ts)) :num   ; 有 Num 操作数的算术按 Num 算（cleat-102）
@@ -486,8 +489,17 @@
           (nil? sl) nil
           :else (case (str (aget ^objects (first sl) 3)) "System.Int64" :l64 "System.Int32" :l64 "System.Double" :fl nil))))   ; Int32 结果按 l64（conv.i8，cleat-101）
 
+(defn- tagged-parts
+  "(clj-call \"Tagged\" #f 'T e)（分析器给宿主调用实参的静态类型标注）：[T e]，否则 nil。"
+  [e]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...) (when (and (= d0 "Tagged") (= 2 (count e*))) [(quoted-datum (first e*)) (second e*)])]
+    [else nil]))
+
 (defn- static-arg-type [e env]
   (let [by-type #(case (expr-type e env) :l64 "System.Int64" :fl "System.Double" :top :pending nil)]
+    (if-let [[t inner] (tagged-parts e)]
+      (or (static-arg-type inner env) (when (instance? Type t) (.AssemblyQualifiedName ^Type t)))
     (nanopass-case [L3 Expr] e
       [(quote ~d) (cond (instance? Int64 d) "System.Int64"
                         (instance? Int32 d) "System.Int32"
@@ -502,7 +514,7 @@
                  (str (aget ^objects (first sl) 3))
                  :else (by-type)))
          (by-type))]
-      [else (by-type)])))
+      [else (by-type)]))))
 
 ;; —— 推断（iron-034c，原版 infer-walk / infer-var-types-into!，Clojure 子集）——
 
@@ -649,7 +661,8 @@
                  (nanopass-case [L3 Expr] e
                    [~x [x]]
                    [(clj-call ~d0 ~d1 ~e* ...)
-                    (if-let [lay (host-call-layout d0 d1 e*)] (vec (mapcat deps (nth lay 2))) [])]
+                    (cond (= d0 "Tagged") (deps (second e*))
+                          :else (if-let [lay (host-call-layout d0 d1 e*)] (vec (mapcat deps (nth lay 2))) []))]
                    [(if ~e0 ~e1 ~e2) (into (deps e1) (deps e2))]
                    [(begin ~e* ... ~e) (deps e)]
                    [(let ([~x* ~e*] ...) ~body) (deps body)]
@@ -927,6 +940,8 @@
             (emit! mc (if static? (i 'ldsfld decl nm) (i 'ldfld decl nm))))))
     (cond
       (= ctx :raw) (when (= ret "System.Int32") (emit! mc (i 'conv.i8)))   ; Int32 结果的原始用途是 l64（cleat-101）
+      ;; 丢弃的结果不装箱（(aset arr i v) 在循环里每轮 box 一个 long 再 pop）
+      (= ctx :effect) (when-not (= ret "System.Void") (emit! mc (i 'pop)))
       (= (str (aget sig 5)) "ctor") (finish-value! mc ctx)
       (= ret "System.Boolean") (finish-bool! mc ctx)
       :else (do (cond (= ret "System.Void") (emit! mc (i 'ldnull))
@@ -1295,6 +1310,7 @@
                 (i 'call "System.Runtime.CompilerServices.AsyncHelpers" "Await" (i task) void-type)
                 (i 'call support "ResultOf" (i task) obj))
          (finish-value! mc ctx))
+       (= d0 "Tagged") (cg (second e*) mc ctx)   ; 静态类型标注：生成代码时透明
        (and (= d0 "IsInstanceOf") (= 2 (count e*))
             (let [t (quoted-datum (first e*))]
               (and (instance? Type t) (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))))

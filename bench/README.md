@@ -25,6 +25,7 @@ dotnet run tools/build.cs -- bench [-r 次数] [--write] [--only 正则]
 | ctor | deftype / defrecord 工厂 / BCL 构造器（cleat-100） | 各 100 万次 |
 | property | `(.Length ^String s)` 一类属性读（cleat-100） | 100 万次迭代，2 次读 |
 | mbrot | Mandelbrot 计数，数值全部从无提示参数进入（cleat-100；skeg r7rs 的 mbrot 形状） | 500×500，最多 100 次迭代 |
+| array1 | 建 0..n-1 的数组再倒序复制（long-array 与 object-array 各一遍，带提示；skeg r7rs 的 array1） | 100 万元素 × 10 轮 |
 
 `baseline.edn` 是 M10 起点（2026-10-15，cleat-100 `bench --write`）的数字，M10 各任务在它之上对照；cleat-042 时期的基线与各步数字见 tasks/cleat-042。
 

@@ -1147,10 +1147,17 @@
 
 ;; 宿主互操作：. / new / set!
 
-(defn- host-args [form ctx args]
+(defn- host-args
+  "宿主调用的实参。静态类型是引用类型（提示、局部的 :tag、宿主调用的返回类型……）时包一层 (clj-call \"Tagged\" #f 'T e)：
+  codegen 的静态决议据此选重载（RT.aset 的 long[] / object[] … 重载要知道数组的类型，cleat-101 的延续），生成代码时透明。"
+  [form ctx args]
   (mapv (fn [a]
           (when (and (clj-list? a) (sym-is? (first a) "by-ref")) (err form ctx "by-ref arguments are not supported yet"))
-          (analyze a (ctx-nontail (ctx-clear ctx))))
+          (let [node (analyze a (ctx-nontail (ctx-clear ctx)))
+                t (when-not (or (string? a) (number? a) (keyword? a) (nil? a) (boolean? a) (char? a)) (host-arg-type ctx a))]
+            (if (and (instance? Type t) (not (.IsValueType ^Type t)) (not= t Object) (not (HostSyntax/IsStub t)))
+              (clj-call "Tagged" false (q t) node)
+              node)))
         args))
 
 (defn- expr-type [ctx d]

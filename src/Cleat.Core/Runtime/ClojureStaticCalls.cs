@@ -27,8 +27,15 @@ public static class ClojureStaticCalls
 
     /// <summary>能按名字（HostSyntax.TypeName）在 Lcil 中引用的类型：非泛型、非嵌套的公共类型，不是 deftype 的桩</summary>
     private static bool Nameable(Type t) =>
-        t.IsPublic && !t.IsNested && !t.IsGenericType && !t.IsArray && !t.IsByRef && !t.IsPointer && !HostSyntax.IsStub(t)
-        && !(t is System.Reflection.Emit.TypeBuilder);
+        t.IsArray
+            ? t.IsSZArray && ArrayElementNameable(t.GetElementType())   // 一维数组（cleat-101 的延续：RT.aset / aget 的 long[] … 重载）
+            : t.IsPublic && !t.IsNested && !t.IsGenericType && !t.IsByRef && !t.IsPointer && !HostSyntax.IsStub(t)
+              && !(t is System.Reflection.Emit.TypeBuilder);
+
+    /// <summary>数组的元素类型：原始类型、object、string，或 BCL / Core 里能按名字引用的类型（Lcil 写作 "元素全名[]"）</summary>
+    private static bool ArrayElementNameable(Type e) =>
+        e.IsPrimitive || e == typeof(object) || e == typeof(string)
+        || (!e.IsArray && Nameable(e) && (e.Assembly == s_core || e.Assembly == typeof(object).Assembly));
 
     /// <summary>
     /// 形参类型：object、五种原始类型，能按名字引用的引用类型（发 castclass，JVM 的 checkcast；cleat-101 起不再限于 String 与 Core 的类型）；
@@ -52,10 +59,26 @@ public static class ClojureStaticCalls
 
     public static object[] Resolve(object t, object name, object argTypes, object isStatic)
     {
+        // aget 的 :inline 是 RT.agetOnArray(Array, int)（不分元素类型，结果装箱）。数组类型已知、元素是 long / double / object / bool / char 时
+        // 改用类型化的 RT.aget(T[], int)：结果与 agetOnArray 的装箱值完全相同（这几种的 Clojure 表示就是自己），而 long / double 可以原始使用。
+        // int[] 等不改：agetOnArray 返回装箱的 Int32，静态调用的 Int32 返回值会转成 long，类型就变了（cleat-101 的延续）
+        if (t is Type rt && rt == typeof(clojure.lang.RT) && name is "agetOnArray" && argTypes is object[] { Length: 2 } ats0
+            && ats0[0] is string an && Type.GetType(an) is Type at && at.IsSZArray && s_agetElements.Contains(at.GetElementType()))
+            return Resolve(t, "aget", argTypes, isStatic);
         if (t is not Type ty || name is not string nm || HostSyntax.IsStub(ty)) return ResolveUncached(t, name, argTypes, isStatic);
         var key = (ty, nm, string.Join(",", ((object[])argTypes).Select(a => a as string ?? "?")), isStatic is bool sb && sb);
         return s_resolved.GetOrAdd(key, _ => ResolveUncached(t, name, argTypes, isStatic));
     }
+
+    /// <summary>
+    /// 选中的方法在静态类型未知的实参位置上是数组形参：不静态决议，交给运行时（cleat-106）。数组的元素类型决定该选哪个重载
+    /// （RT.aset 的 long[] / object[] …、MemoryStream(int) / MemoryStream(byte[])），未知时静态选出的那个可能是错的。
+    /// 数组形参照常参与匹配（保持歧义），只是不让未知实参落在它上面。
+    /// </summary>
+    private static bool UnknownAtArray(Type[] pts, Type[] ats) =>
+        Enumerable.Range(0, pts.Length).Any(i => ats[i] == null && pts[i].IsArray);
+
+    private static readonly Type[] s_agetElements = { typeof(long), typeof(double), typeof(object), typeof(bool), typeof(char) };
 
     private static object[] ResolveUncached(object t, object name, object argTypes, object isStatic)
     {
@@ -94,10 +117,14 @@ public static class ClojureStaticCalls
         else if (matching.Count == 1) chosen = matching[0];
         else if (core && matching.Count > 1)
         {
+            // 按已知实参的精确相符数挑——只有静态类型未知的位置上各候选的形参都一样时才可靠（运行时的实参类型不会改变选择）；
+            // 否则 (aset arr i v) 在 arr 类型未知时会挑中 long[] 的重载（cleat-101 的延续：数组形参可决议之后暴露）
             int Score(MethodInfo m) => m.GetParameters().Select((p, i) => ats[i] != null && p.ParameterType == ats[i] ? 1 : 0).Sum();
             int best = matching.Max(Score);
             var top = matching.Where(m => Score(m) == best).ToList();
-            if (top.Count == 1) chosen = top[0];
+            bool unknownAgree = Enumerable.Range(0, n).Where(i => ats[i] == null)
+                .All(i => matching.Select(m => m.GetParameters()[i].ParameterType).Distinct().Count() == 1);
+            if (top.Count == 1 && unknownAgree) chosen = top[0];
         }
         // 其余类型（cleat-043，按 CLR / C# 的做法）：有多个相容的重载时，取形参与全部已知实参类型逐一相同的那一个——
         // 只在静态类型未知的位置上各重载的形参都一样时（运行时的实参类型不会改变选择），例如 gen-class 的
@@ -124,6 +151,7 @@ public static class ClojureStaticCalls
         }
         if (chosen == null || !Nameable(chosen.DeclaringType)) return Array.Empty<object>();
         var pts = chosen.GetParameters().Select(p => p.ParameterType).ToArray();
+        if (UnknownAtArray(pts, ats)) return Array.Empty<object>();
         if (!pts.All(p => ParamOk(p, core)) || !ReturnOk(chosen.ReturnType)) return Array.Empty<object>();
         return new object[]
         {
@@ -188,6 +216,7 @@ public static class ClojureStaticCalls
         }
         if (chosen == null) return Array.Empty<object>();
         var pts = chosen.GetParameters().Select(p => p.ParameterType).ToArray();
+        if (UnknownAtArray(pts, ats)) return Array.Empty<object>();
         if (!pts.All(p => ParamOk(p, core))) return Array.Empty<object>();
         return new object[] { HostSyntax.TypeName(type), "", pts.Select(p => (object)HostSyntax.TypeName(p)).ToArray(), HostSyntax.TypeName(type), type.IsValueType, "ctor" };
     }

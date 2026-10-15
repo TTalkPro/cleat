@@ -161,6 +161,37 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-106：带数组提示的 aget / aset / alength 静态决议到类型化的 RT 重载（分析器给宿主调用实参带上引用类型的标注，决议器接受一维数组；
+    /// 元素是 long / double / object / bool / char 时 agetOnArray 改用类型化的 aget）。语义用例（tests/Cleat.Host.Tests/data/array_semantics.clj：
+    /// 各种元素类型的读写与结果类型、越界、错误的值类型、无提示的数组、amap）在 CLEAT_NO_OPT=host 与开两种设置下输出逐字相同；
+    /// 提示与实际类型不符时 castclass 抛 InvalidCastException（JVM 的 checkcast）；long-array 的复制循环里没有运行时决议。
+    /// </summary>
+    [Test]
+    public void ArrayAccessIsResolvedStatically()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "array_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "host") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "resolution on:\n" + on.Out + "\nresolution off:\n" + off.Out);
+        Assert.That(on.Out, Does.Contain("5 1.5 :k 7 \\x true 3"), on.ToString());
+
+        var lie = HostProcessTests.CleatIn(_dir, null, null,
+            "-e", "(defn g [^objects o x] (aset o 0 x))", "-e", "(try (g (long-array 1) 1) (catch InvalidCastException _ :cce))");
+        Assert.That(lie.Out, Does.EndWith(":cce\n"), lie.ToString());
+
+        string src = Path.Combine(_dir, "arr.clj");
+        File.WriteAllText(src, "(ns arr)\n(defn cy [^longs x] (let [n (alength x) ^longs r (long-array n)] (loop [i (dec n)] (if (neg? i) r (do (aset r i (aget x i)) (recur (dec i)))))))\n");
+        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
+            "-I", _dir, "--compile-package", Path.Combine(_dir, "arr.dll"), "--package", "arr", "--root", _dir, "arr");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        string lcil = File.ReadAllText(Path.Combine(_dir, "arr.dll.lcil"));
+        Assert.That(lcil, Does.Contain("(call \"clojure.lang.RT\" \"aget\" (\"System.Int64[]\" \"System.Int32\") \"System.Int64\")"), lcil);
+        Assert.That(lcil, Does.Contain("(call \"clojure.lang.RT\" \"aset\" (\"System.Int64[]\" \"System.Int32\" \"System.Int64\") \"System.Int64\")"), lcil);
+        Assert.That(lcil, Does.Not.Contain("\"CallStatic\""), lcil);
+    }
+
+    /// <summary>
     /// cleat-099：镜像里的文件再 RT.load 是空操作（JVM 里 AOT 库已初始化的 __init 类同）：(use 'clojure.core)、(require 'clojure.string)、
     /// (load "/clojure/string") 都不从源码重载，改过的 Var 保留；镜像文件的清单由加载器在镜像初始化时记下。
     /// </summary>
