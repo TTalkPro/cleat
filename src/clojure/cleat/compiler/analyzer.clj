@@ -410,13 +410,24 @@
     (when (and (<= (count params) 4) (some #(not= \O %) sig) (class-for-name (str "clojure.lang.primifs." sig)))
       sig)))
 
+(defn- var-rettag
+  "Var 元数据里的返回类型提示：defn 把 (defn ^long f …) 的 :tag 当表达式求值了，存的是函数 clojure.core/long 本身（JVM 也如此），
+  这里认回符号 long / double——函数类按名字上的提示实现 primifs.LL（cleat-096）；JVM 在这里会 AbstractMethodError。"
+  [vm]
+  (let [t (:tag vm)]
+    (cond
+      (symbol? t) t
+      (identical? t @#'clojure.core/long) 'long
+      (identical? t @#'clojure.core/double) 'double
+      :else nil)))
+
 (defn- var-prim-sig [vm n]
   (let [al (:arglists vm)]
     (when (instance? ISeq (seq al))
       (some (fn [v]
               (when (and (instance? IPersistentVector v) (= (count v) n)
                          (not (some #(sym-is? % "&") v)))
-                (prim-sig v (seq v) (:tag vm))))
+                (prim-sig v (seq v) (var-rettag vm))))
             al))))
 
 (defn- direct-link-target [v n]
@@ -590,8 +601,11 @@
                                   (str "Warning: " sym " not declared dynamic and thus is not dynamically rebindable, "
                                        "but its name suggests otherwise. Please either indicate ^:dynamic " sym
                                        " or change the name. (" (source-file pos) ":" (if pos (first pos) 0) ")")))
+                    ;; 分析期先把 :arglists（与名字上的原始返回类型提示 :tag，cleat-096）放上 Var：体里的自调用据此选 primifs 签名，
+                    ;; 要与函数类实现的一致（函数类用 :rettag，就是这个 :tag）
                     (when-let [al (:arglists sm)]
-                      (.setMeta v (assoc (meta v) :arglists (second al))))
+                      (.setMeta v (cond-> (assoc (meta v) :arglists (second al))
+                                    (prim-kind (:tag sm)) (assoc :tag (:tag sm)))))
                     (let [m (cond-> (assoc sm :line (long (if pos (first pos) 0)) :column (long (if pos (second pos) 0)) :file (source-file pos))
                               doc (assoc :doc doc))
                           init-node (if init? (analyze (nth items (if doc 2 1)) (ctx-hinted ctx (name sym))) (q nil))
