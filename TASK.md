@@ -113,6 +113,7 @@
 | [cleat-104](tasks/cleat-104-typed-entries.md) | 无提示已知函数的类型化入口（skeg iron-075 / 076，溢出抛异常不重算） | M10 | cleat-103 | 完成 |
 | [cleat-105](tasks/cleat-105-closure-and-inlining-budget.md) | 量化后决定：封闭局部 fn 提升、闭包直接 Invoke、内联预算（skeg iron-085 / 070） | M10 | cleat-104 | 完成（量化后不实现） |
 | [cleat-106](tasks/cleat-106-array-resolution.md) | 数组访问的静态决议：引用类型提示带到决议器、数组形参、类型化 aget（skeg 的 array1：long-array 版 10.7 s → 0.5 s） | M10 | cleat-102 | 完成 |
+| [cleat-107](tasks/cleat-107-r7rs-vs-jvm.md) | r7rs-benchmarks 的 Clojure 移植：cleat 对 JVM Clojure（linux01，同一份 .cljc，只计内部时间；56 项，几何平均 cleat / JVM = 4.52） | M10 | cleat-105 | 完成 |
 
 ## 里程碑
 
@@ -132,12 +133,12 @@
 | 后续 | cleat-042、043、054、056、058 ~ 080（057 搁置） | 性能、gen-class / proxy / 异步、库名更名、Clojure 表面的 nanopass |
 | M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
 | M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-099 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
-| M10 性能（2026-10-15 起） | cleat-100 ~ cleat-106 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
+| M10 性能（2026-10-15 起） | cleat-100 ~ cleat-107 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-**M10（2026-10-15 起，现行）**：100 → 101 → 102 → 106 → 103 → 104 → 105（[20 §7](designs/20-skeg-optimizations.md)）。
+**M10（2026-10-15 起，现行）**：100 → 101 → 102 → 106 → 103 → 104 → 105 → 107（[20 §7](designs/20-skeg-optimizations.md)）。
 
 **M9（2026-10-15，完成）**：096 → 097 → 098 → 099（互不依赖，按此顺序做完）。
 
