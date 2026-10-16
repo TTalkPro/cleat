@@ -26,5 +26,6 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（`
 | [18-tools-build.md](18-tools-build.md) | **实现**：tools.build 包（`cleat.edn` 的 NuGet / 本地依赖、`dotnet restore` 解析的 basis、编包程序集、`dotnet-build`、`pack` / `install` / `push`、可部署目录）与 tools.namespace 的部分移植（cleat-066） |
 | [20-skeg-optimizations.md](20-skeg-optimizations.md) | M10（完成）：skeg iron-060 ～ 087 逐条对照、cleat 实测差距（反射构造 / 属性、无提示算术装箱）、Num 与双局部的 Clojure 语义改法、循环推测、类型化入口；任务 cleat-100 ～ 105 |
 | [21-r7rs-gaps.md](21-r7rs-gaps.md) | **现行方向**（2026-10-15 起，M11）：cleat-107 的 r7rs 对比（cleat / JVM 几何平均 4.52）找出的慢区与任务 cleat-108 ～ 115 |
+| [22-gc-and-performance-followups.md](22-gc-and-performance-followups.md) | **提案**（2026-10-16）：M11 之后的 GC 与性能跟进——tier-0 / OSR 生命周期、原始值贯通的类型化调用、本方法内 throw → leave、有限标量替换、字符串局部优化与非本地逃逸协议 |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。

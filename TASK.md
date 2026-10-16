@@ -123,8 +123,16 @@
 | [cleat-114](tasks/cleat-114-tiered-eval.md) | eval 代码分层编译与动态 PGO（不可回收的装载上下文、tier-0 的 GC 报告） | M11 | cleat-113 | 完成 |
 | [cleat-115](tasks/cleat-115-runtime-and-vars.md) | 运行时与 Var 访问：Numbers 的 object 快路径、$Vars 的 static readonly 字段、Symbol 密封 | M11 | cleat-114 | 完成 |
 | [cleat-116](tasks/cleat-116-eval-inline.md) | eval 的小函数内联与运行时快路径（double 装箱、Cons 的 first / next） | M11 | cleat-115 | 完成 |
-| [cleat-117](tasks/cleat-117-typed-call-sites.md) | 类型化调用点；镜像与包的分层编译 | M11 | cleat-116 | 未开始 |
-| [cleat-118](tasks/cleat-118-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-117 | 未开始 |
+| [cleat-117](tasks/cleat-117-image-tiering-and-lifetimes.md) | 镜像与包分层编译、tier-0 生命周期与惰性序列根释放 | M11 | cleat-116 | 进行中 |
+| [cleat-118](tasks/cleat-118-typed-call-sites.md) | 类型化调用点：非递归纯数值函数与已知局部 lambda 直调，原始值贯通 | M11 | cleat-117 | 未开始 |
+| [cleat-119](tasks/cleat-119-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-118 | 未开始 |
+| [cleat-120](tasks/cleat-120-osr-and-tiering.md) | array1 的 OSR 复测、诊断与保守分层规则（两机实测后先确认回退仍显著） | M12 | cleat-119 | 未开始 |
+| [cleat-121](tasks/cleat-121-runtime-allocation-fast-paths.md) | 运行时快路径的分配与 JIT 内联预算；LongBox 范围量化 | M12 | cleat-120 | 未开始 |
+| [cleat-122](tasks/cleat-122-local-throw-to-leave.md) | 本方法内已知 throw 编成 leave（保留其他异常捕获） | M12 | cleat-121 | 未开始 |
+| [cleat-123](tasks/cleat-123-limited-scalar-replacement.md) | 有限标量替换：非逃逸 primitive record / deftype | M12 | cleat-122 | 未开始 |
+| [cleat-124](tasks/cleat-124-string-copy-reduction.md) | 字符串热点的 UTF-16 搬运优化 | M12 | cleat-123 | 未开始 |
+| [cleat-125](tasks/cleat-125-nonlocal-escape-protocol.md) | 非本地逃逸协议调研与原型 | M12 | cleat-124 | 未开始 |
+| [cleat-126](tasks/cleat-126-gc-performance-rerun.md) | M12 收尾：GC、分配与性能全量重测 | M12 | cleat-125 | 未开始 |
 
 ## 里程碑
 
@@ -145,12 +153,15 @@
 | M8 Clojure 自寄宿 | cleat-081 ~ cleat-095 | Clojure 版 nanopass 与编译器、自举不动点、Lcil 文本种子、Scheme 全部移除（[19](designs/19-clojure-self-hosting.md)） |
 | M9 质量与收口（2026-10-15 起） | cleat-096 ~ cleat-099 | 自举后的编译器对着两套大基线验收、已知缺陷、偏离表清理 |
 | M10 性能（2026-10-15 起） | cleat-100 ~ cleat-107 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
-| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-118 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
+| M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-119 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、分层生命周期、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
+| M12 GC 与性能后续（2026-10-16 起） | cleat-120 ~ cleat-126 | tier-0 / OSR、分配快路径、局部异常跳转、有限标量替换、字符串搬运与非本地逃逸（[22](designs/22-gc-and-performance-followups.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
-**M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117（[21 §2](designs/21-r7rs-gaps.md)）。
+**M12（2026-10-16 起）**：119 收口后 → 120 → 121 → 122 → 123 → 124 → 125 → 126（[22 §8](designs/22-gc-and-performance-followups.md)）。
+
+**M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117 → 118 → 119（[21 §2](designs/21-r7rs-gaps.md)）。
 
 **M10（2026-10-15，完成）**：100 → 101 → 102 → 106 → 103 → 104 → 105 → 107（[20 §7](designs/20-skeg-optimizations.md)）。
 
