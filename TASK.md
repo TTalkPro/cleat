@@ -133,6 +133,10 @@
 | [cleat-124](tasks/cleat-124-string-copy-reduction.md) | 字符串热点的 UTF-16 搬运优化 | M12 | cleat-119 | 未开始 |
 | [cleat-125](tasks/cleat-125-nonlocal-escape-protocol.md) | 非本地逃逸协议调研与原型 | M12 | cleat-122 | 未开始 |
 | [cleat-126](tasks/cleat-126-gc-performance-rerun.md) | M12 收尾：GC、分配与性能全量重测 | M12 | cleat-120 ~ 125 | 未开始 |
+| [cleat-127](tasks/cleat-127-array-param-speculation.md) | 数组形参推测：无提示数组形参的类型化入口 | M13 | cleat-118 | 未开始 |
+| [cleat-128](tasks/cleat-128-type-feedback-profiling.md) | 类型反馈：剖面记录、触发与量化 | M13 | cleat-119 | 未开始 |
+| [cleat-129](tasks/cleat-129-type-feedback-specialization.md) | 类型反馈：特化单元的编译、安装、退回与失效 | M13 | cleat-128 | 未开始 |
+| [cleat-130](tasks/cleat-130-m13-rerun.md) | M13 收尾：类型特化的微基准、r7rs 无提示变体与全量重测 | M13 | cleat-127、129 | 未开始 |
 
 ## 里程碑
 
@@ -155,9 +159,12 @@
 | M10 性能（2026-10-15 起） | cleat-100 ~ cleat-107 | 从 skeg M10 ～ M12 借鉴：Num、双局部、循环推测、类型化入口；cleat 自己的静态决议范围（[20](designs/20-skeg-optimizations.md)） |
 | M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-119 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、分层生命周期、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
 | M12 GC 与性能后续（2026-10-16 起） | cleat-120 ~ cleat-126 | tier-0 / OSR、分配快路径、局部异常跳转、有限标量替换、字符串搬运与非本地逃逸（[22](designs/22-gc-and-performance-followups.md)） |
+| M13 按参数类型特化（2026-10-16 起） | cleat-127 ~ cleat-130 | 无提示数组形参的推测、运行时类型反馈特化（[23](designs/23-type-specialization.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
+
+**M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 
 **M12（2026-10-16 起）**：119 收口后，122（先统计）、120（先复测）、121、123、124 并列，125 在 122 之后，最后 126（[22 §8](designs/22-gc-and-performance-followups.md)）。
 
