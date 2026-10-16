@@ -61,9 +61,10 @@ public static class ClojureStaticCalls
 
     public static object[] Resolve(object t, object name, object argTypes, object isStatic)
     {
-        // aget 的 :inline 是 RT.agetOnArray(Array, int)（不分元素类型，结果装箱）。数组类型已知、元素是 long / double / object / bool / char 时
-        // 改用类型化的 RT.aget(T[], int)：结果与 agetOnArray 的装箱值完全相同（这几种的 Clojure 表示就是自己），而 long / double 可以原始使用。
-        // int[] 等不改：agetOnArray 返回装箱的 Int32，静态调用的 Int32 返回值会转成 long，类型就变了（cleat-101 的延续）
+        // aget 的 :inline 是 RT.agetOnArray(Array, int)（不分元素类型，结果装箱）。数组类型已知时改用类型化的 RT.aget(T[], int)：
+        // long / double / object / bool / char 的 Clojure 表示就是自己；int / short / byte / sbyte / ushort / float（cleat-118）的类型化结果
+        // 按静态调用的返回值规则加宽成 long / double——与 agetOnArray 的结果经 RetObject 规范化后相同（(aget (int-array 1) 0) 一直是 Int64），
+        // 而原始用途不再经 Array.GetValue 与装箱。uint / ulong / decimal 不改（返回值规则与运行时的不同）
         if (t is Type rt && rt == typeof(clojure.lang.RT) && name is "agetOnArray" && argTypes is object[] { Length: 2 } ats0
             && ats0[0] is string an && Type.GetType(an) is Type at && at.IsSZArray && s_agetElements.Contains(at.GetElementType()))
             return Resolve(t, "aget", argTypes, isStatic);
@@ -80,7 +81,9 @@ public static class ClojureStaticCalls
     private static bool UnknownAtArray(Type[] pts, Type[] ats) =>
         Enumerable.Range(0, pts.Length).Any(i => ats[i] == null && pts[i].IsArray);
 
-    private static readonly Type[] s_agetElements = { typeof(long), typeof(double), typeof(object), typeof(bool), typeof(char) };
+    private static readonly Type[] s_agetElements =
+        { typeof(long), typeof(double), typeof(object), typeof(bool), typeof(char),
+          typeof(int), typeof(short), typeof(byte), typeof(sbyte), typeof(ushort), typeof(float) };
 
     /// <summary>求值生成的程序集：动态程序集（RunAndCollect），或从字节装载、没有文件位置的（cleat-114 的分层编译）</summary>
     private static bool IsEvalAssembly(System.Reflection.Assembly a) => a.IsDynamic || string.IsNullOrEmpty(a.Location);
@@ -129,6 +132,17 @@ public static class ClojureStaticCalls
             var top = matching.Where(m => Score(m) == best).ToList();
             bool unknownAgree = Enumerable.Range(0, n).Where(i => ats[i] == null)
                 .All(i => matching.Select(m => m.GetParameters()[i].ParameterType).Distinct().Count() == 1);
+            // 并列时取在已知实参位置上形参更具体的那个（值类型形参优于 object，JVM 的 subsumes）：add(double, double) 优于 add(double, object)
+            if (top.Count > 1)
+            {
+                bool Subsumes(MethodInfo a, MethodInfo b) => Enumerable.Range(0, n).All(i =>
+                {
+                    var pa = a.GetParameters()[i].ParameterType; var pb = b.GetParameters()[i].ParameterType;
+                    return pa == pb || ats[i] != null && pb == typeof(object) && pa.IsValueType;
+                });
+                var most = top.Where(m => top.All(o => o == m || Subsumes(m, o))).ToList();
+                if (most.Count == 1) top = most;
+            }
             if (top.Count == 1 && unknownAgree) chosen = top[0];
         }
         // 其余类型（cleat-043，按 CLR / C# 的做法）：有多个相容的重载时，取形参与全部已知实参类型逐一相同的那一个——
@@ -260,6 +274,10 @@ public static class ClojureStaticCalls
         if (a == null) return !core || !p.IsValueType;
         if (p == a || p == typeof(object)) return true;
         if (p == typeof(int) && a == typeof(long)) return true;
+        // cleat-118：Core 的方法接受精确的加宽——较窄的整数（含 Int32）→ Int64、Single → Double（类型化数组访问的结果进 Numbers 的算术，
+        // 与这些结果在 Clojure 里的值相同：它们本来就加宽成 long / double）
+        if (core && p == typeof(long) && (a == typeof(int) || a == typeof(short) || a == typeof(sbyte) || a == typeof(byte) || a == typeof(ushort))) return true;
+        if (core && p == typeof(double) && a == typeof(float)) return true;
         return !p.IsValueType && !a.IsValueType && p.IsAssignableFrom(a);
     }
 

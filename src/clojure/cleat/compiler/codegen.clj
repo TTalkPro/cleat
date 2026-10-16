@@ -527,11 +527,25 @@
                                         :else (Cleat.Core.Runtime.ClojureStaticCalls/ResolveField t nm (first layout)))]
                  (when (pos? (alength sig)) (into [sig] layout)))))))))))
 
+(def ^:private host-ret-raws
+  ;; 宿主调用结果的原始用途（cleat-101 / 118）：Int32 与较窄的整数加宽成 l64、Single 加宽成 fl——与装箱路径的转换相同
+  {"System.Int64" :l64 "System.Int32" :l64 "System.Int16" :l64 "System.SByte" :l64 "System.Byte" :l64 "System.UInt16" :l64
+   "System.Double" :fl "System.Single" :fl})
+(defn- host-ret-raw [ret] (host-ret-raws ret))
+(defn- emit-ret-widen!
+  "原始用途的加宽指令（结果已在栈上）"
+  [mc ret]
+  (case ret
+    ("System.Int32" "System.Int16" "System.SByte") (emit! mc (i 'conv.i8))
+    ("System.Byte" "System.UInt16") (emit! mc (i 'conv.u8))
+    "System.Single" (emit! mc (i 'conv.r8))
+    nil))
+
 (defn- host-call-type [d0 d1 e* env]
   (let [sl (host-call-signature d0 d1 e* env)]
     (cond (= sl :pending) :top
           (nil? sl) nil
-          :else (case (str (aget ^objects (first sl) 3)) "System.Int64" :l64 "System.Int32" :l64 "System.Double" :fl nil))))   ; Int32 结果按 l64（conv.i8，cleat-101）
+          :else (host-ret-raw (str (aget ^objects (first sl) 3))))))
 
 (defn- tagged-parts
   "(clj-call \"Tagged\" #f 'T e)（分析器给宿主调用实参的静态类型标注）：[T e]，否则 nil。"
@@ -1142,7 +1156,7 @@
     (nanopass-case [L3 Expr] e
       [(clj-call ~d0 ~d1 ~e* ...)
        (let [sl (host-call-signature d0 d1 e*)]
-         (when (and (vector? sl) (contains? (if (= t :l64) #{"System.Int64" "System.Int32"} #{"System.Double"}) (str (aget ^objects (first sl) 3))))
+         (when (and (vector? sl) (= t (host-ret-raw (str (aget ^objects (first sl) 3)))))
            sl))]
       [else nil])))
 
@@ -1347,7 +1361,7 @@
         (do (when (= kind "volatile-field") (emit! mc (i 'volatile.)))
             (emit! mc (if static? (i 'ldsfld decl nm) (i 'ldfld decl nm))))))
     (cond
-      (= ctx :raw) (when (= ret "System.Int32") (emit! mc (i 'conv.i8)))   ; Int32 结果的原始用途是 l64（cleat-101）
+      (= ctx :raw) (emit-ret-widen! mc ret)   ; Int32 与较窄的结果的原始用途是 l64 / fl（cleat-101 / 118）
       (= ctx :native) nil   ; 原生的返回值留在栈上（cleat-111，传给同类型的值类型形参）
       ;; 丢弃的结果不装箱（(aset arr i v) 在循环里每轮 box 一个 long 再 pop）
       (= ctx :effect) (when-not (= ret "System.Void") (emit! mc (i 'pop)))

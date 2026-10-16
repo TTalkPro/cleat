@@ -1,6 +1,6 @@
 # cleat-122 本方法内已知 throw 编成 leave
 
-- 里程碑：M12　依赖：cleat-119　状态：未开始
+- 里程碑：M12　依赖：cleat-119　状态：关闭（2026-10-16，频率为零）
 - 设计依据：[22 §3 D8](../designs/22-gc-and-performance-followups.md)、[escape 实测](../notes/escape-continuations-and-try.md)
 
 ## 工作内容
@@ -12,6 +12,12 @@
 ## 背景数字（2026-10-16 微基准，本地机器）
 CLR throw/catch 同方法预分配 1.8 ~ 2.0 µs，一帧深 2.3 ~ 2.6 µs；JVM 同形态 5 ns（内联后编成跳转）、新建异常 467 ns。
 预分配在 CLR 上只省 0 ~ 8%。比值约 400x；fibc / ctak 的 throw 在其他栈帧，本项帮不上（见 notes）。
+
+## 结果（2026-10-16）
+- 统计（种子里的 Lcil，按 S 表达式解析 `(try (body …) (catch …))`）：boot 镜像 12992 个方法、154 个 try，编译器包 9446 个方法、40 个 try；
+  **try 体内直接 `throw` 且由本层 catch 接住的：两者都是 0**（全部 259 / 372 处 `throw` 都不在带 catch 的 try 体里）。
+- 与预期一致：Clojure 核心库的提前退出不用异常（`reduced` 是包装值、由 reduce 检查；`some` 等是循环）；fibc / ctak 的 throw 在别的栈帧。
+- 按工作内容第 2 条关闭本项，不做实现；cleat-125（非本地逃逸协议）仍按其前置门判断。
 
 ## 验收标准
 - 频率统计写进任务书；实现时受益项前后耗时与 r7rs 数字。

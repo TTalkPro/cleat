@@ -13,3 +13,12 @@
 (defn h [^longs a] (loop [i 0 s 0] (if (< i (alength a)) (recur (inc i) (+ s (aget a i))) s)))
 (show (h (long-array [1 2 3])) (r #(h (long-array [Int64/MaxValue 1]))))
 (show (seq (doto (long-array 3) (aset 2 7))) (seq (amap (long-array [1 2]) i ret (* 2 (aget ret i)))))
+;; cleat-118: narrow element types are read through the typed RT.aget overloads too; results widen to long / double like before
+(let [^ints n (int-array [7 -3]) ^shorts s (short-array [(short -5) (short 300)]) ^bytes y (byte-array [(byte 200) (byte 1)])
+      ^floats f (float-array [(float 1.5) (float -0.25)])]
+  (show (aget n 0) (aget s 0) (aget y 0) (aget f 0) (map type [(aget n 0) (aget s 0) (aget y 0) (aget f 0)]))
+  (show (+ (aget n 0) (aget n 1)) (* 2 (aget s 1)) (+ (aget y 0) (aget y 1)) (+ 1.0 (aget f 0)) (+ (aget f 0) (aget f 1)) (type (+ (aget f 0) 1)))
+  (show (aset n 1 (int 9)) (r #(aset n 0 3000000000)) (r #(aset s 0 70000)) (r #(aset y 0 300)) (aset f 0 2.5) (vec n) (vec f))
+  (show (loop [i 0 acc 0] (if (< i (alength s)) (recur (inc i) (+ acc (aget s i))) acc))
+        (loop [i 0 acc 0.0] (if (< i (alength f)) (recur (inc i) (+ acc (aget f i))) acc))
+        (r #(aget n 2))))
