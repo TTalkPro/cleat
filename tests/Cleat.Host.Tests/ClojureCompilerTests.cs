@@ -388,6 +388,19 @@ public class ClojureCompilerTests
     /// 提示与实际类型不符时 castclass 抛 InvalidCastException（JVM 的 checkcast）；long-array 的复制循环里没有运行时决议。
     /// </summary>
     [Test]
+    public void UnhintedArraysInLoopsAreSpeculated()
+    {
+        // cleat-127：循环里无提示的数组变量按元素类型推测（快份里的 aget / aset 决议到类型化重载）；推测不中、nil、越界、错误的值类型、
+        // 闭包与嵌套循环在 CLEAT_NO_OPT=arrayspec 开 / 关两种设置下输出逐字相同
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "arrayspec_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "arrayspec") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "arrayspec on:\n" + on.Out + "\narrayspec off:\n" + off.Out);
+        Assert.That(on.Out, Does.StartWith("6 2.0 9 3 6.5 3 200 1.5\n"), on.ToString());
+    }
+
+    [Test]
     public void ArrayAccessIsResolvedStatically()
     {
         string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "array_semantics.clj");

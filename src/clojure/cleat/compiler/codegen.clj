@@ -76,6 +76,7 @@
 (def ^:private live-unit? (atom false))   ; 当前编译单元是内存模式（eval）：生成的代码与先前求值生成的类在同一进程（cleat-110）；分层编译时 if 的值经局部变量汇合（cleat-114）
 (def opt-boxcache? (not (opt-off? "boxcache")))   ; long 装箱走 LongBox（cleat-109）
 (def opt-imagetier? (not (opt-off? "imagetier")))   ; 镜像与包里的函数类也按 cleat-114 的规则分层编译（cleat-117）
+(def opt-arrayspec? (not (opt-off? "arrayspec")))   ; 循环里无提示的数组变量按元素类型推测（cleat-127）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
 ;; double 经不内联的 LongBox.Double 装箱：内联的 box 在值存活期间调用分配，SysV 的 xmm 寄存器都由调用方保存，
 ;; RyuJIT 于是把循环里的 double 变量整个放在栈上（每次迭代一次存取，sumfp 慢 4 倍）
@@ -951,11 +952,103 @@
                 sel
                 (with-output-language [L3 Expr] (out (let ([~(mapv first binds) ~(mapv second binds)] ...) ~sel)))))))))))
 
+(declare l3-some?)
+
+;; —— 数组推测（cleat-127，designs/23 §1）——
+;; 循环体里被 aget / aset / alength 当数组用、在循环外绑定且不被赋值的变量 a，类型静态未知时：按用法取元素类型的证据，
+;; 生成 (if (isinst T[] a) (let ([a' a]) 循环的副本（a 的用途换成 (Tagged T[] a')）) 原来的循环)。快份里的数组访问静态决议到
+;; 类型化的 RT.aget / aset（ldelem / stelem）；数组在进入循环时就确定，循环里 a 不变，不需要 bailout。最多两种元素类型。
+
+(defn- rt-call-name
+  "(clj-call \"CallStatic\" 3 'clojure.lang.RT '名字 'nil 实参…)：[名字 实参]，否则 nil。"
+  [e]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...)
+     (when (and (= d0 "CallStatic") (= d1 3) (>= (count e*) 4))
+       (let [t (quoted-datum (first e*)) nm (quoted-datum (second e*))]
+         (when (and (or (= t 'clojure.lang.RT) (= t "clojure.lang.RT") (and (instance? Type t) (= (.FullName ^Type t) "clojure.lang.RT")))
+                    (string? nm) (empty-gen? (quoted-datum (nth e* 2))))
+           [nm (drop 3 e*)])))]
+    [else nil]))
+
+(defn- array-uses
+  "body 里以裸变量为数组实参的 RT.aget / agetOnArray / aset / alength：变量 → {:numeric? :aset-types #{…} :generic?}。"
+  [body]
+  (let [acc (volatile! {})
+        note! (fn [v k x] (vswap! acc update v (fnil (fn [m] (case k :aset (update m :aset-types conj x) (assoc m k true))) {:aset-types #{}})))
+        arr-var (fn [e] (when-let [[nm args] (rt-call-name e)]
+                          (when (#{"agetOnArray" "aget" "aset" "alength"} nm)
+                            (nanopass-case [L3 Expr] (first args) [~x [nm x args]] [else nil]))))]
+    (letfn [(walk [e numeric?]
+              (when-let [[nm v args] (arr-var e)]
+                (case nm
+                  ("agetOnArray" "aget") (note! v (if numeric? :numeric? :generic?) nil)
+                  "aset" (note! v :aset (expr-type (nth args 2) sound-types))
+                  nil))
+              (nanopass-case [L3 Expr] e
+                [(if ~e0 ~e1 ~e2) (walk e0 false) (walk e1 false) (walk e2 false)]
+                [(begin ~e* ... ~e) (run! #(walk % false) e*) (walk e false)]
+                [(let ([~x* ~e*] ...) ~body) (run! #(walk % false) e*) (walk body false)]
+                [(label ~x (~x* ...) ~body0 ~body1) (walk body0 false) (walk body1 false)]
+                [(jump ~x ~e* ...) (run! #(walk % false) e*)]
+                [(call ~e ~e* ...) (walk e false) (run! #(walk % false) e*)]
+                [(clj-invoke ~e ~e* ...) (walk e false) (run! #(walk % false) e*)]
+                [(clj-keyword-invoke ~d ~e ~e* ...) (walk e false) (run! #(walk % false) e*)]
+                [(clj-call ~d0 ~d1 ~e* ...)
+                 (let [num? (boolean (numbers-arith-op d0 d1 e*))] (run! #(walk % num?) e*))]
+                [(clj-static-call ~d0 ~d1 ~e* ...) (run! #(walk % false) e*)]
+                [(throw ~e) (walk e false)]
+                [else nil]))]
+      (walk body false)
+      @acc)))
+
+(def ^:private array-type-of {:l64 "System.Int64[]" :fl "System.Double[]" :obj "System.Object[]"})
+
+(defn- array-guesses
+  "一个数组变量的元素类型推测（Type 的列表，最多两个）：aset 的值类型 > aget 结果进入算术（long[]、double[]）> 通用用途（object[]）。"
+  [{:keys [numeric? generic? aset-types]}]
+  (let [ks (cond
+             (seq aset-types) (distinct (map #(case % :l64 :l64 :fl :fl :obj) aset-types))
+             numeric? [:l64 :fl]
+             generic? [:obj]
+             :else nil)]
+    (when (<= 1 (count ks) 2)
+      (mapv #(Type/GetType ^String (array-type-of %)) ks))))
+
+(define-pass spec-tag-var L3 [ir v v' t] -> L3 []
+  (Expr [ir] -> Expr []
+    [~x (if (= x v) (with-output-language [L3 Expr] (out (clj-call "Tagged" false (quote ~t) ~v'))) x)]))
+
+(defn- array-spec-label
+  "(label x (x* …) body0 body1) 的数组推测形式；不推测时 nil。fallback 是原来的（可能已做数值推测的）循环。"
+  [x x* body0 body1 fallback]
+  (when (and opt-arrayspec? (spec-simple? body1)
+             (l3-some? (fn [j] (nanopass-case [L3 Expr] j [(jump ~x2 ~e* ...) (= x2 x)] [else false])) body1 true))
+    (let [uses (array-uses body1)
+          cands (keep (fn [[v u]]
+                        (when (and (not (some #(= v %) x*)) (not (hget assigned-vars v)) (not (#{:l64 :fl :fx} (hget var-types v))))
+                          (when-let [ts (array-guesses u)] [v ts])))
+                      (sort-by (comp str key) uses))]
+      ;; 第一版只推测一个变量（多个变量的组合会让副本成倍增长）
+      (when-let [[v ts] (first cands)]
+        (vreset! *spec-changed* true)
+        (reduce (fn [else-e t]
+                  (let [v' (loops/fresh (str v))
+                        m (into {} (map (fn [y] [y (loops/fresh (str y))]) (cons x (concat x* (spec-binders body0) (spec-binders body1)))))
+                        b0 (spec-tag-var (spec-rename body0 m) v v' t)
+                        b1 (spec-tag-var (spec-rename body1 m) v v' t)]
+                    (with-output-language [L3 Expr]
+                      (out (if (clj-call "IsInstanceOf" false (quote ~t) ~v)
+                             (let ([~[v'] ~[v]] ...) (label ~(m x) (~(mapv m x*) ...) ~b0 ~b1))
+                             ~else-e)))))
+                fallback (reverse ts))))))
+
 (define-pass speculate-loops L3 [ir] -> L3 []
   (Expr [ir] -> Expr []
     [(label ~x (~x* ...) ~[body0] ~[body1])
-     (let [b0 (spec-label x x* body0 body1)]
-       (out (label ~x (~x* ...) ~(or b0 body0) ~body1)))]))
+     (let [b0 (spec-label x x* body0 body1)
+           plain (out (label ~x (~x* ...) ~(or b0 body0) ~body1))]
+       (or (array-spec-label x x* body0 body1 plain) plain))]))
 
 ;; —— 无提示函数的类型化入口（cleat-104，skeg iron-075 / 076）——
 ;; 顶层 (def f (fn [形参…] 体))：单固定子句、≤ 4 形参、没有闭包字段、没有原始签名提示，体是纯的（只有 Numbers / Util.equiv 的运算、
