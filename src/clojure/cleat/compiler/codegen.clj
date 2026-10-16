@@ -76,7 +76,9 @@
 (def ^:private live-unit? (atom false))   ; 当前编译单元是内存模式（eval）：生成的代码与先前求值生成的类在同一进程（cleat-110）；分层编译时 if 的值经局部变量汇合（cleat-114）
 (def opt-boxcache? (not (opt-off? "boxcache")))   ; long 装箱走 LongBox（cleat-109）
 (def opt-imagetier? (not (opt-off? "imagetier")))   ; 镜像与包里的函数类也按 cleat-114 的规则分层编译（cleat-117）
-(def opt-arrayspec? (not (opt-off? "arrayspec")))   ; 循环里无提示的数组变量按元素类型推测（cleat-127）
+(def opt-arrayspec? (not (opt-off? "arrayspec")))
+(def opt-scalar? (not (opt-off? "scalar")))         ; 循环变量的 deftype 标量替换（cleat-123）
+(def opt-collapse? (not (opt-off? "collapse")))     ; 折叠内联子句的 arity 标签（cleat-123）   ; 循环里无提示的数组变量按元素类型推测（cleat-127）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
 ;; double 经不内联的 LongBox.Double 装箱：内联的 box 在值存活期间调用分配，SysV 的 xmm 寄存器都由调用方保存，
 ;; RyuJIT 于是把循环里的 double 变量整个放在栈上（每次迭代一次存取，sumfp 慢 4 倍）
@@ -464,7 +466,7 @@
 (defn- sig-ret [^String sig] (nth sig (dec (count sig))))
 (defn- sig-param-types [sig] (map sig-char-type (sig-params sig)))
 
-(declare host-call-type)
+(declare host-call-type l3-some?)
 
 (defn expr-type
   "表达式的类型（:fx :fl :int … 与 :l64）或 nil；env：变量 → 类型 | :top。不在 env 里的变量查 var-facts（原版 expr-type 的 Clojure 子集）。"
@@ -490,6 +492,10 @@
     [(if ~e0 ~e1 ~e2) (type-join (expr-type e1 env) (expr-type e2 env))]
     [(begin ~e* ... ~e) (expr-type e env)]
     [(let ([~x* ~e*] ...) ~body) (expr-type body env)]
+    ;; 不回跳的标签（内联子句外面的 arity 标签）的值就是体的值（cleat-123）；真正的循环不推（出口变量在推断早期可能被暂定成别的类型）
+    [(label ~x (~x* ...) ~body0 ~body1)
+     (when-not (l3-some? (fn [j] (nanopass-case [L3 Expr] j [(jump ~x2 ~e* ...) (= x2 x)] [else false])) body1 true)
+       (expr-type body1 env))]
     [(jump ~x ~e* ...) :top]
     [(throw ~e) :top]
     [else nil]))
@@ -1043,12 +1049,315 @@
                              ~else-e)))))
                 fallback (reverse ts))))))
 
+;; —— 循环变量的标量替换（cleat-123，designs/22 §4 D10）——
+;; 最内层循环的循环变量 z：recur 时（某些分支）构造 deftype T 的新对象 (NewOf T a b …)、循环体里读它的字段。T 的字段都是 long / double、
+;; 构造器的实参与字段一一对应时，z 拆成每个字段一个原始循环变量与对象槽 zobj：
+;;   进入时 (isinst T z0) 不成立 → 原来的循环；成立 → 字段从 z0 读出，zobj = z0（原来的对象）。
+;;   字段读：(if zobj (zobj 的字段) 标量)——zobj 不空时以对象为准（被交出去以后可能被改）。
+;;   别的用途（交给未知调用、守卫失败的分支……）：zobj 为空才用当前字段构造一次，用 zobj——一轮内是同一个对象，同一性与原程序相同，
+;;   只是分配推迟到真正需要时（deftype 的构造器没有副作用；字段按构造器同样的转换语义存）。
+;;   recur：新值在尾位置是 (NewOf T a b) 时字段取 a / b（按构造器的转换）、zobj 置空；是 z 本身时不变；是别的（未知对象）时
+;;   带着本轮全部实参跳回原来的循环（在 recur 处切换是精确的：本轮的副作用都已发生）。
+
+(def ^:private scalar-max-nodes 600)
+
+(defn- scalar-type-fields
+  "deftype T 的字段（[名字 :l64|:fl] 的向量，声明顺序），全是 long / double 且个数为 n 时；否则 nil。"
+  [t n]
+  (when (and (instance? Type t) (not (.IsValueType ^Type t)) (.IsSealed ^Type t))
+    (let [fs (remove #(.IsStatic ^System.Reflection.FieldInfo %) (.GetFields ^Type t))
+          ks (mapv (fn [^System.Reflection.FieldInfo f] [(.Name f) (condp = (.FieldType f) Int64 :l64 Double :fl nil)]) fs)]
+      (when (and (= n (count ks)) (pos? n) (every? second ks)) ks))))
+
+(defn- new-of-parts [e]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...) (when (and (= d0 "NewOf") (= d1 1) (seq e*)) [(quoted-datum (first e*)) (vec (rest e*))])]
+    [else nil]))
+
+(defn- untag [e]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...) (if (and (= d0 "Tagged") (= 2 (count e*))) (untag (second e*)) e)]
+    [else e]))
+
+(defn- field-read-of
+  "(GetInstanceField 'T 'f z)（实例可带 Tagged）：[T f 实例]，否则 nil。"
+  [e]
+  (nanopass-case [L3 Expr] e
+    [(clj-call ~d0 ~d1 ~e* ...)
+     (when (and (= d0 "GetInstanceField") (false? d1) (= 3 (count e*)))
+       [(quoted-datum (first e*)) (quoted-datum (second e*)) (untag (nth e* 2))])]
+    [else nil]))
+
+(define-pass collapse-entry-labels L3 [ir] -> L3 []
+  ;; (label L (p …) (jump L a …) body1)，body1 不跳回 L、实参都是变量：换成 body1[p := a]（内联的子句的 arity 标签）
+  (Expr [ir] -> Expr []
+    [(label ~x (~x* ...) ~[body0] ~[body1])
+     (let [args (nanopass-case [L3 Expr] body0 [(jump ~x2 ~e* ...) (when (= x2 x) e*)] [else nil])]
+       (if (and args (= (count args) (count x*))
+                (every? #(and (symbol? %) (not (hget assigned-vars %))) args)
+                (not-any? #(hget assigned-vars %) x*)
+                (not (l3-some? (fn [j] (nanopass-case [L3 Expr] j [(jump ~x3 ~e* ...) (= x3 x)] [else false])) body1 true))
+                ;; 体里有 lambda 时不折叠：闭包转换后 lambda 带显式的捕获变量表，代换不改它
+                (not (l3-some? (fn [j] (nanopass-case [L3 Expr] j
+                                         [(lambda ~nm (~x4* ...) ~cl* ...) true]
+                                         [(clj-deftype ~d (~x5* ...) ~le* ...) true]   ; reify / deftype 的方法（l3-some? 不进它们）
+                                         [else false]))
+                               body1)))
+         (spec-rename body1 (zipmap x* args))
+         (out (label ~x (~x* ...) ~body0 ~body1))))]))
+
+(defn- scalar-nodes-ok?
+  "体足够小、没有 lambda / letrec / try（与 spec-simple? 相同，但允许不回跳的 label）"
+  [e]
+  (let [n (volatile! 0)]
+    (letfn [(ok? [e]
+              (and (<= (vswap! n inc) scalar-max-nodes)
+                   (nanopass-case [L3 Expr] e
+                     [~x true]
+                     [(quote ~d) true]
+                     [(if ~e0 ~e1 ~e2) (and (ok? e0) (ok? e1) (ok? e2))]
+                     [(begin ~e* ... ~e) (and (every? ok? e*) (ok? e))]
+                     [(let ([~x* ~e*] ...) ~body) (and (every? ok? e*) (ok? body))]
+                     [(label ~x (~x* ...) ~body0 ~body1) (and (ok? body0) (ok? body1))]
+                     [(call ~e ~e* ...) (and (ok? e) (every? ok? e*))]
+                     [(throw ~e) (ok? e)]
+                     [(jump ~x ~e* ...) (every? ok? e*)]
+                     [(check-initialized ~e) (ok? e)]
+                     [(clj-var-ref ~d ~st) true]
+                     [(clj-invoke ~e ~e* ...) (and (ok? e) (every? ok? e*))]
+                     [(clj-keyword-invoke ~d ~e ~e* ...) (and (ok? e) (every? ok? e*))]
+                     [(clj-call ~d0 ~d1 ~e* ...) (every? ok? e*)]
+                     [(clj-static-call ~d0 ~d1 ~e* ...) (every? ok? e*)]
+                     [(clj-case ~d ~e0 ~e1 ~e* ...) (and (ok? e0) (ok? e1) (every? ok? e*))]
+                     [else false])))]
+      (ok? e))))
+
+(defn- tails
+  "e 的尾位置表达式（穿过 let / begin / if / 不回跳的 label 的体）"
+  [e]
+  (nanopass-case [L3 Expr] e
+    [(let ([~x* ~e*] ...) ~body) (tails body)]
+    [(begin ~e* ... ~e) (tails e)]
+    [(if ~e0 ~e1 ~e2) (concat (tails e1) (tails e2))]
+    [(label ~x (~x* ...) ~body0 ~body1) (tails body1)]
+    [else [e]]))
+
+(defn- loop-jumps
+  "body 里跳到 x 的 jump 的实参表（不进 lambda）"
+  [body x]
+  (let [acc (volatile! [])]
+    (l3-some? (fn [j] (nanopass-case [L3 Expr] j [(jump ~x2 ~e* ...) (do (when (= x2 x) (vswap! acc conj e*)) false)] [else false])) body true)
+    @acc))
+
+(defn- prim-arg-conv
+  "构造器存原始字段时的转换（ClojureStaticCalls.PrimArgLong / PrimArgDouble），实参已是同类型的原始值时省掉"
+  [e k]
+  (if (= k (expr-type e sound-types))
+    e
+    (with-output-language [L3 Expr]
+      (out (clj-call "CallStatic" 3 (quote ~Cleat.Core.Runtime.ClojureStaticCalls) (quote ~(if (= k :l64) "PrimArgLong" "PrimArgDouble")) (quote nil) ~e)))))
+
+;; rw-sub：对 e 的各个子表达式应用 rw 后重建（scalar-nodes-ok? 允许的形式；绑定名经 rw 对变量的处理改名）
+(defn- rw-sub [rw e]
+  (with-output-language [L3 Expr]
+    (nanopass-case [L3 Expr] e
+      [~x (rw x)]
+      [(quote ~d) e]
+      [(if ~e0 ~e1 ~e2) (out (if ~(rw e0) ~(rw e1) ~(rw e2)))]
+      [(begin ~e* ... ~e) (out (begin ~@(map rw e*) ~(rw e)))]
+      [(let ([~x* ~e*] ...) ~body) (out (let ([~(mapv rw x*) ~(mapv rw e*)] ...) ~(rw body)))]
+      [(label ~x (~x* ...) ~body0 ~body1) (out (label ~(rw x) (~(mapv rw x*) ...) ~(rw body0) ~(rw body1)))]
+      [(jump ~x ~e* ...) (out (jump ~(rw x) ~@(map rw e*)))]
+      [(call ~e ~e* ...) (out (call ~(rw e) ~@(map rw e*)))]
+      [(throw ~e) (out (throw ~(rw e)))]
+      [(check-initialized ~e) (out (check-initialized ~(rw e)))]
+      [(clj-var-ref ~d ~st) e]
+      [(clj-invoke ~e ~e* ...) (out (clj-invoke ~(rw e) ~@(map rw e*)))]
+      [(clj-keyword-invoke ~d ~e ~e* ...) (out (clj-keyword-invoke ~d ~(rw e) ~@(map rw e*)))]
+      [(clj-call ~d0 ~d1 ~e* ...) (out (clj-call ~d0 ~d1 ~@(map rw e*)))]
+      [(clj-static-call ~d0 ~d1 ~e* ...) (out (clj-static-call ~d0 ~d1 ~@(map rw e*)))]
+      [(clj-case ~d ~e0 ~e1 ~e* ...) (out (clj-case ~d ~(rw e0) ~(rw e1) ~@(map rw e*)))]
+      [else e])))
+
+;; let 绑定的构造（cleat-123 第二步）：(let ([t (NewOf T a …)]) body)，T 可拆、t 不被赋值 → 字段局部变量 + 对象槽（同循环变量：
+;; 字段读按 (if tobj (tobj 的字段) 标量)，别的用途在 tobj 为空时才构造一次）。初值的尾位置混着构造与别的值（内联的守卫）且 body 小时，
+;; 先把 let 推进初值的各个尾位置（body 复制、绑定换新名），构造的那一支再拆。
+
+(def ^:private split-max-nodes 150)
+
+(defn- node-count [e]
+  (let [n (volatile! 0)] (l3-some? (fn [_] (vswap! n inc) false) e) @n))
+
+(defn- push-let-into-tails
+  "(let ([t E]) body) → E 的每个尾位置 X 换成 (let ([t' X]) body')（body' 是换了新名的副本）"
+  [t e body]
+  (letfn [(copy-body [x]
+            (let [m (into {} (map (fn [y] [y (loops/fresh (str y))]) (cons t (spec-binders body))))]
+              (with-output-language [L3 Expr] (out (let ([~[(m t)] ~[x]] ...) ~(spec-rename body m))))))
+          (push [x]
+            (nanopass-case [L3 Expr] x
+              [(let ([~x* ~e*] ...) ~b) (with-output-language [L3 Expr] (out (let ([~x* ~e*] ...) ~(push b))))]
+              [(begin ~e* ... ~e) (with-output-language [L3 Expr] (out (begin ~@e* ~(push e))))]
+              [(if ~e0 ~e1 ~e2) (with-output-language [L3 Expr] (out (if ~e0 ~(push e1) ~(push e2))))]
+              [else (copy-body x)]))]
+    (push e)))
+
+(defn- scalarize-let-new
+  "(let ([t (NewOf T a …)]) body) 的拆分形式；不拆时 nil"
+  [t e body]
+  (when-let [[ty args] (new-of-parts e)]
+    (when-let [fs (and (not (hget assigned-vars t)) (scalar-type-fields ty (count args)))]
+      (when (l3-some? (fn [x] (when-let [[t' _ inst] (field-read-of x)] (and (identical? t' ty) (= inst t)))) body)
+        (let [tf (mapv (fn [[nm _]] (loops/fresh (str t "." nm))) fs)
+              tobj (loops/fresh (str t ".obj"))
+              raw? (every? (fn [[a [_ k]]] (= k (expr-type a sound-types))) (map vector args fs))
+              ats (if raw? args (mapv (fn [_] (loops/fresh "sr")) args))
+              tagged (fn [v] (with-output-language [L3 Expr] (out (clj-call "Tagged" false (quote ~ty) ~v))))
+              materialize (with-output-language [L3 Expr]
+                            (out (if ~tobj ~tobj (begin (set! ~tobj (clj-call "NewOf" 1 (quote ~ty) ~@tf)) ~tobj))))
+              rw (fn rw [x]
+                   (if-let [[t' nm inst] (field-read-of x)]
+                     (if (and (identical? t' ty) (= inst t))
+                       (let [j (first (keep-indexed (fn [i [n _]] (when (= n nm) i)) fs))]
+                         (with-output-language [L3 Expr]
+                           (out (if ~tobj (clj-call "GetInstanceField" false (quote ~ty) (quote ~nm) ~(tagged tobj)) ~(tf j)))))
+                       (rw-sub rw x))
+                     (nanopass-case [L3 Expr] x
+                       [~x (if (= x t) materialize x)]
+                       [else (rw-sub rw x)])))
+              inner (with-output-language [L3 Expr]
+                      (out (let ([~tf ~(if raw? (vec ats) (mapv (fn [a [_ k]] (prim-arg-conv a k)) ats fs))] ...)
+                             (let ([~[tobj] ~[(with-output-language [L3 Expr] (out (quote nil)))]] ...) ~(rw body)))))]
+          (if raw?
+            inner
+            (with-output-language [L3 Expr] (out (let ([~ats ~(vec args)] ...) ~inner)))))))))
+
+(defn- scalarize-lets
+  "e 里（不进 lambda）可拆的 let 绑定的构造；多绑定的 let 先拆成嵌套的单绑定（名字唯一，求值顺序不变）"
+  [e]
+  (letfn [(walk [x]
+            (nanopass-case [L3 Expr] x
+              [(let ([~x* ~e*] ...) ~body)
+               (if (> (count x*) 1)
+                 (walk (reduce (fn [b [y ey]] (with-output-language [L3 Expr] (out (let ([~[y] ~[ey]] ...) ~b))))
+                               body (reverse (map vector x* e*))))
+                 (let [t (first x*) e0 (walk (first e*))]
+                   (or (scalarize-let-new t e0 body)
+                       (let [ts (tails e0)
+                             news (keep new-of-parts ts)]
+                         (when (and (seq news) (< (count news) (count ts)) (not (hget assigned-vars t))
+                                    (some (fn [[ty args]] (scalar-type-fields ty (count args))) news)
+                                    (<= (node-count body) split-max-nodes)
+                                    (l3-some? (fn [y] (when-let [[_ _ inst] (field-read-of y)] (= inst t))) body))
+                           (walk (push-let-into-tails t e0 body))))
+                       (with-output-language [L3 Expr] (out (let ([~[t] ~[e0]] ...) ~(walk body)))))))]
+              [(lambda ~nm (~x* ...) ~cl* ...) x]
+              [~x x]
+              [else (rw-sub walk x)]))]
+    (walk e)))
+
+(defn- scalar-label
+  "(label x (x* …) body0 body1) 的标量替换形式；不做时 nil。"
+  [x x* body0 body1]
+  (when opt-scalar?
+    (let [body1 (collapse-entry-labels body1)]
+      (when (and (scalar-nodes-ok? body1)
+                 (l3-some? (fn [j] (nanopass-case [L3 Expr] j [(jump ~x2 ~e* ...) (= x2 x)] [else false])) body1 true))
+        (let [jumps (loop-jumps body1 x)
+              cand (some (fn [k]
+                           (let [z (nth x* k)
+                                 ts (mapcat #(tails (nth % k)) jumps)
+                                 news (keep new-of-parts ts)
+                                 t (first (first news))
+                                 fs (when t (scalar-type-fields t (count (second (first news)))))]
+                             (when (and fs (not (hget assigned-vars z))
+                                        (every? (fn [[t' args]] (and (identical? t t') (= (count args) (count fs)))) news)
+                                        (l3-some? (fn [e] (when-let [[t' _ inst] (field-read-of e)] (and (identical? t' t) (= inst z)))) body1))
+                               [k z t fs])))
+                         (range (count x*)))]
+          (when-let [[k z t fs] cand]
+            (vreset! *spec-changed* true)
+            (let [fx (loops/fresh "fast")
+                  zf (mapv (fn [[nm _]] (loops/fresh (str z "." nm))) fs)
+                  zobj (loops/fresh (str z ".obj"))
+                  others (vec (keep-indexed (fn [i y] (when (not= i k) y)) x*))
+                  m (into {} (map (fn [y] [y (loops/fresh (str y))]) (concat others (spec-binders body1))))
+                  fps (vec (concat (map m others) zf [zobj]))   ; 快份循环的形参：其余循环变量、各字段、对象槽
+                  tagged (fn [v] (with-output-language [L3 Expr] (out (clj-call "Tagged" false (quote ~t) ~v))))
+                  read-field (fn [nm v] (with-output-language [L3 Expr] (out (clj-call "GetInstanceField" false (quote ~t) (quote ~nm) ~(tagged v)))))
+                  materialize (with-output-language [L3 Expr]
+                                (out (if ~zobj ~zobj (begin (set! ~zobj (clj-call "NewOf" 1 (quote ~t) ~@zf)) ~zobj))))
+                  fast-jump (fn [other-vals field-vals obj-val]
+                              (with-output-language [L3 Expr] (out (jump ~fx ~@(concat other-vals field-vals [obj-val])))))
+                  rw (fn rw [e]
+                       (if-let [[t' nm inst] (field-read-of e)]
+                         (if (and (identical? t' t) (= inst z))
+                           (let [j (first (keep-indexed (fn [i [n _]] (when (= n nm) i)) fs))]
+                             (with-output-language [L3 Expr] (out (if ~zobj ~(read-field nm zobj) ~(zf j)))))
+                           (rw-sub rw e))
+                         (nanopass-case [L3 Expr] e
+                           [~x (if (= x z) materialize (get m x x))]
+                           [(jump ~x2 ~e* ...)
+                            (if (= x2 x)
+                              ;; recur：z 之前的实参先求值进临时变量，z 的实参按尾位置分派，之后的实参在每个尾里求值（求值顺序不变）
+                              (let [pre (subvec (vec e*) 0 k) post (subvec (vec e*) (inc k))
+                                    tmps (mapv (fn [_] (loops/fresh "sr")) pre)
+                                    others-vals (fn [post'] (vec (concat tmps post')))
+                                    slow (fn [zv] (let [zt (loops/fresh "sr")]
+                                                    (with-output-language [L3 Expr]
+                                                      (out (let ([~[zt] ~[zv]] ...)
+                                                             (jump ~x ~@(concat tmps [zt] (map rw post))))))))
+                                    push (fn push [ze]
+                                           (or (when-let [[t' args] (new-of-parts ze)]
+                                                 (when (and (identical? t' t) (every? (fn [[a [_ kk]]] (= kk (expr-type a sound-types))) (map vector args fs)))
+                                                   ;; 实参已是字段的原始类型：构造器的转换是恒等，不经临时变量
+                                                   (fast-jump (others-vals (map rw post)) (mapv rw args) (with-output-language [L3 Expr] (out (quote nil))))))
+                                               (when-let [[t' args] (new-of-parts ze)]
+                                                 (when (identical? t' t)
+                                                   (let [ats (mapv (fn [_] (loops/fresh "sr")) args)]
+                                                     (with-output-language [L3 Expr]
+                                                       (out (let ([~ats ~(mapv rw args)] ...)
+                                                              ~(fast-jump (others-vals (map rw post))
+                                                                          (map (fn [a [_ kk]] (prim-arg-conv a kk)) ats fs)
+                                                                          (with-output-language [L3 Expr] (out (quote nil))))))))))
+                                               (when (= (untag ze) z)
+                                                 (fast-jump (others-vals (map rw post)) zf zobj))
+                                               (nanopass-case [L3 Expr] ze
+                                                 [(let ([~x* ~e*] ...) ~body)
+                                                  (with-output-language [L3 Expr] (out (let ([~(mapv #(get m % %) x*) ~(mapv rw e*)] ...) ~(push body))))]
+                                                 [(begin ~e* ... ~e) (with-output-language [L3 Expr] (out (begin ~@(map rw e*) ~(push e))))]
+                                                 [(if ~e0 ~e1 ~e2) (with-output-language [L3 Expr] (out (if ~(rw e0) ~(push e1) ~(push e2))))]
+                                                 [else (slow (rw ze))])))
+                                    body (push (nth e* k))]
+                                (if (empty? pre)
+                                  body
+                                  (with-output-language [L3 Expr] (out (let ([~tmps ~(mapv rw pre)] ...) ~body)))))
+                              (rw-sub rw e))]
+                           [else (rw-sub rw e)])))
+                  fast-body (scalarize-lets (rw body1))]
+              (spec-final-jump
+                body0 x
+                (fn [args]
+                  (let [tmps (mapv (fn [_] (loops/fresh "sr")) args)
+                        zt (tmps k)]
+                    (with-output-language [L3 Expr]
+                      (out (let ([~tmps ~(vec args)] ...)
+                             (if (clj-call "IsInstanceOf" false (quote ~t) ~zt)
+                               (label ~fx (~fps ...)
+                                 (jump ~fx ~@(concat (keep-indexed (fn [i a] (when (not= i k) a)) tmps)
+                                                     (map (fn [[nm _]] (read-field nm zt)) fs)
+                                                     [zt]))
+                                 ~fast-body)
+                               (jump ~x ~@tmps)))))))))))))))
+
 (define-pass speculate-loops L3 [ir] -> L3 []
   (Expr [ir] -> Expr []
     [(label ~x (~x* ...) ~[body0] ~[body1])
-     (let [b0 (spec-label x x* body0 body1)
-           plain (out (label ~x (~x* ...) ~(or b0 body0) ~body1))]
-       (or (array-spec-label x x* body0 body1 plain) plain))]))
+     (if-let [sb0 (scalar-label x x* body0 body1)]
+       (out (label ~x (~x* ...) ~sb0 ~body1))   ; 标量替换（cleat-123）：快份在 body0 里，原来的循环兼作退回
+       (let [b0 (spec-label x x* body0 body1)
+             plain (out (label ~x (~x* ...) ~(or b0 body0) ~body1))]
+         (or (array-spec-label x x* body0 body1 plain) plain)))]))
 
 ;; —— 无提示函数的类型化入口（cleat-104，skeg iron-075 / 076）——
 ;; 顶层 (def f (fn [形参…] 体))：单固定子句、≤ 4 形参、没有闭包字段、没有原始签名提示，体是纯的（只有 Numbers / Util.equiv 的运算、
@@ -1204,7 +1513,7 @@
 
 ;; —— 原始值（iron-034c / cleat-042，原版 cg-raw 等）——
 
-(declare cg cg* load-var! cg-raw l3-some?)
+(declare cg cg* load-var! cg-raw l3-some? binding-code bind-value! bind-local! num-alias-loc)
 
 (defn- type-clr [t] (case t :fl double-type :l64 int64-type :num num-type int32-type))
 
@@ -1374,6 +1683,15 @@
      (run! #(cg % mc :effect) e*)
      (cg-raw e mc t)
      true]
+    ;; let（cleat-123）：同 cg* 绑定变量，体原始求值——内联的调用是 (let ([r Var 读] …) (if 守卫 快 慢))，两支都是原始值时不再装箱再拆箱
+    [(let ([~x* ~e*] ...) ~body)
+     ;; 只在体的推断类型正好是 t 时（否则交给 cg-raw-default 的转换）
+     (when (= t (expr-type body var-types))
+       (let [codes (mapv (fn [x e] (if (num-alias-loc mc x) [] (binding-code mc x e))) x* e*)]
+         (doseq [[x code] (map vector x* codes)]
+           (if (num-alias-loc mc x) (bind-local! mc x) (do (emit-code! mc code) (bind-value! mc x))))
+         (cg-raw body mc t)
+         true))]
     [else nil]))
 
 (defn- cg-prim-invoke!
@@ -1713,6 +2031,8 @@
                              (let [t (new-local! mc (if rt (type-clr rt) obj))] (emit! mc (i 'stloc t)) t))))
                        (second entry) e*)]
        (when-let [keep (nth entry 2 nil)]
+         ;; 按存储位置判断（cleat-123 发现）：let 把变量绑定到形参时可能直接复用形参的槽（别名），名字不在循环体里不代表槽不再被用
+         (let [keep-locs (set (clojure.core/keep #(hget (:vars mc) %) keep))]
          ;; Num 形参的别名（循环变量就用形参的存储，cleat-102）不清
          (doseq [a (distinct (map (fn under [p a]
                                     (cond
@@ -1722,14 +2042,14 @@
                                               [(clj-call ~d0 ~d1 ~e* ...) (when (#{"Tagged" "Speculated"} d0) (under p (second e*)))]
                                               [else nil])))
                                   (second entry) e*))]
-           (when (and (symbol? a) (not (contains? keep a)))
+           (when (and (symbol? a) (not (contains? keep a)) (not (contains? keep-locs (hget (:vars mc) a))))
              (let [loc (hget (:vars mc) a)]
                (case (first loc)
                  :arg (emit! mc (i 'ldnull) (i 'starg (second loc)))
                  ;; Num 形参（cleat-102）：Num 副本的 Tag 字段对非数也持有对象本身，一并清掉
                  :numarg (emit! mc (i 'ldnull) (i 'starg (second loc))
                                 (i 'ldnull) (i 'call num-type "FromObject" (i obj) num-type) (i 'stloc (nth loc 2)))
-                 nil)))))
+                 nil))))))
        (doseq [[p t] (map vector (second entry) temps)]
          (when t
            (if (var-raw-type mc p) (emit! mc (i 'ldloc t)) (ldloc-clear! mc t))
@@ -2936,6 +3256,11 @@
                        (doseq [[f lp?] (map vector forms loop-flags)] (when lp? (infer-var-types-into! f var-types)))
                        (doseq [f forms] (infer-var-types-into! f var-types)))))
           _ (infer! forms)
+          ;; 不回跳、入口实参都是变量的标签（内联子句外面的 arity 标签）折叠成代换：原始值能穿过内联的体（cleat-123）
+          forms (if opt-collapse?
+                  (let [fs' (mapv collapse-entry-labels forms)]
+                    (if (= fs' forms) forms (do (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases]) (infer! fs') fs')))
+                  forms)
           ;; 循环推测（cleat-103）按第一遍推断的结果挑候选；改写了循环就清表重推（快份的形参由推断定成原始类型）
           forms (if (and opt-infer? (or opt-loopspec? opt-typed?))
                   (let [changed (volatile! false)

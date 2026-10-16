@@ -388,6 +388,19 @@ public class ClojureCompilerTests
     /// 提示与实际类型不符时 castclass 抛 InvalidCastException（JVM 的 checkcast）；long-array 的复制循环里没有运行时决议。
     /// </summary>
     [Test]
+    public void DeftypeLoopVariablesAreScalarised()
+    {
+        // cleat-123：循环变量与 let 临时对象的 deftype 标量替换（逃逸处才物化、一轮内同一个对象）、原始签名函数带转换的内联、
+        // 循环中途重定义被内联的函数、可变字段、构造实参的转换与异常顺序、defrecord 不拆：CLEAT_NO_OPT=scalar 开 / 关逐字相同
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "scalar_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "scalar") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "scalar on:\n" + on.Out + "\nscalar off:\n" + off.Out);
+        Assert.That(on.Out, Does.Contain("6 true true true false [0.0 0.0 1.0 1.0 2.0 2.0] 3.0 true"), on.ToString());
+    }
+
+    [Test]
     public void UnhintedArraysInLoopsAreSpeculated()
     {
         // cleat-127：循环里无提示的数组变量按元素类型推测（快份里的 aget / aset 决议到类型化重载）；推测不中、nil、越界、错误的值类型、

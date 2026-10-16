@@ -502,14 +502,18 @@
                  :else x))]
     (walk cl)))
 
-(defn- inline-call [[type cl] v args]
+(defn- inline-call [[type cl] v args & [prim-sig]]
   (let [lam (np/parse L0 (list 'lambda false (alpha-rename-clause cl)))
         r (fresh-name "r")
-        ts (mapv (fn [_] (inl-name "g$t$0$c" "inl")) args)]
+        ts (mapv (fn [_] (inl-name "g$t$0$c" "inl")) args)
+        ;; 有原始签名的函数（cleat-123）：守卫不成立时与不内联一样走 PrimInvoke（两支都是原始值，语义相同）
+        slow (if prim-sig
+               (apply clj-call "PrimInvoke" false (q prim-sig) r ts)
+               (L0-out (clj-invoke ~r ~@ts)))]
     (L0-out (call (lambda false (clause (~r ~@ts) false
                                   (if (clj-call "IsInstanceOf" false (quote ~type) ~r)
                                     (call ~lam ~@ts)
-                                    (clj-invoke ~r ~@ts))))
+                                    ~slow)))
                   ~(var-reference v) ~@args))))
 
 (defn- var-call [form ^Var v ctx]
@@ -527,12 +531,13 @@
           (analyze (transfer-source (.applyTo ^clojure.lang.IFn inline (next form)) form) (assoc ctx :pos pos)))
       (and (= n 2) (= (str v) "#'clojure.core/instance?") (maybe-type ctx (first args)))
       (clj-call "IsInstanceOf" false (q (maybe-type ctx (first args))) (analyze (second args) (assoc nt :pos pos)))
+      ;; 只在 fn 体里内联（顶层形式只运行一次：留给简单解释，调用帧也照旧）；实参是 NaN 字面量时不内联——形参本是对象，
+      ;; 同一个常量对象 (= a b) 为真，内联后常量传播成原始 double 的比较就为假（cleat-116）。
+      ;; 有原始签名的函数也先内联（子句带着与 invokePrim 相同的转换，cleat-123），否则走 PrimInvoke
+      (and @inline-calls? (:fn-name ctx) (not (some #(and (instance? Double %) (Double/IsNaN %)) args)) (inline-target v n))
+      (inline-call (inline-target v n) v (mapv #(analyze % (assoc nt :pos pos)) args) (when (<= 1 n 4) (var-prim-sig vm n)))
       (and (<= 1 n 4) (var-prim-sig vm n))
       (apply clj-call "PrimInvoke" false (q (var-prim-sig vm n)) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
-      ;; 只在 fn 体里内联（顶层形式只运行一次：留给简单解释，调用帧也照旧）；实参是 NaN 字面量时不内联——形参本是对象，
-      ;; 同一个常量对象 (= a b) 为真，内联后常量传播成原始 double 的比较就为假（cleat-116）
-      (and @inline-calls? (:fn-name ctx) (not (some #(and (instance? Double %) (Double/IsNaN %)) args)) (inline-target v n))
-      (inline-call (inline-target v n) v (mapv #(analyze % (assoc nt :pos pos)) args))
       :else
       (if-let [cls (direct-link-target v n)]
         (L0-out (clj-static-call ~cls ~n ~(var-reference v) ~@(mapv #(analyze % (assoc nt :pos pos)) args)))

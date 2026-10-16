@@ -17,6 +17,8 @@
 - **`Locals.Take` 未内联**（browse 8.5%、peval 5.3%）：大方法里 JIT 的内联预算用尽，只出现在分层方法（tier-0 需要它）；
   `DOTNET_JitInlineBudget` 在正式版运行时不起作用。没有不破坏 tier-0 防护的替代写法，暂不动。
 - **接口转换**（peval 里 mcar / mcdr 的 `ChkCastInterface` 约 3%）：用户代码经接口 `IMPair` 调用，C# 复现里接口调用本身不慢（见 cleat-116），不动。
+- **LongBox 缓存范围（designs/22 D7）**：192.168.3.111 上把上限从 1023 改成 65535 跑 r7rs 56 项（各一次）：几何平均 1.018（慢 1.8%）；
+  matrix、quicksort -9%、divrec -8%，triangl +46%、bv2string +17%、chudnovsky +13%（缓存数组变大后的访问开销与缓存未命中）。不扩大。
 - 结论：剩下的大头是分配次数（GC 与分配快速路径），通用的减法在标量替换（cleat-123）与按类型特化（M13）；本项保留，等这两项之后再看。
 
 ## 验收标准

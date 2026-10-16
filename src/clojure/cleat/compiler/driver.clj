@@ -10,6 +10,7 @@
 (ns cleat.compiler.driver
   (:refer-clojure :exclude [load-reader])
   (:require [clojure.string :as str]
+            [clojure.walk]
             [cleat.nanopass :as np :refer [with-output-language out]]
             [cleat.nanopass.records :as r]
             [cleat.compiler.languages :as l :refer [L0]]
@@ -329,10 +330,29 @@
 (def ^:private inline-max-pairs 160)
 (def ^:private no-inline-heads '#{set! clj-def clj-var-set! clj-deftype try-catch try-finally})
 
-(defn- inline-ok?
-  "序对个数不超过上限（同 原版按表的格子数），不含赋值、定义、类型、try 与嵌套的 fn*"
+(def ^:private inline-max-pairs-arith 400)
+(def ^:private arith-only-calls #{"CallStatic" "GetInstanceField" "NewOf" "Tagged"})
+
+(defn- arith-only?
+  "子句只有字段读、Numbers / RT 的静态运算、构造与局部结构（没有经 Var 的调用、关键字调用、直接链接）：deftype 的运算函数（cleat-123）"
   [sexpr]
-  (let [pairs (volatile! 0)]
+  (letfn [(ok? [x]
+            (cond
+              (not (seq? x)) true
+              (empty? x) true
+              :else (let [h (first x)]
+                      (cond
+                        (= 'quote h) true
+                        (#{'clj-invoke 'clj-keyword-invoke 'clj-static-call 'clj-var-ref 'clj-var-set! 'set!} h) false
+                        (= 'clj-call h) (and (contains? arith-only-calls (second x)) (every? ok? (drop 3 x)))
+                        :else (every? ok? x)))))]
+    (ok? sexpr)))
+
+(defn- inline-ok?
+  "序对个数不超过上限（同 原版按表的格子数），不含赋值、定义、类型、try 与嵌套的 fn*；只有字段读、算术与构造的子句上限放宽（cleat-123）"
+  [sexpr]
+  (let [inline-max-pairs (if (arith-only? sexpr) inline-max-pairs-arith inline-max-pairs)
+        pairs (volatile! 0)]
     (letfn [(ok? [x]
               (loop [xs x]
                 (cond
@@ -350,6 +370,28 @@
                       :else (recur (rest xs)))))))]
       (ok? sexpr))))
 
+(defn- prim-sig-wrap
+  "有原始签名 sig（如 \"DOD\"：各形参与返回的 L / D / O）的子句 (clause (x …) false body)：L / D 形参经 PrimArgLong / PrimArgDouble 重新绑定、
+  结果经 PrimRetLong / PrimRetDouble——与 invoke → invokePrim 的桥相同的转换；没有签名时原样。"
+  [cl sig]
+  (if-not (string? sig)
+    cl
+    (let [[_ x* rst body] cl
+          cs (butlast sig) rc (last sig)
+          conv (fn [c] (case c \L "PrimArgLong" \D "PrimArgDouble" nil))
+          prim (keep (fn [[x c]] (when (conv c) [x (symbol (str (name x) "$pa")) (conv c)])) (map vector x* cs))
+          m (into {} (map (fn [[x p _]] [x p]) prim))
+          body' (if (empty? m) body (clojure.walk/postwalk (fn [y] (if (and (symbol? y) (m y)) (m y) y)) body))
+          body'' (case rc
+                   \L (list 'clj-call "CallStatic" 3 (list 'quote Cleat.Core.Runtime.ClojureStaticCalls) (list 'quote "PrimRetLong") (list 'quote nil) body')
+                   \D (list 'clj-call "CallStatic" 3 (list 'quote Cleat.Core.Runtime.ClojureStaticCalls) (list 'quote "PrimRetDouble") (list 'quote nil) body')
+                   body')]
+      (list 'clause x* rst
+            (if (empty? prim)
+              body''
+              (apply list 'call (list 'lambda false (list 'clause (apply list (map second prim)) false body''))
+                     (map (fn [[x _ f]] (list 'clj-call "CallStatic" 3 (list 'quote Cleat.Core.Runtime.ClojureStaticCalls) (list 'quote f) (list 'quote nil) x)) prim)))))))
+
 (defn- inline-clauses
   "def 的初值（不带自引用的 fn*，或外包 WithMetaOf）的可内联固定子句：[[参数个数 fasl 字节] …]"
   [e0]
@@ -364,9 +406,10 @@
             last-fixed (if (integer? (:variadic nm)) (dec (count cl*)) (count cl*))]
         (vec (keep (fn [cl]
                      (let [[_ [x*]] (prod-of cl)
-                           sexpr (np/unparse cl)]
-                       ;; 有原始签名的子句（^long / ^double 形参或返回）不内联：子句体里没有入口与返回的转换（cleat-116）
-                       (when (and (not (some (fn [[k _]] (= (long k) (count x*))) (:prims nm))) (inline-ok? sexpr))
+                           sig (some (fn [[k sg]] (when (= (long k) (count x*)) sg)) (:prims nm))
+                           sexpr (prim-sig-wrap (np/unparse cl) sig)]
+                       ;; 有原始签名的子句（^long / ^double 形参或返回）：体外包上与 invokePrim 相同的入口 / 返回转换后内联（cleat-123；cleat-116 时不内联）
+                       (when (inline-ok? sexpr)
                          (try [(count x*) (Cleat.Core.Runtime.Fasl/Write [:cleat/l0 sexpr])]
                               (catch Exception _ nil)))))   ; 常量里有 fasl 写不了的对象：不内联
                    (take last-fixed cl*)))))))

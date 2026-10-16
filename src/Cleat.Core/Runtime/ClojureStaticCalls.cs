@@ -307,6 +307,12 @@ public static class ClojureStaticCalls
     public static double PrimArgDouble(object x) =>
       x is double d ? d : x == null ? throw new NullReferenceException() : clojure.lang.Util.IsNumeric(x) ? clojure.lang.RT.doubleCast(x) : throw NotNumber(x);
 
+    // 实参 / 结果已是签名的原始类型时的恒等重载（cleat-123：内联有原始签名的子句时，转换按静态类型决议到这里，不装箱）
+    public static long PrimArgLong(long x) => x;
+    public static double PrimArgDouble(double x) => x;
+    public static long PrimRetLong(long x) => x;
+    public static double PrimRetDouble(double x) => x;
+
     public static long PrimRetLong(object x)
     {
         switch (x)
