@@ -1,6 +1,6 @@
 # r7rs 56 项：cleat 与 JVM Clojure 的对比（2026-10-16）
 
-> linux01；只计基准内部计时（`+!CSVLINE!+`），不含启动与编译。JVM 是 cleat-107 时各项的最小值（Clojure 1.12，`-Xss8m`）；
+> linux01（2026-10-16 起不可用，此表为历史数字，与新机器不可直接比较）；"JVM"列是 **GraalVM CE 25.0.2**（Graal JIT），不是 HotSpot C2。只计基准内部计时（`+!CSVLINE!+`），不含启动与编译。JVM 是 cleat-107 时各项的最小值（Clojure 1.12，`-Xss8m`）；
 > cleat 三列各跑一次：107 = M11 开始前，116 = 已提交的 a74d2ec，当前 = cleat-117 中途（boot 镜像分层编译 + 惰性序列头修复 +
 > rem / quot / longCast / nth 快路径，不含 `not` 内联，未提交）。倍数 = cleat / JVM，小于 1 表示比 JVM 快；按当前倍数排序。
 > 移植与运行方式见 bench/r7rs/README.md 与 tasks/cleat-107。
@@ -69,12 +69,86 @@
 
 ## 剩下的慢项与原因
 - **ctak / fibc**：call/cc 用异常模拟，.NET 的 throw / catch 走完整的栈展开（见 notes/escape-continuations-and-try.md）。
-- **array1、gcbench、nboyer**：时间大量在 GC（array1 约 67%、nboyer 约 40%）；array1 另有 cleat-116 的 tier-0 回退（见 notes/array1.md）。
+- **array1、gcbench、nboyer**：时间大量在 GC（array1 约 67%、nboyer 约 40%），差在单次回收成本（见 notes/gc-config-and-tier0-two-machines.md）；
+  array1 的 tier-0 回退在两机复测里只有 0 ~ 11%。
 - **string**：.NET 的 UTF-16 字符串，JVM 有 Latin-1 紧凑字符串，大字符串拼接的搬运字节量差一倍。
-- **mbrotZ**：每步分配的复数对象被 JVM 的逃逸分析消掉，.NET 没有对应优化。
+- **mbrotZ**：每步分配的复数对象被 GraalVM 的部分逃逸分析消掉（C2 上待实测），.NET 没有对应优化。
 - **cpstak、browse、peval 等**：分配快速路径（`RhpNewFast` 经 `__tls_get_addr` 取线程分配上下文）与 GC、大方法里 JIT 内联预算耗尽。
 
 ## 本地的其他对照（单次，本地机器约比 linux01 慢 1.3 ~ 1.5 倍）
 - boot 镜像分层编译（14 项）：最初的实验（所有方法分层）平均约快 3%、启动快约 1 s；收紧规则修完惰性序列头之后基本持平。
 - `clojure.core/not` 加 `:inline` 后数值递归函数拿到类型化入口：tak 3.7 → 1.9 s（未在 linux01 验证）。
 - sumfp：循环后内联的 double 装箱 → 不内联的辅助方法，0.91 → 0.24 s（C# 复现 911 → 226 ms）。
+
+## 192.168.3.111 上的三方对比（2026-10-16，cleat-117 收口前的版本）
+
+> 机器：4 vCPU / 15 GB 的虚拟机（linux01 不可用后的测试机）；.NET 运行时 10.0.0（本机是 10.0.12）。cleat 是 cleat-117 的工作区版本
+> （镜像分层、惰性序列头修复、`not` 的 `:inline`、rem / quot / longCast / nth 快路径），各项一次；JVM 两种各一次：
+> **C2** = 该机默认的 OpenJDK 25.0.4（Red Hat，HotSpot C2），**GraalVM** = 从本机复制过去的 GraalVM CE 25.0.2（cleat-107 ~ 117 的"JVM"列用的就是它）。
+> 只计基准内部计时；按 cleat / C2 排序。与上面 linux01 的表不可直接比较（机器、JVM 都不同）。
+
+| 基准 | C2 | GraalVM | cleat | cleat / C2 | cleat / GraalVM |
+|---|---|---|---|---|---|
+| sum | 6.55 | 0.64 | 0.71 | 0.11x | 1.11x |
+| sumfp | 1.01 | 0.39 | 0.38 | 0.38x | 0.98x |
+| ack | 5.02 | 6.85 | 1.92 | 0.38x | 0.28x |
+| ntakl | 35.57 | 15.27 | 15.92 | 0.45x | 1.04x |
+| lattice | 18.57 | 12.62 | 10.12 | 0.55x | 0.80x |
+| fibfp | 0.97 | 1.12 | 0.67 | 0.69x | 0.60x |
+| pi | 1.13 | 1.15 | 0.96 | 0.85x | 0.84x |
+| fib | 2.89 | 6.02 | 2.74 | 0.95x | 0.45x |
+| mazefun | 6.05 | 4.53 | 6.09 | 1.01x | 1.34x |
+| conform | 9.16 | 6.82 | 9.52 | 1.04x | 1.40x |
+| tak | 1.51 | 1.89 | 1.58 | 1.05x | 0.84x |
+| cat | 2.80 | 2.82 | 2.96 | 1.06x | 1.05x |
+| paraffins | 12.04 | 11.69 | 12.88 | 1.07x | 1.10x |
+| sboyer | 5.52 | 4.91 | 5.93 | 1.07x | 1.21x |
+| nqueens | 14.68 | 15.13 | 16.28 | 1.11x | 1.08x |
+| takl | 14.02 | 16.44 | 16.70 | 1.19x | 1.02x |
+| chudnovsky | 0.44 | 0.51 | 0.54 | 1.23x | 1.07x |
+| mperm | 19.86 | 17.41 | 24.96 | 1.26x | 1.43x |
+| quicksort | 3.48 | 1.76 | 4.56 | 1.31x | 2.60x |
+| sum1 | 1.45 | 1.36 | 1.94 | 1.33x | 1.42x |
+| triangl | 2.04 | 2.66 | 2.80 | 1.37x | 1.05x |
+| diviter | 5.18 | 4.53 | 7.17 | 1.39x | 1.58x |
+| graphs | 5.48 | 5.07 | 8.21 | 1.50x | 1.62x |
+| mbrot | 0.34 | 0.35 | 0.54 | 1.59x | 1.55x |
+| divrec | 6.29 | 5.57 | 10.66 | 1.70x | 1.91x |
+| matrix | 3.24 | 3.50 | 5.54 | 1.71x | 1.58x |
+| primes | 1.94 | 2.04 | 3.41 | 1.76x | 1.67x |
+| slatex | 6.36 | 5.96 | 11.21 | 1.76x | 1.88x |
+| read1 | 1.72 | 1.64 | 3.20 | 1.86x | 1.95x |
+| simplex | 4.77 | 3.11 | 9.04 | 1.89x | 2.91x |
+| tail | 0.51 | 0.56 | 0.97 | 1.89x | 1.74x |
+| equal | 1.44 | 2.04 | 2.83 | 1.97x | 1.39x |
+| nboyer | 5.70 | 5.26 | 11.29 | 1.98x | 2.15x |
+| string | 0.88 | 0.91 | 1.92 | 2.18x | 2.11x |
+| parsing | 4.60 | 3.92 | 10.96 | 2.38x | 2.80x |
+| nucleic | 2.31 | 2.21 | 5.64 | 2.44x | 2.55x |
+| destruc | 2.73 | 2.56 | 6.81 | 2.50x | 2.66x |
+| maze | 1.11 | 1.25 | 2.85 | 2.56x | 2.29x |
+| pnpoly | 1.46 | 1.90 | 3.76 | 2.57x | 1.98x |
+| fft | 0.81 | 0.73 | 2.10 | 2.60x | 2.86x |
+| deriv | 3.36 | 2.90 | 8.90 | 2.65x | 3.07x |
+| earley | 4.54 | 4.84 | 12.95 | 2.85x | 2.67x |
+| wc | 2.24 | 2.08 | 6.42 | 2.87x | 3.09x |
+| ray | 1.27 | 1.05 | 3.86 | 3.05x | 3.69x |
+| scheme | 4.86 | 5.06 | 16.30 | 3.35x | 3.22x |
+| bv2string | 0.75 | 0.73 | 2.69 | 3.60x | 3.69x |
+| puzzle | 1.94 | 2.10 | 7.13 | 3.68x | 3.39x |
+| mbrotZ | 0.99 | 0.40 | 3.67 | 3.71x | 9.24x |
+| cpstak | 4.47 | 4.55 | 16.84 | 3.76x | 3.70x |
+| array1 | 6.61 | 7.19 | 25.38 | 3.84x | 3.53x |
+| dynamic | 3.58 | 4.38 | 14.32 | 4.00x | 3.27x |
+| gcbench | 0.42 | 0.51 | 1.89 | 4.47x | 3.68x |
+| peval | 4.25 | 5.43 | 21.72 | 5.11x | 4.00x |
+| browse | 1.30 | 1.61 | 8.44 | 6.48x | 5.25x |
+| fibc | 1.33 | 2.19 | 43.24 | 32.54x | 19.74x |
+| ctak | 0.86 | 1.09 | 48.00 | 56.01x | 44.02x |
+| **几何平均（56 项）** | | | | **1.85x** | **1.99x** |
+
+- GraalVM 对 C2 的几何平均是 0.93（GraalVM 快约 7%），但各项差别很大：mbrotZ 0.40（部分逃逸分析消掉复数分配）、quicksort 0.50、
+  simplex 0.65、mazefun 0.75；反过来 fib 2.08、equal 1.42、ack 1.37、pnpoly 1.30、peval 1.28 是 C2 更快。
+- 对 C2：sum、sumfp、ack、ntakl、lattice、fibfp、pi、fib 8 项 cleat 更快，另有 mazefun、conform、tak、cat、paraffins、sboyer、nqueens
+  在 1.11 倍以内。最慢的仍是 fibc / ctak（异常）、browse、peval、gcbench、dynamic、array1、cpstak、mbrotZ。
+- 这台机器上 JVM 的 array1 是 6.6 s（linux01 上是 1.26 s），cleat 只差约 1.3 倍：array1 在 JVM 上对机器很敏感，原因未查。

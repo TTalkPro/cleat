@@ -5,12 +5,20 @@ import json, os, re, subprocess, sys, time
 B = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(B, 'src')
 R = os.environ['R7RS_BENCH']
-CLEAT = os.environ.get('CLEAT')
+CLEAT = os.environ.get('CLEAT', os.path.dirname(os.path.dirname(B)))   # 缺省为本仓库（同 run.py）
+JAVA = os.environ.get('JAVA', 'java')
+RUN_JVM = os.environ.get('RUN_JVM', '1') == '1'
+if not os.path.exists(os.path.join(CLEAT, 'src/Cleat.Host/bin/Release/net10.0/cleat.dll')):
+    sys.exit('gc_bench: no Release build under CLEAT=' + CLEAT)
 NAMES = ['array1', 'gcbench', 'nboyer', 'deriv', 'cpstak']
 REPS = 3
 
-CP = subprocess.run(['clojure', '-Spath'], cwd=B, capture_output=True, text=True, check=True).stdout.strip()
-CP = ':'.join(os.path.join(B, p) if not os.path.isabs(p) else p for p in CP.split(':'))
+CP = None   # JVM 的类路径只在跑 JVM 时取（RUN_JVM=0 的机器上可以没有 clojure CLI）
+if RUN_JVM:
+    CP = subprocess.run(['clojure', '-Spath'], cwd=B, capture_output=True, text=True, check=True).stdout.strip()
+    CP = ':'.join(os.path.join(B, p) if not os.path.isabs(p) else p for p in CP.split(':'))
+    _v = subprocess.run([JAVA, '-version'], capture_output=True, text=True).stderr.strip().splitlines()
+    print(json.dumps({'jvm': _v[1].strip() if len(_v) > 1 else _v}), flush=True)
 
 CLEAT_CONFIGS = [
     ('cleat-ws',              {},                 []),
@@ -34,7 +42,7 @@ def jvm_cmd(name, jvm_args, gclog):
     args = list(jvm_args)
     if gclog:
         args += ['-Xlog:gc:stdout']
-    return (['java'] + args + ['-cp', CP, 'clojure.main', '-m', 'r7rs.' + name], dict(os.environ))
+    return ([JAVA] + args + ['-cp', CP, 'clojure.main', '-m', 'r7rs.' + name], dict(os.environ))
 
 def run_one(name, cmd, env):
     t0 = time.time()
@@ -48,7 +56,8 @@ def run_one(name, cmd, env):
     if not m:
         return None, None, time.time() - t0
     secs = float(m.group(1))
-    gc = len(re.findall(r'\[gc\s*,', out)) or len(re.findall(r'GC\(\d+', out))
+    # -Xlog:gc 每次回收可能输出多行（并发周期尤其如此）：按 GC(n) 的编号去重
+    gc = len(set(re.findall(r'GC\((\d+)\)', out)))
     return secs, (gc if gc else None), time.time() - t0
 
 results = {}
@@ -59,7 +68,7 @@ for label, env, _ in CLEAT_CONFIGS:
             secs, _, wall = run_one(name, cmd, e)
             results.setdefault(label, {}).setdefault(name, []).append(secs)
             print(json.dumps({'config': label, 'name': name, 'secs': secs, 'wall': round(wall, 1)}), flush=True)
-for label, jvm_args, _ in (JVM_CONFIGS if os.environ.get("RUN_JVM", "1") == "1" else []):
+for label, jvm_args, _ in (JVM_CONFIGS if RUN_JVM else []):
     for name in NAMES:
         for _ in range(REPS):
             cmd, e = jvm_cmd(name, jvm_args, True)

@@ -2,15 +2,27 @@
 # r7rs-benchmarks 的 Clojure 移植：在同一台机器上比较 cleat 与 JVM Clojure（cleat-107）。只计程序内部计时（+!CSVLINE!+），不含启动与编译。
 # 用法：R7RS_BENCH=<ecraven/r7rs-benchmarks 仓库> CLEAT=<cleat 仓库> run.py <cleat|clojure> [-r 次数] [基准名 …]   不给基准名则跑 src/r7rs 下全部
 # JVM：bench/r7rs/deps.edn（Clojure 1.12.4），java -cp $(clojure -Spath) clojure.main -m r7rs.<名字>，-Xss8m（与 .NET 主线程的栈相同），其余为默认 JVM 选项。
+# JAVA=<java 可执行文件>（缺省 PATH 里的 java）；JVM 的结果记下 `java -version` 的版本行（GraalVM 与 HotSpot C2 的数字可能差很多，表头必须注明）。
+# R7_OUT=<名字> 把结果写到 results/<名字>.jsonl（缺省 <impl>.jsonl），便于并排保存两种 JVM。
 # 工作目录为 r7rs-benchmarks 仓库（读文件的基准按相对路径读 inputs/），标准输入是 inputs/<名字>.input。结果追加到 results/<impl>.jsonl。
 import json, os, re, subprocess, sys, time
 B = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(B, 'src')
 R = os.environ['R7RS_BENCH']
 CLEAT = os.environ.get('CLEAT', os.path.dirname(os.path.dirname(B)))
+JAVA = os.environ.get('JAVA', 'java')
+
+_jvm = None
+def jvm_version():
+    """`java -version` 的第二行（运行时名与版本，如 "OpenJDK Runtime Environment GraalVM CE 25.0.2+10.1"）"""
+    global _jvm
+    if _jvm is None:
+        lines = subprocess.run([JAVA, '-version'], capture_output=True, text=True).stderr.strip().splitlines()
+        _jvm = lines[1].strip() if len(lines) > 1 else (lines[0] if lines else '?')
+    return _jvm
 
 def names():
-    return sorted(f[:-5] for f in os.listdir(os.path.join(SRC, 'r7rs')) if f.endswith('.cljc') and f != 'common.cljc')
+    return sorted(f[:-5] for f in os.listdir(os.path.join(SRC, 'r7rs')) if f.endswith('.cljc') and f not in ('common.cljc', 'util.cljc'))   # 共用的辅助命名空间不是基准
 
 _cp = None
 def classpath():
@@ -24,7 +36,7 @@ def command(impl, name):
     ns = 'r7rs.' + name
     if impl == 'cleat':
         return ['dotnet', os.path.join(CLEAT, 'src/Cleat.Host/bin/Release/net10.0/cleat.dll'), '-I', SRC, '-m', ns]
-    return ['java', '-Xss8m', '-cp', classpath(), 'clojure.main', '-m', ns]   # 栈与 .NET 主线程（Linux 上 8 MB 的 ulimit）相同：equal 的 5000 层非尾递归
+    return [JAVA, '-Xss8m', '-cp', classpath(), 'clojure.main', '-m', ns]   # 栈与 .NET 主线程（Linux 上 8 MB 的 ulimit）相同：equal 的 5000 层非尾递归
 
 def run(impl, name, timeout=900):
     cmd = command(impl, name)
@@ -45,10 +57,12 @@ if __name__ == '__main__':
     if args[:1] == ['-r']:
         reps, args = int(args[1]), args[2:]
     os.makedirs(os.path.join(B, 'results'), exist_ok=True)
-    with open(os.path.join(B, 'results', impl + '.jsonl'), 'a') as f:
+    with open(os.path.join(B, 'results', os.environ.get('R7_OUT', impl) + '.jsonl'), 'a') as f:
         for name in args or names():
             for _ in range(reps):
                 r = run(impl, name)
+                if impl != 'cleat':
+                    r['jvm'] = jvm_version()
                 print(json.dumps(r), flush=True)
                 f.write(json.dumps(r) + '\n')
                 f.flush()

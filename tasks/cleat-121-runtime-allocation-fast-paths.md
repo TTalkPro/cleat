@@ -1,6 +1,6 @@
 # cleat-121 运行时快路径的分配与内联预算
 
-- 里程碑：M12　依赖：cleat-120　状态：未开始
+- 里程碑：M12　依赖：cleat-119　状态：未开始
 - 设计依据：[22 §2 D5 ~ D7](../designs/22-gc-and-performance-followups.md)
 
 ## 工作内容

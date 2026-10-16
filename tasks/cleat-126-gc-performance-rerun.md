@@ -1,6 +1,6 @@
 # cleat-126 M12 收尾：GC、分配与性能全量重测
 
-- 里程碑：M12　依赖：cleat-125　状态：未开始
+- 里程碑：M12　依赖：cleat-120 ~ 125　状态：未开始
 - 设计依据：[22 §7](../designs/22-gc-and-performance-followups.md)、[GC 配置实测](../notes/gc-config-and-tier0-two-machines.md)
 
 ## 工作内容
