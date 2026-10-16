@@ -1,6 +1,6 @@
 # cleat-123 有限标量替换：非逃逸 primitive record / deftype
 
-- 里程碑：M12　依赖：cleat-119　状态：进行中（实现完成，等批量验证）
+- 里程碑：M12　依赖：cleat-119　状态：完成
 - 设计依据：[22 §4 D10](../designs/22-gc-and-performance-followups.md)
 
 ## 工作内容
@@ -30,6 +30,16 @@
 - 语义：`data/scalar_semantics.clj`（7 个循环发生变换：同一性与哈希、可变字段被方法修改、构造实参的转换与异常顺序、long 字段与溢出、
   defrecord、let 临时对象、循环中途重定义被内联的函数、原始签名函数的内联与 BigInt / 比值 / nil / 非数字）`CLEAT_NO_OPT=scalar` 开 / 关逐字相同；
   测试 `ClojureCompilerTests.DeftypeLoopVariablesAreScalarised`。门禁 OK，种子不动点（2073 KiB）。
+
+## 批量验证（2026-10-16，linux01 = 192.168.0.10；192.168.3.111 已离线）
+- 种子不动点 133 s（stage2 == stage3 逐字节相同，2073 KiB，与提交的种子字节一致）；门禁 521 行 OK；cts（6868 / 29 / 6）与 test-clojure（3688 / 18）基线不变；
+  Core 117 通过，Host 268 通过 + 1 环境跳过（含新增的 DeftypeLoopVariablesAreScalarised）。
+- r7rs 56 项 × 3 轮对 cleat-127（同窗口先后跑，各取最小值）：**几何平均 0.930**。
+  收益：destruc 0.42、mbrotZ 0.63、browse 0.68、string 0.73、slatex 0.75、simplex 0.77、bv2string 0.81、earley 0.86；
+  回退：mbrot 1.16（待查）、chudnovsky 1.07、diviter 1.07，其余在 1.03 以内。明细见 notes/r7rs-performance.md 末节。
+- 事故记录：第一轮全量曾出现 nucleic / mperm / maze / ntakl / lattice 约 2x 的回退假象，开关隔离（scalar / collapse 分别关）均"恢复"，疑似两优化交互；
+  探针重编与干净种子复跑证明同一份编译器在安静环境下全部恢复正常——真实原因是机器刚开机、另一个 JVM 应用在基准窗口内启动（20:22）造成的干扰。
+  教训：r7rs 必须在空闲机器上跑，跑前看 load；结论只信同窗口的双版本对照。
 
 ## 验收标准
 - mbrotZ 分配采样中复数对象分配显著下降、耗时前后对照（GraalVM 的部分逃逸分析消掉这些分配，8.5x 是对 GraalVM 的差距；对 C2 的差距待 cleat-119 实测）。
