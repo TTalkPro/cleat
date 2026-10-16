@@ -889,8 +889,10 @@
         variadic-n (let [cls (seq clauses)]
                      ;; 变长子句的必需参数个数
                      (some (fn [cl] (let [[req rst] (fn-params form ctx (first (clause-of cl)))] (when rst (count req)))) cls))
-        fname (l/->CljFnName nm (or variadic-n false) (vec @prims)
-                             (boolean (and thunk? (runtime-async?))))
+        fname (cond-> (l/->CljFnName nm (or variadic-n false) (vec @prims)
+                                     (boolean (and thunk? (runtime-async?))))
+                ;; (fn* ^:once [] …)（lazy-seq、delay 的展开；JVM 的 FnExpr.onceOnly）：闭包字段在最后一次使用处清空（cleat-117）
+                (:once (meta (first form))) (assoc :once true))
         fnode (mk-lambda fname built)
         m (let [m (user-meta form)] (when m (let [m (dissoc m :rettag)] (when (pos? (count m)) m))))
         fnode (if m

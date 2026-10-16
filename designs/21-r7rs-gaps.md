@@ -23,8 +23,9 @@
 | eval 代码由 RunAndCollect 发射：不分层、没有动态 PGO（JVM 内联缓存的对应物） | 编成包加载时同一份代码快 20% ~ 37% | cleat-114（几何平均 3.26 → 2.64） |
 | 无类型算术的 Numbers.ops / combine / 虚调用、Var 读取的常量表与 castclass、symbol? 的类型检查 | cpstak、browse、scheme | cleat-115 |
 | eval 的小函数没有接口文件、不内联；循环后内联的 double 装箱让 JIT 把 double 变量放在栈上；Cons 的 first / next 走 CastHelpers | fft、sumfp、ray、lattice、nboyer | cleat-116（与 115 一起：几何平均 2.64 → 2.29） |
-| 类型化调用点；镜像与包的分层编译（boot 的动态 PGO，约 3%，启动快约 1 s） | browse、destruc、deriv | cleat-117 |
-| 全部重测 | | cleat-118 |
+| 镜像与包的分层编译、tier-0 生命周期（^:once、nth、转发方法、自递归规则）、`not` 的 :inline | 全部（惰性序列头不再被抓住） | cleat-117（192.168.3.111：对 C2 1.85x、对 GraalVM 1.99x） |
+| 类型化调用点 | browse、destruc、deriv | cleat-118 |
+| 全部重测 | | cleat-119 |
 
 ## §2 顺序
 108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117 → 118。109（装箱缓存）与 110（已知调用）影响所有通用代码，先做；111 是 C# 侧快路径；112 / 113 是"类型交给推断"；114 改动最大，放最后。

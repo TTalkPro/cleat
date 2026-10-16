@@ -66,6 +66,7 @@
   (let [nm (str "eval$c" (swap! eval-counter inc))   ; 原版驱动的程序集叫 eval$N，为区分而带 c
         [lcil cs] (pl/compile-unit [[0 (with-output-language [L0 Expr] (out (clj-call "HoldResult" false ~l0)))]]
                                    nm "#Module" true (fn [_ _ _]))
+        _ (when (System.Environment/GetEnvironmentVariable "TMP_DUMP_EVAL") (binding [*out* *err*] (prn lcil)))
         asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil nm (object-array cs))]
     (run-module asm)
     ;; 构建镜像 / 包时不登记：产物里的调用点不能链接到 eval 程序集里的类
@@ -112,6 +113,24 @@
         (let [[_ [x* x body]] (prod-of (first cl*))]
           (when (r/absent? x) [x* body]))))))
 
+(declare simple?)
+
+(defn- atomic?
+  "调用的实参、let 的初值：常量、局部变量、Var 读、集合字面量（元素也是原子）。嵌套的调用不解释——解释器把实参值放在向量 / 环境里直到调用返回，
+  惰性序列的头就被抓住（顶层的 (println (nth (map inc (range 3e7)) n)) 在 512 MB 堆下 OutOfMemory；编译后的代码按局部变量清除，cleat-117）"
+  [x scope]
+  (cond
+    (symbol? x) (contains? scope x)
+    (not (r/node? x)) false
+    :else
+    (let [[k fs] (prod-of x)]
+      (case k
+        quote true
+        clj-var-ref (instance? clojure.lang.Var (first fs))
+        ;; 实参本身都是原子的运行时操作（集合字面量、宿主字段读、静态调用……）：值不来自长时间运行的求值，也算原子；用户函数的已知调用不算
+        clj-call (let [[d0 _ e*] fs] (and (not= "KnownCall" d0) (simple? x scope) (every? #(atomic? % scope) e*)))
+        false))))
+
 (defn- simple? [x scope]
   (cond
     (symbol? x) (contains? scope x)
@@ -125,15 +144,15 @@
         clj-var-ref (instance? clojure.lang.Var (first fs))
         clj-var-set! (and (instance? clojure.lang.Var (first fs)) (simple? (second fs) scope))
         clj-def (let [[d _ _ e0 e1] fs] (and (instance? clojure.lang.Var d) (simple? e0 scope) (simple? e1 scope)))
-        clj-invoke (and (simple? (first fs) scope) (every? #(simple? % scope) (second fs)))
-        clj-keyword-invoke (let [[d e e*] fs] (and (keyword? d) (<= (count e*) 1) (simple? e scope) (every? #(simple? % scope) e*)))
+        clj-invoke (and (atomic? (first fs) scope) (every? #(atomic? % scope) (second fs)))
+        clj-keyword-invoke (let [[d e e*] fs] (and (keyword? d) (<= (count e*) 1) (atomic? e scope) (every? #(atomic? % scope) e*)))
         clj-call (let [[d0 d1 e*] fs]
                    (if (= d0 "KnownCall")   ; 用户函数的已知调用（cleat-110）：解释时就是 IFn 调用
-                     (every? #(simple? % scope) (rest e*))
-                     (and (some? (ops-method d0 d1 (count e*))) (every? #(simple? % scope) e*))))
+                     (every? #(atomic? % scope) (rest e*))
+                     (and (some? (ops-method d0 d1 (count e*))) (every? #(atomic? % scope) e*))))
         call (let [[e0 e*] fs]
                 (when-let [[x* body] (let-head e0)]
-                  (and (= (count x*) (count e*)) (every? #(simple? % scope) e*) (simple? body (into scope x*)))))
+                  (and (= (count x*) (count e*)) (every? #(atomic? % scope) e*) (simple? body (into scope x*)))))
         false))))
 
 (defn- unwrap-invoke [^System.Reflection.MethodInfo m args]

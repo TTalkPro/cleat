@@ -1158,6 +1158,8 @@ namespace clojure.lang
 
         public static object quotient(object x, object y)
         {
+            // 两个 long 先判（与 LongOps 的结果、异常都相同：除零 ArithmeticException，MinValue / -1 照 CLR 抛 OverflowException）
+            if (x is long a && y is long b) { if (b == 0) throw new ArithmeticException("Divide by zero"); return num(a / b); }
             Ops yops = ops(y);
             if (yops.isZero(y))
                 throw new ArithmeticException("Divide by zero");
@@ -1210,6 +1212,8 @@ namespace clojure.lang
 
         public static object remainder(object x, object y)
         {
+            // 两个 long 先判（与 LongOps 的结果、异常都相同：除零 ArithmeticException，MinValue % -1 照 CLR 抛 OverflowException）
+            if (x is long a && y is long b) { if (b == 0) throw new ArithmeticException("Divide by zero"); return num(a % b); }
             Ops yops = ops(y);
             if (yops.isZero(y))
                 throw new ArithmeticException("Divide by zero");

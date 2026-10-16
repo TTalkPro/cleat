@@ -123,16 +123,16 @@
 | [cleat-114](tasks/cleat-114-tiered-eval.md) | eval 代码分层编译与动态 PGO（不可回收的装载上下文、tier-0 的 GC 报告） | M11 | cleat-113 | 完成 |
 | [cleat-115](tasks/cleat-115-runtime-and-vars.md) | 运行时与 Var 访问：Numbers 的 object 快路径、$Vars 的 static readonly 字段、Symbol 密封 | M11 | cleat-114 | 完成 |
 | [cleat-116](tasks/cleat-116-eval-inline.md) | eval 的小函数内联与运行时快路径（double 装箱、Cons 的 first / next） | M11 | cleat-115 | 完成 |
-| [cleat-117](tasks/cleat-117-image-tiering-and-lifetimes.md) | 镜像与包分层编译、tier-0 生命周期与惰性序列根释放 | M11 | cleat-116 | 进行中 |
+| [cleat-117](tasks/cleat-117-image-tiering-and-lifetimes.md) | 镜像与包分层编译、tier-0 生命周期与惰性序列根释放 | M11 | cleat-116 | 完成 |
 | [cleat-118](tasks/cleat-118-typed-call-sites.md) | 类型化调用点：非递归纯数值函数与已知局部 lambda 直调，原始值贯通 | M11 | cleat-117 | 未开始 |
 | [cleat-119](tasks/cleat-119-r7rs-rerun.md) | M11 收尾：r7rs 56 项与 bench/ 全部重测，更新 cleat-107 的表与 designs/21 | M11 | cleat-118 | 未开始 |
 | [cleat-120](tasks/cleat-120-osr-and-tiering.md) | array1 的 OSR 复测、诊断与保守分层规则（两机实测后先确认回退仍显著） | M12 | cleat-119 | 未开始 |
-| [cleat-121](tasks/cleat-121-runtime-allocation-fast-paths.md) | 运行时快路径的分配与 JIT 内联预算；LongBox 范围量化 | M12 | cleat-120 | 未开始 |
-| [cleat-122](tasks/cleat-122-local-throw-to-leave.md) | 本方法内已知 throw 编成 leave（保留其他异常捕获） | M12 | cleat-121 | 未开始 |
-| [cleat-123](tasks/cleat-123-limited-scalar-replacement.md) | 有限标量替换：非逃逸 primitive record / deftype | M12 | cleat-122 | 未开始 |
-| [cleat-124](tasks/cleat-124-string-copy-reduction.md) | 字符串热点的 UTF-16 搬运优化 | M12 | cleat-123 | 未开始 |
-| [cleat-125](tasks/cleat-125-nonlocal-escape-protocol.md) | 非本地逃逸协议调研与原型 | M12 | cleat-124 | 未开始 |
-| [cleat-126](tasks/cleat-126-gc-performance-rerun.md) | M12 收尾：GC、分配与性能全量重测 | M12 | cleat-125 | 未开始 |
+| [cleat-121](tasks/cleat-121-runtime-allocation-fast-paths.md) | 运行时快路径的分配与 JIT 内联预算；LongBox 范围量化 | M12 | cleat-119 | 未开始 |
+| [cleat-122](tasks/cleat-122-local-throw-to-leave.md) | 本方法内已知 throw 编成 leave（保留其他异常捕获；先统计，预计关闭） | M12 | cleat-119 | 未开始 |
+| [cleat-123](tasks/cleat-123-limited-scalar-replacement.md) | 有限标量替换：非逃逸 primitive record / deftype | M12 | cleat-119 | 未开始 |
+| [cleat-124](tasks/cleat-124-string-copy-reduction.md) | 字符串热点的 UTF-16 搬运优化 | M12 | cleat-119 | 未开始 |
+| [cleat-125](tasks/cleat-125-nonlocal-escape-protocol.md) | 非本地逃逸协议调研与原型 | M12 | cleat-122 | 未开始 |
+| [cleat-126](tasks/cleat-126-gc-performance-rerun.md) | M12 收尾：GC、分配与性能全量重测 | M12 | cleat-120 ~ 125 | 未开始 |
 
 ## 里程碑
 
@@ -159,7 +159,7 @@
 
 ## 关键路径
 
-**M12（2026-10-16 起）**：119 收口后 → 120 → 121 → 122 → 123 → 124 → 125 → 126（[22 §8](designs/22-gc-and-performance-followups.md)）。
+**M12（2026-10-16 起）**：119 收口后，122（先统计）、120（先复测）、121、123、124 并列，125 在 122 之后，最后 126（[22 §8](designs/22-gc-and-performance-followups.md)）。
 
 **M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117 → 118 → 119（[21 §2](designs/21-r7rs-gaps.md)）。
 

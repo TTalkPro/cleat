@@ -1032,15 +1032,28 @@ namespace clojure.lang
         }
 
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         static public Object nth(object coll, int n)
         {
-
+            // 向量按精确类型先判（Indexed 是接口，isinst 走 CastHelpers）；不是 Indexed 时形参经 ref 交出并清空：
+            // tier-0 把形参与 JIT 临时变量报告为整个方法内活着，按值传会在遍历期间抓住惰性序列的头（cleat-117）
+            if (coll != null && coll.GetType() == typeof(PersistentVector))
+                return Unsafe.As<PersistentVector>(coll).nth(n);
             if (coll is Indexed indexed)
                 return indexed.nth((int)n);
 
-            return NthFrom(Util.Ret1(coll, coll = null), (int)n);
+            return NthFromRef(ref coll, n);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private static object NthFromRef(ref object slot, int n)
+        {
+            object coll = slot;
+            slot = null;
+            return NthFrom(coll, n);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]   // 遍历传入的序列：tier-0 把形参报告为整个方法内活着，会抓住惰性序列的头（cleat-117）
         static object NthFrom(object coll, int n)
         {
             if (coll == null)
@@ -1054,6 +1067,11 @@ namespace clojure.lang
 
             // Java has RandomAccess here.  CLR has no equiv.
             // Trying to replace it with IList caused some real problems,  See the fix in ASeq.
+
+            // 序列（LazySeq、ASeq 也实现 IList）走下面的 Sequential 分支（同 JVM：它们不是 RandomAccess）：IList 的索引器抓着序列的头，
+            // (nth (map inc (range 3e7)) 29999999) 在 512 MB 堆下 OutOfMemory（cleat-117）
+            if (coll is ISeq || coll is LazySeq)
+                return NthFromSeq(coll, n);
 
             if (coll is IList ilist)
                 return ilist[n];
@@ -1092,18 +1110,22 @@ namespace clojure.lang
             }
 
             if (coll is Sequential)
-            {
-                ISeq seq = RT.seq(coll);
-                coll = null;
-                for (int i = 0; i <= n && seq != null; ++i, seq = seq.next())
-                {
-                    if (i == n)
-                        return seq.first();
-                }
-                throw new ArgumentOutOfRangeException("n");
-            }
+                return NthFromSeq(coll, n);
 
             throw new InvalidOperationException("nth not supported on this type: " + Util.NameForType(coll.GetType()));
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]   // 遍历传入的序列：tier-0 把形参报告为整个方法内活着，会抓住惰性序列的头（cleat-117）
+        private static object NthFromSeq(object coll, int n)
+        {
+            ISeq seq = RT.seq(coll);
+            coll = null;
+            for (int i = 0; i <= n && seq != null; ++i, seq = seq.next())
+            {
+                if (i == n)
+                    return seq.first();
+            }
+            throw new ArgumentOutOfRangeException("n");
         }
 
 
@@ -1435,9 +1457,11 @@ namespace clojure.lang
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         public static int intCast(object x)
         {
+            if (x is long l)
+                return intCast(l);
             if (x is int i)
                 return i;
-            return intCast(longCast(x));
+            return intCast(LongCastSlow(x));
         }
 
 
@@ -1531,11 +1555,12 @@ namespace clojure.lang
         #region long casting
 
 
-        public static long longCast(object x)
-        {
-            if (x is long lng)
-                return lng;
+        // long 的快路径内联进调用方（数组下标、^long 转换都经过这里），其余类型在 LongCastSlow
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static long longCast(object x) => x is long lng ? lng : LongCastSlow(x);
 
+        private static long LongCastSlow(object x)
+        {
             if (x is int i)
                 return (long)i;
 

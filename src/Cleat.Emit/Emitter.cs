@@ -442,7 +442,8 @@ public sealed partial class LcilEmitter
             // (reduce + (map inc (range 3e7))) 抓住惰性序列的头（512 MB 堆下 OutOfMemory）；函数类的方法分层编译
             // 分层编译只给带 (attrs tiered) 的方法（codegen：函数体有循环或自递归的顶层 defn）：只调用一次、没有循环的方法停在 tier-0 时，
             // JIT 为调用实参建的临时变量在调用期间抓着惰性序列（实参无法在 IL 里清掉）；有循环的经 OSR 进入优化代码
-            bool optimize = _tiered ? (t.Name == _asm.EntryType || !m.Attrs.Contains("tiered")) : m.Attrs.Contains("optimize");
+            // 写成文件的镜像与包（cleat-117）：codegen 同样给分层的函数类加 tiered，这些方法不加 AggressiveOptimization
+            bool optimize = _tiered ? (t.Name == _asm.EntryType || !m.Attrs.Contains("tiered")) : m.Attrs.Contains("optimize") && !m.Attrs.Contains("tiered");
             var impl = (optimize ? MethodImplAttributes.AggressiveOptimization : 0)
                      | (m.Attrs.Contains("async") ? (MethodImplAttributes)0x2000 : 0);
             if (impl != 0) mb.SetImplementationFlags(impl);
@@ -634,7 +635,7 @@ public sealed partial class LcilEmitter
             }
         }
         DefineLabels(m.Body);
-        if (_tiered && t.Name != _asm.EntryType)
+        if ((_tiered && t.Name != _asm.EntryType) || m.Attrs.Contains("tiered"))
         {
             cx.TakeLoads = TakeLoadsFor(m);
             s_take ??= LoadReference(CoreAssemblyName).GetType("Cleat.Core.Runtime.Locals", true).GetMethod("Take");

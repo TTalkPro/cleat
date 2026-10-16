@@ -534,7 +534,10 @@
   "Returns true if x is logical false, false otherwise."
   {:tag Boolean
    :added "1.0"
-   :static true}
+   :static true
+   ;; cleat-117：调用点直接展开成 if（JVM 由 JIT 内联；cleat 的守卫式内联让函数体不再"纯"，数值递归函数就没有类型化入口）
+   :inline (fn [x] `(if ~x false true))
+   :inline-arities #{1}}
   [x] (if x false true))
 
 (defn some?

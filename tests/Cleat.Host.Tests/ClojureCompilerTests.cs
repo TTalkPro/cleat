@@ -192,6 +192,20 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-117：镜像与包里的函数类也分层编译。tests/Cleat.Host.Tests/data/lazy_head_core.clj 在 512 MB 堆下把 3000 万元素的惰性序列交给只调用一次的
+    /// 核心函数（dorun、last、nth、count、reduce、apply、some、every?、run!、filter、take、drop、doseq、多序列 map、partition、transduce、concat），
+    /// 输出与 .out 逐字相同（与 JVM Clojure 的结果相同）。
+    /// </summary>
+    [Test]
+    public void CoreFunctionsKeepLazySeqsCollectable()
+    {
+        string data = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data");
+        var r = HostProcessTests.CleatInWithTimeout(_dir, null, new[] { ("DOTNET_GCHeapHardLimit", "0x20000000") }, 900_000, Path.Combine(data, "lazy_head_core.clj"));
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Is.EqualTo(File.ReadAllText(Path.Combine(data, "lazy_head_core.out"))), r.ToString());
+    }
+
+    /// <summary>
     /// cleat-112：deftype / defrecord 的 ^long / ^double 字段编成 Int64 / Double 字段（构造器形参仍是 object，另有按字段类型的构造器），方法体里原始读写，
     /// 外部 (.-f x) 静态决议到原始字段。tests/Cleat.Host.Tests/data/primfield_semantics.clj 的输出与 .out 逐字相同
     /// （与 JVM Clojure 1.12 对照过：类型名之外只有 map->P 给 ^long 字段 1.5 时 JVM 报错、cleat 按 longCast 截断）。
