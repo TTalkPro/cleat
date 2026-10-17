@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Threading;
 using clojure.lang;
+using Cleat.Core.Runtime;
 using NUnit.Framework;
 
 namespace Cleat.Core.Tests;
@@ -316,4 +317,18 @@ internal sealed class Fn1 : AFn
     private readonly Func<object, object> _f;
     public Fn1(Func<object, object> f) { _f = f; }
     public override object invoke(object a) => _f(a);
+}
+
+// cleat-121：nth 字符分支用 JVM Character cache 的范围，避免反复读同几个 ASCII 字符时重复装箱
+public class CharBoxTests
+{
+    [Test]
+    public void CachedAsciiCharsFromNthAreIdentical()
+    {
+        Assert.That(RT.nth("abc", 0), Is.SameAs(RT.nth("azz", 0)));
+        Assert.That(RT.nth("abc", 1), Is.SameAs(CharBox.Get('b')));
+        Assert.That(RT.nth("abc", 2, 'x'), Is.EqualTo('c'));
+        Assert.That(RT.nth("abc", 3, 'x'), Is.EqualTo('x'));
+        Assert.That(CharBox.Get('ā'), Is.EqualTo('ā'));
+    }
 }

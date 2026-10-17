@@ -1060,7 +1060,7 @@ namespace clojure.lang
                 return null;
 
             if (coll is string str)
-                return str[n];
+                return Cleat.Core.Runtime.CharBox.Get(str[n]);   // JVM Character cache 对齐：nth 反复读同几个字符时不重复装箱
 
             if (coll.GetType().IsArray)
                 return ((Array)coll).GetValue(n); // CLEAT-005: was Reflector.prepRet(elemType, value); prepRet is the identity in ClojureCLR
@@ -1155,7 +1155,7 @@ namespace clojure.lang
             if (coll is string s)
             {
                 if (n < s.Length)
-                    return s[n];
+                    return Cleat.Core.Runtime.CharBox.Get(s[n]);
                 return notFound;
             }
 

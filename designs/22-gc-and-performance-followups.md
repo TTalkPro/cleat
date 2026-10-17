@@ -118,6 +118,7 @@ eval 已使用不可回收 ALC 与 `PersistedAssemblyBuilder` 获得分层编译
 - 避免快路径分配实参数组、缓存 key、委托或包装对象；
 - 大方法拆冷路径，防止 JIT 内联预算耗尽；
 - double 装箱继续经不内联的 `LongBox.Double`，避免分配调用让循环 double 落到栈槽。
+- 字符快路径用 `CharBox` 缓存 0 ~ 127（cleat-121，browse 的字符串 `nth`）；只对齐 JVM 的 `Character.valueOf` 缓存范围，不扩大到所有 char。
 
 ### D7：装箱缓存不盲目扩大
 
