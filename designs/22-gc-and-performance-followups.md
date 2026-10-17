@@ -1,6 +1,6 @@
 # 22 GC 与性能后续：M11 之后的重构方向
 
-> 状态：**提案**（2026-10-16）。来源：[r7rs-performance](../notes/r7rs-performance.md)、
+> 状态：**收口**（2026-10-18）。来源：[r7rs-performance](../notes/r7rs-performance.md)、
 > [array1](../notes/array1.md)、[escape-continuations-and-try](../notes/escape-continuations-and-try.md)
 > [GC 配置两机实测](../notes/gc-config-and-tier0-two-machines.md) 与 cleat-107 ~ 117 的剖析。
 > 本文处理 M11 收口后仍剩下的分配、GC 存活、异常与宿主差异；不承诺全部实现。
@@ -43,6 +43,22 @@ linux01 已不可用，改用本地 8 线程 i9-13900H 与 david@192.168.3.111�
 | deriv / cpstak 的 server GC 回归随核数放大（4 核 +7~15%，8 线程 +80~90%） | 同上 | 默认值风险确认；多核机器是尾部风险 |
 | JVM 堆砍到 512MB，array1 不变、GC 次数 ×4.6 不掉速 | JVM 参数矩阵 | "JVM 靠堆大"假设关闭；优势是单次回收成本 |
 | 内联 / tier-0 开关在 r7rs 尺度对 array1 只有 0 ~ 11%，server+gen0 下归零 | array1 开关对照 | D1 / D2 降级：cleat-120 先复测确认再诊断，不作为 array1 的主要杠杆 |
+
+### §0.3 c126 本地-only 收口（2026-10-18）
+
+按用户决定，cleat-126 只在本地 linux01（AMD Ryzen 7 9700X，8C / 16T）测量，不再使用 `192.168.3.111`。
+r7rs 56 项对 OpenJDK 25 C2 各 3 轮取最小，几何平均 **1.671**，与 cleat-130 normal 的 1.673 持平；
+C2 自身对照几何比 1.005。`browse` 4.8061 → 4.6185 s、`gcbench` 1.2171 → 1.1838 s、
+`cpstak` 13.0810 → 12.7865 s、`peval` 15.5741 → 15.2306 s，方向与 cleat-121 的分配快路径一致；
+全量仍是噪声级持平。完整 56 项与污染对照见任务书 cleat-126。
+
+GC 矩阵的本地复跑维持“不进默认值”：server + gen0 256MB 把 `array1` 从 14.327 s 降到 5.859 s，
+但 `deriv` / `cpstak` 分别 +16.4% / +12.4%；单独 server 也会让 `deriv` +5.1%、`cpstak` +5.8%。
+JVM 小堆矩阵继续显示 `array1` 变慢、GC 次数大幅上升，不改变 §6。
+
+分配采样确认 `browse` 的 `System.Char` 约为 1.84 GB（cleat-121 改前约 3.86 GB）；其余主导仍是
+`array1` 的装箱 long / 对象数组、`cpstak` 的闭包与装箱、`peval` / `browse` 的 `MPair`、
+`mbrotZ` 的 `Complex` 和 `string` 的宿主字符串搬运。没有新的安全泛化快路径。
 
 ## §1 tier-0 生命周期与 OSR
 
@@ -240,9 +256,9 @@ mbrotZ 的前提：Complex 会传进 `c+` / `c*`（违反"不传给未知调用"
 
 ## §7 度量与验收
 
-每个方向先做最小复现，再改实现。固定报告：
+每个方向先做最小复现，再改实现。自 2026-10-17 起按用户决定只做本地测量；固定报告：
 
-- 两台可用机器（本地 8 线程 i9-13900H、192.168.3.111 4 vCPU）的 r7rs 受影响项，3 轮 min；
+- linux01 本地（AMD Ryzen 7 9700X，8C / 16T）的 r7rs 受影响项，3 轮 min；
 - `bench/` 相关项；
 - `dotnet-counters` 或现有工具的 allocation rate、gen0 / gen1 / gen2、LOH 字节数；
 - `perf` / `dotnet-trace` 中的 GC mark / plan / relocate、`RhpNewFast`、write barrier；
@@ -272,6 +288,6 @@ mbrotZ 的前提：Complex 会传进 `c+` / `c*`（违反"不传给未知调用"
    - **cleat-123 有限标量替换**（先解决小 deftype 操作函数的内联）；
    - **cleat-124 字符串局部优化**；
    - **cleat-125 非本地逃逸协议**：依赖 122 的结论，且需要语言层构造。
-4. **cleat-126 全量重测与收口**（依赖 120 ~ 125）。
+4. **cleat-126 全量重测与收口**（依赖 120 ~ 125，2026-10-18 本地-only 完成）。
 
 每步完成后重测受影响基准；出现单项收益但整体回退时，保留诊断结论，不默认启用。
