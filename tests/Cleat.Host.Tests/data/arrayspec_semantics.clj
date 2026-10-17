@@ -19,3 +19,7 @@
 (show ((mk) (double-array [1.5 2.5])) ((mk) (long-array [1 2])) ((mk) (object-array [0.25])))
 (defn nested [a b] (loop [i 0 s 0] (if (< i (alength a)) (recur (inc i) (+ s (loop [j 0 t 0] (if (< j (alength b)) (recur (inc j) (+ t (* (aget a i) (aget b j)))) t)))) s)))
 (show (nested (long-array [1 2]) (long-array [3 4])) (nested (double-array [0.5]) (long-array [2 4])) (nested (object-array [1]) (double-array [1.5])))
+;; cleat-131：内联 / 已知调用在循环体里留下的 let 临时数组不能提到循环入口守卫；数组推测必须退回原循环。
+(defn make-u [] (object-array 2))
+(defn local-temp [n] (loop [i 0 acc 0] (if (< i n) (let [a (make-u)] (aset a 0 i) (recur (inc i) (+ acc (alength a)))) acc)))
+(show (local-temp 4))

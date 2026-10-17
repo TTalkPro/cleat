@@ -1032,8 +1032,12 @@
   (when (and opt-arrayspec? (spec-simple? body1)
              (l3-some? (fn [j] (nanopass-case [L3 Expr] j [(jump ~x2 ~e* ...) (= x2 x)] [else false])) body1 true))
     (let [uses (array-uses body1)
+          body-binders (set (spec-binders body1))
           cands (keep (fn [[v u]]
-                        (when (and (not (some #(= v %) x*)) (not (hget assigned-vars v)) (not (#{:l64 :fl :fx} (hget var-types v))))
+                        ;; 守卫要放在循环入口，所以只有循环体外绑定的数组才可推测。
+                        ;; 内联结果这类 let 临时在循环体内绑定；若不排除，副本会引用未进入绑定的原名。
+                        (when (and (not (some #(= v %) x*)) (not (contains? body-binders v))
+                                   (not (hget assigned-vars v)) (not (#{:l64 :fl :fx} (hget var-types v))))
                           (when-let [ts (array-guesses u)] [v ts])))
                       (sort-by (comp str key) uses))]
       ;; 第一版只推测一个变量（多个变量的组合会让副本成倍增长）

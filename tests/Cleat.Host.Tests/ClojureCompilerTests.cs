@@ -411,6 +411,7 @@ public class ClojureCompilerTests
         Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
         Assert.That(on.Out, Is.EqualTo(off.Out), "arrayspec on:\n" + on.Out + "\narrayspec off:\n" + off.Out);
         Assert.That(on.Out, Does.StartWith("6 2.0 9 3 6.5 3 200 1.5\n"), on.ToString());
+        Assert.That(on.Out, Does.Contain("\n8\n"), on.ToString());
     }
 
     [Test]

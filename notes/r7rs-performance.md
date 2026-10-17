@@ -313,3 +313,11 @@ nohint / normal 几何比是 cleat 1.101、C2 1.004、GraalVM 1.008。
 补充微基准：数组推测开启 / 关闭中位数为 long-sum 2.111 / 42.681 ms、long-fill 1.396 / 153.610 ms、
 double-sum 3.204 / 8.820 ms、object-count 3.253 / 3.892 ms。eval-only 类型反馈两参候选
 50M 次为 141.060 / 85.180 ms（约 1.12 ns / 次残差），常规文件路径仍是零触发；继续支持 cleat-129 关闭。
+
+## cleat-131 nohint maze 的作用域修复（2026-10-17）
+
+上面 nohint `maze` 的失败根因不是基准源，而是数组推测违反了自己的候选前提：`print-hexmaze`
+里的内联结果留在循环体的 `let` 临时变量中，旧判断却把它当作循环外数组，先在循环入口生成
+`isinst` 守卫，再引用还未绑定的 `g$t$…$inl`。cleat-131 现在收集循环体内的 `let` / label / 形参绑定；
+候选命中这些名字时保留原循环。`arrayspec_semantics` 已补循环体内已知调用返回数组的用例，
+nohint `maze` 也能用原始输入完整运行。
