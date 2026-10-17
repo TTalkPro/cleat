@@ -125,3 +125,111 @@ catch ExceptionInfo {                 catch ExceptionInfo { ... }   ; 保留，�
 - 更新（2026-10-17，cleat-125）：已采用保守标注的返回值协议。语言层 `(escape* (fn [k] …))` 分配 owner；只对 `^:escape`
   形参的已证明直接调用点返回 marker，其余读法回退到异常协议，普通调用不加 marker 检查。保护区里从受保护块返回受限，
   统一用 marker 异常走旧协议。fibc / ctak 分别约 31x / 50x；跨线程与超出动态范围的续延不在本协议范围内。
+
+## 5. `escape*` 的用法与多层返回协议
+
+### 5.1 用法
+
+基本形式：
+
+```clojure
+(escape* (fn [k] body))
+```
+
+进入表达式时创建一个单向逃逸续延 `k`；在动态范围内调用 `(k v)` 会让整个 `escape*` 表达式的值变成 `v`，之后的 body 不执行。
+不调用 `k` 时，`escape*` 的值就是 body 的正常返回值。
+
+跨函数传播要写成 `fn*` 并标注形参（当前 `defn` 会剥掉形参元数据）：
+
+```clojure
+(def target
+  (fn* [x ^:escape k]
+    (if (= x :escape)
+      (k :escaped)
+      [:normal x])))
+
+(def pass
+  (fn* [x ^:escape k]
+    (target x k)))
+
+(escape* (fn [k] (pass :escape k)))
+;; => :escaped
+```
+
+`k` 只应在 `escape*` 的动态范围内调用；保存到外部、跨线程、跨异步边界或把它当作可重入 `call/cc` 使用都不在本协议内。
+
+### 5.2 多层退栈
+
+快速路径不是真正的跨栈跳转，也不是保存/恢复调用栈，而是协作式 marker 返回链：
+
+```text
+(k v)
+  → EscapeInvoke(owner, v) 返回 EscapeMarker(owner, v)
+  → 调用点 EscapePropagate 看到 marker
+  → 当前方法立刻 ret / throw marker
+  → 逐层穿过已证明调用点
+  → escape* 边界 EscapeUnwrap 拆本层 marker
+```
+
+对上面的 `pass` / `target`：
+
+```text
+escape* owner O
+  └─ pass
+      └─ target
+          └─ (k :escaped)
+              returns Marker(O, :escaped)
+      ← pass 看到 marker，立刻返回
+  ← EscapeUnwrap(O, marker) 返回 :escaped
+```
+
+物理栈仍然逐帧返回；区别是中间帧用普通返回值把 marker 送出去，不走 CLR 异常展开。因此只有编译器能证明的路径启用这套协议：
+
+- 对 `:escape` 局部的单参直接调用；
+- 直接把 `:escape` 局部传给 Var 声明为 `:escape-params` 的指定参数位置。
+
+未证明路径经 `EscapeFallbackOf` 回到旧异常协议：owner 被普通调用时 `EscapeOwner.invoke` 抛 marker，由 `escape*` 边界的
+`EscapeCatch` 拆自己的 marker。这样普通调用不加 marker 检查。
+
+### 5.3 owner / marker 与嵌套边界
+
+`EscapeOwner` 是本次 `escape*` 执行的身份；`EscapeMarker` 携带 owner 和逃逸值。`EscapeUnwrap` 只拆 owner 引用相同的 marker：
+
+```csharp
+if (ReferenceEquals(m.Owner, owner))
+    return m.Value;
+
+throw m;   // 别人的 marker 继续向外传播
+```
+
+所以嵌套情况下：
+
+```clojure
+(escape*
+  (fn [outer-k]
+    (escape*
+      (fn [inner-k]
+        (outer-k :from-inner)))))
+;; => :from-inner
+```
+
+`(outer-k :from-inner)` 产生外层 owner 的 marker；内层边界发现不是自己的 owner，rethrow；外层边界匹配后返回值。
+
+非尾位置不能把 marker 当普通值继续计算，因此 `EscapePropagate` 在尾位置 `ret` marker，在非尾位置 `throw` marker。
+`try / catch / finally` 保护区里 CIL 不能从受保护块 `ret`，改走 `EscapePropagateProtected`，用 marker 异常穿过保护区；
+`escape*` 自己的 catch 再拆本层 marker。
+
+## 6. 为什么 JVM 的 try / catch / finally 通常代价更低
+
+CLR 的异常模型面向多语言统一语义、确定性 finally / fault 清理、异常过滤、managed/native interop 和运行时服务，
+异常路径采用通用两遍式查找与栈展开。正常路径很便宜，但 throw 通常要经历处理器查找、栈展开和保护区语义处理；
+JIT 一般不把同方法 throw/catch 优化成普通跳转。
+
+JVM/Clojure 编译器本身不高级很多：JVM 字节码也没有真正的 finally，通常把 finally 复制到正常、catch 和异常出口。
+关键差别在于 HotSpot 对特定形态有低成本变换：预分配异常避免构造成本；内联后如果 `athrow` 和匹配 handler 落在同一个
+编译单元，C2 可把 throw 编成跳到 handler 的普通跳转。旧协议里预分配 `escape-ex` 的 fibc 正处在这种形态，所以同方法
+throw/catch 在 JVM 上约 5 ns，而 CLR 上约 1.8–2.0 µs。跨方法异常仍会走 JVM 通用异常机制；这个数字不代表所有 JVM
+异常都便宜。
+
+这也是 cleat-125 不继续压异常、而引入 `escape*` marker 返回协议的原因：在热逃逸路径上避免 CLR 通用异常展开，
+只在证明失败或保护区回退时才依赖旧异常协议。
