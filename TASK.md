@@ -131,7 +131,7 @@
 | [cleat-122](tasks/cleat-122-local-throw-to-leave.md) | 本方法内已知 throw 编成 leave（保留其他异常捕获；先统计，预计关闭） | M12 | cleat-119 | 关闭（频率为零） |
 | [cleat-123](tasks/cleat-123-limited-scalar-replacement.md) | 有限标量替换：非逃逸 primitive record / deftype | M12 | cleat-119 | 完成 |
 | [cleat-124](tasks/cleat-124-string-copy-reduction.md) | 字符串热点的 UTF-16 搬运优化 | M12 | cleat-119 | 关闭（试过无收益） |
-| [cleat-125](tasks/cleat-125-nonlocal-escape-protocol.md) | 非本地逃逸协议调研与原型 | M12 | cleat-122 | 未开始 |
+| [cleat-125](tasks/cleat-125-nonlocal-escape-protocol.md) | 非本地逃逸协议调研与原型 | M12 | cleat-122 | 完成 |
 | [cleat-126](tasks/cleat-126-gc-performance-rerun.md) | M12 收尾：GC、分配与性能全量重测 | M12 | cleat-120 ~ 125 | 未开始 |
 | [cleat-127](tasks/cleat-127-array-param-speculation.md) | 数组推测：循环里无提示数组变量的类型化访问 | M13 | cleat-118 | 完成 |
 | [cleat-128](tasks/cleat-128-type-feedback-profiling.md) | 类型反馈：剖面记录、触发与量化 | M13 | cleat-119 | 未开始 |

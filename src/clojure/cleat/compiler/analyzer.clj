@@ -91,7 +91,7 @@
 
 (def ^:private special-names
   #{"def" "if" "do" "let*" "loop*" "recur" "fn*" "quote" "var" "throw" "try" "monitor-enter" "monitor-exit" "." "new"
-    "set!" "letfn*" "case*" "deftype*" "reify*" "proxy-class*" "gen-class*" "await*" "import*" "catch" "finally" "&"})
+    "set!" "letfn*" "case*" "deftype*" "reify*" "proxy-class*" "gen-class*" "await*" "import*" "escape*" "catch" "finally" "&"})
 
 (defn- special-head
   "形式头部的特殊形式名（未限定；import* 也可以是 clojure.core/import*），否则 nil。"
@@ -378,7 +378,11 @@
 
 (defn- analyze-symbol [sym ctx]
   (if-let [l (and (nil? (namespace sym)) (find-local ctx sym))]
-    (:name l)
+    ;; cleat-125：escape 续延局部作为普通值读出时不能假定对方走 marker 返回协议，包回旧的异常续延；
+    ;; 直接调用点在 analyze-seq / var-call 里另行识别，只有已证明路径才保留 marker。
+    (if (= :escape (:kind l))
+      (clj-call "EscapeFallbackOf" false (:name l))
+      (:name l))
     (let [[o msg private?] (resolve-in (current-ns) sym)]
       (cond
         (instance? Var o) (if (.IsMacro ^Var o)
@@ -396,6 +400,31 @@
 ;; —— 调用（syntax.sls application / var-call，namespaces.sls default-var-call）——
 
 (defn- invoke-node [f args] (L0-out (clj-invoke ~f ~@args)))
+
+(defn- escape-local [ctx x]
+  (when (and (symbol? x) (nil? (namespace x)))
+    (when-let [l (find-local ctx x)]
+      (when (= :escape (:kind l)) l))))
+
+(defn- analyze-call-arg [ctx x]
+  (if-let [l (escape-local ctx x)]
+    (clj-call "EscapeFallbackOf" false (:name l))
+    (analyze x (assoc (ctx-nontail ctx) :pos (position x ctx)))))
+
+(defn- escape-param-positions
+  "fn* 形参上的 ^:escape 元数据（cleat-125）：返回参数位置的向量，用于把 Var 标成 marker 感知调用。"
+  [init]
+  (when (and (clj-list? init) (seq init) (sym-is? (first init) "fn*"))
+    (let [rest-items (rest init)
+          single? (vector? (first rest-items))
+          clauses (if single? [rest-items] rest-items)]
+      (when (= 1 (count clauses))
+        (let [cl (first clauses)
+              params (first cl)]
+          (when (vector? params)
+            (->> (map-indexed (fn [i p] (when (:escape (meta p)) i)) params)
+                 (remove nil?)
+                 (mapv long))))))))
 
 (defn- prim-kind [t]
   (when (and (symbol? t) (nil? (namespace t)))
@@ -558,6 +587,19 @@
           (analyze (transfer-source (.applyTo ^clojure.lang.IFn inline (next form)) form) (assoc ctx :pos pos)))
       (and (= n 2) (= (str v) "#'clojure.core/instance?") (maybe-type ctx (first args)))
       (clj-call "IsInstanceOf" false (q (maybe-type ctx (first args))) (analyze (second args) (assoc nt :pos pos)))
+      ;; cleat-125：目标 Var 声明了 ^:escape 形参，而这一位置确实传直接续延局部时才走 marker 返回协议。
+      ;; 这个分支放在内联 / 原始签名 / 直接调用前面；其余带 ^:escape 形参的调用仍按普通函数处理，
+      ;; analyze-call-arg 会把续延包成异常回退，保证未证明路径不改语义。
+      (and (vector? (:escape-params vm)) (= n (count (:escape-params vm)))
+           (some #(and (nth (:escape-params vm) %) (escape-local ctx (nth args % nil)))
+                 (range n)))
+      (let [ analyzed-args (map-indexed
+                             (fn [i x]
+                               (if (and ((set (:escape-params vm)) i) (escape-local ctx x))
+                                 (analyze x nt)   ; 直接传 owner，被调函数自己知道这是 marker 续延
+                                 (analyze-call-arg ctx x)))
+                             (vec args))]
+        (clj-call "EscapePropagate" false (invoke-node (var-reference v) analyzed-args)))
       ;; 只在 fn 体里内联（顶层形式只运行一次：留给简单解释，调用帧也照旧）；实参是 NaN 字面量时不内联——形参本是对象，
       ;; 同一个常量对象 (= a b) 为真，内联后常量传播成原始 double 的比较就为假（cleat-116）。
       ;; 有原始签名的函数也先内联（子句带着与 invokePrim 相同的转换，cleat-123），否则走 PrimInvoke。
@@ -587,7 +629,12 @@
       (special-head op) (analyze-special (special-head op) form ctx)
       (symbol? op)
       (if-let [l (and (nil? (namespace op)) (find-local ctx op))]
-        (invoke-node (:name l) (mapv #(analyze % (ctx-nontail ctx)) (rest form)))
+        ;; cleat-125：escape 续延的单参调用返回 marker；结果是否向外传播由外层调用点的 EscapePropagate 决定。
+        (if (and (= :escape (:kind l)) (= 1 (count (rest form))))
+          ;; 局部续延调用也必须立刻离开当前方法：尾位置 ret marker，非尾位置 throw marker，避免被普通绑定吞掉
+          (clj-call "EscapePropagate" false
+                    (clj-call "EscapeInvoke" false (:name l) (analyze (second form) (ctx-nontail ctx))))
+          (invoke-node (:name l) (mapv #(analyze % (ctx-nontail ctx)) (rest form))))
         (let [[o msg private?] (resolve-in (current-ns) op)]
           (cond
             (and (instance? Var o) (.IsMacro ^Var o))
@@ -649,7 +696,9 @@
                         sm (meta sym)
                         dynamic? (boolean (:dynamic sm))
                         pos (position form ctx)
-                        n (name sym)]
+                        n (name sym)
+                        init-form (when init? (nth items (if doc 2 1)))
+                        eps (escape-param-positions init-form)]
                     (when dynamic? (.setDynamic v))
                     (when (and (not dynamic?) (> (count n) 2) (str/starts-with? n "*") (str/ends-with? n "*"))
                       (.WriteLine ^System.IO.TextWriter (RT/errPrintWriter)
@@ -661,9 +710,13 @@
                     (when-let [al (:arglists sm)]
                       (.setMeta v (cond-> (assoc (meta v) :arglists (second al))
                                     (prim-kind (:tag sm)) (assoc :tag (:tag sm)))))
+                    ;; ^:escape 形参必须先放 Var 元数据：函数体里的递归调用在 clj-def 求值之前分析
+                    (when (and eps (pos? (count eps)))
+                      (.setMeta v (assoc (meta v) :escape-params eps)))
                     (let [m (cond-> (assoc sm :line (long (if pos (first pos) 0)) :column (long (if pos (second pos) 0)) :file (source-file pos))
+                              (and eps (pos? (count eps))) (assoc :escape-params eps)
                               doc (assoc :doc doc))
-                          init-node (if init? (analyze (nth items (if doc 2 1)) (ctx-hinted ctx (name sym))) (q nil))
+                          init-node (if init? (analyze init-form (ctx-hinted ctx (name sym))) (q nil))
                           meta-node (analyze m (assoc (ctx-nontail ctx) :pos nil))]
                       (L0-out (clj-def ~v ~(boolean init?) ~dynamic? ~init-node ~meta-node))))))]
     (case (count items)
@@ -914,7 +967,12 @@
                     (let [outer-names (dedupe-names params)
                           lp (fresh-name "recur")
                           inner-names (dedupe-names params)
-                          locals (mapv (fn [p y] (make-local* p :arg y)) params inner-names)
+                          ;; ^:escape 形参是语言层续延：直接调用点保留 owner，普通读出由 analyze-symbol 回退
+                          locals (mapv (fn [p y]
+                                         (if (:escape (meta p))
+                                           (->Local p y nil false :escape)
+                                           (make-local* p :arg y)))
+                                       params inner-names)
                           bc (-> base-ctx (ctx-with-locals locals) (assoc :tail? true :loop [lp (count params)] :fn-name nm :hint nil))
                           body (if async? (async-body form (assoc bc :loop nil) (rest cl)) (analyze-body (rest cl) bc))
                           inits (mapv prim-param-init params outer-names)
@@ -939,6 +997,38 @@
       fnode)))
 
 (defn- sp-fn* [form ctx] (expand-fn* form false ctx))
+
+(defn- sp-escape*
+  "cleat-125 的语言层单向逃逸：(escape* (fn [k] body))。参数必须是直接 fn* 的单参子句；
+  每次执行分配 owner，body 的直接续延调用返回 marker，未证明路径经 EscapeFallbackOf 回到异常协议。"
+  [form ctx]
+  (let [raw-f (when (= 2 (count form)) (second form))
+        ;; 用户源码写 fn，读入后仍是 fn 宏调用；escape* 是特殊形式，先于参数的宏展开，这里统一到 fn*
+        f (when (and (clj-list? raw-f) (seq raw-f) (or (sym-is? (first raw-f) "fn*") (sym-is? (first raw-f) "fn")))
+            (if (sym-is? (first raw-f) "fn*") raw-f (apply list 'fn* (rest raw-f))))]
+    (when-not (and (clj-list? f) (seq f) (sym-is? (first f) "fn*"))
+      (err form ctx "escape* requires a direct (fn [k] ...) form"))
+    (let [rest-items (rest f)
+          single? (vector? (first rest-items))
+          clauses (if single? [rest-items] rest-items)
+          cl (when (= 1 (count clauses)) (first clauses))
+          params (when (and cl (vector? (first cl))) (first cl))]
+      (when-not (and params (= 1 (count params)) (symbol? (params 0)) (nil? (namespace (params 0))))
+        (err form ctx "escape* requires exactly one continuation parameter"))
+      (let [k (params 0)
+            owner-name (fresh-name (str k))
+            ex-name (fresh-name "ex")
+            fn-form (let [params' (assoc (vec params) 0 (with-meta k {:escape true}))]
+                      (apply list 'fn* [(apply list params' (rest cl))]))
+            body-ctx (ctx-with-locals ctx [(->Local k owner-name nil false :escape)])
+            body (expand-fn* fn-form false body-ctx)
+            invoked (L0-out (call ~body ~owner-name))
+            unwrapped (clj-call "EscapeUnwrap" false owner-name invoked)
+            handler (mk-lambda false [(mk-clause [ex-name] false
+                                       (clj-call "EscapeCatch" false owner-name ex-name))])
+            hs [["System.Exception" handler]]
+            node (L0-out (try-catch ~unwrapped (~(map first hs) ~(map second hs)) ...))]
+        (mk-let1 [owner-name] [(clj-call "NewEscapeOwner" false)] node)))))
 
 (defn- sp-await* [form ctx]
   (if (= 2 (count form))
@@ -1487,6 +1577,7 @@
     "proxy-class*" (sp-proxy-class* form ctx)
     "gen-class*" (sp-gen-class* form ctx)
     "await*" (sp-await* form ctx)
+    "escape*" (sp-escape* form ctx)
     "import*" (sp-import* form ctx)
     "catch" (err form ctx "catch must be inside try")
     "finally" (err form ctx "finally must be inside try")

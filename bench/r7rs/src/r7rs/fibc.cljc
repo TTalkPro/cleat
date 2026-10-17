@@ -1,29 +1,27 @@
 ;;; FIBC -- FIB using first-class continuations, written by Kent Dybvig
 (ns r7rs.fibc
-  (:require [r7rs.common :refer [hide read-input run-r7rs-benchmark]]
-            [r7rs.util :as u]))
+  (:require [r7rs.common :refer [hide read-input run-r7rs-benchmark]]))
 
 (defn succ [n] (+ n 1))
 (defn pred [n] (- n 1))
 
-;; addc 的自尾调用用 recur
-(defn addc [x y k]
-  (if (zero? y)
-    (k x)
-    (recur (succ x) (pred y) k)))
+;; cleat-125：语言层 escape* + ^:escape 续延形参。普通续延仍由 EscapeFallbackOf 回退到异常协议；
+;; 直接传 owner 的调用返回 marker，由调用点的 EscapePropagate 沿已证明路径传播。
+(def addc
+  (fn* [x y ^:escape k]
+    (if (zero? y)
+      (k x)
+      (recur (succ x) (pred y) k))))
 
-;; 原版的 call/cc 只作逃逸用：c 只在捕获它的 call/cc 的动态范围内被调用（经 addc 或直接 (c 0) / (c 1)），
-;; 所以用 util/call-with-escape，语义相同。最外层的 c 是普通函数 (fn [n] n)。
-(defn fibc [x c]
-  (if (zero? x)
-    (c 0)
-    (if (zero? (pred x))
-      (c 1)
-      (addc (u/call-with-escape
-             (fn [c] (fibc (pred x) c)))
-            (u/call-with-escape
-             (fn [c] (fibc (pred (pred x)) c)))
-            c))))
+(def fibc
+  (fn* [x ^:escape c]
+    (if (zero? x)
+      (c 0)
+      (if (zero? (pred x))
+        (c 1)
+        (addc (escape* (fn [c] (fibc (pred x) c)))
+              (escape* (fn [c] (fibc (pred (pred x)) c)))
+              c)))))
 
 (defn -main [& _]
   (let [count (read-input) input (read-input) output (read-input)

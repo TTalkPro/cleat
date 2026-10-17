@@ -173,6 +173,11 @@ Clojure 核心库的提前退出都不用异常（`reduced` 是包装值、由 r
 
 这不是 M11 后立即开工项。只有在 `throw/catch` 仍占主要时间、且本方法内 `leave` 无法覆盖时，才先做最小语义原型。
 
+**实现（2026-10-17，cleat-125）**：语言层新增 `escape*`。owner 只在 `escape*` 的动态范围内使用；fn* 形参标注 `^:escape`，
+只有 Var `:escape-params` 指定位置收到直接 escape 局部、以及对 escape 局部的单参调用启用 marker 返回。其他读法经
+`EscapeFallbackOf` 回到旧异常协议，普通调用不加检查；保护区改走 `EscapePropagateProtected`，不在受保护块 `ret`。
+第一版不做全局 / 线程局部 state，也不支持跨线程、跨异步或存续到动态范围后的续延。fibc 约 31x、ctak 约 50x。
+
 ## §4 有限标量替换
 
 ### D10：非逃逸 primitive record/deftype 降低

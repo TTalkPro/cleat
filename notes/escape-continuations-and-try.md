@@ -122,3 +122,6 @@ catch ExceptionInfo {                 catch ExceptionInfo { ... }   ; 保留，�
   （更正：Clojure 核心库的提前退出都不用异常——`reduced` 是包装值、由 reduce 检查，`some` 等是循环——所以核心库里基本没有这种模式，
   受益面很可能接近零）；fibc / ctak 仍按宿主固有差距对待。
   若要实现，先统计编译器里这种模式出现的次数再决定。
+- 更新（2026-10-17，cleat-125）：已采用保守标注的返回值协议。语言层 `(escape* (fn [k] …))` 分配 owner；只对 `^:escape`
+  形参的已证明直接调用点返回 marker，其余读法回退到异常协议，普通调用不加 marker 检查。保护区里从受保护块返回受限，
+  统一用 marker 异常走旧协议。fibc / ctak 分别约 31x / 50x；跨线程与超出动态范围的续延不在本协议范围内。

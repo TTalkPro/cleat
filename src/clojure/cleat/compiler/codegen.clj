@@ -1562,7 +1562,7 @@
            sl))]
       [else nil])))
 
-(declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry! cg-known-call!)
+(declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry! cg-known-call! cg-escape-propagate!)
 
 (defn- typed-self-ret
   "(clj-call \"TypedSelf\" …) 的返回类型（:l64 / :fl），别的节点 nil。"
@@ -2210,6 +2210,7 @@
        (= d0 "TypedSelf") (do (cg-typed-self! e mc) (box-raw! mc (typed-self-ret e)) (finish-value! mc ctx))   ; cleat-104
        (= d0 "TypedEntry") (cg-typed-entry! e* mc ctx)
        (= d0 "KnownCall") (cg-known-call! e* mc ctx)   ; cleat-110
+       (and (= d0 "EscapePropagate") (= 1 (count e*))) (cg-escape-propagate! (first e*) mc ctx)   ; cleat-125
        (and (= d0 "IsInstanceOf") (= 2 (count e*))
             (let [t (quoted-datum (first e*))]
               (and (instance? Type t) (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))))
@@ -2679,6 +2680,25 @@
           (emit! mc (i 'label end))
           (when merge (emit! mc (i 'ldloca merge)) (take-slot! mc)))
         (finish-value! mc ctx)))))
+
+(defn- cg-escape-propagate!
+  "(clj-call \"EscapePropagate\" #f 子表达式)（cleat-125）：marker 是跨调用返回的信号。不在保护区内时，
+  尾位置直接 ret；其他位置 throw 同一个 marker（立刻离开当前方法，owner 会在外层拆包）。保护区里 CIL 不允许
+  ret / 覆盖用户的 catch 语义，因此退回运行时异常协议。"
+  [e mc ctx]
+  (if (pos? @(:try-depth mc))
+    ;; 用另一个运行时入口，避免 clj-call 分派再次进入本特殊节点
+    (cg* (with-output-language [L3 Expr] (out (clj-call "EscapePropagateProtected" false ~e))) mc ctx)
+    (let [r (new-local! mc obj)
+          normal (new-label! mc)]
+      (cg e mc :value)
+      (emit! mc (i 'stloc r) (i 'ldloc r) (i 'call clojure-ops-type "IsEscapeMarker" (i obj) bool-type) (i 'brfalse normal))
+      (emit! mc (i 'ldloc r))
+      (if (= ctx :tail)
+        (emit! mc (i 'ret))
+        (emit! mc (i 'throw)))
+      (emit! mc (i 'label normal) (i 'ldloc r))
+      (finish-value! mc ctx))))
 
 (defn- clj-typed-entry-method
   "invokeStaticTyped(self, T…) → R：类型化子句的体（cleat-104）。"

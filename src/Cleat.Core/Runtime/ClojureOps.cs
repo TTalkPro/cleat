@@ -157,6 +157,82 @@ public static class ClojureOps
 
     public static IFn ProxyFn(IPersistentMap map, string name) => map?.valAt(name) as IFn;
 
+    // —— escape*（cleat-125）：单向逃逸的 owner / marker 协议 ——
+    // owner 是语言层 escape* 每次执行分配的续延；语言层保证只在动态范围内调用。正常快速路径返回 marker，
+    // 由 EscapePropagate 沿调用链返回；保守回退时 owner 自身像旧 call-with-escape 一样抛 marker，由 EscapeCatch 拆开。
+
+    public sealed class EscapeOwner : AFn
+    {
+        public override object invoke(object value) => throw new EscapeMarker(this, value);
+    }
+
+    private sealed class EscapeMarker : Exception
+    {
+        public EscapeOwner Owner { get; }
+        public object Value { get; }
+
+        internal EscapeMarker(EscapeOwner owner, object value)
+        {
+            Owner = owner;
+            Value = value;
+        }
+    }
+
+    /// <summary>escape* 进入时创建一个续延 owner。</summary>
+    public static object NewEscapeOwner() => new EscapeOwner();
+
+    /// <summary>
+    /// 已证明的续延调用：owner 返回 marker，普通函数照常调用。分析器只对 kind 为 :escape 的局部发出这里，
+    /// 其他续延形参先经 EscapeFallbackOf 包回异常协议。
+    /// </summary>
+    public static object EscapeInvoke(object k, object v)
+    {
+        if (k is EscapeOwner) return new EscapeMarker((EscapeOwner)k, v);
+        return ((IFn)NotNil(k, "escape continuation")).invoke(v);
+    }
+
+    /// <summary>escape* 的返回值：自己的 marker 拆值，别的 owner 的 marker 继续向外传播，普通值原样返回。</summary>
+    public static object EscapeUnwrap(object owner, object result)
+    {
+        if (result is EscapeMarker m)
+        {
+            if (ReferenceEquals(m.Owner, owner)) return m.Value;
+            throw m;
+        }
+        return result;
+    }
+
+    /// <summary>escape* 的 catch：只接收自己的回退 marker，别人的 marker 与普通异常重抛。</summary>
+    public static object EscapeCatch(object owner, object ex)
+    {
+        if (ex is Exception e)
+        {
+            if (e is EscapeMarker m && ReferenceEquals(m.Owner, owner)) return m.Value;
+            throw e;
+        }
+        throw new InvalidCastException("escape catch requires an Exception");
+    }
+
+    /// <summary>
+    /// 未证明路径的续延值：escape owner 保留自身的异常回退行为；普通函数不变。分析器在读 kind 不是调用点的
+    /// :escape 局部时发出这里，因此旧的普通调用仍然能捕获/传播逃逸。
+    /// </summary>
+    public static object EscapeFallbackOf(object k) => k;
+
+    /// <summary>保护区里不能发受保护块内的 ret；这里用 marker 异常退回现有异常协议。</summary>
+    public static object EscapePropagate(object result)
+    {
+        if (result is EscapeMarker m) throw m;
+        return result;
+    }
+
+    /// <summary>codegen 在 try / catch / finally 里的专用入口：语义上就是上面的保守异常回退。</summary>
+    public static object EscapePropagateProtected(object result) => EscapePropagate(result);
+
+    /// <summary>生成的快速传播代码用这个谓词分支，避免为嵌套 marker 类型发 TypeRef。</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    public static bool IsEscapeMarker(object result) => result is EscapeMarker;
+
     /// <summary>update-proxy：并入新映射（值为 nil 的键保留，于是该方法回到缺省行为）。</summary>
     public static IPersistentMap ProxyUpdate(IPersistentMap cur, IPersistentMap m) =>
         (IPersistentMap)((IPersistentCollection)(cur ?? PersistentHashMap.EMPTY)).cons(m);

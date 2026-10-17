@@ -427,6 +427,16 @@ public class ClojureCompilerTests
     }
 
     [Test]
+    public void EscapeReturnsMarkersAndFallsBackConservatively()
+    {
+        // cleat-125：直接 escape 调用返回 marker；普通值、跨函数传播、非尾逃逸、嵌套 owner、用户异常与保护区回退逐字不变
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "escape_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n")), on.ToString());
+    }
+
+    [Test]
     public void ArrayAccessIsResolvedStatically()
     {
         string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "array_semantics.clj");
