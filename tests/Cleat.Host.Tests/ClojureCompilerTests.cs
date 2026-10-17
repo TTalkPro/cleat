@@ -414,6 +414,19 @@ public class ClojureCompilerTests
     }
 
     [Test]
+    public void UserCallsInLoopsAreNotInlined()
+    {
+        // cleat-120：循环里的用户 wrapper 不再展开成带其他调用的内联体；wrapper 重定义、实参副作用与异常顺序仍逐字相同
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "loopinl_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "loopinl") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "loopinl on:\n" + on.Out + "\nloopinl off:\n" + off.Out);
+        Assert.That(on.Out, Is.EqualTo(File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n")), on.ToString());
+    }
+
+    [Test]
     public void ArrayAccessIsResolvedStatically()
     {
         string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "array_semantics.clj");

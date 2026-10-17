@@ -542,10 +542,15 @@
   image-id：镜像核对用的镜像 id（缺省正在运行的镜像；自举时为下一级镜像编编译器包，cleat-091）"
   ([package forms roots dll] (compile-package package forms roots dll nil))
   ([package forms roots dll image-id]
-   (let [pkg {:roots roots :segments (atom [])}]
-     (with-st {:package pkg :unit nil}
-       (run! eval-toplevel forms))
-     (compile-package-unit @(:segments pkg) package dll (or image-id (AotPaths/ClojureImageId))))))
+   (let [pkg {:roots roots :segments (atom [])}
+         rl @an/restrict-loop-inlines?]
+     ;; 包构建不做 eval 专属的循环体内联限制（cleat-120）：与 eval 不同的内联决定会让自举的接口文件跨级反馈，破坏种子不动点
+     (reset! an/restrict-loop-inlines? false)
+     (try
+       (with-st {:package pkg :unit nil}
+         (run! eval-toplevel forms))
+       (compile-package-unit @(:segments pkg) package dll (or image-id (AotPaths/ClojureImageId)))
+       (finally (reset! an/restrict-loop-inlines? rl))))))
 
 (defn- compile-reader
   "*compile-files* 为真时加载文件：这个文件与它加载到的、还没加载过的文件编成一个包程序集"

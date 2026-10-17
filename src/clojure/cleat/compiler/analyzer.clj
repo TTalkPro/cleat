@@ -454,6 +454,33 @@
 
 (def inline-calls? (atom (nil? (System.Environment/GetEnvironmentVariable "CLEAT_NO_INLINE"))))
 
+;; cleat-120：循环体里不内联"展开后还调用用户函数 / 宿主方法"的小函数（CLEAT_NO_OPT=loopinl 关）。调用点处在 loop* 体里
+;; （:in-loop ctx，fn* / catch 边界清除）且子句含真实调用时，内联会把被调用者的实参 / 结果挪进外层 fn 的 JIT 临时变量——
+;; 外层若是只跑几轮、靠 OSR 升级的驱动循环，.NET 的 OSR 补丁点不回降到少轮循环，方法整场停在插桩 tier-0，临时变量把每轮
+;; 流过的大对象多根一轮（array1 的 go 内联 my-try：500 轮 × 每轮两个百万元素数组，19.6 vs 14.4 s）。clojure.core 的
+;; 可内联助手视为已知小操作；用户函数的耗时和分配无法静态判断，只要子句还有真实调用就保守地留在循环外。运行时静态调用
+;; （CallStatic 的 Numbers / RT 快路径）与局部 lambda 调用（let / recur 的编译形态）不算——fft 的收益正来自把纯算术子句内联进循环。
+;; 镜像 / 包构建照旧不启用（driver 关掉 restrict-loop-inlines?）：与 eval 不同的内联决定会让自举的接口文件跨级反馈。
+(def opt-loopinl? (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "loopinl")))
+
+(def restrict-loop-inlines? (atom true))
+
+(defn- clause-has-calls?
+  "子句 S 表达式里有对别的函数 / 宿主方法的真实调用（clj-invoke / clj-static-call / clj-keyword-invoke / KnownCall / PrimInvoke）；
+  CallStatic 等运行时静态调用与 call 的局部 lambda / recur 形态不算；quote 里的不看。"
+  [sexpr]
+  (letfn [(walk [x]
+            (and (seq? x)
+                 (if (= 'quote (first x))
+                   false
+                   (or (let [h (first x)]
+                         (cond
+                           (#{'clj-invoke 'clj-static-call 'clj-keyword-invoke} h) true
+                           (= 'clj-call h) (contains? #{"KnownCall" "PrimInvoke"} (second x))
+                           :else false))
+                       (some walk x)))))]
+    (walk sexpr)))
+
 (def ^:private inline-cache (atom {}))
 
 (defn- find-type-named [^String cls]
@@ -533,8 +560,12 @@
       (clj-call "IsInstanceOf" false (q (maybe-type ctx (first args))) (analyze (second args) (assoc nt :pos pos)))
       ;; 只在 fn 体里内联（顶层形式只运行一次：留给简单解释，调用帧也照旧）；实参是 NaN 字面量时不内联——形参本是对象，
       ;; 同一个常量对象 (= a b) 为真，内联后常量传播成原始 double 的比较就为假（cleat-116）。
-      ;; 有原始签名的函数也先内联（子句带着与 invokePrim 相同的转换，cleat-123），否则走 PrimInvoke
-      (and @inline-calls? (:fn-name ctx) (not (some #(and (instance? Double %) (Double/IsNaN %)) args)) (inline-target v n))
+      ;; 有原始签名的函数也先内联（子句带着与 invokePrim 相同的转换，cleat-123），否则走 PrimInvoke。
+      ;; cleat-120：调用点在循环体里、被内联的不是 core 助手、且子句展开后还有真实调用时不内联（见 opt-loopinl? 的注释）
+      (and @inline-calls? (:fn-name ctx) (not (some #(and (instance? Double %) (Double/IsNaN %)) args)) (inline-target v n)
+           (not (and opt-loopinl? @restrict-loop-inlines? (:in-loop ctx)
+                     (not= "clojure.core" (str (.Name (.Namespace v))))
+                     (clause-has-calls? (second (inline-target v n))))))
       (inline-call (inline-target v n) v (mapv #(analyze % (assoc nt :pos pos)) args) (when (<= 1 n 4) (var-prim-sig vm n)))
       (and (<= 1 n 4) (var-prim-sig vm n))
       (apply clj-call "PrimInvoke" false (q (var-prim-sig vm n)) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
@@ -773,7 +804,7 @@
           (let [lp (fresh-name "loop")
                 ys (dedupe-names (map first pairs))
                 inner (mapv (fn [l y] (assoc l :name y)) locals ys)
-                bc (-> (ctx-with-locals c inner) (assoc :tail? true :loop [lp (count pairs)] :hint nil))
+                bc (-> (ctx-with-locals c inner) (assoc :tail? true :loop [lp (count pairs)] :hint nil :in-loop true))   ; :in-loop：cleat-120 的循环体内联限制；ctx-nontail 只清 :loop，recur 实参等非尾位置仍在循环里
                 body (analyze-body forms bc)
                 lbody (named-let lp "loop" ys names body)
                 inits (analyze-inits)]
@@ -969,7 +1000,7 @@
         b (analyze-body body (ctx-no-recur c tail?))
         hs (mapv (fn [[t b hforms]]
                    (let [bn (fresh-name (str b))
-                         hc (ctx-with-locals (ctx-no-await (ctx-no-recur c tail?)) [(->Local b bn (symbol (.FullName ^Type t)) false :catch)])]
+                         hc (ctx-with-locals (assoc (ctx-no-await (ctx-no-recur c tail?)) :in-loop nil) [(->Local b bn (symbol (.FullName ^Type t)) false :catch)])]   ; catch 是独立 lambda（codegen 单独成方法），:in-loop 到此为止
                      [(type-name t) (mk-lambda false [(mk-clause [bn] false (analyze-body hforms hc))])]))
                  catches)
         fin (when fin (analyze-body fin (ctx-no-await (ctx-no-recur c false))))]
