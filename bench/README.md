@@ -30,3 +30,8 @@ dotnet run tools/build.cs -- bench [-r 次数] [--write] [--only 正则]
 `baseline.edn` 是 M10 起点（2026-10-15，cleat-100 `bench --write`）的数字，M10 各任务在它之上对照；cleat-042 时期的基线与各步数字见 tasks/cleat-042。
 
 分配采样：`dotnet run tools/alloc.cs -- [--top N] -I bench -m bench.<名字>`（在本进程里跑宿主，按类型汇总 GCAllocationTick；`--first-chance` 打印每个异常，排错用）。
+
+M13 收尾资产：`r7rs/nohint.py` 生成无数组提示的 r7rs 源树（保留标量提示），
+`r7rs/run.py` 可用 `CLEAT_R7RS_SRC` 指向变体；`r7rs/run130.py` 在同一基准窗口交错跑
+cleat / C2 / GraalVM，`summarize130.py` 汇总按 variant / label 写入的 JSONL；
+`m13_micro.clj` 覆盖数组推测微基准与 eval-only 类型反馈候选（见文件头）。

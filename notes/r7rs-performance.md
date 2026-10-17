@@ -291,3 +291,25 @@ linux01 重装上线后地址为 192.168.0.10（上表 linux01 数字为历史�
 vs 19.6 s（`CLEAT_NO_OPT=loopinl` 关）；安静抽样中其他受影响基准基本持平。初始宽规则曾测出 1.026 几何平均，怀疑把
 `clojure.core/apply` 一类助手也挡住；只应把耗时不可静态判断的用户函数留在循环调用点。跑 A/B 时还须避开开机后另一 JVM
 应用等负载（同 cleat-123 教训），只采信同窗口安静环境结果。
+
+## cleat-130 M13 数组提示与三方收尾（2026-10-17，linux01 = 192.168.0.10）
+
+normal 与 nohint 各为 56 项 × 3 轮，`run130.py` 在同一基准 / 轮次窗口里交错跑 cleat、OpenJDK C2 与
+GraalVM；取每项最小值。normal 完整 56 项，几何比 cleat / C2 = 1.672、cleat / GraalVM = 1.791、
+GraalVM / C2 = 0.934。`fibc` / `ctak` 已改成 cleat 用 `escape*`、JVM 用 `r7rs.util/call-with-escape`，
+这次几何平均因此覆盖 56 项，不再排除这两项。
+
+nohint 由 `nohint.py` 生成：只移除 22 个文件里的元素数组提示，保留 `^long` / `^double` 等标量提示。
+nohint 的 `maze` 触发一个新的 cleat 编译器问题：`print-hexmaze` 报 `codegen: unbound variable g$t$…$inl`；
+关闭 `arrayspec` / `loopspec` / `infer` 任一项都能编译，所以问题在数组推测、循环推测和内联临时变量的交互。
+nohint 几何比只含另外 55 项：cleat / C2 = 1.817、cleat / GraalVM = 1.936、GraalVM / C2 = 0.937。
+
+数组提示本身的作用看 22 个改写文件中两变体都成功的 21 项：nohint / normal 的 cleat 几何比 **1.281**，
+也就是提示平均省约 22% 时间。fft 7.58x、simplex 2.63x、triangl 2.48x、mbrot 1.65x、quicksort 与
+conform 约 1.36x；array1 / matrix 基本持平，说明 array1 主要靠循环推测而不是元素数组提示。
+同 22 项 JVM 对照 C2 = 0.997、GraalVM = 1.009，证实差异来自 cleat 编译器。全部 55 个可比项的
+nohint / normal 几何比是 cleat 1.101、C2 1.004、GraalVM 1.008。
+
+补充微基准：数组推测开启 / 关闭中位数为 long-sum 2.111 / 42.681 ms、long-fill 1.396 / 153.610 ms、
+double-sum 3.204 / 8.820 ms、object-count 3.253 / 3.892 ms。eval-only 类型反馈两参候选
+50M 次为 141.060 / 85.180 ms（约 1.12 ns / 次残差），常规文件路径仍是零触发；继续支持 cleat-129 关闭。

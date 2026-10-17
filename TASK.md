@@ -136,7 +136,7 @@
 | [cleat-127](tasks/cleat-127-array-param-speculation.md) | 数组推测：循环里无提示数组变量的类型化访问 | M13 | cleat-118 | 完成 |
 | [cleat-128](tasks/cleat-128-type-feedback-profiling.md) | 类型反馈：剖面记录、触发与量化 | M13 | cleat-119 | 完成 |
 | [cleat-129](tasks/cleat-129-type-feedback-specialization.md) | 类型反馈：特化单元的编译、安装、退回与失效 | M13 | cleat-128 | 关闭（量化后不实现） |
-| [cleat-130](tasks/cleat-130-m13-rerun.md) | M13 收尾：数组推测微基准、r7rs 无提示变体与全量重测 | M13 | cleat-127、128 | 未开始 |
+| [cleat-130](tasks/cleat-130-m13-rerun.md) | M13 收尾：数组推测微基准、r7rs 无提示变体与全量重测 | M13 | cleat-127、128 | 完成 |
 
 ## 里程碑
 

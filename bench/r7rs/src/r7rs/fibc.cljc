@@ -1,6 +1,7 @@
 ;;; FIBC -- FIB using first-class continuations, written by Kent Dybvig
 (ns r7rs.fibc
-  (:require [r7rs.common :refer [hide read-input run-r7rs-benchmark]]))
+  (:require [r7rs.common :refer [hide read-input run-r7rs-benchmark]]
+            [r7rs.util :as u]))
 
 (defn succ [n] (+ n 1))
 (defn pred [n] (- n 1))
@@ -19,8 +20,8 @@
       (c 0)
       (if (zero? (pred x))
         (c 1)
-        (addc (escape* (fn [c] (fibc (pred x) c)))
-              (escape* (fn [c] (fibc (pred (pred x)) c)))
+        (addc #?(:cljr (escape* (fn [c] (fibc (pred x) c))) :clj (u/call-with-escape (fn [c] (fibc (pred x) c))))
+              #?(:cljr (escape* (fn [c] (fibc (pred (pred x)) c))) :clj (u/call-with-escape (fn [c] (fibc (pred (pred x)) c))))
               c)))))
 
 (defn -main [& _]

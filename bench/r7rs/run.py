@@ -7,7 +7,7 @@
 # 工作目录为 r7rs-benchmarks 仓库（读文件的基准按相对路径读 inputs/），标准输入是 inputs/<名字>.input。结果追加到 results/<impl>.jsonl。
 import json, os, re, subprocess, sys, time
 B = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(B, 'src')
+SRC = os.environ.get('CLEAT_R7RS_SRC', os.path.join(B, 'src'))
 R = os.environ['R7RS_BENCH']
 CLEAT = os.environ.get('CLEAT', os.path.dirname(os.path.dirname(B)))
 JAVA = os.environ.get('JAVA', 'java')
