@@ -79,6 +79,7 @@
 (def opt-arrayspec? (not (opt-off? "arrayspec")))
 (def opt-scalar? (not (opt-off? "scalar")))         ; 循环变量的 deftype 标量替换（cleat-123）
 (def opt-collapse? (not (opt-off? "collapse")))     ; 折叠内联子句的 arity 标签（cleat-123）   ; 循环里无提示的数组变量按元素类型推测（cleat-127）
+(def opt-typefeedback? (not (opt-off? "typefeedback")))   ; eval 候选的剖面记录（cleat-128；量化后 129 关闭）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
 ;; double 经不内联的 LongBox.Double 装箱：内联的 box 在值存活期间调用分配，SysV 的 xmm 寄存器都由调用方保存，
 ;; RyuJIT 于是把循环里的 double 变量整个放在栈上（每次迭代一次存取，sumfp 慢 4 倍）
@@ -1368,6 +1369,7 @@
 
 (def ^:private spec-entry-max-nodes 200)
 (def ^:private spec-entries (ht))   ; fn 的类名（名字记录的 :class）→ {:sig 签名 :clause 类型化子句}；每个编译单元清空
+(def ^:private spec-profiles (ht))   ; 推测失败 / 缺席的候选：类名 → 固定形参个数（cleat-128）；每个编译单元清空
 
 (defn- spec-self-ref? [e v]
   (nanopass-case [L3 Expr] e [(clj-var-ref ~d ~st) (identical? d v)] [else false]))
@@ -1479,21 +1481,37 @@
              (some (fn [[t r]] (spec-entry-try x* body v (mapv #(when % t) num) r))
                    [[:l64 :l64] [:l64 :fl] [:fl :fl]]))))])))
 
+(defn- spec-feedback-candidate
+  "cleat-104 的通用体条件成立但类型化入口不成立（推测失败，或没有数值证据）时返回形参个数（cleat-128）。"
+  [v nm fv* cl*]
+  (when (and (instance? clojure.lang.Var v) (l/clj-fn-name? nm) (empty? fv*) (= 1 (count cl*)) (false? (:variadic nm))
+             (not (:async? nm)) (empty? (:prims nm)))
+    (nanopass-case [L3 Clause] (first cl*)
+      [(clause (~x* ...) ~x ~body)
+       (when (and (not x) (<= 1 (count x*) 4) (spec-pure? body v)) (count x*))])))
+
 (define-pass speculate-entries L3 [ir] -> L3 []
   (Expr [ir] -> Expr []
     [(clj-def ~d ~st0 ~st1 ~[e0] ~[e1])
      (let [e0' (nanopass-case [L3 Expr] e0
                  [(lambda ~nm (~x* ...) ~cl* ...)
-                  (when-let [se (and (instance? clojure.lang.Var d) (not (hhas? spec-entries (:class nm))) (spec-entry d nm x* cl*))]
-                    (vreset! *spec-changed* true)
-                    (hput! spec-entries (:class nm) se)
-                    (let [cl (nanopass-case [L3 Clause] (first cl*)
-                               [(clause (~y* ...) ~y ~body)
-                                (with-output-language [L3 Clause]
-                                  (out (clause (~y* ...) ~y
-                                         ~(with-output-language [L3 Expr]
-                                            (out (clj-call "TypedEntry" false (quote ~[(:sig se) y*]) ~body))))))])]
-                      (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))]
+                 (let [pf (and opt-typefeedback? @live-unit? (spec-feedback-candidate d nm x* cl*))
+                       ;; 类型化入口不能依赖剖面开关 / eval 模式（cleat-104 的原有语义）
+                       se (and (instance? clojure.lang.Var d) (not (hhas? spec-entries (:class nm)))
+                               (spec-entry d nm x* cl*))]
+                   (cond
+                     se (do (vreset! *spec-changed* true)
+                            (hput! spec-entries (:class nm) se)
+                            (let [cl (nanopass-case [L3 Clause] (first cl*)
+                                       [(clause (~y* ...) ~y ~body)
+                                        (with-output-language [L3 Clause]
+                                          (out (clause (~y* ...) ~y
+                                                 ~(with-output-language [L3 Expr]
+                                                    (out (clj-call "TypedEntry" false (quote ~[(:sig se) y*]) ~body))))))])]
+                              (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))
+                     ;; 推测失败 / 缺席：类名和形参个数交给函数类生成静态剖面字段（cleat-128）
+                     pf (do (hput! spec-profiles (:class nm) pf) e0)
+                     :else e0))]
                  [else nil])]
        (out (clj-def ~d ~st0 ~st1 ~(or e0' e0) ~e1)))]))
 
@@ -1513,7 +1531,7 @@
 
 ;; —— 原始值（iron-034c / cleat-042，原版 cg-raw 等）——
 
-(declare cg cg* load-var! cg-raw l3-some? binding-code bind-value! bind-local! num-alias-loc)
+(declare cg cg* load-var! cg-raw l3-some? binding-code bind-value! bind-local! num-alias-loc cg-profile-args!)
 
 (defn- type-clr [t] (case t :fl double-type :l64 int64-type :num num-type int32-type))
 
@@ -2451,6 +2469,8 @@
   (nanopass-case [L3 Clause] cl
     [(clause (~x* ...) ~x ~body)
      (let [mc (make-method-ctx u class true nil nil nil)]
+       (when (and opt-typefeedback? @live-unit? (hget spec-profiles class))
+         (cg-profile-args! mc class (count x*)))
        (when self (hput! (:vars mc) self [:arg 0]))
        (bind-clause-params! mc x* 1 sig)
        (reset! (:big? mc) (bigger-than? body big-body-nodes))
@@ -2594,6 +2614,46 @@
     m))
 
 (def ^:private typed-bailout-type "Cleat.Core.Runtime.TypedBailout")
+(def ^:private type-feedback-type "Cleat.Core.Runtime.TypeFeedback")
+(def ^:private obj-array-type "System.Object[]")
+(def ^:private long-array-type "System.Int64[]")
+(def ^:private string-array-type "System.String[]")
+
+(defn- cg-profile-args!
+  "通用入口的活动剖面记录（cleat-128）：跨一个独立小方法调用运行时，避免入口主体里调用与后续分支组合成 RyuJIT 拒绝的形状。"
+  [mc class n]
+  (let [done (new-label! mc)]
+    (emit! mc (i 'ldsfld class "tfOn") (i 'brfalse done))
+    (doseq [j (range 1 (inc n))] (emit! mc (i 'ldarg j)))
+    (emit! mc (i 'call class "ProfileArgs" (apply i (objs n)) void-type)
+              (i 'label done))))
+
+(defn- profile-fields
+  "候选函数类的静态剖面状态（cleat-128）：每形参一个计数 / 类型槽；达到阈值时 Profile 返回 false 并写入 tfOn。"
+  [class n]
+  [(i 'field "tfName" string-type 'static 'readonly)
+   (i 'field "tfOn" bool-type 'static)
+   (i 'field "tfC" long-array-type 'static)
+   (i 'field "tfT" obj-array-type 'static)
+   (i 'field "tfN" string-array-type 'static)
+   (i 'method "ProfileArgs" (i 'attrs 'static) (apply i 'params (objs n)) (i 'ret void-type) (i 'locals)
+      (apply i 'body
+             (concat
+               [(i 'ldsfld class "tfOn") (i 'brfalse 'LprofileDone)
+                (i 'ldsfld class "tfName") (i 'ldsfld class "tfC") (i 'ldsfld class "tfT") (i 'ldsfld class "tfN")]
+               (mapcat (fn [j] [(i 'ldarg j)]) (range n))
+               [(i 'call type-feedback-type "Profile"
+                    (apply i string-type long-array-type obj-array-type string-array-type (objs n))
+                    bool-type)
+                (i 'stsfld class "tfOn") (i 'label 'LprofileDone) (i 'ret)])))
+   (i 'method ".cctor" (i 'attrs 'cctor) (i 'params)
+      (i 'body (i 'ldstr class) (i 'stsfld class "tfName")
+               (i 'ldsfld class "tfName") (i 'ldc.i4 n)
+               (i 'call type-feedback-type "Register" (i string-type int32-type) void-type)
+               (i 'ldc.i4 n) (i 'newarr int64-type) (i 'stsfld class "tfC")
+               (i 'ldc.i4 n) (i 'newarr obj) (i 'stsfld class "tfT")
+               (i 'ldc.i4 n) (i 'newarr string-type) (i 'stsfld class "tfN")
+               (i 'ldc.i4 1) (i 'stsfld class "tfOn") (i 'ret)))])
 
 (defn- cg-typed-self!
   "类型化体里的自调用（cleat-104）：Var 的值还是本函数的类时直接 call invokeStaticTyped，否则经 IFn.invoke 调用、结果按签名取回
@@ -2729,6 +2789,7 @@
         async? (:async? nm)
         methods (atom [])
         add! #(swap! methods conj %)
+        profile-n (when (and opt-typefeedback? @live-unit?) (hget spec-profiles (:class nm)))
         ;; 转发 / 桥方法不分层：tier-0 把转发实参的 JIT 临时变量报告为整个方法内活着，被调用的实现运行期间抓着实参（惰性序列的头，cleat-117）
         fwd-methods (atom #{})
         add-fixed! #(do (swap! fwd-methods conj %) (add! %))]
@@ -2766,6 +2827,7 @@
       (add-class! u (apply i 'type cname (i 'base base) (i 'attrs 'sealed)
                            (concat (if (seq sigs) [(apply i 'interfaces (map #(str primifs-prefix %) sigs))] [])
                                    (map #(i 'field % obj) field-names)
+                                   (when profile-n (profile-fields cname profile-n))
                                    (if *tiered-method* (map #(if (contains? @fwd-methods %) % (add-tiered-attr %)) @methods) @methods)))))
     [static? cname "Instance"])))
 
@@ -3267,7 +3329,7 @@
   [forms assembly-name module-name loop-flags live?]
   (let [u (make-unit assembly-name module-name)]
     (reset! live-unit? (boolean live?))
-    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases spec-entries tier-classes])
+    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases spec-entries spec-profiles tier-classes])
     (when (or live? opt-imagetier?) (run! mark-tier-classes! forms))
     (let [infer! (fn [forms]
                    (run! collect-assigned! forms)
