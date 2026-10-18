@@ -16,10 +16,14 @@ public static class RuntimeSigSpec
     /// <summary>(函数类名, 实参, 通用函数) → 特化表项；null 表示该签名不能安全特化。由 Clojure 编译器登记。</summary>
     public static Func<string, object[], object, object> Compiler { get; set; }
 
+    /// <summary>构建镜像时关闭：编译器自身的函数会执行超过阈值，递归触发运行时编译会自举死循环。</summary>
+    public static bool Enabled { get; set; } = true;
+
     /// <summary>生成代码在慢路径调用；异常一律视作不能特化，调用方回退通用体。</summary>
     public static object Promote(string className, object[] args, object generic)
     {
         var compiler = Compiler;
+        if (!Enabled) return null;
         if (compiler is null) return null;
         try
         {

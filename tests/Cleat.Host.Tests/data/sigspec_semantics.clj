@@ -6,6 +6,7 @@
 (def rt-sum4 (fn [a b c n] (if (= n 0) a (rt-sum4 (+ a b) (+ b c) (+ c n) (dec n)))))
 (def rt-array (fn [xs] (aget xs 0)))
 (def rt-string (fn [s] (count s)))
+(def rt-mixed (fn [xs s] (+ (aget xs 0) (count s))))
 
 (prn (sig-ll 1 3))
 (prn (sig-dd 1.25 2))
@@ -30,5 +31,9 @@
 (prn (rt-sum4 1 2 3 4))                  ; 首签名 Int64；Int32 回到通用函数
 (dotimes [_ 20] (rt-array (int-array [7])))
 (prn (rt-array (int-array [9])))
+(prn (rt-array (long-array [11])))               ; 首签名 Int32[]；其他数组回退通用函数
 (dotimes [_ 20] (rt-string "abc"))
 (prn (rt-string "de"))
+(dotimes [_ 20] (rt-mixed (int-array [3]) "abcd"))
+(prn (rt-mixed (int-array [4]) "de"))
+(prn (rt-mixed (double-array [1.5]) "x"))        ; 混合精确签名不命中，回退通用体

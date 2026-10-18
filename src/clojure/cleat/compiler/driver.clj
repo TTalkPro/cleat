@@ -566,17 +566,21 @@
 (defn compile-boot
   "依次求值形式（boot-order 的 load / require），全部加载到的文件的顶层形式按求值顺序（后序）收集成一个单元，编译为 Clojure 镜像 dll。"
   [forms dll]
-  (let [unit (atom [])]
+  (let [unit (atom [])
+        runtime-spec? Cleat.Core.Runtime.RuntimeSigSpec/Enabled]
     (reset! form-ordinal 0)
     ;; 构建镜像时不内联：镜像里的子句不含内联结果，各级镜像的接口文件相同，不动点成立
     ;; 也不报反射警告（cleat-099）：core_print / gvec / instant 等开着 *warn-on-reflection*，镜像构建的输出不变
     (let [inl @an/inline-calls? rw @an/reflection-warnings?]
       (reset! an/inline-calls? false)
       (reset! an/reflection-warnings? false)
+      (set! Cleat.Core.Runtime.RuntimeSigSpec/Enabled false)
       (try
         (with-st {:unit unit :boot true}
           (doseq [f forms] (reset-ids!) (eval-toplevel f)))
-        (finally (reset! an/inline-calls? inl) (reset! an/reflection-warnings? rw))))
+        (finally
+          (set! Cleat.Core.Runtime.RuntimeSigSpec/Enabled runtime-spec?)
+          (reset! an/inline-calls? inl) (reset! an/reflection-warnings? rw))))
     (compile-boot-unit @unit dll)))
 
 ;; —— 钩子 ——

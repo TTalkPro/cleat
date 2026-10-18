@@ -385,6 +385,18 @@ public class ClojureCompilerTests
         Assert.That(rt4, Does.Contain("(field \"__rtSpec\" \"System.Object\" static)"), rt4);
         Assert.That(rt4, Does.Contain("(field \"__rtCount\" \"System.Int32\" static)"), rt4);
         Assert.That(rt4, Does.Contain("(call \"Cleat.Core.Runtime.RuntimeSigSpec\" \"Promote\" (\"System.String\" \"System.Object[]\" \"System.Object\") \"System.Object\")"), rt4);
+
+        string runtimeSrc = Path.Combine(_dir, "rtspec134.clj");
+        string runtimeLcil = Path.Combine(_dir, "rtspec134.lcil");
+        File.WriteAllText(runtimeSrc, "(ns rtspec134)\n(defn rt-array [xs] (aget xs 0))\n"
+            + "(dotimes [_ 20] (rt-array (int-array [7])))\n(prn (rt-array (int-array [9])))\n");
+        var runtime = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", runtimeLcil) }, runtimeSrc);
+        Assert.That(runtime.ExitCode, Is.EqualTo(0), runtime.ToString());
+        Assert.That(runtime.Out, Is.EqualTo("9\n"), runtime.ToString());
+        Assert.That(File.Exists(runtimeLcil), runtime.ToString());
+        Assert.That(File.ReadAllText(runtimeLcil),
+            Does.Contain("(call \"clojure.lang.RT\" \"aget\" (\"System.Int32[]\" \"System.Int32\") \"System.Int32\")"),
+            File.ReadAllText(runtimeLcil));
     }
 
     /// <summary>
