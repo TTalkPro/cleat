@@ -138,6 +138,7 @@
 | [cleat-129](tasks/cleat-129-type-feedback-specialization.md) | 类型反馈：特化单元的编译、安装、退回与失效 | M13 | cleat-128 | 关闭（量化后不实现） |
 | [cleat-130](tasks/cleat-130-m13-rerun.md) | M13 收尾：数组推测微基准、r7rs 无提示变体与全量重测 | M13 | cleat-127、128 | 完成 |
 | [cleat-131](tasks/cleat-131-arrayspec-local-bindings.md) | 数组推测候选的作用域修复 | M13 后续 | cleat-127、130 | 完成 |
+| [cleat-132](tasks/cleat-132-signature-specialization.md) | 参数签名特化分发原型 | M13 后续 | cleat-104、128 | 完成 |
 
 ## 里程碑
 

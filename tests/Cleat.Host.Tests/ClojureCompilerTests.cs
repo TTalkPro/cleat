@@ -344,6 +344,42 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-132：无提示的 1～2 参纯递归函数在 cleat-104 证明不了整条签名时，可预生成 LL / DD 类型化重载；
+    /// 通用 invokeStatic 用静态签名缓存分发，类型不符或 TypedBailout 回退通用体。语义输出在默认、
+    /// CLEAT_NO_OPT=sigspec、CLEAT_NO_OPT=typed（只启用 sigspec）三种设置下逐字相同。
+    /// </summary>
+    [Test]
+    public void SignatureSpecialization()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "sigspec_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "sigspec") }, script);
+        var noTyped = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "typed") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(noTyped.ExitCode, Is.EqualTo(0), noTyped.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "sigspec on:\n" + on.Out + "\nsigspec off:\n" + off.Out);
+        Assert.That(on.Out, Is.EqualTo(noTyped.Out), "typed off:\n" + on.Out + "\ntyped off sigspec:\n" + noTyped.Out);
+
+        string src = Path.Combine(_dir, "sigspec.clj");
+        File.WriteAllText(src, "(ns sigspec)\n(defn sig-dd [x n] (if (= n 0) x (sig-dd (* x 2.0) (dec n))))\n"
+            + "(defn noisy [x n] (println x) (if (= n 0) x (noisy (inc x) (dec n))))\n");
+        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "typed"), ("CLEAT_DUMP_LCIL", "1") },
+            "-I", _dir, "--compile-package", Path.Combine(_dir, "sigspec.dll"), "--package", "sigspec", "--root", _dir, "sigspec");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        string lcil = File.ReadAllText(Path.Combine(_dir, "sigspec.dll.lcil"));
+        int start = lcil.IndexOf("(type \"sigspec$sig_dd\"", StringComparison.Ordinal);
+        int end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
+        string sigDd = lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
+        Assert.That(sigDd, Does.Contain("(field \"ssKind\" \"System.Int32\" static)"), sigDd);
+        Assert.That(sigDd, Does.Contain("(call \"sigspec$sig_dd\" \"invokeStaticTyped\" (\"System.Object\" \"System.Double\" \"System.Double\") \"System.Double\")"), sigDd);
+        start = lcil.IndexOf("(type \"sigspec$noisy\"", StringComparison.Ordinal);
+        end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
+        string noisy = lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
+        Assert.That(noisy, Does.Not.Contain("invokeStaticTyped"), noisy);
+    }
+
+    /// <summary>
     /// cleat-103：初值来自无提示形参的最内层循环生成快慢两份（入口 isinst，快份原始局部）。语义用例（tests/Cleat.Host.Tests/data/loopspec_semantics.clj：
     /// 入口是 long / double / Ratio / BigInt / BigDecimal / Int32 / 非数 / nil、溢出、NaN、两个变量一起推测、会变成 double 的变量、循环里装箱使用、
     /// 初值是调用（求值一次、按顺序）、unchecked-math、嵌套循环）在 CLEAT_NO_OPT=loopspec 与开两种设置下输出逐字相同；
