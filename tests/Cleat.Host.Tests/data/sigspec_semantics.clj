@@ -37,3 +37,17 @@
 (dotimes [_ 20] (rt-mixed (int-array [3]) "abcd"))
 (prn (rt-mixed (int-array [4]) "de"))
 (prn (rt-mixed (double-array [1.5]) "x"))        ; 混合精确签名不命中，回退通用体
+
+;; cleat-135：4+ 参进入运行时签名候选；9 参走 InvokeArray；第二个精确签名补进同一张表。
+(def rt6 (fn [a b c d e n] (if (= n 0) a (rt6 (inc a) b c d e (dec n)))))
+(dotimes [_ 20] (rt6 1 2 3 4 5 3))
+(prn (rt6 2 3 4 5 6 2))
+(def rt9 (fn [a b c d e f g h n] (if (= n 0) a (rt9 (inc a) b c d e f g h (dec n)))))
+(dotimes [_ 20] (rt9 1 2 3 4 5 6 7 8 3))
+(prn (rt9 2 3 4 5 6 7 8 9 2))
+(def rt-multi (fn [xs n] (if (= n 0) (aget xs 0) (rt-multi xs (dec n)))))
+(dotimes [_ 20] (rt-multi (int-array [3]) 2))
+(prn (rt-multi (int-array [7]) 1))
+(dotimes [_ 24] (rt-multi (long-array [11]) 2))
+(prn (rt-multi (long-array [13]) 1))
+(prn (rt-multi (int-array [17]) 1))              ; 回到旧签名仍直接命中

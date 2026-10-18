@@ -332,3 +332,55 @@ public class CharBoxTests
         Assert.That(CharBox.Get('ā'), Is.EqualTo('ā'));
     }
 }
+
+// cleat-135：运行时签名表在第二个精确签名补生成后，旧签名必须仍直接命中。
+public class RuntimeSigFnTests
+{
+    private sealed class MarkerFn : AFn
+    {
+        private readonly object _marker;
+        public MarkerFn(object marker) { _marker = marker; }
+        public override object invoke(object a) => _marker;
+    }
+
+    [Test]
+    public void SecondSignatureIsAddedAndOldSignatureRemainsHot()
+    {
+        var ints = new[] { typeof(int[]) };
+        var longs = new[] { typeof(long[]) };
+        var intFn = new MarkerFn("int");
+        var longFn = new MarkerFn("long");
+        RuntimeSigFn table = null;
+        var compiler = RuntimeSigSpec.Compiler;
+        var enabled = RuntimeSigSpec.Enabled;
+        RuntimeSigSpec.Enabled = true;
+        RuntimeSigSpec.Compiler = (name, args, generic) =>
+        {
+            if (args[0] is long[]) return new RuntimeSigFn(longs, longFn, name);
+            return null;
+        };
+        try
+        {
+            table = new RuntimeSigFn(ints, intFn, "test$table");
+            var a = new int[1];
+            var l = new long[1];
+            Assert.That(table.Invoke(a), Is.EqualTo("int"));
+
+            for (var i = 0; i < RuntimeSigSpec.Threshold - 1; i++)
+            {
+                var ex = Assert.Throws<TypedBailout>(() => table.Invoke(l));
+                Assert.That(ex, Is.Not.Null);
+            }
+
+            // 第 16 次 miss 触发补生成；本次仍按协议回通用体。
+            Assert.Throws<TypedBailout>(() => table.Invoke(l));
+            Assert.That(table.Invoke(l), Is.EqualTo("long"));
+            Assert.That(table.Invoke(a), Is.EqualTo("int"), "old signature stays hot");
+        }
+        finally
+        {
+            RuntimeSigSpec.Compiler = compiler;
+            RuntimeSigSpec.Enabled = enabled;
+        }
+    }
+}

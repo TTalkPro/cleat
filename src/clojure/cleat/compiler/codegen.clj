@@ -1522,7 +1522,8 @@
              (not (:async? nm)) (empty? (:prims nm)))
     (nanopass-case [L3 Clause] (first cl*)
       [(clause (~x* ...) ~x ~body)
-       (when (and (not x) (<= 1 (count x*) 4) (spec-pure? body v)) (count x*))])))
+       ;; cleat-135：运行时签名候选不再停在 4 参；invokeStatic 常驻到 20 参。
+       (when (and (not x) (<= 1 (count x*) 20) (spec-pure? body v)) (count x*))])))
 
 (defn- sigspec-param-vectors
   "给定形参个数 n，返回候选类型向量列表（:l64 / :fl 组合）。1 参 L / D，2 参 LL / LD / DL / DD，3 参 LLL / LLD / DDL / DDD。"
@@ -1534,8 +1535,8 @@
     []))
 
 (defn- spec-signature-entry-tries
-  "cleat-132 / 133：≤3 参纯递归候选先尝试编译期预生成 LL / DD（cleat-132 已验证的路径）；
-  推不出的或 ≥4 参的标记为 :runtime（cleat-133），由运行时按需编译。"
+  "cleat-132 / 133 / 135：≤3 参纯递归候选先尝试编译期预生成 LL / DD（cleat-132 已验证的路径）；
+  推不出的或 ≥4 参的标记为 :runtime（cleat-133 / 135），由运行时按需编译，上限是 invokeStatic 的 20 参。"
   [v nm fv* cl*]
   (when (and opt-sigspec? (not (hhas? spec-entries (:class nm)))
              (spec-feedback-candidate v nm fv* cl*))
@@ -1549,7 +1550,7 @@
                        (keep (fn [guess] (some #(spec-entry-try x* body v guess %) [:l64 :fl])))
                        (into []))]
            (if (seq cs) cs :runtime))
-         (and (not x) (pos? (count x*))) :runtime
+         (and (not x) (<= 1 (count x*) 20)) :runtime
          :else nil)])))
 
 (define-pass speculate-entries L3 [ir] -> L3 []
@@ -1557,7 +1558,9 @@
     [(clj-def ~d ~st0 ~st1 ~[e0] ~[e1])
      (let [e0' (nanopass-case [L3 Expr] e0
                  [(lambda ~nm (~x* ...) ~cl* ...)
-                 (let [pf (and opt-typefeedback? @live-unit? (spec-feedback-candidate d nm x* cl*))
+                 (let [;; cleat-135：5+ 参交给运行时签名特化；活动剖面运行时重载仍只到 4 参。
+                       pf-count (spec-feedback-candidate d nm x* cl*)
+                       pf (when (and opt-typefeedback? @live-unit? pf-count (<= pf-count 4)) pf-count)
                        ;; 类型化入口不能依赖剖面开关 / eval 模式（cleat-104 的原有语义）
                        se (and opt-typed? (instance? clojure.lang.Var d) (not (hhas? spec-entries (:class nm)))
                                (spec-entry d nm x* cl*))
@@ -3600,14 +3603,17 @@
 (def ^:private rt-spec-counter (atom 0))
 
 (defn compile-runtime-specialization
-  "cleat-133 / 134 的保守原型：按观察到的 CLR 类型重试签名；引用类型签名里是 O，精确
+  "cleat-133 / 134 / 135 的保守原型：按观察到的 CLR 类型重试签名；引用类型签名里是 O，精确
   Type 交给 RuntimeSigFn 守卫，证明成功后在特化体里 Tagged。证明失败 / 编译异常都返回
   nil，调用方保留通用体。"
   [cname args generic]
   (let [reg (hget runtime-sig-specs cname)]
     (when-let [{:keys [params body v]} reg]
       (when (= (count params) (count args))
-        (let [exact (volatile! {})
+        (let [;; cleat-135：预算在生成前检查；只有真正发射成功才消耗计数。
+              _ (when-not (Cleat.Core.Runtime.RuntimeSigSpec/CanGenerate)
+                  (throw (ex-info "runtime signature budget exhausted" {})))
+              exact (volatile! {})
             guess (mapv (fn [p x] (cond
                                     (instance? Int64 x) :l64
                                     (instance? Double x) :fl
@@ -3646,8 +3652,11 @@
                                                   (throw (ex-info "runtime specialization object slot" {:param p :guess g})))))
                                   params guess)]
                   (when (instance? clojure.lang.IFn spec)
-                    (Cleat.Core.Runtime.RuntimeSigFn.
+                    (do
+                      (Cleat.Core.Runtime.RuntimeSigSpec/MarkGenerated)
+                      (Cleat.Core.Runtime.RuntimeSigFn.
                      (into-array Type (map (fn [t] (if (instance? Type t) t (Type/GetType ^String t))) types))
-                     ^clojure.lang.IFn spec)))
+                     ^clojure.lang.IFn spec
+                     cname))))
                 (finally (hdel! runtime-generated-entries (:class nm)))))
             (catch Exception _ nil))))))))

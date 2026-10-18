@@ -397,6 +397,28 @@ public class ClojureCompilerTests
         Assert.That(File.ReadAllText(runtimeLcil),
             Does.Contain("(call \"clojure.lang.RT\" \"aget\" (\"System.Int32[]\" \"System.Int32\") \"System.Int32\")"),
             File.ReadAllText(runtimeLcil));
+
+        string wideSrc = Path.Combine(_dir, "rtspec135.clj");
+        string wideLcil = Path.Combine(_dir, "rtspec135.lcil");
+        File.WriteAllText(wideSrc, "(ns rtspec135)\n"
+            + "(defn rt6 [a b c d e n] (if (= n 0) a (rt6 (inc a) b c d e (dec n))))\n"
+            + "(dotimes [_ 20] (rt6 1 2 3 4 5 3))\n(prn (rt6 2 3 4 5 6 2))\n");
+        var wide = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", wideLcil) }, wideSrc);
+        Assert.That(wide.ExitCode, Is.EqualTo(0), wide.ToString());
+        Assert.That(wide.Out, Is.EqualTo("4\n"), wide.ToString());
+        string wideText = File.ReadAllText(wideLcil);
+        Assert.That(wideText, Does.Contain("(call \"rtSpec$"));
+        Assert.That(wideText, Does.Contain(
+            "(\"System.Object\" \"System.Int64\" \"System.Int64\" \"System.Int64\" \"System.Int64\" \"System.Int64\" \"System.Int64\") \"System.Int64\")"));
+
+        string tableSrc = Path.Combine(_dir, "rtspec-table.clj");
+        File.WriteAllText(tableSrc, "(defn rt-multi [xs n] (if (= n 0) (aget xs 0) (rt-multi xs (dec n))))\n"
+            + "(dotimes [_ 20] (rt-multi (int-array [3]) 2))\n(prn (rt-multi (int-array [7]) 1))\n"
+            + "(dotimes [_ 24] (rt-multi (long-array [11]) 2))\n(prn (rt-multi (long-array [13]) 1))\n"
+            + "(prn (rt-multi (int-array [17]) 1))\n");
+        var table = HostProcessTests.CleatIn(_dir, null, null, tableSrc);
+        Assert.That(table.ExitCode, Is.EqualTo(0), table.ToString());
+        Assert.That(table.Out, Is.EqualTo("7\n13\n17\n"), table.ToString());
     }
 
     /// <summary>

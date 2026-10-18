@@ -141,6 +141,8 @@
 | [cleat-132](tasks/cleat-132-signature-specialization.md) | 参数签名特化分发原型 | M13 后续 | cleat-104、128 | 完成 |
 | [cleat-133](tasks/cleat-133-runtime-sigspec.md) | 运行时签名特化：观察 → 按需生成 → 查表分发 | M14 | cleat-132 | 完成 |
 | [cleat-134](tasks/cleat-134-reference-signature-specialization.md) | 引用类型运行时签名特化：精确观察 + Tagged 静态决议 | M14 | cleat-133 | 完成 |
+| [cleat-135](tasks/cleat-135-runtime-signature-tables.md) | 运行时签名表与高元数特化：5～20 参 + 多签名上限 | M14 | cleat-134 | 完成 |
+| [cleat-136](tasks/cleat-136-runtime-signature-recycling.md) | 运行时签名批次回收与逐出 | M14 | cleat-135 | 未开始 |
 
 ## 里程碑
 
@@ -170,7 +172,7 @@
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 
-**M14（2026-10-18 起）**：133 → 134 → 135；134 扩展引用形参，135 扩展表管理与 4+ 参收口（[24 §6](designs/24-runtime-signature-specialization.md)、[25](designs/25-runtime-reference-signature-specialization.md)）。
+**M14（2026-10-18 起）**：133 → 134 → 135 → 136；134 扩展引用形参，135 扩展多签名表与 5～20 参候选，136 收口批次回收与逐出（[24 §6](designs/24-runtime-signature-specialization.md)、[25](designs/25-runtime-reference-signature-specialization.md)、[26](designs/26-runtime-signature-tables.md)）。
 
 **M12（2026-10-16 起）**：119 收口后，122（先统计）、120（先复测）、121、123、124 并列，125 在 122 之后，最后 126（[22 §8](designs/22-gc-and-performance-followups.md)）。
 
