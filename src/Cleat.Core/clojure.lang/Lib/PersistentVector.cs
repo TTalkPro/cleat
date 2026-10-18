@@ -285,6 +285,10 @@ namespace clojure.lang
         /// <remarks>Throws an exception if the index <c>i</c> is not in the range of the vector's elements.</remarks>
         public override object nth(int i)
         {
+            // 小向量与尾部访问走 O(1) 的尾数组；AOT 下 ArrayFor 的普通循环更容易阻止整个 nth 内联。
+            // 越界仍交给 ArrayFor，保持 ArgumentOutOfRangeException 的语义。
+            if (i >= 0 && i < _cnt && i >= tailoff())
+                return _tail[i & 0x01f];
             object[] node = ArrayFor(i);
             return node[i & 0x01f];
         }
