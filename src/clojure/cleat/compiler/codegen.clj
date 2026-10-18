@@ -3657,6 +3657,7 @@
                       (Cleat.Core.Runtime.RuntimeSigFn.
                      (into-array Type (map (fn [t] (if (instance? Type t) t (Type/GetType ^String t))) types))
                      ^clojure.lang.IFn spec
-                     cname))))
+                     cname
+                     asm))))
                 (finally (hdel! runtime-generated-entries (:class nm)))))
             (catch Exception _ nil))))))))

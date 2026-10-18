@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using System.Threading;
 using clojure.lang;
 using Cleat.Core.Runtime;
+using Cleat.Emit;
 using NUnit.Framework;
 
 namespace Cleat.Core.Tests;
@@ -334,8 +336,15 @@ public class CharBoxTests
 }
 
 // cleat-135：运行时签名表在第二个精确签名补生成后，旧签名必须仍直接命中。
+[NonParallelizable]
 public class RuntimeSigFnTests
 {
+    private const string CollectibleMarker = @"
+(lcil 1
+  (assembly ""collectible-marker"")
+  (type ""Marker"" (attrs abstract sealed)
+    (method ""Touch"" (attrs static) (params) (ret ""System.Void"") (body (ret)))))";
+
     private sealed class MarkerFn : AFn
     {
         private readonly object _marker;
@@ -382,5 +391,154 @@ public class RuntimeSigFnTests
             RuntimeSigSpec.Compiler = compiler;
             RuntimeSigSpec.Enabled = enabled;
         }
+    }
+
+    [Test]
+    public void FullTableEvictsIdleSignatureAndRebuildsItLater()
+    {
+        var first = new[] { typeof(int[]) };
+        var churn = new[]
+        {
+            typeof(long[]), typeof(double[]), typeof(string[]), typeof(object[]),
+            typeof(bool[]), typeof(char[]), typeof(byte[]), typeof(decimal[])
+        };
+        var markers = new Dictionary<Type, IFn>();
+        RuntimeSigFn table = null;
+        var compiler = RuntimeSigSpec.Compiler;
+        var enabled = RuntimeSigSpec.Enabled;
+        RuntimeSigSpec.Enabled = true;
+        RuntimeSigSpec.Compiler = (name, args, generic) =>
+        {
+            if (args[0] is int[]) return new RuntimeSigFn(first, new MarkerFn("first"), name, null);
+            if (args[0] is Array array && Array.IndexOf(churn, array.GetType()) >= 0)
+                return new RuntimeSigFn(new[] { array.GetType() }, markers[array.GetType()], name, null);
+            return null;
+        };
+
+        for (var i = 0; i < churn.Length; i++)
+        {
+            markers[churn[i]] = new MarkerFn($"marker-{i}");
+        }
+
+        try
+        {
+            table = new RuntimeSigFn(first, new MarkerFn("first"), "test$lru");
+            Assert.That(table.Invoke(new int[1]), Is.EqualTo("first"));
+
+            // 先填满 8 项；每次新签名先经历 16 次 miss，再确认进入表。
+            for (var i = 0; i < 7; i++)
+            {
+                var type = churn[i];
+                for (var miss = 0; miss < RuntimeSigSpec.Threshold; miss++)
+                {
+                    var value = MakeArray(type);
+                    var captured = value;
+                    Assert.Throws<TypedBailout>(() => table.Invoke(captured));
+                }
+                Assert.That(table.Count, Is.EqualTo(i + 2));
+                Assert.That(table.Invoke(MakeArray(type)), Is.EqualTo("marker-" + i));
+            }
+
+            Assert.That(table.Count, Is.EqualTo(RuntimeSigFn.MaxSignatures));
+            Thread.Sleep((int)(RuntimeSigFn.EvictionIdleMilliseconds + 100));
+
+            // 第 9 个签名触发一次补生成：最久未用的 int[] 被换出，表大小保持上限。
+            var ninth = churn[^1];
+            for (var i = 0; i < RuntimeSigSpec.Threshold - 1; i++)
+            {
+                Assert.Throws<TypedBailout>(() => table.Invoke(MakeArray(ninth)));
+            }
+            Assert.That(table.Count, Is.EqualTo(RuntimeSigFn.MaxSignatures));
+            Assert.Throws<TypedBailout>(() => table.Invoke(MakeArray(ninth)));
+            Assert.That(table.Invoke(MakeArray(ninth)), Is.EqualTo("marker-7"));
+            Assert.Throws<TypedBailout>(() => table.Invoke(new int[1]));
+
+            // 旧热签名重新达到阈值后可重新生成；已活跃的 decimal[] 不会被逐出。
+            for (var i = 0; i < RuntimeSigSpec.Threshold - 1; i++)
+            {
+                Assert.Throws<TypedBailout>(() => table.Invoke(new int[1]));
+            }
+            Assert.That(table.Count, Is.EqualTo(RuntimeSigFn.MaxSignatures));
+            Assert.That(table.Invoke(new int[1]), Is.EqualTo("first"));
+            Assert.That(table.Invoke(MakeArray(ninth)), Is.EqualTo("marker-7"));
+        }
+        finally
+        {
+            RuntimeSigSpec.Compiler = compiler;
+            RuntimeSigSpec.Enabled = enabled;
+        }
+    }
+
+    private static object MakeArray(Type type)
+    {
+        if (type == typeof(int[])) return new int[1];
+        if (type == typeof(long[])) return new long[1];
+        if (type == typeof(double[])) return new double[1];
+        if (type == typeof(string[])) return new string[1];
+        if (type == typeof(object[])) return new object[1];
+        if (type == typeof(bool[])) return new bool[1];
+        if (type == typeof(char[])) return new char[1];
+        if (type == typeof(byte[])) return new byte[1];
+        if (type == typeof(decimal[])) return new decimal[1];
+        throw new NotSupportedException(type.FullName);
+    }
+
+    [Test]
+    public void RetiredAssemblyWeakReferenceBecomesUnreachable()
+    {
+        var retiredBefore = RuntimeSigSpec.RetiredAssemblyCount();
+        RuntimeSigFn table = CreateRecyclableTable();
+        var churn = new[]
+        {
+            typeof(long[]), typeof(double[]), typeof(string[]), typeof(object[]),
+            typeof(bool[]), typeof(char[]), typeof(byte[]), typeof(decimal[])
+        };
+        var compiler = RuntimeSigSpec.Compiler;
+        var enabled = RuntimeSigSpec.Enabled;
+        RuntimeSigSpec.Enabled = true;
+        RuntimeSigSpec.Compiler = (name, args, generic) =>
+        {
+            var types = new[] { args[0].GetType() };
+            return new RuntimeSigFn(types, new MarkerFn("next"), name, null);
+        };
+        try
+        {
+            Assert.That(table.Invoke(new int[1]), Is.EqualTo("int"));
+
+            // 先填满表；再让全部旧签名空闲，用第 9 个签名换出最初的 int[]。
+            for (var i = 0; i < 7; i++)
+            {
+                for (var miss = 0; miss < RuntimeSigSpec.Threshold - 1; miss++)
+                {
+                    Assert.Throws<TypedBailout>(() => table.Invoke(MakeArray(churn[i])));
+                }
+                Assert.Throws<TypedBailout>(() => table.Invoke(MakeArray(churn[i])));
+                Assert.That(table.Invoke(MakeArray(churn[i])), Is.EqualTo("next"));
+            }
+
+            Thread.Sleep((int)(RuntimeSigFn.EvictionIdleMilliseconds + 100));
+            for (var miss = 0; miss < RuntimeSigSpec.Threshold - 1; miss++)
+            {
+                Assert.Throws<TypedBailout>(() => table.Invoke(MakeArray(churn[^1])));
+            }
+            Assert.Throws<TypedBailout>(() => table.Invoke(MakeArray(churn[^1])));
+            Assert.That(table.Invoke(MakeArray(churn[^1])), Is.EqualTo("next"));
+
+            // int[] 是最久未用签名，逐出后仅剩弱引用；marker 是无关强引用，但程序集没有其他根。
+            Assert.That(RuntimeSigSpec.RetiredAssemblyCount(), Is.GreaterThan(retiredBefore));
+            Assert.That(RuntimeSigSpec.AliveRetiredAssemblies(), Is.EqualTo(0));
+        }
+        finally
+        {
+            RuntimeSigSpec.Compiler = compiler;
+            RuntimeSigSpec.Enabled = enabled;
+        }
+    }
+
+    private static RuntimeSigFn CreateRecyclableTable()
+    {
+        // 独立作用域保证 Assembly 强引用立刻离开栈；表里只保留 Entry 中的 WeakReference。
+        var assembly = LcilEmitter.EmitInMemory(CollectibleMarker, "collectible-marker.lcil");
+        return new RuntimeSigFn(new[] { typeof(int[]) }, new MarkerFn("int"), "test$recycle", assembly);
     }
 }

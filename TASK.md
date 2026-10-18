@@ -142,7 +142,7 @@
 | [cleat-133](tasks/cleat-133-runtime-sigspec.md) | 运行时签名特化：观察 → 按需生成 → 查表分发 | M14 | cleat-132 | 完成 |
 | [cleat-134](tasks/cleat-134-reference-signature-specialization.md) | 引用类型运行时签名特化：精确观察 + Tagged 静态决议 | M14 | cleat-133 | 完成 |
 | [cleat-135](tasks/cleat-135-runtime-signature-tables.md) | 运行时签名表与高元数特化：5～20 参 + 多签名上限 | M14 | cleat-134 | 完成 |
-| [cleat-136](tasks/cleat-136-runtime-signature-recycling.md) | 运行时签名批次回收与逐出 | M14 | cleat-135 | 未开始 |
+| [cleat-136](tasks/cleat-136-runtime-signature-recycling.md) | 运行时签名回收与逐出 | M14 | cleat-135 | 完成 |
 
 ## 里程碑
 

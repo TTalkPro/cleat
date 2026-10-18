@@ -1,14 +1,15 @@
 using System;
+using System.Collections.Concurrent;
 using clojure.lang;
 using System.Threading;
 
 namespace Cleat.Core.Runtime;
 
 /// <summary>
-/// cleat-133 / 135 的运行时签名特化钩子。生成的通用入口先观察调用次数；达到阈值后把函数类名与实参类型交给
+/// cleat-133 / 135 / 136 的运行时签名特化钩子。生成的通用入口先观察调用次数；达到阈值后把函数类名与实参类型交给
 /// 编译器登记的回调。回调返回特化 IFn 时，通用入口把它写入函数类静态字段；返回 null 或未登记编译器时，
 /// 调用始终留在原通用体，因此本类型只提供接合点，不改变任何可见语义。cleat-135 增加进程级生成上限，
-/// 防止多签名 / 多函数的按需生成无限消耗内存。
+/// 防止多签名 / 多函数的按需生成无限消耗内存。cleat-136 另记录逐出程序集的弱引用，用于本地 GC 到达性诊断。
 /// </summary>
 public static class RuntimeSigSpec
 {
@@ -19,6 +20,9 @@ public static class RuntimeSigSpec
     public const int MaxGenerated = 4096;
 
     private static int _generated;
+
+    // 逐出后的程序集只保存弱引用；诊断本身不延长 RunAndCollect 程序集的生命周期。
+    private static readonly ConcurrentQueue<WeakReference> s_retired = new();
 
     /// <summary>(函数类名, 实参, 通用函数) → 特化表项；null 表示该签名不能安全特化。由 Clojure 编译器登记。</summary>
     public static Func<string, object[], object, object> Compiler { get; set; }
@@ -31,6 +35,29 @@ public static class RuntimeSigSpec
 
     /// <summary>运行时特化程序集成功发射后登记；失败不占预算。</summary>
     public static void MarkGenerated() => Interlocked.Increment(ref _generated);
+
+    /// <summary>签名表逐出条目时登记程序集弱引用；null / 已失效引用忽略。</summary>
+    public static void RecordRetiredAssembly(WeakReference assembly)
+    {
+        if (assembly is not null) s_retired.Enqueue(assembly);
+    }
+
+    /// <summary>累计逐出的程序集弱引用数；不触发 GC。</summary>
+    public static int RetiredAssemblyCount() => s_retired.Count;
+
+    /// <summary>强制完整 GC 后仍可达的已逐出程序集数；测试 / 诊断用。</summary>
+    public static int AliveRetiredAssemblies()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        var alive = 0;
+        foreach (var assembly in s_retired)
+        {
+            if (assembly.IsAlive) alive++;
+        }
+        return alive;
+    }
 
     /// <summary>生成代码在慢路径调用；异常一律视作不能特化，调用方回退通用体。</summary>
     public static object Promote(string className, object[] args, object generic)
