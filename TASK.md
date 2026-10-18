@@ -119,7 +119,7 @@
 | [cleat-110](tasks/cleat-110-user-known-calls.md) | 用户函数的已知调用：经 Var 调用、分析时 Var 的值是有 invokeStatic 的函数类时，isinst 守卫后直接 call | M11 | cleat-109 | 完成 |
 | [cleat-111](tasks/cleat-111-runtime-fast-paths.md) | 运行时快路径：Util.equiv(Object, long / double)、zero? / pos? / neg? 作用于 Object、(byte x) 与 byte[] 的 aset、符号相等 | M11 | cleat-110 | 完成 |
 | [cleat-112](tasks/cleat-112-result-types-to-inference.md) | 结果类型交给推断：宿主调用返回的数组类型给无提示局部、deftype 原始字段读取的类型进算术 | M11 | cleat-111 | 完成 |
-| [cleat-113](tasks/cleat-113-float-loops.md) | 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围 | M11 | cleat-112 | 进行中 |
+| [cleat-113](tasks/cleat-113-float-loops.md) | 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围 | M11 | cleat-112 | 完成 |
 | [cleat-114](tasks/cleat-114-tiered-eval.md) | eval 代码分层编译与动态 PGO（不可回收的装载上下文、tier-0 的 GC 报告） | M11 | cleat-113 | 完成 |
 | [cleat-115](tasks/cleat-115-runtime-and-vars.md) | 运行时与 Var 访问：Numbers 的 object 快路径、$Vars 的 static readonly 字段、Symbol 密封 | M11 | cleat-114 | 完成 |
 | [cleat-116](tasks/cleat-116-eval-inline.md) | eval 的小函数内联与运行时快路径（double 装箱、Cons 的 first / next） | M11 | cleat-115 | 完成 |

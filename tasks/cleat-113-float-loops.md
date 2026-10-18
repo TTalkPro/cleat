@@ -1,6 +1,6 @@
 # cleat-113 浮点循环：从对象数组 / 向量取出的 double 与 Num 的覆盖范围（cleat-107 原因 3，先量化）
 
-- 里程碑：M11　依赖：cleat-112　状态：进行中（2026-10-16 部分完成）
+- 里程碑：M11　依赖：cleat-112　状态：完成（2026-10-18）
 - 设计依据：[21](../designs/21-r7rs-gaps.md)
 
 ## 工作内容
@@ -36,3 +36,8 @@
 - 实际保留的改动在运行时：`Numbers` 的 `add` / `minus` / `multiply` 共 6 个 `(double,Object)` / `(Object,double)` 重载，先用可内联的 Double / long 快路径转换，其他数值类型继续走 `Util.ConvertToDouble`；异常与转换语义不变。这 6 个重载标 `AggressiveInlining`，避免依赖 JIT 对小方法的自动阈值。
 - linux01 本地 5 轮取 min：fft 1.4873 → 1.3738 s（约 -7.6%）；pnpoly 2.6294 → 2.6031 s（约 -1.0%）；ray 2.6473 → 2.6636 s、simplex 5.1656 → 5.3026 s、nucleic 3.4614 → 3.5331 s、sumfp 0.2380 → 0.2367 s，噪声内或轻度波动。记录在 `bench/r7rs/results/cleat113-{fft-hint,fft-hint-base,fft-doublespec-upper,numfast,numfast-inline}.jsonl`（results 目录不入库）。
 - Release 构建通过；Core 19 项与 Host 5 项数值 / 装箱 / 循环推测 / 数组推测 / KnownCall 专项测试通过，语义数据的开 / 关输出逐字相同。种子不动点本轮不需要：未改 `src/clojure`。
+
+## 收口（2026-10-18）
+- 本地 Release 全量：Core 118 项全部通过；Host 273 项 272 通过 / 1 跳过 / 0 失败，合计 391 项 390 通过 / 1 跳过 / 0 失败。
+- 语料门禁 521 行 OK；cts 6868 通过 / 29 失败 / 6 错误、test-clojure 3688 通过 / 18 失败，两套基线都不变。
+- 未改 `src/clojure`，无需种子不动点。
