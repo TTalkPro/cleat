@@ -1497,17 +1497,26 @@
       [(clause (~x* ...) ~x ~body)
        (when (and (not x) (<= 1 (count x*) 4) (spec-pure? body v)) (count x*))])))
 
+(defn- sigspec-param-vectors
+  "给定形参个数 n，返回候选类型向量列表（:l64 / :fl 组合）。1 参 L / D，2 参 LL / LD / DL / DD，3 参 LLL / LLD / DDL / DDD。"
+  [n]
+  (case n
+    1 [[:l64] [:fl]]
+    2 [[:l64 :l64] [:l64 :fl] [:fl :l64] [:fl :fl]]
+    3 [[:l64 :l64 :l64] [:l64 :l64 :fl] [:fl :fl :l64] [:fl :fl :fl]]
+    []))
+
 (defn- spec-signature-entry-tries
-  "cleat-132：无编译期类型证据的 1～2 参纯递归候选，预生成运行时常见的 LL / DD 特化。
+  "cleat-132：无编译期类型证据的 1～3 参纯递归候选，预生成运行时常见的 L / D 混合特化。
   返回类型仍由类型化体在猜测形参下证明；证明不了时不投机。"
   [v nm fv* cl*]
   (when (and opt-sigspec? (not (hhas? spec-entries (:class nm)))
              (spec-feedback-candidate v nm fv* cl*))
     (nanopass-case [L3 Clause] (first cl*)
       [(clause (~x* ...) ~x ~body)
-       (when (and (not x) (<= 1 (count x*) 2))
-         (->> [:l64 :fl]
-              (keep (fn [t] (some #(spec-entry-try x* body v (vec (repeat (count x*) t)) %) [:l64 :fl])))
+       (when (and (not x) (<= 1 (count x*) 3))
+         (->> (sigspec-param-vectors (count x*))
+              (keep (fn [guess] (some #(spec-entry-try x* body v guess %) [:l64 :fl])))
               (into [])))])))
 
 (define-pass speculate-entries L3 [ir] -> L3 []
