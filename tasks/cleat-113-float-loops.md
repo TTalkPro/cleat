@@ -29,3 +29,10 @@
 - linux01 本地 A/B（3 轮取 min，只计内部时间）：pnpoly 3.1432 → 2.6294 s（-16.3%）；simplex 5.2842 → 5.1656 s、nucleic 3.5223 → 3.4614 s、ray 2.6678 → 2.6473 s、fft 1.5068 → 1.4706 s，轻度改善或在噪声内；sumfp 0.2363 → 0.2380 s，噪声内。记录在 `bench/r7rs/results/cleat113-{base,patchA,patchB}.jsonl`（B 是已回退的内联实验）。
 - Release 构建通过；本地全量 391 项 390 通过 / 1 跳过 / 0 失败。数组与装箱语义数据开 / 关输出逐字相同。
 - 剩余热点：fft 的 `vector-ref` / `vector-set!` 虽然函数体已是 `object[]` 访问，但热循环里的调用与索引装箱仍值得做运行模式的 Lcil / JIT 对照；后续优先区分包程序集和 eval 加载两种模式的差异，再做对象数组元素到 double 推断的泛化机制。
+
+## 进展（2026-10-18：fft eval 模式与混合算术转换）
+- 用 `Diagnostics/ReadForm` 读取真实 `fft.cljc` 顶层形式，先 eval `vector-ref` / `vector-set!`，再单独编译 `four1` 并转储 Lcil。源码 eval 模式下这两个 wrapper 已走 KnownCall 内联：热循环是 `RT.aget` / `RT.aset`，数组实参是 `object[]`；不是包程序集 Lcil 里的 Var 调用 + `LongBox.Get` 形态。
+- Lcil 里 24 处索引进入 wrapper 前装箱成 `LongBox`。给两个 wrapper 的索引形参加 `^long` 后这些装箱消失，但 3 轮本地 A/B 的 fft min 1.4873 → 1.4891 s，在噪声内；索引装箱不是当前瓶颈。另一次把读取结果显式转成 double 的实验 min 回退到 3.3174 s，说明“对象数组元素统一转 double”不是当前编译形态下的安全收益方向。这两个实验都只改 bench 源、测后恢复，未提交。
+- 实际保留的改动在运行时：`Numbers` 的 `add` / `minus` / `multiply` 共 6 个 `(double,Object)` / `(Object,double)` 重载，先用可内联的 Double / long 快路径转换，其他数值类型继续走 `Util.ConvertToDouble`；异常与转换语义不变。这 6 个重载标 `AggressiveInlining`，避免依赖 JIT 对小方法的自动阈值。
+- linux01 本地 5 轮取 min：fft 1.4873 → 1.3738 s（约 -7.6%）；pnpoly 2.6294 → 2.6031 s（约 -1.0%）；ray 2.6473 → 2.6636 s、simplex 5.1656 → 5.3026 s、nucleic 3.4614 → 3.5331 s、sumfp 0.2380 → 0.2367 s，噪声内或轻度波动。记录在 `bench/r7rs/results/cleat113-{fft-hint,fft-hint-base,fft-doublespec-upper,numfast,numfast-inline}.jsonl`（results 目录不入库）。
+- Release 构建通过；Core 19 项与 Host 5 项数值 / 装箱 / 循环推测 / 数组推测 / KnownCall 专项测试通过，语义数据的开 / 关输出逐字相同。种子不动点本轮不需要：未改 `src/clojure`。

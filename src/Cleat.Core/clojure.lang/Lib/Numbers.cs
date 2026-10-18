@@ -16,6 +16,18 @@ namespace clojure.lang
 {
     public static class Numbers
     {
+        /// <summary>
+        /// 原始数与 Object 混合运算的最小转换快路径：Double / long 是热路径上的常见值，
+        /// 在调用点内联后省掉一次 ConvertToDouble 调用；其余数值类型仍回退到原语义。
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static double ConvertArithObject(object o)
+        {
+            if (o is double d) return d;
+            if (o is long l) return l;
+            return Util.ConvertToDouble(o);
+        }
+
         /* 
          * Random notes so I don't forget this stuff when I return here.
          * 
@@ -376,10 +388,12 @@ namespace clojure.lang
         public static decimal add(decimal x, decimal y) { return x + y; }
 
 
-        public static double add(double x, Object y) { return add(x, Util.ConvertToDouble(y)); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：Double / long 与 Object 的热路径转换内联进生成的代码
+        public static double add(double x, Object y) { return add(x, ConvertArithObject(y)); }
 
 
-        public static double add(Object x, double y) { return add(Util.ConvertToDouble(x), y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：Double / long 与 Object 的热路径转换内联进生成的代码
+        public static double add(Object x, double y) { return add(ConvertArithObject(x), y); }
 
 
         public static double add(double x, long y) { return x + y; }
@@ -655,10 +669,12 @@ namespace clojure.lang
         public static decimal minus(decimal x, decimal y) { return x - y; }
 
 
-        public static double minus(double x, Object y) { return minus(x, Util.ConvertToDouble(y)); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：Double / long 与 Object 的热路径转换内联进生成的代码
+        public static double minus(double x, Object y) { return minus(x, ConvertArithObject(y)); }
 
 
-        public static double minus(Object x, double y) { return minus(Util.ConvertToDouble(x), y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：Double / long 与 Object 的热路径转换内联进生成的代码
+        public static double minus(Object x, double y) { return minus(ConvertArithObject(x), y); }
 
 
         public static double minus(double x, long y) { return x - y; }
@@ -927,10 +943,12 @@ namespace clojure.lang
         public static decimal multiply(decimal x, decimal y) { return x * y; }
 
 
-        public static double multiply(double x, Object y) { return multiply(x, Util.ConvertToDouble(y)); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：Double / long 与 Object 的热路径转换内联进生成的代码
+        public static double multiply(double x, Object y) { return multiply(x, ConvertArithObject(y)); }
 
 
-        public static double multiply(Object x, double y) { return multiply(Util.ConvertToDouble(x), y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-113：Double / long 与 Object 的热路径转换内联进生成的代码
+        public static double multiply(Object x, double y) { return multiply(ConvertArithObject(x), y); }
 
 
         public static double multiply(double x, long y) { return x * y; }
