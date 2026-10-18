@@ -68,6 +68,8 @@ public sealed class LcilMethod
     public string ImplementsType, ImplementsName;
     /// <summary>(runtime clojure)：本方法互操作指令的运行时；null 时沿用程序集的。</summary>
     public string Runtime;
+    /// <summary>(maxstack n)：显式覆盖自动计算；剖面入口的分支路径会超过直线估算。</summary>
+    public int? MaxStack;
     public List<Instr> Body = new List<Instr>();
     public SNode Pos;
     public bool IsStatic => Attrs.Contains("static") || Attrs.Contains("cctor");
@@ -282,7 +284,7 @@ public static class LcilParser
                     case "source": Arity(cl, 1, 1); m.Source = Str(cl[1], "source file"); break;
                     case "implements": Arity(cl, 2, 2); m.ImplementsType = Str(cl[1], "interface"); m.ImplementsName = Str(cl[2], "interface method"); break;
                     case "runtime": Arity(cl, 1, 1); m.Runtime = Check(cl[1], "runtime", LcilRuntime.All); break;
-                    case "maxstack": break;   // 发射器自动计算，接受并忽略
+                    case "maxstack": Arity(cl, 1, 1); m.MaxStack = (int)Int(cl[1], "max stack"); break;
                     case "body": body = cl; break;
                     default: throw Err(cl, "unknown method clause: " + cl.Head);
                 }

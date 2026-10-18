@@ -344,8 +344,8 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
-    /// cleat-132：无提示的 1～2 参纯递归函数在 cleat-104 证明不了整条签名时，可预生成 LL / DD 类型化重载；
-    /// 通用 invokeStatic 用静态签名缓存分发，类型不符或 TypedBailout 回退通用体。语义输出在默认、
+    /// cleat-132 / 133：无提示的 1～2 参纯递归函数可预生成 LL / DD 类型化重载，通用 invokeStatic 用静态签名
+    /// 缓存分发；≥4 参候选标记 RuntimeSigEntry，进入运行时观察 / 按需生成框架。语义输出在默认、
     /// CLEAT_NO_OPT=sigspec、CLEAT_NO_OPT=typed（只启用 sigspec）三种设置下逐字相同。
     /// </summary>
     [Test]
@@ -363,20 +363,28 @@ public class ClojureCompilerTests
 
         string src = Path.Combine(_dir, "sigspec.clj");
         File.WriteAllText(src, "(ns sigspec)\n(defn sig-dd [x n] (if (= n 0) x (sig-dd (* x 2.0) (dec n))))\n"
-            + "(defn noisy [x n] (println x) (if (= n 0) x (noisy (inc x) (dec n))))\n");
+            + "(defn noisy [x n] (println x) (if (= n 0) x (noisy (inc x) (dec n))))\n"
+            + "(defn rt4 [a b c d] (+ (+ (+ a b) c) d))\n"
+            + "(defn rt-sum4 [a b c n] (if (= n 0) a (rt-sum4 (+ a b) (+ b c) (+ c n) (dec n))))\n");
         var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "typed"), ("CLEAT_DUMP_LCIL", "1") },
             "-I", _dir, "--compile-package", Path.Combine(_dir, "sigspec.dll"), "--package", "sigspec", "--root", _dir, "sigspec");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         string lcil = File.ReadAllText(Path.Combine(_dir, "sigspec.dll.lcil"));
-        int start = lcil.IndexOf("(type \"sigspec$sig_dd\"", StringComparison.Ordinal);
-        int end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
-        string sigDd = lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
+        string Type(string name)
+        {
+            int start = lcil.IndexOf("(type \"sigspec$" + name + "\"", StringComparison.Ordinal);
+            int end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
+            return lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
+        }
+        string sigDd = Type("sig_dd");
         Assert.That(sigDd, Does.Contain("(field \"ssKind\" \"System.Int32\" static)"), sigDd);
         Assert.That(sigDd, Does.Contain("(call \"sigspec$sig_dd\" \"invokeStaticTyped\" (\"System.Object\" \"System.Double\" \"System.Double\") \"System.Double\")"), sigDd);
-        start = lcil.IndexOf("(type \"sigspec$noisy\"", StringComparison.Ordinal);
-        end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
-        string noisy = lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
+        string noisy = Type("noisy");
         Assert.That(noisy, Does.Not.Contain("invokeStaticTyped"), noisy);
+        string rt4 = Type("rt4");
+        Assert.That(rt4, Does.Contain("(field \"__rtSpec\" \"System.Object\" static)"), rt4);
+        Assert.That(rt4, Does.Contain("(field \"__rtCount\" \"System.Int32\" static)"), rt4);
+        Assert.That(rt4, Does.Contain("(call \"Cleat.Core.Runtime.RuntimeSigSpec\" \"Promote\" (\"System.String\" \"System.Object[]\" \"System.Object\") \"System.Object\")"), rt4);
     }
 
     /// <summary>

@@ -612,7 +612,9 @@ public sealed partial class LcilEmitter
 
     private void EmitBody(LcilType t, LcilMethod m, MethodBase b)
     {
-        var il = b is ConstructorBuilder cb ? cb.GetILGenerator() : ((MethodBuilder)b).GetILGenerator();
+        var il = b is ConstructorBuilder cb
+          ? cb.GetILGenerator()
+          : m.MaxStack is int methodMaxStack ? ((MethodBuilder)b).GetILGenerator(methodMaxStack) : ((MethodBuilder)b).GetILGenerator();
         var cx = new BodyContext { IL = il, M = m, Namespaces = m.Namespaces.ToArray(), Runtime = m.Runtime ?? _asm.Runtime };
         if (_asm.LazyStart && m.IsCctor) EmitEnsureStarted(il);
         foreach (var l in m.Locals) il.DeclareLocal(T(l, m.Pos));

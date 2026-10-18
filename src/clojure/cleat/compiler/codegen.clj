@@ -35,6 +35,7 @@
 (def bool-type "System.Boolean")
 (def num-type "Cleat.Core.Runtime.Num")   ; 不装箱的未定类型数（cleat-102）
 (def long-box-type "Cleat.Core.Runtime.LongBox")   ; 小整数装箱缓存（cleat-109）
+(def rt-sig-fn-type "Cleat.Core.Runtime.RuntimeSigFn")   ; 运行时签名表项（cleat-133）
 (def ^:private narrow-value-types #{"System.Byte" "System.SByte" "System.Int16" "System.UInt16" "System.Single"})   ; 较窄的数值类型（cleat-111）
 (def char-type "System.Char")
 (def string-type "System.String")
@@ -164,6 +165,7 @@
 
 (defn- make-method-ctx [u class static? loop-label loop-arity self-mref]
   {:unit u :class class :static? static? :vars (ht) :locals (atom []) :buffer (atom []) :nlabels (atom 0) :try-depth (atom 0)
+   :max-stack (atom nil)
    :loop-label loop-label :loop-arity loop-arity :self-mref self-mref :arg-base (if static? 0 1) :labels (ht)
    :big? (atom false) :ret-type (atom nil) :uses (ht) :pinned (ht)})
 
@@ -482,6 +484,7 @@
        (= d0 "TypedSelf") (sig-char-raw (sig-ret (first (quoted-datum (first e*)))))   ; 类型化体里的自调用（cleat-104）
        (= d0 "TypedEntry") (expr-type (second e*) env)
        (= d0 "SigEntry") (expr-type (last e*) env)   ; 签名分发对外仍是通用体返回的对象（cleat-132）
+       (= d0 "RuntimeSigEntry") (expr-type (last e*) env)   ; 运行时签名分发对外仍是通用体返回的对象（cleat-133）
        (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
        :else
@@ -1377,6 +1380,9 @@
 (def ^:private spec-entries (ht))   ; fn 的类名（名字记录的 :class）→ {:sig 签名 :clause 类型化子句}；每个编译单元清空
 (def ^:private spec-profiles (ht))   ; 推测失败 / 缺席的候选：类名 → 固定形参个数（cleat-128）；每个编译单元清空
 (def ^:private spec-signature-entries (ht))   ; cleat-104 推测失败候选的 LL / DD 特化：类名 → 特化表；每个编译单元清空
+(def ^:private runtime-sig-ir (ht))   ; cleat-133 运行时签名特化候选：类名 → {:params x* :body L3}；每个编译单元清空
+(def ^:private runtime-sig-specs (ht))   ; cleat-133 运行时可查的候选登记表：编译单元结束后仍保留，供慢路径钩子查找
+(def ^:private runtime-generated-entries (ht))   ; cleat-133 正在单独生成的类型化条目：生成类名 → cleat-104 条目
 
 (defn- spec-self-ref? [e v]
   (nanopass-case [L3 Expr] e [(clj-var-ref ~d ~st) (identical? d v)] [else false]))
@@ -1507,17 +1513,21 @@
     []))
 
 (defn- spec-signature-entry-tries
-  "cleat-132：无编译期类型证据的 1～3 参纯递归候选，预生成运行时常见的 L / D 混合特化。
-  返回类型仍由类型化体在猜测形参下证明；证明不了时不投机。"
+  "cleat-132 / 133：≤3 参纯递归候选先尝试编译期预生成 LL / DD（cleat-132 已验证的路径）；
+  推不出的或 ≥4 参的标记为 :runtime（cleat-133），由运行时按需编译。"
   [v nm fv* cl*]
   (when (and opt-sigspec? (not (hhas? spec-entries (:class nm)))
              (spec-feedback-candidate v nm fv* cl*))
     (nanopass-case [L3 Clause] (first cl*)
       [(clause (~x* ...) ~x ~body)
-       (when (and (not x) (<= 1 (count x*) 3))
+       (cond
+         (and (not x) (<= (count x*) 3))
+         ;; cleat-132 的 ≤3 参分发保持不变：即使当前猜测证明失败，也保留空 SigEntry 的分发骨架。
          (->> (sigspec-param-vectors (count x*))
               (keep (fn [guess] (some #(spec-entry-try x* body v guess %) [:l64 :fl])))
-              (into [])))])))
+              (into []))
+         (and (not x) (pos? (count x*))) :runtime
+         :else nil)])))
 
 (define-pass speculate-entries L3 [ir] -> L3 []
   (Expr [ir] -> Expr []
@@ -1542,16 +1552,38 @@
                                                     (out (clj-call "TypedEntry" false (quote ~[(:sig se) y*]) ~body))))))])]
                               (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))
                      ss (do (vreset! *spec-changed* true)
-                            (hput! spec-signature-entries (:class nm) ss)
-                            (let [cl (nanopass-case [L3 Clause] (first cl*)
-                                       [(clause (~y* ...) ~y ~body)
-                                        (with-output-language [L3 Clause]
-                                          (out (clause (~y* ...) ~y
-                                                 ~(with-output-language [L3 Expr]
-                                                    (out (clj-call "SigEntry" false
-                                                                   (quote ~(mapv :sig ss))
-                                                                   ~body))))))])]
-                              (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))
+                            ;; cleat-128 的剖面只依赖 eval 通用调用，与 cleat-133 的运行时观察正交；两者并存可保留既有诊断。
+                            (when pf (hput! spec-profiles (:class nm) pf))
+                            (if (vector? ss)
+                              ;; 编译期预生成 LL / DD（cleat-132 已验证路径）
+                              (do (hput! spec-signature-entries (:class nm) ss)
+                                  (let [cl (nanopass-case [L3 Clause] (first cl*)
+                                             [(clause (~y* ...) ~y ~body)
+                                              (with-output-language [L3 Clause]
+                                                (out (clause (~y* ...) ~y
+                                                       ~(with-output-language [L3 Expr]
+                                                          (out (clj-call "SigEntry" false
+                                                                         (quote ~(mapv :sig ss))
+                                                                         ~body))))))])]
+                                    (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))
+                              ;; 运行时特化候选（cleat-133）：保存 IR，包装为 RuntimeSigEntry
+                              (let [rp (nanopass-case [L3 Clause] (first cl*)
+                                         [(clause (~y* ...) ~y ~body) (vec y*)])
+                                    rb (nanopass-case [L3 Clause] (first cl*)
+                                         [(clause (~y* ...) ~y ~body) body])]
+                                (do (hput! runtime-sig-ir (:class nm)
+                                           {:params rp :body rb})
+                                    (hput! runtime-sig-specs (:class nm)
+                                           {:params rp :body rb :v d})
+                                  (let [cl (nanopass-case [L3 Clause] (first cl*)
+                                             [(clause (~y* ...) ~y ~body)
+                                              (with-output-language [L3 Clause]
+                                                (out (clause (~y* ...) ~y
+                                                       ~(with-output-language [L3 Expr]
+                                                          (out (clj-call "RuntimeSigEntry" false
+                                                                         (quote ~(count rp))
+                                                                         ~body))))))])]
+                                    (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl))))))))
                      ;; 推测失败 / 缺席：类名和形参个数交给函数类生成静态剖面字段（cleat-128）
                      pf (do (hput! spec-profiles (:class nm) pf) e0)
                      :else e0))]
@@ -1624,7 +1656,7 @@
       [else nil])))
 
 (declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry!
-         cg-signature-entry! cg-known-call! cg-escape-propagate!)
+         cg-signature-entry! cg-runtime-sig-entry! cg-known-call! cg-escape-propagate!)
 
 (defn- typed-self-ret
   "(clj-call \"TypedSelf\" …) 的返回类型（:l64 / :fl），别的节点 nil。"
@@ -2272,6 +2304,7 @@
        (= d0 "TypedSelf") (do (cg-typed-self! e mc) (box-raw! mc (typed-self-ret e)) (finish-value! mc ctx))   ; cleat-104
        (= d0 "TypedEntry") (cg-typed-entry! e* mc ctx)
        (= d0 "SigEntry") (cg-signature-entry! e* mc ctx)   ; cleat-132
+       (= d0 "RuntimeSigEntry") (cg-runtime-sig-entry! e* mc ctx)   ; cleat-133
        (= d0 "KnownCall") (cg-known-call! e* mc ctx)   ; cleat-110
        (and (= d0 "EscapePropagate") (= 1 (count e*))) (cg-escape-propagate! (first e*) mc ctx)   ; cleat-125
        (and (= d0 "IsInstanceOf") (= 2 (count e*))
@@ -2408,10 +2441,11 @@
       s)))
 
 (defn- finish-method [mc nm attrs params & [ret]]
-  (i 'method nm (apply i 'attrs attrs) (apply i 'params params) (i 'ret (or ret obj))
-     (apply i 'locals @(:locals mc))
-     (i 'clr-namespaces)
-     (apply i 'body @(:buffer mc))))
+  (let [max-stack (when-let [n @(:max-stack mc)] [(i 'maxstack n)])]
+    (apply i 'method nm (apply i 'attrs attrs) (apply i 'params params) (i 'ret (or ret obj))
+           (concat max-stack [(apply i 'locals @(:locals mc))
+                              (i 'clr-namespaces)
+                              (apply i 'body @(:buffer mc))]))))
 
 (declare clj-fn-class!)
 
@@ -2515,7 +2549,8 @@
     [(clause (~x* ...) ~x ~body)
      (let [mc (make-method-ctx u class true nil nil nil)]
        (when (and opt-typefeedback? @live-unit? (hget spec-profiles class))
-         (cg-profile-args! mc class (count x*)))
+         (do (reset! (:max-stack mc) 8)
+             (cg-profile-args! mc class (count x*))))
        (when self (hput! (:vars mc) self [:arg 0]))
        (bind-clause-params! mc x* 1 sig)
        (reset! (:big? mc) (bigger-than? body big-body-nodes))
@@ -2797,6 +2832,51 @@
     (emit! mc (i 'label generic))
     (cg body mc ctx)))
 
+(defn- cg-runtime-sig-entry!
+  "(clj-call \"RuntimeSigEntry\" #f '(n) 通用体)（cleat-133）：先累计通用调用数；达到阈值后请求编译器
+  按实参生成特化。__rtSpec 非空时通过 IFn.invoke 调用，否则 / 失败时走通用体。"
+  [e* mc ctx]
+  (let [n (int (quoted-datum (first e*)))
+        body (second e*)
+        cname (:class mc)
+        generic (new-label! mc)
+        hot (new-label! mc)
+        disabled (new-label! mc)
+        end (new-label! mc)
+        spec (new-local! mc obj)]
+    ;; 已有特化 → 边界仍是 object；特化 IFn 内部做 raw 运算，返回时一次装箱。
+    (emit! mc (i 'ldsfld cname "__rtSpec") (i 'brtrue hot))
+    ;; 观察只服务生成时机；竞态最多多请求一次，不会改变实参求值或函数语义。
+    (emit! mc (i 'ldsfld cname "__rtCount") (i 'ldc.i4 1) (i 'add) (i 'stsfld cname "__rtCount"))
+    (emit! mc (i 'ldsfld cname "__rtCount") (i 'ldc.i4 16) (i 'blt generic))
+    (emit! mc (i 'ldstr cname) (i 'ldc.i4 n) (i 'newarr obj))
+    (doseq [j (range n)]
+      (emit! mc (i 'dup) (i 'ldc.i4 j) (i 'ldarg (inc j)) (i 'stelem.ref)))
+    (emit! mc (i 'ldarg 0))
+    (emit! mc (i 'call "Cleat.Core.Runtime.RuntimeSigSpec" "Promote"
+                  (i string-type obj-array-type obj) obj)
+           (i 'stloc spec) (i 'ldloc spec) (i 'brfalse disabled))
+    (emit! mc (i 'ldloc spec) (i 'stsfld cname "__rtSpec"))
+    (emit! mc (i 'label hot))
+    (if (<= n 8)
+      (do (emit! mc (i 'ldsfld cname "__rtSpec") (i 'castclass rt-sig-fn-type))
+          (doseq [j (range 1 (inc n))] (emit! mc (i 'ldarg j)))
+          (emit! mc (i 'callvirt rt-sig-fn-type "Invoke"
+                        (apply i (objs n)) obj)))
+      (do (emit! mc (i 'ldsfld cname "__rtSpec") (i 'castclass rt-sig-fn-type))
+          (emit! mc (i 'ldc.i4 n) (i 'newarr obj))
+          (doseq [j (range n)]
+            (emit! mc (i 'dup) (i 'ldc.i4 j) (i 'ldarg (inc j)) (i 'stelem.ref)))
+          (emit! mc (i 'callvirt rt-sig-fn-type "InvokeArray" (i obj-array-type) obj))))
+    (finish-value! mc ctx)
+    (when-not (= ctx :tail) (emit! mc (i 'br end)))
+    ;; 编译器未登记 / 该签名证明失败：不再反复付出 Promote 成本。
+    (emit! mc (i 'label disabled) (i 'ldc.i4 -2147483648) (i 'stsfld cname "__rtCount"))
+    ;; 通用体
+    (emit! mc (i 'label generic))
+    (cg body mc ctx)
+    (when-not (= ctx :tail) (emit! mc (i 'label end)))))
+
 (defn- known-call-target-ok?
   "KnownCall 的目标类能被这个单元引用：内存模式，或类在从文件加载的程序集里（编成包时，求值期间生成的类在运行时不存在）。"
   [^Type t]
@@ -2891,7 +2971,8 @@
           (when sig
             (add-fixed! (clj-prim-bridge u cname cl sig :static))
             (add-fixed! (clj-prim-bridge u cname cl sig :prim)))))
-      (when-let [se (hget spec-entries (:class nm))]
+      (when-let [se (or (hget spec-entries (:class nm))
+                        (hget runtime-generated-entries (:class nm)))]
         (add! (clj-typed-entry-method u cname se))))
     (when-let [ss (hget spec-signature-entries (:class nm))]
       (doseq [se ss] (add! (clj-typed-entry-method u cname se))))   ; 重载按 LL / DD 的实参类型区分（cleat-132）
@@ -2923,6 +3004,9 @@
                                    (when profile-n (profile-fields cname profile-n))
                                    (when (hget spec-signature-entries (:class nm))
                                      [(i 'field "ssKind" int32-type 'static)])
+                                   (when (hget runtime-sig-ir (:class nm))
+                                     [(i 'field "__rtSpec" obj 'static)
+                                      (i 'field "__rtCount" int32-type 'static)])
                                    (if *tiered-method* (map #(if (contains? @fwd-methods %) % (add-tiered-attr %)) @methods) @methods)))))
     [static? cname "Instance"])))
 
@@ -3425,7 +3509,7 @@
   (let [u (make-unit assembly-name module-name)]
     (reset! live-unit? (boolean live?))
     (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases
-                   spec-entries spec-profiles spec-signature-entries tier-classes])
+                   spec-entries spec-profiles spec-signature-entries runtime-sig-ir tier-classes])
     (when (or live? opt-imagetier?) (run! mark-tier-classes! forms))
     (let [infer! (fn [forms]
                    (run! collect-assigned! forms)
@@ -3485,3 +3569,42 @@
                             :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
                           (cons module (if vars (conj @(:classes u) vars) @(:classes u)))))]
         [lcil cs]))))
+
+(def ^:private rt-spec-counter (atom 0))
+
+(defn compile-runtime-specialization
+  "cleat-133 的保守原型：按观察到的 CLR 类型重试数值签名；成功时把类型化 lambda 编成内存程序集并返回其实例。
+  引用类型 / 证明失败 / 编译异常都返回 nil，调用方保留通用体。"
+  [cname args generic]
+  (when-let [{:keys [params body v]} (hget runtime-sig-specs cname)]
+    (when (= (count params) (count args))
+      (let [guess (mapv (fn [x] (cond (instance? Int64 x) :l64
+                                      (instance? Double x) :fl
+                                      :else nil))
+                        args)
+            entry (when (every? #(contains? #{:l64 :fl} %) guess)
+                    (some #(spec-entry-try params body v guess %) [:l64 :fl]))]
+        (when entry
+          (try
+            (let [nm (symbol (str "rtSpec$" (swap! rt-spec-counter inc)))]
+              (hput! runtime-generated-entries (:class nm) entry)
+              (try
+                (let [lambda (with-output-language [L3 Expr]
+                               (out (lambda ~nm (~params ...) ~(:body entry))))
+                      wrapped (with-output-language [L3 Expr]
+                                (out (clj-call "HoldResult" false ~lambda)))
+                      asm-name (str "rtspec$c" (swap! rt-spec-counter inc))
+                      [lcil cs] (generate-unit [wrapped] asm-name "#Module" [false] true)
+                      _ (when-not (= (env "CLEAT_DUMP_RT_LCIL") "")
+                          (System.IO.File/WriteAllText (env "CLEAT_DUMP_RT_LCIL") (pr-str lcil)))
+                      asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil asm-name (object-array cs))
+                      _ (.invoke ^clojure.lang.IFn Cleat.Core.Compiler.DriverOps/RunModule asm)
+                      spec (Cleat.Core.Runtime.ClojureOps/TakeHeldResult)
+                      types (mapv #(case % :l64 int64-type :fl double-type) guess)]
+                  (when (instance? clojure.lang.IFn spec)
+                    (Cleat.Core.Runtime.RuntimeSigFn.
+                     (object-array (map #(Type/GetType ^String %) types))
+                     ^clojure.lang.IFn spec
+                     ^clojure.lang.IFn generic)))
+                (finally (hdel! runtime-generated-entries (:class nm)))))
+            (catch Exception _ nil)))))))

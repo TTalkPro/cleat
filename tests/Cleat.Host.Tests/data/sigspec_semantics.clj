@@ -2,6 +2,10 @@
 (def sig-ll (fn [x n] (if (= n 0) x (sig-ll (inc x) (dec n)))))
 (def sig-dd (fn [x n] (if (= n 0) x (sig-dd (* x 2.0) (dec n)))))
 (def sig-overflow (fn [x n] (if (= n 0) x (sig-overflow (+ x x) (dec n)))))
+(def rt4 (fn [a b c d] (+ (+ (+ a b) c) d)))
+(def rt-sum4 (fn [a b c n] (if (= n 0) a (rt-sum4 (+ a b) (+ b c) (+ c n) (dec n)))))
+(def rt-array (fn [xs] (aget xs 0)))
+(def rt-string (fn [s] (count s)))
 
 (prn (sig-ll 1 3))
 (prn (sig-dd 1.25 2))
@@ -19,3 +23,12 @@
 (try (sig-ll :bad 0) (catch Exception e (prn :bad-arg (.Name (.GetType e)))))
 (with-redefs [sig-ll (fn [x n] [:redefined x n])] (prn (sig-ll 1 1)))
 (prn (sig-ll 1 1))
+(dotimes [_ 20] (rt4 1 2 3 4))
+(prn (rt4 5 6 7 8))
+(dotimes [_ 20] (rt-sum4 (long 1) (long 2) (long 3) (long 4)))
+(prn (rt-sum4 (long 5) (long 6) (long 7) (long 8)))
+(prn (rt-sum4 1 2 3 4))                  ; 首签名 Int64；Int32 回到通用函数
+(dotimes [_ 20] (rt-array (int-array [7])))
+(prn (rt-array (int-array [9])))
+(dotimes [_ 20] (rt-string "abc"))
+(prn (rt-string "de"))

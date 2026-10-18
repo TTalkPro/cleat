@@ -139,6 +139,7 @@
 | [cleat-130](tasks/cleat-130-m13-rerun.md) | M13 收尾：数组推测微基准、r7rs 无提示变体与全量重测 | M13 | cleat-127、128 | 完成 |
 | [cleat-131](tasks/cleat-131-arrayspec-local-bindings.md) | 数组推测候选的作用域修复 | M13 后续 | cleat-127、130 | 完成 |
 | [cleat-132](tasks/cleat-132-signature-specialization.md) | 参数签名特化分发原型 | M13 后续 | cleat-104、128 | 完成 |
+| [cleat-133](tasks/cleat-133-runtime-sigspec.md) | 运行时签名特化：观察 → 按需生成 → 查表分发 | M14 | cleat-132 | 完成 |
 
 ## 里程碑
 

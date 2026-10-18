@@ -588,5 +588,6 @@
   (Cleat.Core.Runtime.RuntimeHooks/Set "load-source" load-hook)
   (Cleat.Core.Runtime.RuntimeHooks/Set "compile" compile-reader)
   (Cleat.Core.Runtime.RuntimeHooks/Set "macroexpand-1" (fn [form _] (an/macroexpand-1 form)))
+  (set! Cleat.Core.Runtime.RuntimeSigSpec/Compiler cg/compile-runtime-specialization)
   (DriverOps/InstallCompileHooks compile-boot compile-package)
   nil)
