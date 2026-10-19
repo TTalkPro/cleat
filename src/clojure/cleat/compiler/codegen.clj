@@ -81,7 +81,7 @@
 (def opt-scalar? (not (opt-off? "scalar")))         ; 循环变量的 deftype 标量替换（cleat-123）
 (def opt-collapse? (not (opt-off? "collapse")))     ; 折叠内联子句的 arity 标签（cleat-123）   ; 循环里无提示的数组变量按元素类型推测（cleat-127）
 (def opt-typefeedback? (not (opt-off? "typefeedback")))   ; eval 候选的剖面记录（cleat-128；量化后 129 关闭）
-(def opt-sigspec? (not (opt-off? "sigspec")))     ; 无提示递归函数的 LL / DD 签名特化与缓存分发（cleat-132）
+(def opt-sigspec? (not (opt-off? "sigspec")))     ; 运行时签名特化（cleat-133 ~ 140；cleat-137 删除了 cleat-132 的 LL / DD 预生成）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
 ;; double 经不内联的 LongBox.Double 装箱：内联的 box 在值存活期间调用分配，SysV 的 xmm 寄存器都由调用方保存，
 ;; RyuJIT 于是把循环里的 double 变量整个放在栈上（每次迭代一次存取，sumfp 慢 4 倍）
@@ -483,7 +483,6 @@
        (= d0 "Speculated") (quoted-datum (first e*))   ; 推测循环的快份入口：isinst 检查过的实参（cleat-103）
        (= d0 "TypedSelf") (sig-char-raw (sig-ret (first (quoted-datum (first e*)))))   ; 类型化体里的自调用（cleat-104）
        (= d0 "TypedEntry") (expr-type (second e*) env)
-       (= d0 "SigEntry") (expr-type (last e*) env)   ; 签名分发对外仍是通用体返回的对象（cleat-132）
        (= d0 "RuntimeSigEntry") (expr-type (last e*) env)   ; 运行时签名分发对外仍是通用体返回的对象（cleat-133）
        (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
@@ -1379,7 +1378,6 @@
 (def ^:private spec-entry-max-nodes 200)
 (def ^:private spec-entries (ht))   ; fn 的类名（名字记录的 :class）→ {:sig 签名 :clause 类型化子句}；每个编译单元清空
 (def ^:private spec-profiles (ht))   ; 推测失败 / 缺席的候选：类名 → 固定形参个数（cleat-128）；每个编译单元清空
-(def ^:private spec-signature-entries (ht))   ; cleat-104 推测失败候选的 LL / DD 特化：类名 → 特化表；每个编译单元清空
 (def ^:private runtime-sig-ir (ht))   ; cleat-133 运行时签名特化候选：类名 → {:params x* :body L3}；每个编译单元清空
 (def ^:private runtime-sig-specs (ht))   ; cleat-133 运行时可查的候选登记表：编译单元结束后仍保留，供慢路径钩子查找
 (def ^:private runtime-generated-entries (ht))   ; cleat-133 正在单独生成的类型化条目：生成类名 → cleat-104 条目
@@ -1525,33 +1523,11 @@
        ;; cleat-135：运行时签名候选不再停在 4 参；invokeStatic 常驻到 20 参。
        (when (and (not x) (<= 1 (count x*) 20) (spec-pure? body v)) (count x*))])))
 
-(defn- sigspec-param-vectors
-  "给定形参个数 n，返回候选类型向量列表（:l64 / :fl 组合）。1 参 L / D，2 参 LL / LD / DL / DD，3 参 LLL / LLD / DDL / DDD。"
-  [n]
-  (case n
-    1 [[:l64] [:fl]]
-    2 [[:l64 :l64] [:l64 :fl] [:fl :l64] [:fl :fl]]
-    3 [[:l64 :l64 :l64] [:l64 :l64 :fl] [:fl :fl :l64] [:fl :fl :fl]]
-    []))
-
-(defn- spec-signature-entry-tries
-  "cleat-132 / 133 / 135：≤3 参纯递归候选先尝试编译期预生成 LL / DD（cleat-132 已验证的路径）；
-  推不出的或 ≥4 参的标记为 :runtime（cleat-133 / 135），由运行时按需编译，上限是 invokeStatic 的 20 参。"
+(defn- spec-runtime-candidate?
+  "cleat-133 / 135 / 137：cleat-104 推不出类型化入口、形状合适的函数交给运行时签名特化（cleat-137 起不再预生成 LL / DD）。"
   [v nm fv* cl*]
-  (when (and opt-sigspec? (not (hhas? spec-entries (:class nm)))
-             (spec-feedback-candidate v nm fv* cl*))
-    (nanopass-case [L3 Clause] (first cl*)
-      [(clause (~x* ...) ~x ~body)
-       (cond
-         (and (not x) (<= (count x*) 3))
-         ;; cleat-132 的 ≤3 参分发保持不变。数值预生成一个都不成立时，可能是运行时才能观察的
-         ;; 引用签名（cleat-134）；空骨架没有意义，交给 RuntimeSigEntry。
-         (let [cs (->> (sigspec-param-vectors (count x*))
-                       (keep (fn [guess] (some #(spec-entry-try x* body v guess %) [:l64 :fl])))
-                       (into []))]
-           (if (seq cs) cs :runtime))
-         (and (not x) (<= 1 (count x*) 20)) :runtime
-         :else nil)])))
+  (and opt-sigspec? (not (hhas? spec-entries (:class nm)))
+       (some? (spec-feedback-candidate v nm fv* cl*))))
 
 (define-pass speculate-entries L3 [ir] -> L3 []
   (Expr [ir] -> Expr []
@@ -1566,7 +1542,7 @@
                                (spec-entry d nm x* cl*))
                        ;; 编译期推不出类型但形状合适时，把 LL / DD 交给运行时签名缓存（cleat-132）
                        ss (and (not se) (instance? clojure.lang.Var d)
-                               (spec-signature-entry-tries d nm x* cl*))]
+                               (spec-runtime-candidate? d nm x* cl*))]
                    (cond
                      se (do (vreset! *spec-changed* true)
                             (hput! spec-entries (:class nm) se)
@@ -1580,18 +1556,6 @@
                      ss (do (vreset! *spec-changed* true)
                             ;; cleat-128 的剖面只依赖 eval 通用调用，与 cleat-133 的运行时观察正交；两者并存可保留既有诊断。
                             (when pf (hput! spec-profiles (:class nm) pf))
-                            (if (vector? ss)
-                              ;; 编译期预生成 LL / DD（cleat-132 已验证路径）
-                              (do (hput! spec-signature-entries (:class nm) ss)
-                                  (let [cl (nanopass-case [L3 Clause] (first cl*)
-                                             [(clause (~y* ...) ~y ~body)
-                                              (with-output-language [L3 Clause]
-                                                (out (clause (~y* ...) ~y
-                                                       ~(with-output-language [L3 Expr]
-                                                          (out (clj-call "SigEntry" false
-                                                                         (quote ~(mapv :sig ss))
-                                                                         ~body))))))])]
-                                    (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))
                               ;; 运行时特化候选（cleat-133）：保存 IR，包装为 RuntimeSigEntry
                               (let [rp (nanopass-case [L3 Clause] (first cl*)
                                          [(clause (~y* ...) ~y ~body) (vec y*)])
@@ -1609,7 +1573,7 @@
                                                           (out (clj-call "RuntimeSigEntry" false
                                                                          (quote ~(count rp))
                                                                          ~body))))))])]
-                                    (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl))))))))
+                                    (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))))
                      ;; 推测失败 / 缺席：类名和形参个数交给函数类生成静态剖面字段（cleat-128）
                      pf (do (hput! spec-profiles (:class nm) pf) e0)
                      :else e0))]
@@ -1682,7 +1646,7 @@
       [else nil])))
 
 (declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry!
-         cg-signature-entry! cg-runtime-sig-entry! cg-known-call! cg-escape-propagate!)
+         cg-runtime-sig-entry! cg-known-call! cg-escape-propagate!)
 
 (defn- typed-self-ret
   "(clj-call \"TypedSelf\" …) 的返回类型（:l64 / :fl），别的节点 nil。"
@@ -2329,7 +2293,6 @@
        (= d0 "Speculated") (cg (second e*) mc ctx)   ; 推测的实参：值就是检查过的对象；原始用途由 cg-raw-default 的 unbox.any 取（cleat-103）
        (= d0 "TypedSelf") (do (cg-typed-self! e mc) (box-raw! mc (typed-self-ret e)) (finish-value! mc ctx))   ; cleat-104
        (= d0 "TypedEntry") (cg-typed-entry! e* mc ctx)
-       (= d0 "SigEntry") (cg-signature-entry! e* mc ctx)   ; cleat-132
        (= d0 "RuntimeSigEntry") (cg-runtime-sig-entry! e* mc ctx)   ; cleat-133
        (= d0 "KnownCall") (cg-known-call! e* mc ctx)   ; cleat-110
        (and (= d0 "EscapePropagate") (= 1 (count e*))) (cg-escape-propagate! (first e*) mc ctx)   ; cleat-125
@@ -2811,53 +2774,6 @@
     (cg body mc ctx)
     (when-not (= ctx :tail) (emit! mc (i 'label end)))))
 
-(defn- cg-signature-call!
-  "先检查 invokeStatic 原始实参，再调用类型化重载并装箱；TypedBailout 时去 fail。cache 非空表示慢路径命中后写入签名缓存。"
-  [cname {:keys [sig]} result fail cache mc]
-  ;; Num 优化会把形参槽改绑成 Num 局部；签名入口必须检查 / 拆箱的仍是 invokeStatic 的原始 object 实参。
-  ;; 签名形参个数不能从通用体反推：collapse 可能移除外层 arity label；固定签名字符串本身包含返回类型。
-  (let [args (mapv inc (range (dec (count sig))))
-        body (concat [(i 'ldarg 0)]
-                     (mapcat (fn [j c] [(i 'ldarg j) (i 'unbox.any (sig-char-type c))]) args (sig-params sig))
-                     [(i 'call cname "invokeStaticTyped" (apply i (cons obj (sig-param-types sig))) (sig-char-type (sig-ret sig)))
-                      (if (= (sig-ret sig) \L) (box-long) (box-double))
-                      (i 'stloc result)])]
-    (doseq [[j c] (map vector args (sig-params sig))]
-      (emit! mc (i 'ldarg j) (i 'isinst (sig-char-type c)) (i 'brfalse fail)))
-    ;; 特化体只返回原始 long / double，装箱后不会是 null；方法入口为 null，TypedBailout 后保持 null。
-    (emit! mc (i 'try (apply i 'body body) (i 'catch typed-bailout-type (i 'pop)))
-           (i 'ldloc result) (i 'brfalse fail))
-    (when cache (emit! mc (i 'ldc.i4 cache) (i 'stsfld cname "ssKind")))
-    ;; SigEntry 只包函数子句体，始终在 invokeStatic 的尾位置；直接返回可避免跨过后续 EH 块的汇合分支。
-    (emit! mc (i 'ldloc result) (i 'ret))))
-
-(defn- cg-signature-entry!
-  "(clj-call \"SigEntry\" #f '[sig …] 通用体)（cleat-132）：静态签名缓存命中时直调特化；缓存不命中时
-  依次尝试 LL / DD 并记住命中项。类型不符或 TypedBailout 回到通用体；其他异常照常传播。"
-  [e* mc ctx]
-  (let [body (second e*)
-        entries (mapv #(array-map :sig %) (quoted-datum (first e*)))
-        cname (:class mc)
-        result (new-local! mc obj)
-        hot (mapv (fn [_] (new-label! mc)) entries)
-        between (mapv (fn [_] (new-label! mc)) (rest entries))
-        slow (new-label! mc) generic (new-label! mc)
-        fails (vec (concat between [generic]))]
-    ;; 缓存只减少 isinst；错缓存 / Var 重定义都安全落入慢路径或通用体。
-    (doseq [[idx _entry] (map-indexed vector entries)]
-      (emit! mc (i 'ldsfld cname "ssKind") (i 'ldc.i4 (inc idx)) (i 'beq (hot idx))))
-    (emit! mc (i 'br slow))
-    (doseq [[idx sig] (map-indexed vector (map :sig entries))]
-      (emit! mc (i 'label (hot idx)))
-      (cg-signature-call! cname (entries idx) result slow nil mc))
-    (emit! mc (i 'label slow))
-    (doseq [[idx entry] (map-indexed vector entries)]
-      ;; 上一个签名失败时分支到当前签名；最后一个签名失败则由 fails 指向通用体。
-      (when (pos? idx) (emit! mc (i 'label (fails (dec idx)))))
-      (cg-signature-call! cname entry result (fails idx) (inc idx) mc))
-    (emit! mc (i 'label generic))
-    (cg body mc ctx)))
-
 (defn- cg-runtime-sig-entry!
   "(clj-call \"RuntimeSigEntry\" #f '(n) 通用体)（cleat-133）：先累计通用调用数；达到阈值后请求编译器
   按实参生成特化。__rtSpec 非空时通过 IFn.invoke 调用，否则 / 失败时走通用体。"
@@ -3004,8 +2920,6 @@
       (when-let [se (or (hget spec-entries (:class nm))
                         (hget runtime-generated-entries (:class nm)))]
         (add! (clj-typed-entry-method u cname se))))
-    (when-let [ss (hget spec-signature-entries (:class nm))]
-      (doseq [se ss] (add! (clj-typed-entry-method u cname se))))   ; 重载按 LL / DD 的实参类型区分（cleat-132）
     (doseq [[cl j] (map vector cl* (range))]
       (let [last-variadic? (and variadic (= j (dec n)))]
         (cond
@@ -3032,8 +2946,6 @@
                            (concat (if (seq sigs) [(apply i 'interfaces (map #(str primifs-prefix %) sigs))] [])
                                    (map #(i 'field % obj) field-names)
                                    (when profile-n (profile-fields cname profile-n))
-                                   (when (hget spec-signature-entries (:class nm))
-                                     [(i 'field "ssKind" int32-type 'static)])
                                    (when (hget runtime-sig-ir (:class nm))
                                      [(i 'field "__rtSpec" obj 'static)
                                       (i 'field "__rtCount" int32-type 'static)])
@@ -3539,7 +3451,7 @@
   (let [u (make-unit assembly-name module-name)]
     (reset! live-unit? (boolean live?))
     (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases
-                   spec-entries spec-profiles spec-signature-entries runtime-sig-ir tier-classes])
+                   spec-entries spec-profiles runtime-sig-ir tier-classes])
     (when (or live? opt-imagetier?) (run! mark-tier-classes! forms))
     (let [infer! (fn [forms]
                    (run! collect-assigned! forms)
@@ -3568,10 +3480,6 @@
                           ;; 类型化入口的体（不在形式里）：形参按签名固定类型后推断
                           (doseq [k (keys-of spec-entries)]
                             (let [{:keys [params guess body]} (hget spec-entries k)]
-                              (doseq [[p t] (map vector params guess)] (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t)))
-                              (infer-var-types-into! body var-types)))
-                          (doseq [k (keys-of spec-signature-entries)]
-                            (doseq [{:keys [params guess body]} (hget spec-signature-entries k)]
                               (doseq [[p t] (map vector params guess)] (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t)))
                               (infer-var-types-into! body var-types)))
                           forms')

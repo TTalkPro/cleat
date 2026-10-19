@@ -143,6 +143,11 @@
 | [cleat-134](tasks/cleat-134-reference-signature-specialization.md) | 引用类型运行时签名特化：精确观察 + Tagged 静态决议 | M14 | cleat-133 | 完成 |
 | [cleat-135](tasks/cleat-135-runtime-signature-tables.md) | 运行时签名表与高元数特化：5～20 参 + 多签名上限 | M14 | cleat-134 | 完成 |
 | [cleat-136](tasks/cleat-136-runtime-signature-recycling.md) | 运行时签名回收与逐出 | M14 | cleat-135 | 完成 |
+| [cleat-137](tasks/cleat-137-remove-ll-dd-pregeneration.md) | 删除 cleat-132 的 LL / DD 编译期预生成 | M15 | cleat-136 | 完成 |
+| [cleat-138](tasks/cleat-138-signature-key-table.md) | 单一签名 key 与 RuntimeSigTable：最优路径查表、哨兵未命中、形参掩码 | M15 | cleat-137 | 进行中 |
+| [cleat-139](tasks/cleat-139-whole-function-specialization.md) | 整体函数特化（O 模式）：任意体重新生成、object 兜底、身份守卫自调用 | M15 | cleat-138 | 待办 |
+| [cleat-140](tasks/cleat-140-call-path-type-inference.md) | 编译期调用路径类型推导：调用图、类型摘要、确认的快速路径编译期生成 | M15 | cleat-139 | 待办 |
+| [cleat-141](tasks/cleat-141-m15-validation.md) | M15 收口：压力模式全量基线、种子重生成、r7rs 三方重跑 | M15 | cleat-140 | 待办 |
 
 ## 里程碑
 
@@ -166,11 +171,15 @@
 | M11 r7rs 差距（2026-10-15 起） | cleat-108 ~ cleat-119 | cleat-107 的 r7rs 对比找出的慢区：分支汇合、运行时快路径、结果类型、浮点循环、分层生命周期、类型化调用点（[21](designs/21-r7rs-gaps.md)） |
 | M12 GC 与性能后续（2026-10-16 起） | cleat-120 ~ cleat-126 | tier-0 / OSR、分配快路径、局部异常跳转、有限标量替换、字符串搬运与非本地逃逸（[22](designs/22-gc-and-performance-followups.md)） |
 | M13 按参数类型特化（2026-10-16 起） | cleat-127 ~ cleat-131 | 无提示数组形参的推测、运行时类型反馈特化与候选作用域修复（[23](designs/23-type-specialization.md)） |
+| M14 运行时签名特化（2026-10-18 起） | cleat-132 ~ cleat-136 | 观察 → 按需生成 → 查表分发、引用形参、多签名表与回收（[24](designs/24-runtime-signature-specialization.md) ~ [26](designs/26-runtime-signature-tables.md)） |
+| M15 JIT 式特化（2026-10-19 起） | cleat-137 ~ cleat-141 | 删除 LL / DD 预生成、单一签名 key、整体函数特化、编译期调用路径类型推导（[27](designs/27-jit-style-runtime-specialization.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
+
+**M15（2026-10-19 起）**：137 → 138 → 139 → 140 → 141；JIT 式运行时重新编译与编译期调用路径类型推导（[27](designs/27-jit-style-runtime-specialization.md)）。
 
 **M14（2026-10-18 起）**：133 → 134 → 135 → 136；134 扩展引用形参，135 扩展多签名表与 5～20 参候选，136 收口批次回收与逐出（[24 §6](designs/24-runtime-signature-specialization.md)、[25](designs/25-runtime-reference-signature-specialization.md)、[26](designs/26-runtime-signature-tables.md)）。
 

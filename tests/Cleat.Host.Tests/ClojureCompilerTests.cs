@@ -344,8 +344,8 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
-    /// cleat-132 / 133：无提示的 1～2 参纯递归函数可预生成 LL / DD 类型化重载，通用 invokeStatic 用静态签名
-    /// 缓存分发；≥4 参候选标记 RuntimeSigEntry，进入运行时观察 / 按需生成框架。语义输出在默认、
+    /// cleat-133 / 137：无提示的候选函数（cleat-137 起不再编译期预生成 LL / DD）标记 RuntimeSigEntry，
+    /// 进入运行时观察 / 按需生成框架。语义输出在默认、
     /// CLEAT_NO_OPT=sigspec、CLEAT_NO_OPT=typed（只启用 sigspec）三种设置下逐字相同。
     /// </summary>
     [Test]
@@ -377,8 +377,10 @@ public class ClojureCompilerTests
             return lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
         }
         string sigDd = Type("sig_dd");
-        Assert.That(sigDd, Does.Contain("(field \"ssKind\" \"System.Int32\" static)"), sigDd);
-        Assert.That(sigDd, Does.Contain("(call \"sigspec$sig_dd\" \"invokeStaticTyped\" (\"System.Object\" \"System.Double\" \"System.Double\") \"System.Double\")"), sigDd);
+        // cleat-137：不再预生成 LL / DD；≤3 参候选和其他候选一样进入运行时签名特化
+        Assert.That(sigDd, Does.Not.Contain("ssKind"), sigDd);
+        Assert.That(sigDd, Does.Not.Contain("invokeStaticTyped"), sigDd);
+        Assert.That(sigDd, Does.Contain("(field \"__rtSpec\" \"System.Object\" static)"), sigDd);
         string noisy = Type("noisy");
         Assert.That(noisy, Does.Not.Contain("invokeStaticTyped"), noisy);
         string rt4 = Type("rt4");
