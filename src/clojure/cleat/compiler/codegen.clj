@@ -484,6 +484,9 @@
        (= d0 "TypedSelf") (sig-char-raw (sig-ret (first (quoted-datum (first e*)))))   ; 类型化体里的自调用（cleat-104）
        (= d0 "TypedEntry") (expr-type (second e*) env)
        (= d0 "RuntimeSigEntry") (expr-type (last e*) env)   ; 运行时签名分发对外仍是通用体返回的对象（cleat-133）
+       (= d0 "RtSpecCall") (when (= 4 (count e*))
+                             (let [[_ _ sig _] (quoted-datum (first e*))]
+                               (sig-char-raw (sig-ret (str sig)))))
        (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
        :else
@@ -1391,6 +1394,13 @@
 (def ^:private runtime-sig-ir (ht))   ; cleat-133 运行时签名特化候选：类名 → {:params x* :body L3}；每个编译单元清空
 (def ^:private runtime-sig-specs (ht))   ; cleat-133 运行时可查的候选登记表：编译单元结束后仍保留，供慢路径钩子查找
 (def ^:private runtime-generated-entries (ht))   ; cleat-133 正在单独生成的类型化条目：生成类名 → cleat-104 条目
+(def ^:private runtime-compiled-calls (ht))   ; cleat-140 已准备的编译期特化：[Var key] → 调用点 info，防止重复生成
+(def ^:private runtime-install-forms (volatile! ()))   ; cleat-140 本单元里要排在所有 def 之后执行的填表形式
+(def ^:private runtime-installed-specs (volatile! ()))   ; cleat-140 本单元的特化形参类型，供链接后的整体推断使用
+
+(declare collect-runtime-defs! link-runtime-calls)
+(declare rt-code-ref-type)
+(declare tier-classes rt-spec-counter)
 
 (defn- spec-self-ref? [e v]
   (nanopass-case [L3 Expr] e [(clj-var-ref ~d ~st) (identical? d v)] [else false]))
@@ -1607,6 +1617,121 @@
 
 (def ^:private spec-runtime-max-nodes 4000)
 
+(defn- rt-tagged-code
+  "Tagged 精确引用类型（cleat-101）→ RuntimeSigKey 码；不是精确登记类型时 0。"
+  [e]
+  (when-let [[t _] (tagged-parts e)]
+    (when (instance? Type t) (Cleat.Core.Runtime.RuntimeSigKey/CodeOf ^Type t))))
+
+(defn- rt-static-code
+  "编译期能证明的实参类型码（cleat-140）。只用精确事实：字面量、Tagged、Numbers 的 long / double 运算结果。
+  宿主调用返回的 :l64 可能是编译期加宽的 Int32，对象里的精确类型仍然不符，不能直接固定。"
+  [e]
+  (or (rt-tagged-code e)
+      (nanopass-case [L3 Expr] e
+        [(quote ~d)
+         (cond (instance? Int64 d) 1
+               (instance? Double d) 2
+               (instance? String d) 7
+               :else 0)]
+        [(clj-call ~d0 ~d1 ~e* ...)
+         (if-let [op (numbers-arith-op d0 d1 e*)]
+           (let [t (expr-type e sound-types)]
+             (cond (and (= :l64 t) (contains? (conj numbers-long-ops "minus") op)) 1
+                   (= :fl t) 2
+                   :else 0))
+           (when (= d0 "PrimInvoke") (case (sig-ret (quoted-datum (first e*))) \L 1 \D 2 0)))]
+        [else 0])))
+
+(def ^:private rt-call-tables [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
+
+(defn- save-infer-tables []
+  (let [snap (ht)]
+    (doseq [t rt-call-tables]
+      (let [copy (ht)]
+        (doseq [k (keys-of t)] (hput! copy k (hget t k)))
+        (hput! snap t copy)))
+    snap))
+
+(defn- restore-infer-tables! [snap]
+  (doseq [t rt-call-tables]
+    (hclear! t)
+    (let [copy (hget snap t)]
+      (doseq [k (keys-of copy)] (hput! t k (hget copy k))))))
+
+(defn- rt-effective-codes
+  "掩码外与不能安全传入签名 key 的类型码清零（cleat-140）：只有这些槽位才允许固定类型。"
+  [target codes]
+  (mapv (fn [k c]
+          (let [c (long c)]
+            (if (and (< k 16) (pos? (bit-and (long (:mask target)) (bit-shift-left 1 k)))
+                     (or (<= 1 c 2) (rt-code-ref-type c)))
+              c 0)))
+        (range) codes))
+
+(defn- prepare-runtime-entry
+  "按一个已证明的调用点生成 O 模式特化类（cleat-140）：O 没有放弃点，调用点才能在 Var 恒等时直调，
+  Var 变化时退回通用函数。特化类与调用方在同一个 eval 单元里；安装形式排在所有 def 初始化之后，
+  只把普通条目填进目标表，供未经直链的调用走通用签名表。"
+  [target codes0]
+  (let [codes (rt-effective-codes target codes0)
+        cached (when-let [k (reduce (fn [a [k c]] (bit-or a (bit-shift-left (long c) (* 4 k))))
+                                    0 (map-indexed vector codes))]
+                 (when-let [saved (hget runtime-compiled-calls [(:v target) (long k)])]
+                   {:key (long k) :saved saved}))
+        {params :params body :body v :v} target]
+    (or (when cached
+          (vswap! runtime-install-forms conj (:form (:saved cached)))
+          [(:info (:saved cached)) nil])
+        (let [key (when-not cached (reduce bit-or 0
+                                           (map-indexed (fn [k c] (bit-shift-left (long c) (* 4 k))) codes)))]
+          (when (and key (pos? (long key)))
+            (let [k (long key)
+                  cached-key [v k]
+                  nm (l/->CljFnName (str "rtSpec$" (swap! rt-spec-counter inc)) false [] false)
+                  _ (hput! tier-classes (:class nm) true)   ; 运行时特化类按 cleat-139 规则分层，保留 PGO
+                  guard [v (:class nm) codes]
+                  guess (mapv #(case (int %) 1 :l64 2 :fl nil) codes)
+                  exact (into {} (keep (fn [[p c]] (when-let [t (rt-code-ref-type c)] [p t]))
+                                       (map vector params codes)))
+                  snap (save-infer-tables)
+                  note (fn [what e]
+                         (when (some? (env "CLEAT_RTSPEC_DEBUG"))
+                           (binding [*out* *err*] (println "rtspec-compile:" (:class nm) what (when e (.Message ^Exception e))))))
+                  entry (try (spec-entry-try params body v guess :o exact guard
+                                             ;; O 模式数值也按 object 传入：特化类是普通 fn 类，避免装箱来回
+                                             (mapv (constantly nil) guess))
+                             (catch Exception e (note "prove :o" e) nil))]
+              (restore-infer-tables! snap)
+              (when entry
+                (let [info [v (:class nm) (:sig entry) k codes]
+                      form (with-output-language [L3 Expr]
+                             (out (clj-call "InstallRtSpec" false
+                                            (quote ~[v k (:mask target) false])
+                                            ~(with-output-language [L3 Expr]
+                                               (out (lambda ~nm ()
+                                                      ~(with-output-language [L3 Clause]
+                                                         (out (clause (~params ...) nil ~(:body entry))))))))))]
+                  (hput! runtime-compiled-calls cached-key {:info info :form form})
+                  (vswap! runtime-install-forms conj form)
+                  (vswap! runtime-installed-specs conj {:params (:params entry) :guess guess})
+                  [info nil]))))))))
+
+(defn- link-confirmed-runtime-calls
+  "cleat-140：调用图上 Var 恒等可确定、实参类型在编译期证明、目标有运行时候选 IR 时，
+  生成该签名的特化类并在所有 def 初始化后填表；调用点直接 call 特化类，Var 值变化退回 IFn。"
+  [forms]
+  (if false #_(and opt-sigspec? @live-unit? (Cleat.Core.Runtime.RuntimeSigSpec/Enabled))
+    (let [links (ht)]
+      (doseq [f forms] (collect-runtime-defs! f links))
+      (hclear! runtime-compiled-calls)
+      (vreset! runtime-install-forms ())
+      (vreset! runtime-installed-specs ())
+      (let [forms' (mapv #(link-runtime-calls % links) forms)
+            forms'' (if (seq @runtime-install-forms) (into forms' @runtime-install-forms) forms')]
+        forms''))
+    forms))
+
 (defn- spec-runtime-mask
   "cleat-133 / 137 / 138 / 139：cleat-104 推不出类型化入口、形状合适的函数交给运行时签名特化，返回形参掩码。
   cleat-139 起不要求纯（O 模式整体特化任意体，designs/27 §3.3）：单 Var 的固定单子句、1～16 参（key 的容量）、
@@ -1672,6 +1797,86 @@
                      :else e0))]
                  [else nil])]
        (out (clj-def ~d ~st0 ~st1 ~(or e0' e0) ~e1)))]))
+
+(define-pass collect-runtime-defs! L3 [ir links] -> * []
+  (Expr [ir] -> * []
+    [(lambda ~nm (~x* ...) ~cl* ...) (run! Body cl*)]
+    [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
+     (nanopass-case [L3 Expr] e0
+       [(lambda ~nm0 (~x0* ...) ~cl0* ...)
+        (when-let [rt (hget runtime-sig-specs (:class nm0))]
+          (let [cl (first cl0*)]
+            (nanopass-case [L3 Clause] cl
+              [(clause (~p* ...) ~r ~body)
+               (when (and (instance? clojure.lang.Var (:v rt)) (nil? (hget links (:v rt))))
+                 (hput! links (:v rt) (assoc rt :params (vec p*))))])))]
+       [else nil])
+       (Expr e0) (Expr e1)]
+    [else nil])
+  (Body Clause [ir] -> * []
+    [(clause (~x* ...) ~x ~body) (Expr body)]))
+
+(define-pass link-runtime-calls L3 [ir links] -> L3 []
+  (Expr [ir] -> Expr []
+    [(lambda ~nm (~x* ...) ~cl* ...)
+     (out (lambda ~nm (~x* ...) ~(mapv #(Body % links) cl*)))]
+    [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
+     (out (clj-def ~d ~st0 ~st1 ~(Expr e0 links) ~(Expr e1 links)))]
+    [(clj-invoke ~f ~e* ...)
+     (let [f' (Expr f links) args (mapv #(Expr % links) e*)
+           target (nanopass-case [L3 Expr] f [~x (hget links x)] [else nil])
+           prepared (when (and target (= (count args) (count (:params target))))
+                      (prepare-runtime-entry target (mapv rt-static-code args)))]
+       (if prepared
+         (out (clj-call "RtSpecCall" false (quote ~(first prepared)) ~f' ~args ...))
+         (out (clj-invoke ~f' ~args ...))))]
+    [(clj-call ~d0 ~d1 ~e* ...)
+     (cond
+       (and (= d0 "KnownCall") (>= (count e*) 2))
+       (let [target (nanopass-case [L3 Expr] (second e*)
+                       [(clj-var-ref ~x ~st) (hget links x)]
+                       [else nil])
+              prepared (when (and target (= (count (drop 2 e*)) (count (:params target))))
+                         (prepare-runtime-entry target (mapv rt-static-code (drop 2 e*))))]
+         (if prepared
+           (out (clj-call "RtSpecCall" false
+                           (quote ~(first prepared))
+                           ~(Expr (second e*) links)
+                           ~(mapv #(Expr % links) (drop 2 e*)) ...))
+           (out (clj-call ~d0 ~d1 ~(Expr (first e*) links) ~(Expr (second e*) links)
+                         ~(mapv #(Expr % links) (drop 2 e*)) ...))))
+       :else (out (clj-call ~d0 ~d1 ~(mapv #(Expr % links) e*) ...)))]
+    ;; 其余节点逐一重建；只有函数调用节点可能被 cleat-140 改写
+    [~x ir]
+    [(quote ~d) ir]
+    [(if ~e0 ~e1 ~e2) (out (if ~(Expr e0 links) ~(Expr e1 links) ~(Expr e2 links)))]
+    [(begin ~e* ... ~e) (out (begin ~(mapv #(Expr % links) e*) ... ~(Expr e links)))]
+    [(set! ~x ~e) (out (set! ~x ~(Expr e links)))]
+    [(letrec ([~x* ~le*] ...) ~body)
+     (out (letrec ([~x* ~(mapv #(Expr % links) le*)] ...) ~(Expr body links)))]
+    [(let ([~x* ~e*] ...) ~body)
+     (out (let ([~x* ~(mapv #(Expr % links) e*)] ...) ~(Expr body links)))]
+    [(call ~e ~e* ...) (out (call ~(Expr e links) ~(mapv #(Expr % links) e*) ...))]
+    [(throw ~e) (out (throw ~(Expr e links)))]
+    [(try-finally ~e0 ~e1) (out (try-finally ~(Expr e0 links) ~(Expr e1 links)))]
+    [(try-catch ~e (~d* ~e*) ...) ir]
+    [(label ~x (~x* ...) ~body0 ~body1)
+     (out (label ~x (~x* ...) ~(Expr body0 links) ~(Expr body1 links)))]
+    [(jump ~x ~e* ...) (out (jump ~x ~(mapv #(Expr % links) e*) ...))]
+    [(box ~e) (out (box ~(Expr e links)))]
+    [(set-box! ~x ~e) (out (set-box! ~x ~(Expr e links)))]
+    [(clj-var-set! ~d ~e) (out (clj-var-set! ~d ~(Expr e links)))]
+    [(clj-keyword-invoke ~d ~e ~e* ...)
+     (out (clj-keyword-invoke ~d ~(Expr e links) ~(mapv #(Expr % links) e*) ...))]
+    [(clj-static-call ~d0 ~d1 ~e* ...) (out (clj-static-call ~d0 ~d1 ~(mapv #(Expr % links) e*) ...))]
+    [(check-initialized ~e) (out (check-initialized ~(Expr e links)))]
+    [(clj-case ~d ~e0 ~e1 ~e* ...)
+     (out (clj-case ~d ~(Expr e0 links) ~(Expr e1 links) ~(mapv #(Expr % links) e*) ...))]
+    [(clj-deftype ~d (~x* ...) ~le* ...) ir]
+    [uninitialized ir]
+    [else (throw (ex-info "codegen: unhandled node in link-runtime-calls" {}))])
+  (Body Clause [ir links] -> Clause []
+    [(clause (~x* ...) ~x ~body) (out (clause (~x* ...) ~x ~(Expr body links)))]))
 
 ;; —— deftype* 描述的访问（向量，见原版 deftype-info-*）——
 (defn- dinfo [d k] (nth d k))
@@ -2739,7 +2944,7 @@
                                [(clj-invoke ~f ~e* ...) (when (own? f) (count e*))]
                                [(clj-static-call ~d0 ~d1 ~e* ...) (when (own? (first e*)) (count (rest e*)))]
                                [(clj-call ~d0 ~d1 ~e* ...) (cond (= "TypedSelf" d0) :any
-                                                                 (and (#{"KnownCall" "PrimInvoke"} d0) (own? (second e*))) (count (drop 2 e*)))]
+                                                                 (and (#{"KnownCall" "RtSpecCall" "PrimInvoke"} d0) (own? (second e*))) (count (drop 2 e*)))]
                                [else nil]))]
              (nanopass-case [L3 Expr] e0
                [(lambda ~nm (~x* ...) ~cl* ...)
@@ -2998,6 +3203,53 @@
   [^Type t]
   (or @live-unit?
       (let [a (.Assembly t)] (and (not (.IsDynamic a)) (not (str/blank? (.Location a)))))))
+
+(defn- cg-rt-spec-call!
+  "(clj-call \"RtSpecCall\" #f '[Var 类 签名 key 类型码] Var读 实参 …)（cleat-140）：Var 值仍是编译时通用函数时
+  直调同一单元里的特化类；Var 重定义后走 IFn.invoke。实参已由编译期证明，但仍然只求值一次。"
+  [e* mc ctx]
+  (let [[v cname sig _ codes] (quoted-datum (first e*))
+        f (second e*) args (drop 2 e*) n (count args)]
+    (if-not (and @live-unit? (instance? clojure.lang.Var v) (string? cname) (string? sig) (<= n 20))
+      (cg* (with-output-language [L3 Expr] (out (clj-invoke ~f ~args ...))) mc ctx)
+      (let [root (new-local! mc obj)
+            _ (do (cg f mc :value) (emit! mc (i 'stloc root)))
+            temps (mapv (fn [a] (cg a mc :value) (let [l (new-local! mc obj)] (emit! mc (i 'stloc l)) l)) args)
+            slow (new-label! mc) end (new-label! mc)]
+        (emit! mc (i 'ldloc root))
+        (load-constant! mc v)
+        (emit! mc (i 'bne.un slow))
+        (ldloc-clear! mc root)
+        (doseq [l temps] (ldloc-clear! mc l))
+        (let [merge (when *tiered-method* (new-local! mc obj))]   ; 结果不留在栈上跨过汇合点（同 KnownCall，cleat-114）
+          (emit! mc (i 'call cname "invokeStatic" (apply i (objs (inc n))) obj))
+          (when merge (emit! mc (i 'stloc merge)))
+          (emit! mc (i 'br end) (i 'label slow))
+          (ldloc-clear! mc root)
+          (emit! mc (i 'castclass ifn-type))
+          (doseq [l temps] (ldloc-clear! mc l))
+          (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj))
+          (when merge (emit! mc (i 'stloc merge)))
+          (emit! mc (i 'label end))
+          (when merge (emit! mc (i 'ldloca merge)) (take-slot! mc)))
+        (finish-value! mc ctx)))))
+
+(defn- cg-install-rt-spec!
+  "(clj-call \"InstallRtSpec\" #f '[Var key 掩码 guarded?] 特化 fn)（cleat-140）：所有 def 初始化后执行，
+  把同一单元生成的特化函数装进目标函数的运行时签名表。"
+  [e* mc ctx]
+  (let [[v key mask guarded?] (quoted-datum (first e*))]
+    (load-constant! mc v)
+    (emit! mc
+           (i 'ldc.i8 (long key))
+           (i 'ldc.i4 (int mask))
+           (i 'ldc.i4 (if guarded? 1 0))
+           (i 'ldnull))
+    (cg (second e*) mc :value)
+    (emit! mc (i 'call "Cleat.Core.Runtime.RuntimeSigSpec" "SeedCompiled"
+                      (i obj int64-type int32-type ifn-type bool-type) void-type)
+           (i 'ldnull))
+    (finish-value! mc ctx)))
 
 (defn- cg-known-call!
   "(clj-call \"KnownCall\" #f '类 Var读 实参 …)（cleat-110）：先求函数值再求实参（同 IFn 调用的顺序），isinst 类时 call 类.invokeStatic(f, 实参 …)，
@@ -3676,6 +3928,16 @@
           _ (doseq [[k b] (map vector rt-keys (subvec forms n0))]
               (hput! runtime-generated-entries k (assoc (hget runtime-generated-entries k) :body b)))
           forms (subvec forms 0 n0)]
+      (let [forms (let [fs (link-confirmed-runtime-calls forms)]
+                    (when (seq @runtime-installed-specs)
+                      (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
+                      (doseq [{:keys [params guess]} @runtime-installed-specs]
+                        (doseq [[p t] (map vector params guess)]
+                          (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t))))
+                      (run! collect-assigned! fs)
+                      (when opt-infer?
+                        (doseq [f fs] (infer-var-types-into! f var-types)))
+                      fs))]
       (let [inits (mapv (fn [f k] (top-level-method u f k)) forms (range))
             n (count inits)
             entry (i 'method "Initialize" (i 'attrs 'static) (i 'params) (i 'ret obj)
@@ -3697,7 +3959,7 @@
                             ;; 原版在 canonical-gensyms 时（boot 镜像）把编码里的 gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
                             :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
                           (cons module (if vars (conj @(:classes u) vars) @(:classes u)))))]
-        [lcil cs])))
+        [lcil cs]))))
   (finally (Cleat.Core.Runtime.RuntimeSigSpec/ExitUnit))))
 
 (def ^:private rt-spec-counter (atom 0))

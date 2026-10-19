@@ -58,6 +58,17 @@ public static class RuntimeSigKey
     /// <summary>类型码对应的 CLR 类型；0 / 未知码为 null。</summary>
     public static Type TypeOf(int code) => code > 0 && code < s_types.Length ? s_types[code] : null;
 
+    /// <summary>
+    /// 编译期已知 CLR 类型的类型码（cleat-140）：静态类型必须是精确类型才返回非 0；
+    /// CLR 数组协变让 <c>typeof(long).IsAssignableFrom</c> 一类判断不可靠，所以只做同一类型比较。
+    /// </summary>
+    public static int CodeOf(Type t)
+    {
+        if (t is null) return Other;
+        for (var i = 1; i < s_types.Length; i++) if (t == s_types[i]) return i;
+        return Other;
+    }
+
     /// <summary>key 第 i 个形参的类型码。</summary>
     public static int Slot(long key, int i) => (int)((ulong)key >> (4 * i)) & 0xF;
 

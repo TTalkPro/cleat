@@ -428,4 +428,11 @@ public sealed class RuntimeSigTable
 
     /// <summary>首个条目：入口达到阈值时由 <see cref="RuntimeSigSpec.Install"/> 建表后立即按实参补生成。</summary>
     internal bool Seed(long key, object[] args) => key != 0 && Promote(key, args) is not null;
+
+    /// <summary>编译期预生成条目（cleat-140）：没有实参可观察，直接按编译器证明的有效 key 装入。</summary>
+    public void SeedCompiled(RuntimeSigCompiled compiled)
+    {
+        if (compiled.Key == 0) return;
+        Add(compiled.Key, compiled, alias: false);
+    }
 }

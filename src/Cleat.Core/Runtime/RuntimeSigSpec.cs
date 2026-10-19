@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Reflection;
 using clojure.lang;
 using System.Threading;
 
@@ -83,6 +84,28 @@ public static class RuntimeSigSpec
         // 同步模式：首个签名都生成不了（未登记 IR、证明失败、忙）就不建表，入口永久回通用体
         return table.Seed(key, args) ? table : null;
     }
+
+    /// <summary>
+    /// 编译期已生成的条目登记（cleat-140）：调用路径类型已经证明时，在目标函数第一次被调用前填表。
+    /// 竞态语义与 <see cref="Install"/> 相同：表可能刚被首次调用建出，已有序照旧；字段写回是幂等的。
+    /// </summary>
+    public static void SeedCompiled(object generic, int mask, RuntimeSigCompiled compiled)
+    {
+        var type = generic.GetType();
+        var field = type.GetField("__rtSpec", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+        if (field is null) return;
+        var table = field.GetValue(null) as RuntimeSigTable;
+        if (table is null)
+        {
+            table = new RuntimeSigTable(type.FullName ?? type.Name, mask, generic);
+            field.SetValue(null, table);
+        }
+        table.SeedCompiled(compiled);
+    }
+
+    /// <summary>InstallRtSpec 调用点使用的登记入口（cleat-140）：编译单元里已生成特化类，装配时只填目标签名表。</summary>
+    public static void SeedCompiled(object generic, long key, int mask, bool guarded, IFn fn)
+        => SeedCompiled(generic, mask, new RuntimeSigCompiled(fn, key, guarded, null));
 
     /// <summary>
     /// 后台编译（缺省）：运行时编译放到一个专用后台线程依次进行，调用线程不等待。CLEAT_RTSPEC_SYNC=1 改回在触发的
