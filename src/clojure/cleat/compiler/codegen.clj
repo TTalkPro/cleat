@@ -1724,7 +1724,7 @@
   (let [_ (hclear! runtime-compiled-calls)
         _ (vreset! runtime-install-forms ())
         _ (vreset! runtime-installed-specs ())]
-    (if false #_(and opt-sigspec? @live-unit? (Cleat.Core.Runtime.RuntimeSigSpec/Enabled))
+    (if (and opt-sigspec? @live-unit? (Cleat.Core.Runtime.RuntimeSigSpec/Enabled))
       (let [links (ht)]
         (doseq [f forms] (collect-runtime-defs! f links))
         (let [forms' (mapv #(link-runtime-calls % links) forms)
@@ -1819,11 +1819,11 @@
 (define-pass link-runtime-calls L3 [ir links] -> L3 []
   (Expr [ir] -> Expr []
     [(lambda ~nm (~x* ...) ~cl* ...)
-     (out (lambda ~nm (~x* ...) ~(mapv #(Body % links) cl*)))]
+     (out (lambda ~nm (~x* ...) ~(mapv #(Body %) cl*) ...))]
     [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
-     (out (clj-def ~d ~st0 ~st1 ~(Expr e0 links) ~(Expr e1 links)))]
+     (out (clj-def ~d ~st0 ~st1 ~(Expr e0) ~(Expr e1)))]
     [(clj-invoke ~f ~e* ...)
-     (let [f' (Expr f links) args (mapv #(Expr % links) e*)
+     (let [f' (Expr f) args (mapv #(Expr %) e*)
            target (nanopass-case [L3 Expr] f [~x (hget links x)] [else nil])
            prepared (when (and target (= (count args) (count (:params target))))
                       (prepare-runtime-entry target (mapv rt-static-code args)))]
@@ -1841,42 +1841,44 @@
          (if prepared
            (out (clj-call "RtSpecCall" false
                            (quote ~(first prepared))
-                           ~(Expr (second e*) links)
-                           ~(mapv #(Expr % links) (drop 2 e*)) ...))
-           (out (clj-call ~d0 ~d1 ~(Expr (first e*) links) ~(Expr (second e*) links)
-                         ~(mapv #(Expr % links) (drop 2 e*)) ...))))
-       :else (out (clj-call ~d0 ~d1 ~(mapv #(Expr % links) e*) ...)))]
+                           ~(Expr (second e*))
+                           ~(mapv #(Expr %) (drop 2 e*)) ...))
+           (out (clj-call ~d0 ~d1 ~(Expr (first e*)) ~(Expr (second e*))
+                         ~(mapv #(Expr %) (drop 2 e*)) ...))))
+       :else (out (clj-call ~d0 ~d1 ~(mapv #(Expr %) e*) ...)))]
     ;; 其余节点逐一重建；只有函数调用节点可能被 cleat-140 改写
     [~x ir]
+    [(clj-var-ref ~x ~st) ir]
     [(quote ~d) ir]
-    [(if ~e0 ~e1 ~e2) (out (if ~(Expr e0 links) ~(Expr e1 links) ~(Expr e2 links)))]
-    [(begin ~e* ... ~e) (out (begin ~(mapv #(Expr % links) e*) ... ~(Expr e links)))]
-    [(set! ~x ~e) (out (set! ~x ~(Expr e links)))]
+    [(if ~e0 ~e1 ~e2) (out (if ~(Expr e0) ~(Expr e1) ~(Expr e2)))]
+    [(begin ~e* ... ~e) (out (begin ~(mapv #(Expr %) e*) ... ~(Expr e)))]
+    [(set! ~x ~e) (out (set! ~x ~(Expr e)))]
     [(letrec ([~x* ~le*] ...) ~body)
-     (out (letrec ([~x* ~(mapv #(Expr % links) le*)] ...) ~(Expr body links)))]
+     (out (letrec ([~x* ~(mapv #(Expr %) le*)] ...) ~(Expr body)))]
     [(let ([~x* ~e*] ...) ~body)
-     (out (let ([~x* ~(mapv #(Expr % links) e*)] ...) ~(Expr body links)))]
-    [(call ~e ~e* ...) (out (call ~(Expr e links) ~(mapv #(Expr % links) e*) ...))]
-    [(throw ~e) (out (throw ~(Expr e links)))]
-    [(try-finally ~e0 ~e1) (out (try-finally ~(Expr e0 links) ~(Expr e1 links)))]
+     (out (let ([~x* ~(mapv #(Expr %) e*)] ...) ~(Expr body)))]
+    [(call ~e ~e* ...) (out (call ~(Expr e) ~(mapv #(Expr %) e*) ...))]
+    [(throw ~e) (out (throw ~(Expr e)))]
+    [(try-finally ~e0 ~e1) (out (try-finally ~(Expr e0) ~(Expr e1)))]
     [(try-catch ~e (~d* ~e*) ...) ir]
     [(label ~x (~x* ...) ~body0 ~body1)
-     (out (label ~x (~x* ...) ~(Expr body0 links) ~(Expr body1 links)))]
-    [(jump ~x ~e* ...) (out (jump ~x ~(mapv #(Expr % links) e*) ...))]
-    [(box ~e) (out (box ~(Expr e links)))]
-    [(set-box! ~x ~e) (out (set-box! ~x ~(Expr e links)))]
-    [(clj-var-set! ~d ~e) (out (clj-var-set! ~d ~(Expr e links)))]
+     (out (label ~x (~x* ...) ~(Expr body0) ~(Expr body1)))]
+    [(jump ~x ~e* ...) (out (jump ~x ~(mapv #(Expr %) e*) ...))]
+    [(box ~e) (out (box ~(Expr e)))]
+    [(unbox ~x) ir]
+    [(set-box! ~x ~e) (out (set-box! ~x ~(Expr e)))]
+    [(clj-var-set! ~d ~e) (out (clj-var-set! ~d ~(Expr e)))]
     [(clj-keyword-invoke ~d ~e ~e* ...)
-     (out (clj-keyword-invoke ~d ~(Expr e links) ~(mapv #(Expr % links) e*) ...))]
-    [(clj-static-call ~d0 ~d1 ~e* ...) (out (clj-static-call ~d0 ~d1 ~(mapv #(Expr % links) e*) ...))]
-    [(check-initialized ~e) (out (check-initialized ~(Expr e links)))]
+     (out (clj-keyword-invoke ~d ~(Expr e) ~(mapv #(Expr %) e*) ...))]
+    [(clj-static-call ~d0 ~d1 ~e* ...) (out (clj-static-call ~d0 ~d1 ~(mapv #(Expr %) e*) ...))]
+    [(check-initialized ~e) (out (check-initialized ~(Expr e)))]
     [(clj-case ~d ~e0 ~e1 ~e* ...)
-     (out (clj-case ~d ~(Expr e0 links) ~(Expr e1 links) ~(mapv #(Expr % links) e*) ...))]
+     (out (clj-case ~d ~(Expr e0) ~(Expr e1) ~(mapv #(Expr %) e*) ...))]
     [(clj-deftype ~d (~x* ...) ~le* ...) ir]
     [uninitialized ir]
     [else (throw (ex-info "codegen: unhandled node in link-runtime-calls" {}))])
-  (Body Clause [ir links] -> Clause []
-    [(clause (~x* ...) ~x ~body) (out (clause (~x* ...) ~x ~(Expr body links)))]))
+  (Body Clause [ir] -> Clause []
+    [(clause (~x* ...) ~x ~body) (out (clause (~x* ...) ~x ~(Expr body)))]))
 
 ;; —— deftype* 描述的访问（向量，见原版 deftype-info-*）——
 (defn- dinfo [d k] (nth d k))

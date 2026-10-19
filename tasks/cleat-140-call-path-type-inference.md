@@ -1,6 +1,6 @@
 # cleat-140 编译期调用路径类型推导
 
-- 里程碑：M15　依赖：cleat-139　状态：进行中
+- 里程碑：M15　依赖：cleat-139　状态：完成
 - 设计依据：[27 §5](../designs/27-jit-style-runtime-specialization.md)
 
 ## 问题
@@ -21,20 +21,13 @@
 5. 补齐 `RtSpecCall` / `InstallRtSpec` 的类型、递归识别和 CIL 生成；修复 forward declare 与
    64 位 key 发射。
 
-## 当前阻塞
+## 自举修复
 
-编译期链接入口必须保持条件禁用。启用后 `GenerateCompilerPackage` 的第三个 Exec 稳定失败：
-
-```text
-Wrong number of args (2) passed to:
-cleat.compiler0.codegen/link-runtime-calls/Expr
-```
-
-这不是 MSBuild 环境缺失：使用完整 `CLEAT_COMPILER_NS=cleat.compiler0` 环境可复现。把直接
-Var 调用改成 `mapv` 高阶调用、显式 `loop` 或 `apply` 都不能绕过；同一改动禁用入口后完整自举
-通过。由于包编译时 `@live-unit?` 为 false，运行路径不应进入链接，怀疑是 cleat-140 的 IR / 接口
-变化破坏了当前 compiler0 自举不动点。需要按 cleat-141 重生成种子或在独立干净自举环境中分级比对
-接口与 Lcil 后再启用。
+编译期链接入口已恢复启用。此前的 arity 错误根因是 `link-runtime-calls` 把外层 pass 形参
+`links` 又声明成 `Expr` / `Body` 处理器的额外形参：自举编译器生成的 letfn 闭包把它作为捕获
+上下文，但调用侧仍按额外实参传递，二者在当前不动点里错位。仓库既有 nanopass pass 的风格是
+处理器只接 `ir`、闭包捕获外层上下文；现在改写为同一风格，并补上 `clj-var-ref` 与 `unbox` 的恒等覆盖，
+lambda 输出用省略号接入重写后的子句序列。
 
 ## 验证
 
