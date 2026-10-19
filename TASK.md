@@ -147,7 +147,7 @@
 | [cleat-138](tasks/cleat-138-signature-key-table.md) | 单一签名 key 与 RuntimeSigTable：最优路径查表、哨兵未命中、形参掩码 | M15 | cleat-137 | 完成 |
 | [cleat-139](tasks/cleat-139-whole-function-specialization.md) | 整体函数特化（O 模式）：任意体重新生成、object 兜底、身份守卫自调用 | M15 | cleat-138 | 完成 |
 | [cleat-140](tasks/cleat-140-call-path-type-inference.md) | 编译期调用路径类型推导：调用图、类型摘要、确认的快速路径编译期生成 | M15 | cleat-139 | 完成 |
-| [cleat-141](tasks/cleat-141-m15-validation.md) | M15 收口：压力模式全量基线、种子重生成、r7rs 三方重跑 | M15 | cleat-140 | 待办 |
+| [cleat-141](tasks/cleat-141-m15-validation.md) | M15 收口：压力模式全量基线、种子重生成、r7rs 三方重跑 | M15 | cleat-140 | 完成 |
 
 ## 里程碑
 

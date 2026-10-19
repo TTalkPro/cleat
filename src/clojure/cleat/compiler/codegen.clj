@@ -35,7 +35,6 @@
 (def bool-type "System.Boolean")
 (def num-type "Cleat.Core.Runtime.Num")   ; 不装箱的未定类型数（cleat-102）
 (def long-box-type "Cleat.Core.Runtime.LongBox")   ; 小整数装箱缓存（cleat-109）
-(def rt-sig-fn-type "Cleat.Core.Runtime.RuntimeSigFn")   ; 运行时签名表项（cleat-133）
 (def ^:private narrow-value-types #{"System.Byte" "System.SByte" "System.Int16" "System.UInt16" "System.Single"})   ; 较窄的数值类型（cleat-111）
 (def char-type "System.Char")
 (def string-type "System.String")
@@ -1875,7 +1874,7 @@
     [(clj-case ~d ~e0 ~e1 ~e* ...)
      (out (clj-case ~d ~(Expr e0) ~(Expr e1) ~(mapv #(Expr %) e*) ...))]
     [(clj-deftype ~d (~x* ...) ~le* ...) ir]
-    [uninitialized ir]
+    [(uninitialized) ir]
     [else (throw (ex-info "codegen: unhandled node in link-runtime-calls" {}))])
   (Body Clause [ir] -> Clause []
     [(clause (~x* ...) ~x ~body) (out (clause (~x* ...) ~x ~(Expr body)))]))

@@ -180,9 +180,6 @@ public static class RuntimeSigSpec
     // 逐出后的程序集只保存弱引用；诊断本身不延长 RunAndCollect 程序集的生命周期。
     private static readonly ConcurrentQueue<WeakReference> s_retired = new();
 
-    /// <summary>cleat-133 ~ 136 的旧协议（只为旧种子保留，cleat-141 重生成种子后删除）。</summary>
-    public static Func<string, object[], object, object> Compiler { get; set; }
-
     /// <summary>构建镜像时关闭：编译器自身的函数会执行超过阈值，递归触发运行时编译会自举死循环。</summary>
     public static bool Enabled { get; set; } = true;
 
@@ -215,19 +212,4 @@ public static class RuntimeSigSpec
         return alive;
     }
 
-    /// <summary>生成代码在慢路径调用；异常一律视作不能特化，调用方回退通用体。</summary>
-    public static object Promote(string className, object[] args, object generic)
-    {
-        var compiler = Compiler;
-        if (!Enabled) return null;
-        if (compiler is null) return null;
-        try
-        {
-            return compiler(className, args, generic);
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }
