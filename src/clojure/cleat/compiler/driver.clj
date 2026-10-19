@@ -67,6 +67,9 @@
   (let [nm (str "eval$c" (swap! eval-counter inc))   ; 原版驱动的程序集叫 eval$N，为区分而带 c
         [lcil cs] (pl/compile-unit [[0 (with-output-language [L0 Expr] (out (clj-call "HoldResult" false ~l0)))]]
                                    nm "#Module" true (fn [_ _ _]))
+        ;; 诊断（cleat-139）：CLEAT_DUMP_EVAL_LCIL=<文件> 把每个 eval 单元的 Lcil 追加到文件
+        _ (when-let [dump (System.Environment/GetEnvironmentVariable "CLEAT_DUMP_EVAL_LCIL")]
+            (System.IO.File/AppendAllText dump (str (pr-str lcil) "\n")))
         asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil nm (object-array cs))]
     (run-module asm)
     ;; 构建镜像 / 包时不登记：产物里的调用点不能链接到 eval 程序集里的类

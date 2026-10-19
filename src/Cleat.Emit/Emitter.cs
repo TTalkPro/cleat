@@ -58,6 +58,12 @@ public sealed partial class LcilEmitter
     public static Assembly EmitInMemory(LcilAssembly a) => EmitInMemory(a, null);
 
     /// <summary>eval 的快速路径：直接发射编译器产出的 Lcil S 表达式（Clojure 数据），不经文本（iron-033）。</summary>
+    /// <summary>
+    /// 本线程发射时优先查找短类型名的程序集（cleat-139）：运行时特化单元引用原函数所在 eval 单元里按短名定义的类型；
+    /// 同名类型被重定义过时，只有先查原程序集才能拿到原函数看到的那个。结果不进静态缓存。
+    /// </summary>
+    [ThreadStatic] public static Assembly[] PreferredAssemblies;
+
     public static Assembly EmitInMemoryData(object lcil, string file, object[] constants) =>
       EmitInMemory(LcilParser.FromTree(DataToTree(lcil, file), file), constants);
 
@@ -233,6 +239,9 @@ public sealed partial class LcilEmitter
         // 本单元的类型先于跨实例的静态缓存（缓存里可能是进程中运行着的同名程序集——上一级镜像——的类型）
         if (QualifiedSplit(name) is int q && OwnQualifier(name.Substring(q + 1).Trim()) && _types.TryGetValue(name.Substring(0, q).Trim(), out var mine))
             return mine;
+        if (PreferredAssemblies is { } prefer && QualifiedSplit(name) == null)
+            foreach (var a in prefer)
+                if (a.GetType(name) is { } p && (p.IsPublic || p.IsNestedPublic)) return p;
         if (s_staticTypes.TryGetValue(name, out var cached)) return cached;
         var t = Type.GetType(name);
         if (t == null && QualifiedSplit(name) is int comma)

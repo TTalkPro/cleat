@@ -564,13 +564,16 @@ public class RuntimeSigTableTests
     {
         var saved = RuntimeSigSpec.SpecCompiler;
         var enabled = RuntimeSigSpec.Enabled;
+        var background = RuntimeSigSpec.Background;
         RuntimeSigSpec.Enabled = true;
         RuntimeSigSpec.SpecCompiler = compiler;
+        RuntimeSigSpec.Background = false;   // 同步编译：断言生成时机
         try { return body(); }
         finally
         {
             RuntimeSigSpec.SpecCompiler = saved;
             RuntimeSigSpec.Enabled = enabled;
+            RuntimeSigSpec.Background = background;
         }
     }
 

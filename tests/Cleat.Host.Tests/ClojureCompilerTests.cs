@@ -352,12 +352,13 @@ public class ClojureCompilerTests
     public void SignatureSpecialization()
     {
         string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "sigspec_semantics.clj");
-        // 用例按 cleat-135 的 16 次阈值写（dotimes 20）；cleat-139 起缺省阈值是 128，这里显式设成 16，另跑一遍压力模式（阈值 1）
+        // 用例按 cleat-135 的 16 次阈值写（dotimes 20）；cleat-139 起缺省阈值是 8，这里显式设成 16，另跑一遍压力模式（阈值 1）
         var t16 = ("CLEAT_RTSPEC_THRESHOLD", "16");
+        var sync = ("CLEAT_RTSPEC_SYNC", "1");   // cleat-139 起缺省后台编译；断言生成时机 / 导出文件的运行用同步
         var on = HostProcessTests.CleatIn(_dir, null, new[] { t16 }, script);
         var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "sigspec") }, script);
         var noTyped = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "typed"), t16 }, script);
-        var stress = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_RTSPEC_THRESHOLD", "1") }, script);
+        var stress = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_RTSPEC_THRESHOLD", "1"), ("CLEAT_RTSPEC_ALL", "1") }, script);
         Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
         Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
         Assert.That(noTyped.ExitCode, Is.EqualTo(0), noTyped.ToString());
@@ -382,24 +383,22 @@ public class ClojureCompilerTests
             return lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
         }
         string sigDd = Type("sig_dd");
-        // cleat-137：不再预生成 LL / DD；≤3 参候选和其他候选一样进入运行时签名特化
+        // cleat-137：不再预生成 LL / DD；cleat-139：运行时候选只在 eval 单元里生成（包里没有可用的 L3 登记），
+        // 包程序集的函数类没有签名表字段，也不调 Install
         Assert.That(sigDd, Does.Not.Contain("ssKind"), sigDd);
         Assert.That(sigDd, Does.Not.Contain("invokeStaticTyped"), sigDd);
-        Assert.That(sigDd, Does.Contain("(field \"__rtSpec\" \"System.Object\" static)"), sigDd);
         string noisy = Type("noisy");
         Assert.That(noisy, Does.Not.Contain("invokeStaticTyped"), noisy);
         string rt4 = Type("rt4");
-        Assert.That(rt4, Does.Contain("(field \"__rtSpec\" \"System.Object\" static)"), rt4);
-        Assert.That(rt4, Does.Contain("(field \"__rtCount\" \"System.Int32\" static)"), rt4);
-        Assert.That(rt4, Does.Contain("(call \"Cleat.Core.Runtime.RuntimeSigSpec\" \"Install\" (\"System.String\" \"System.Int32\" \"System.Object[]\" \"System.Object\") \"System.Object\")"), rt4);
-        Assert.That(rt4, Does.Contain("(ldsfld \"Cleat.Core.Runtime.RuntimeSigTable\" \"Miss\")"), rt4);
-        Assert.That(rt4, Does.Not.Contain("TypedBailout"), rt4);   // cleat-138：入口不再有 try / catch
+        Assert.That(rt4, Does.Not.Contain("__rtSpec"), rt4);
+        Assert.That(rt4, Does.Not.Contain("RuntimeSigSpec"), rt4);
 
         string runtimeSrc = Path.Combine(_dir, "rtspec134.clj");
         string runtimeLcil = Path.Combine(_dir, "rtspec134.lcil");
         File.WriteAllText(runtimeSrc, "(ns rtspec134)\n(defn rt-array [xs] (aget xs 0))\n"
             + "(dotimes [_ 20] (rt-array (int-array [7])))\n(prn (rt-array (int-array [9])))\n");
-        var runtime = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", runtimeLcil), t16 }, runtimeSrc);
+        // 单次 aget 不在热区：这里验证机制，不看收益门槛
+        var runtime = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", runtimeLcil), t16, sync, ("CLEAT_RTSPEC_ALL", "1") }, runtimeSrc);
         Assert.That(runtime.ExitCode, Is.EqualTo(0), runtime.ToString());
         Assert.That(runtime.Out, Is.EqualTo("9\n"), runtime.ToString());
         Assert.That(File.Exists(runtimeLcil), runtime.ToString());
@@ -412,7 +411,7 @@ public class ClojureCompilerTests
         File.WriteAllText(wideSrc, "(ns rtspec135)\n"
             + "(defn rt6 [a b c d e n] (if (= n 0) a (rt6 (inc a) b c d e (dec n))))\n"
             + "(dotimes [_ 20] (rt6 1 2 3 4 5 3))\n(prn (rt6 2 3 4 5 6 2))\n");
-        var wide = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", wideLcil), t16 }, wideSrc);
+        var wide = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", wideLcil), t16, sync }, wideSrc);
         Assert.That(wide.ExitCode, Is.EqualTo(0), wide.ToString());
         Assert.That(wide.Out, Is.EqualTo("4\n"), wide.ToString());
         string wideText = File.ReadAllText(wideLcil);
@@ -429,6 +428,38 @@ public class ClojureCompilerTests
         var table = HostProcessTests.CleatIn(_dir, null, new[] { t16 }, tableSrc);
         Assert.That(table.ExitCode, Is.EqualTo(0), table.ToString());
         Assert.That(table.Out, Is.EqualTo("7\n13\n17\n"), table.ToString());
+    }
+
+    /// <summary>
+    /// cleat-139：O 模式整体特化——任意函数体（副作用、闭包、异常、集合、写数组）按观察到的形参类型重新生成，
+    /// 以 object 通用体兜底。tests/Cleat.Host.Tests/data/rtspec_jit_semantics.clj 在默认、CLEAT_NO_OPT=sigspec、
+    /// 压力模式（阈值 1）三种设置下输出逐字相同，默认设置确有运行时生成（CLEAT_RTSPEC_STATS）。
+    /// </summary>
+    [Test]
+    public void WholeFunctionRuntimeSpecialization()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "rtspec_jit_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_RTSPEC_STATS", "1"), ("CLEAT_RTSPEC_SYNC", "1") }, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "sigspec") }, script);
+        // 压力模式：阈值 1 且不看收益门槛（CLEAT_RTSPEC_ALL），用例里的直线小函数也重新编译
+        var stress = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_RTSPEC_THRESHOLD", "1"), ("CLEAT_RTSPEC_ALL", "1"), ("CLEAT_RTSPEC_STATS", "1"), ("CLEAT_RTSPEC_SYNC", "1") }, script);
+        // 后台编译的压力运行：特化在调用进行中装入，只比较输出
+        var stressAsync = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_RTSPEC_THRESHOLD", "1"), ("CLEAT_RTSPEC_ALL", "1") }, script);
+        Assert.That(stressAsync.ExitCode, Is.EqualTo(0), stressAsync.ToString());
+        Assert.That(stressAsync.Out, Is.EqualTo(off.Out), "async stress:\n" + stressAsync.Out + "\nsigspec off:\n" + off.Out);
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(stress.ExitCode, Is.EqualTo(0), stress.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "default:\n" + on.Out + "\nsigspec off:\n" + off.Out);
+        Assert.That(stress.Out, Is.EqualTo(off.Out), "stress:\n" + stress.Out + "\nsigspec off:\n" + off.Out);
+        var m = System.Text.RegularExpressions.Regex.Match(on.Err, @"rtspec: compiled (\d+) failed (\d+)");
+        Assert.That(m.Success, on.Err);   // "rtspec: compiled N failed M compile-ms T"
+        Assert.That(int.Parse(m.Groups[1].Value), Is.GreaterThanOrEqualTo(8), on.Err);   // 收益门槛：有循环 / 自调用 / 数组的函数
+        Assert.That(int.Parse(m.Groups[2].Value), Is.EqualTo(0), on.Err);
+        var ms = System.Text.RegularExpressions.Regex.Match(stress.Err, @"rtspec: compiled (\d+) failed (\d+)");
+        Assert.That(ms.Success, stress.Err);
+        Assert.That(int.Parse(ms.Groups[1].Value), Is.GreaterThanOrEqualTo(25), stress.Err);
+        Assert.That(int.Parse(ms.Groups[2].Value), Is.EqualTo(0), stress.Err);
     }
 
     /// <summary>

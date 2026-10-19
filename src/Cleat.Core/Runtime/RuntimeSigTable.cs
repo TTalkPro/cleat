@@ -28,6 +28,30 @@ public sealed class RuntimeSigCompiled
 }
 
 /// <summary>
+/// 入口的单态快路径（cleat-139，designs/27 §3.1）：一个不放弃的特化 IFn 与它每个槽位要求的精确类型（null = 通配）。
+/// 不可变；生成的通用入口读一次 <see cref="RuntimeSigTable.Fast"/>，逐个比较进 key 的实参的 GetType()，相符就直接
+/// IFn.invoke，不经过 key 计算、表查找与拆箱。
+/// </summary>
+public sealed class RuntimeSigFast
+{
+    public RuntimeSigFast(IFn fn, long key)
+    {
+        Fn = fn;
+        T0 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 0)); T1 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 1));
+        T2 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 2)); T3 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 3));
+        T4 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 4)); T5 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 5));
+        T6 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 6)); T7 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 7));
+        T8 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 8)); T9 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 9));
+        T10 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 10)); T11 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 11));
+        T12 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 12)); T13 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 13));
+        T14 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 14)); T15 = RuntimeSigKey.TypeOf(RuntimeSigKey.Slot(key, 15));
+    }
+
+    public readonly IFn Fn;
+    public readonly Type T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+}
+
+/// <summary>
 /// cleat-138 的签名表（designs/27 §2.3）：函数类静态字段 `__rtSpec` 持有它。入口按形参掩码对实参算单一 key，
 /// 先在条目里找相同 key；没有时选最具体的兼容条目（0 槽位通配）并把结果作为别名缓存；都不兼容返回 <see cref="Miss"/>，
 /// 生成代码随即执行原通用体。未命中周期达到阈值时按当前实参请编译器补生成；失败的 key 记负表不再重试。
@@ -64,6 +88,9 @@ public sealed class RuntimeSigTable
         public long Hits;
         public long LastUse;
     }
+
+    /// <summary>入口快路径（cleat-139）：最先装入的不放弃条目；逐出它时清空。</summary>
+    public volatile RuntimeSigFast Fast;
 
     private readonly string _className;
     private readonly int _mask;
@@ -216,7 +243,43 @@ public sealed class RuntimeSigTable
         if (key == 0 || IsNegative(key)) return null;
         var misses = Interlocked.Increment(ref _misses);
         if ((uint)misses % (uint)RuntimeSigSpec.Threshold != 0) return null;
+        if (RuntimeSigSpec.Background)
+        {
+            Request(key, args);
+            return null;
+        }
         return Promote(key, args);
+    }
+
+    private long[] _pending = Array.Empty<long>();
+
+    /// <summary>后台编译请求（cleat-139）：同一 key 已有条目或正在编译时不重复排队；完成后装入条目（含快路径）或记负表。</summary>
+    internal void Request(long key, object[] args)
+    {
+        lock (_sync)
+        {
+            if (Find(key) is not null || IsNegative(key)) return;
+            foreach (var k in _pending) if (k == key) return;
+            var p = new long[_pending.Length + 1];
+            Array.Copy(_pending, p, _pending.Length);
+            p[^1] = key;
+            _pending = p;
+        }
+        RuntimeSigSpec.Enqueue(() =>
+        {
+            try { CompileAndAdd(key, args); }
+            finally
+            {
+                lock (_sync)
+                {
+                    var n = 0;
+                    var p = new long[_pending.Length];
+                    foreach (var k in _pending) if (k != key) p[n++] = k;
+                    Array.Resize(ref p, n);
+                    _pending = p;
+                }
+            }
+        });
     }
 
     private Entry BestCompatible(long key)
@@ -240,6 +303,28 @@ public sealed class RuntimeSigTable
     }
 
     /// <summary>按当前实参请编译器补生成 key 的特化；失败记负表。返回可直接调用的条目或 null。</summary>
+    /// <summary>后台线程：锁外编译（调用线程的未命中路径不被长时间挡住），再加锁装入条目或记负表。</summary>
+    private void CompileAndAdd(long key, object[] args)
+    {
+        if (Find(key) is not null || BestCompatible(key) is not null) return;
+        var compiled = RuntimeSigSpec.Compile(_className, args, _generic);
+        lock (_sync)
+        {
+            if (compiled is null) { AddNegative(key); return; }
+            Add(compiled.Key, compiled, alias: false);
+            if (compiled.Key != key) Add(key, compiled, alias: true);
+        }
+    }
+
+    private void AddNegative(long key)
+    {
+        if (_negative.Length >= MaxNegative) return;
+        var neg = new long[_negative.Length + 1];
+        Array.Copy(_negative, neg, _negative.Length);
+        neg[^1] = key;
+        _negative = neg;
+    }
+
     private Entry Promote(long key, object[] args)
     {
         if (!Monitor.TryEnter(_sync)) return null;
@@ -299,8 +384,10 @@ public sealed class RuntimeSigTable
                 if (!victim.Alias && !SharedFn(next, victim.Fn)) RuntimeSigSpec.RecordRetiredAssembly(victim.Assembly);
                 // 逐出编译条目时连带它的别名，避免别名继续抓着特化 IFn。
                 if (!victim.Alias) next = WithoutFn(next, victim.Fn);
+                if (!victim.Alias && Fast is { } f && ReferenceEquals(f.Fn, victim.Fn)) Fast = null;
             }
             _entries = next;
+            if (!alias && !compiled.Guarded && Fast is null) Fast = new RuntimeSigFast(compiled.Fn, key);
             return entry;
         }
     }
@@ -340,8 +427,5 @@ public sealed class RuntimeSigTable
     }
 
     /// <summary>首个条目：入口达到阈值时由 <see cref="RuntimeSigSpec.Install"/> 建表后立即按实参补生成。</summary>
-    internal void Seed(long key, object[] args)
-    {
-        if (key != 0) Promote(key, args);
-    }
+    internal bool Seed(long key, object[] args) => key != 0 && Promote(key, args) is not null;
 }

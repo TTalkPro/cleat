@@ -1482,10 +1482,12 @@ namespace clojure.lang
         public static bool equiv(decimal x, decimal y) { return x == y; }
 
 
-        public static bool equiv(double x, Object y) { return x == Util.ConvertToDouble(y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool equiv(double x, Object y) { return x == ConvertArithObject(y); }
 
 
-        public static bool equiv(Object x, double y) { return Util.ConvertToDouble(x) == y; }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool equiv(Object x, double y) { return ConvertArithObject(x) == y; }
 
 
         public static bool equiv(double x, long y) { return x == y; }
@@ -1542,10 +1544,12 @@ namespace clojure.lang
         public static bool lt(decimal x, decimal y) { return x < y; }
 
 
-        public static bool lt(double x, Object y) { return x < Util.ConvertToDouble(y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool lt(double x, Object y) { return x < ConvertArithObject(y); }
 
 
-        public static bool lt(Object x, double y) { return Util.ConvertToDouble(x) < y; }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool lt(Object x, double y) { return ConvertArithObject(x) < y; }
 
 
         public static bool lt(double x, long y) { return x < y; }
@@ -1602,10 +1606,12 @@ namespace clojure.lang
         public static bool lte(decimal x, decimal y) { return x <= y; }
 
 
-        public static bool lte(double x, Object y) { return x <= Util.ConvertToDouble(y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool lte(double x, Object y) { return x <= ConvertArithObject(y); }
 
 
-        public static bool lte(Object x, double y) { return Util.ConvertToDouble(x) <= y; }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool lte(Object x, double y) { return ConvertArithObject(x) <= y; }
 
 
         public static bool lte(double x, long y) { return x <= y; }
@@ -1662,10 +1668,12 @@ namespace clojure.lang
         public static bool gt(decimal x, decimal y) { return x > y; }
 
 
-        public static bool gt(double x, Object y) { return x > Util.ConvertToDouble(y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool gt(double x, Object y) { return x > ConvertArithObject(y); }
 
 
-        public static bool gt(Object x, double y) { return Util.ConvertToDouble(x) > y; }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool gt(Object x, double y) { return ConvertArithObject(x) > y; }
 
 
         public static bool gt(double x, long y) { return x > y; }
@@ -1721,10 +1729,12 @@ namespace clojure.lang
         public static bool gte(decimal x, decimal y) { return x >= y; }
 
 
-        public static bool gte(double x, Object y) { return x >= Util.ConvertToDouble(y); }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool gte(double x, Object y) { return x >= ConvertArithObject(y); }
 
 
-        public static bool gte(Object x, double y) { return Util.ConvertToDouble(x) >= y; }
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]   // cleat-139：object / double 混合比较的 double、long 快路径内联（运行时特化体的形参是已知 double）
+        public static bool gte(Object x, double y) { return ConvertArithObject(x) >= y; }
 
 
         public static bool gte(double x, long y) { return x >= y; }

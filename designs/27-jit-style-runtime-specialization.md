@@ -129,7 +129,8 @@ cleat-104 已经证明类型化入口的函数不进运行时候选。
 | 生成异常 / 预算耗尽 | 返回 null，该 key 记负表；入口继续通用 |
 | 编译期间重入 | `generate-unit` 进行中时 `Install` / 补生成直接返回 null |
 
-阈值缺省 128 次通用调用（O 模式的生成成本比纯体高）；`CLEAT_RTSPEC_THRESHOLD=<n>` 覆盖，
+阈值缺省 8 次通用调用（cleat-139：要赶在通用体分层升级前请求后台编译，晚切会让热循环重新预热；
+生成在专用后台线程上，不占调用线程）；`CLEAT_RTSPEC_THRESHOLD=<n>` 覆盖，
 `CLEAT_RTSPEC_THRESHOLD=1` 是验证用的**压力模式**：几乎所有候选在第一次调用就重新编译。
 `CLEAT_NO_OPT=sigspec` 关闭整条路径。镜像 / 包构建时 `RuntimeSigSpec.Enabled = false` 不变。
 

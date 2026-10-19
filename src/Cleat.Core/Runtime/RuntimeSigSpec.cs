@@ -14,15 +14,24 @@ namespace Cleat.Core.Runtime;
 public static class RuntimeSigSpec
 {
     /// <summary>
-    /// 观察阈值：通用调用达到这么多次才付出一次运行时编译成本（cleat-139 起默认 128）。
+    /// 观察阈值：通用调用达到这么多次请求一次运行时编译（cleat-139 起默认 8）。要赶在通用体分层升级（30 次调用 + 延迟）之前：
+    /// 晚了切换到特化体要从 tier-0 重新预热，mbrot 在第 128 次调用切换时慢 50%，从头特化则持平；编译在后台，低阈值不占调用线程。
     /// CLEAT_RTSPEC_THRESHOLD 覆盖；设为 1 是验证用的压力模式，几乎所有候选第一次调用就重新编译。
     /// </summary>
     public static readonly int Threshold = ReadThreshold();
 
+    static RuntimeSigSpec()
+    {
+        // CLEAT_RTSPEC_STATS=1：进程退出时在 stderr 打印运行时编译次数（诊断用，不影响计时）
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLEAT_RTSPEC_STATS")))
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+                Console.Error.WriteLine($"rtspec: compiled {CompiledCount} failed {FailedCount} compile-ms {Interlocked.Read(ref s_compileTicks) * 1000 / System.Diagnostics.Stopwatch.Frequency}");
+    }
+
     private static int ReadThreshold()
     {
         var s = Environment.GetEnvironmentVariable("CLEAT_RTSPEC_THRESHOLD");
-        return int.TryParse(s, out var n) && n > 0 ? n : 128;
+        return int.TryParse(s, out var n) && n > 0 ? n : 8;
     }
 
     // 编译器的代码生成表是进程级共享的：编译单元与运行时补生成互斥。eval 的编译单元可以等待，
@@ -48,7 +57,8 @@ public static class RuntimeSigSpec
     /// </summary>
     public static Func<string, object[], object, object> SpecCompiler { get; set; }
 
-    private static long s_compiled, s_failed;
+    private static long s_compiled, s_failed, s_compileTicks;
+    private static readonly bool s_debug = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLEAT_RTSPEC_DEBUG"));
 
     /// <summary>成功 / 失败的运行时编译次数；诊断与测试用。</summary>
     public static long CompiledCount => Interlocked.Read(ref s_compiled);
@@ -56,7 +66,7 @@ public static class RuntimeSigSpec
 
     /// <summary>
     /// 生成入口达到阈值时调用（cleat-138）：key 为 0 或机制关闭时返回 null（入口永久回通用体）；
-    /// 否则建表并按当前实参尝试生成首个条目。首个条目失败也返回表：后续其他 key 仍可补生成。
+    /// 否则建表并按当前实参生成首个条目；首个条目失败同样返回 null。
     /// </summary>
     public static object Install(string className, int mask, object[] args, object generic)
     {
@@ -64,8 +74,47 @@ public static class RuntimeSigSpec
         var key = RuntimeSigKey.Of(mask, args);
         if (key == 0) return null;
         var table = new RuntimeSigTable(className, mask, generic);
-        table.Seed(key, args);
-        return table;
+        if (Background)
+        {
+            // 后台编译（cleat-139，JIT 的做法）：本次与编译完成前的调用都走通用体，编译时间不落在调用线程上
+            table.Request(key, args);
+            return table;
+        }
+        // 同步模式：首个签名都生成不了（未登记 IR、证明失败、忙）就不建表，入口永久回通用体
+        return table.Seed(key, args) ? table : null;
+    }
+
+    /// <summary>
+    /// 后台编译（缺省）：运行时编译放到一个专用后台线程依次进行，调用线程不等待。CLEAT_RTSPEC_SYNC=1 改回在触发的
+    /// 调用线程上同步编译（测试要确定的生成时机时用）。
+    /// </summary>
+    public static bool Background { get; set; } = string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLEAT_RTSPEC_SYNC"));
+
+    private static readonly System.Collections.Concurrent.BlockingCollection<Action> s_queue = new();
+    private static Thread s_worker;
+
+    /// <summary>把编译任务排进后台线程；线程第一次用时启动（大栈：编译器递归深）。</summary>
+    internal static void Enqueue(Action work)
+    {
+        if (s_worker is null)
+        {
+            lock (s_queue)
+            {
+                if (s_worker is null)
+                {
+                    var t = new Thread(() =>
+                    {
+                        foreach (var w in s_queue.GetConsumingEnumerable())
+                        {
+                            try { w(); } catch { }
+                        }
+                    }, 256 * 1024 * 1024) { IsBackground = true, Name = "cleat-rtspec" };
+                    t.Start();
+                    s_worker = t;
+                }
+            }
+        }
+        s_queue.Add(work);
     }
 
     /// <summary>调用编译器回调；忙、重入、预算耗尽或任何异常都返回 null。</summary>
@@ -73,21 +122,28 @@ public static class RuntimeSigSpec
     {
         var compiler = SpecCompiler;
         if (!Enabled || compiler is null || !CanGenerate() || t_unitDepth > 0) return null;
-        if (!Monitor.TryEnter(s_unitLock)) return null;
+        // 后台线程可以等 eval 的编译单元结束；调用线程上的同步编译只尝试一次
+        if (Background && Thread.CurrentThread == s_worker) Monitor.Enter(s_unitLock);
+        else if (!Monitor.TryEnter(s_unitLock)) return null;
         t_unitDepth++;
+        var t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
-            var r = compiler(className, args, generic) as RuntimeSigCompiled;
+            var raw = compiler(className, args, generic);
+            var r = raw as RuntimeSigCompiled;
             if (r is null) Interlocked.Increment(ref s_failed); else Interlocked.Increment(ref s_compiled);
+            if (r is null && s_debug) Console.Error.WriteLine($"rtspec: {className} -> {raw?.GetType().FullName ?? "null"}");
             return r;
         }
-        catch
+        catch (Exception e)
         {
             Interlocked.Increment(ref s_failed);
+            if (s_debug) Console.Error.WriteLine($"rtspec: {className} threw {e.GetType().Name}: {e.Message}");
             return null;
         }
         finally
         {
+            Interlocked.Add(ref s_compileTicks, System.Diagnostics.Stopwatch.GetTimestamp() - t0);
             t_unitDepth--;
             Monitor.Exit(s_unitLock);
         }
