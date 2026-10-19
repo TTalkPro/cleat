@@ -1721,16 +1721,16 @@
   "cleat-140：调用图上 Var 恒等可确定、实参类型在编译期证明、目标有运行时候选 IR 时，
   生成该签名的特化类并在所有 def 初始化后填表；调用点直接 call 特化类，Var 值变化退回 IFn。"
   [forms]
-  (if false #_(and opt-sigspec? @live-unit? (Cleat.Core.Runtime.RuntimeSigSpec/Enabled))
-    (let [links (ht)]
-      (doseq [f forms] (collect-runtime-defs! f links))
-      (hclear! runtime-compiled-calls)
-      (vreset! runtime-install-forms ())
-      (vreset! runtime-installed-specs ())
-      (let [forms' (mapv #(link-runtime-calls % links) forms)
-            forms'' (if (seq @runtime-install-forms) (into forms' @runtime-install-forms) forms')]
-        forms''))
-    forms))
+  (let [_ (hclear! runtime-compiled-calls)
+        _ (vreset! runtime-install-forms ())
+        _ (vreset! runtime-installed-specs ())]
+    (if false #_(and opt-sigspec? @live-unit? (Cleat.Core.Runtime.RuntimeSigSpec/Enabled))
+      (let [links (ht)]
+        (doseq [f forms] (collect-runtime-defs! f links))
+        (let [forms' (mapv #(link-runtime-calls % links) forms)
+              forms'' (if (seq @runtime-install-forms) (into forms' @runtime-install-forms) forms')]
+          forms''))
+      forms)))
 
 (defn- spec-runtime-mask
   "cleat-133 / 137 / 138 / 139：cleat-104 推不出类型化入口、形状合适的函数交给运行时签名特化，返回形参掩码。
@@ -3929,14 +3929,15 @@
               (hput! runtime-generated-entries k (assoc (hget runtime-generated-entries k) :body b)))
           forms (subvec forms 0 n0)]
       (let [forms (let [fs (link-confirmed-runtime-calls forms)]
-                    (when (seq @runtime-installed-specs)
-                      (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
-                      (doseq [{:keys [params guess]} @runtime-installed-specs]
-                        (doseq [[p t] (map vector params guess)]
-                          (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t))))
-                      (run! collect-assigned! fs)
-                      (when opt-infer?
-                        (doseq [f fs] (infer-var-types-into! f var-types)))
+                    (if (seq @runtime-installed-specs)
+                      (do (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
+                          (doseq [{:keys [params guess]} @runtime-installed-specs]
+                            (doseq [[p t] (map vector params guess)]
+                              (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t))))
+                          (run! collect-assigned! fs)
+                          (when opt-infer?
+                            (doseq [f fs] (infer-var-types-into! f var-types)))
+                          fs)
                       fs))]
       (let [inits (mapv (fn [f k] (top-level-method u f k)) forms (range))
             n (count inits)
