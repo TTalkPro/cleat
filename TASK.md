@@ -144,8 +144,8 @@
 | [cleat-135](tasks/cleat-135-runtime-signature-tables.md) | 运行时签名表与高元数特化：5～20 参 + 多签名上限 | M14 | cleat-134 | 完成 |
 | [cleat-136](tasks/cleat-136-runtime-signature-recycling.md) | 运行时签名回收与逐出 | M14 | cleat-135 | 完成 |
 | [cleat-137](tasks/cleat-137-remove-ll-dd-pregeneration.md) | 删除 cleat-132 的 LL / DD 编译期预生成 | M15 | cleat-136 | 完成 |
-| [cleat-138](tasks/cleat-138-signature-key-table.md) | 单一签名 key 与 RuntimeSigTable：最优路径查表、哨兵未命中、形参掩码 | M15 | cleat-137 | 进行中 |
-| [cleat-139](tasks/cleat-139-whole-function-specialization.md) | 整体函数特化（O 模式）：任意体重新生成、object 兜底、身份守卫自调用 | M15 | cleat-138 | 待办 |
+| [cleat-138](tasks/cleat-138-signature-key-table.md) | 单一签名 key 与 RuntimeSigTable：最优路径查表、哨兵未命中、形参掩码 | M15 | cleat-137 | 完成 |
+| [cleat-139](tasks/cleat-139-whole-function-specialization.md) | 整体函数特化（O 模式）：任意体重新生成、object 兜底、身份守卫自调用 | M15 | cleat-138 | 进行中 |
 | [cleat-140](tasks/cleat-140-call-path-type-inference.md) | 编译期调用路径类型推导：调用图、类型摘要、确认的快速路径编译期生成 | M15 | cleat-139 | 待办 |
 | [cleat-141](tasks/cleat-141-m15-validation.md) | M15 收口：压力模式全量基线、种子重生成、r7rs 三方重跑 | M15 | cleat-140 | 待办 |
 

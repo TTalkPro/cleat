@@ -13,8 +13,85 @@ namespace Cleat.Core.Runtime;
 /// </summary>
 public static class RuntimeSigSpec
 {
-    /// <summary>默认观察阈值：先让解释器 / JIT 完成启动调用，再付出一次运行时编译成本。</summary>
-    public const int Threshold = 16;
+    /// <summary>
+    /// 观察阈值：通用调用达到这么多次才付出一次运行时编译成本（cleat-139 起默认 128）。
+    /// CLEAT_RTSPEC_THRESHOLD 覆盖；设为 1 是验证用的压力模式，几乎所有候选第一次调用就重新编译。
+    /// </summary>
+    public static readonly int Threshold = ReadThreshold();
+
+    private static int ReadThreshold()
+    {
+        var s = Environment.GetEnvironmentVariable("CLEAT_RTSPEC_THRESHOLD");
+        return int.TryParse(s, out var n) && n > 0 ? n : 128;
+    }
+
+    // 编译器的代码生成表是进程级共享的：编译单元与运行时补生成互斥。eval 的编译单元可以等待，
+    // 运行时补生成只尝试一次，忙就放弃（下个周期再试）；同一线程在编译单元里不补生成。
+    private static readonly object s_unitLock = new();
+    [ThreadStatic] private static int t_unitDepth;
+
+    /// <summary>codegen 的 generate-unit 进入 / 退出；可重入。</summary>
+    public static void EnterUnit()
+    {
+        Monitor.Enter(s_unitLock);
+        t_unitDepth++;
+    }
+
+    public static void ExitUnit()
+    {
+        t_unitDepth--;
+        Monitor.Exit(s_unitLock);
+    }
+
+    /// <summary>
+    /// cleat-138：(函数类名, 实参, 通用函数) → <see cref="RuntimeSigCompiled"/>；null 表示该签名不能特化。由 Clojure 编译器登记。
+    /// </summary>
+    public static Func<string, object[], object, object> SpecCompiler { get; set; }
+
+    private static long s_compiled, s_failed;
+
+    /// <summary>成功 / 失败的运行时编译次数；诊断与测试用。</summary>
+    public static long CompiledCount => Interlocked.Read(ref s_compiled);
+    public static long FailedCount => Interlocked.Read(ref s_failed);
+
+    /// <summary>
+    /// 生成入口达到阈值时调用（cleat-138）：key 为 0 或机制关闭时返回 null（入口永久回通用体）；
+    /// 否则建表并按当前实参尝试生成首个条目。首个条目失败也返回表：后续其他 key 仍可补生成。
+    /// </summary>
+    public static object Install(string className, int mask, object[] args, object generic)
+    {
+        if (!Enabled || SpecCompiler is null) return null;
+        var key = RuntimeSigKey.Of(mask, args);
+        if (key == 0) return null;
+        var table = new RuntimeSigTable(className, mask, generic);
+        table.Seed(key, args);
+        return table;
+    }
+
+    /// <summary>调用编译器回调；忙、重入、预算耗尽或任何异常都返回 null。</summary>
+    internal static RuntimeSigCompiled Compile(string className, object[] args, object generic)
+    {
+        var compiler = SpecCompiler;
+        if (!Enabled || compiler is null || !CanGenerate() || t_unitDepth > 0) return null;
+        if (!Monitor.TryEnter(s_unitLock)) return null;
+        t_unitDepth++;
+        try
+        {
+            var r = compiler(className, args, generic) as RuntimeSigCompiled;
+            if (r is null) Interlocked.Increment(ref s_failed); else Interlocked.Increment(ref s_compiled);
+            return r;
+        }
+        catch
+        {
+            Interlocked.Increment(ref s_failed);
+            return null;
+        }
+        finally
+        {
+            t_unitDepth--;
+            Monitor.Exit(s_unitLock);
+        }
+    }
 
     /// <summary>进程里允许按需生成的特化程序集上限；保守首版预算。</summary>
     public const int MaxGenerated = 4096;
@@ -24,7 +101,7 @@ public static class RuntimeSigSpec
     // 逐出后的程序集只保存弱引用；诊断本身不延长 RunAndCollect 程序集的生命周期。
     private static readonly ConcurrentQueue<WeakReference> s_retired = new();
 
-    /// <summary>(函数类名, 实参, 通用函数) → 特化表项；null 表示该签名不能安全特化。由 Clojure 编译器登记。</summary>
+    /// <summary>cleat-133 ~ 136 的旧协议（只为旧种子保留，cleat-141 重生成种子后删除）。</summary>
     public static Func<string, object[], object, object> Compiler { get; set; }
 
     /// <summary>构建镜像时关闭：编译器自身的函数会执行超过阈值，递归触发运行时编译会自举死循环。</summary>

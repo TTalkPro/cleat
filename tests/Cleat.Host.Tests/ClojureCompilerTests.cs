@@ -352,14 +352,19 @@ public class ClojureCompilerTests
     public void SignatureSpecialization()
     {
         string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "sigspec_semantics.clj");
-        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        // 用例按 cleat-135 的 16 次阈值写（dotimes 20）；cleat-139 起缺省阈值是 128，这里显式设成 16，另跑一遍压力模式（阈值 1）
+        var t16 = ("CLEAT_RTSPEC_THRESHOLD", "16");
+        var on = HostProcessTests.CleatIn(_dir, null, new[] { t16 }, script);
         var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "sigspec") }, script);
-        var noTyped = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "typed") }, script);
+        var noTyped = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "typed"), t16 }, script);
+        var stress = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_RTSPEC_THRESHOLD", "1") }, script);
         Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
         Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
         Assert.That(noTyped.ExitCode, Is.EqualTo(0), noTyped.ToString());
+        Assert.That(stress.ExitCode, Is.EqualTo(0), stress.ToString());
         Assert.That(on.Out, Is.EqualTo(off.Out), "sigspec on:\n" + on.Out + "\nsigspec off:\n" + off.Out);
         Assert.That(on.Out, Is.EqualTo(noTyped.Out), "typed off:\n" + on.Out + "\ntyped off sigspec:\n" + noTyped.Out);
+        Assert.That(stress.Out, Is.EqualTo(off.Out), "stress:\n" + stress.Out + "\nsigspec off:\n" + off.Out);
 
         string src = Path.Combine(_dir, "sigspec.clj");
         File.WriteAllText(src, "(ns sigspec)\n(defn sig-dd [x n] (if (= n 0) x (sig-dd (* x 2.0) (dec n))))\n"
@@ -386,13 +391,15 @@ public class ClojureCompilerTests
         string rt4 = Type("rt4");
         Assert.That(rt4, Does.Contain("(field \"__rtSpec\" \"System.Object\" static)"), rt4);
         Assert.That(rt4, Does.Contain("(field \"__rtCount\" \"System.Int32\" static)"), rt4);
-        Assert.That(rt4, Does.Contain("(call \"Cleat.Core.Runtime.RuntimeSigSpec\" \"Promote\" (\"System.String\" \"System.Object[]\" \"System.Object\") \"System.Object\")"), rt4);
+        Assert.That(rt4, Does.Contain("(call \"Cleat.Core.Runtime.RuntimeSigSpec\" \"Install\" (\"System.String\" \"System.Int32\" \"System.Object[]\" \"System.Object\") \"System.Object\")"), rt4);
+        Assert.That(rt4, Does.Contain("(ldsfld \"Cleat.Core.Runtime.RuntimeSigTable\" \"Miss\")"), rt4);
+        Assert.That(rt4, Does.Not.Contain("TypedBailout"), rt4);   // cleat-138：入口不再有 try / catch
 
         string runtimeSrc = Path.Combine(_dir, "rtspec134.clj");
         string runtimeLcil = Path.Combine(_dir, "rtspec134.lcil");
         File.WriteAllText(runtimeSrc, "(ns rtspec134)\n(defn rt-array [xs] (aget xs 0))\n"
             + "(dotimes [_ 20] (rt-array (int-array [7])))\n(prn (rt-array (int-array [9])))\n");
-        var runtime = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", runtimeLcil) }, runtimeSrc);
+        var runtime = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", runtimeLcil), t16 }, runtimeSrc);
         Assert.That(runtime.ExitCode, Is.EqualTo(0), runtime.ToString());
         Assert.That(runtime.Out, Is.EqualTo("9\n"), runtime.ToString());
         Assert.That(File.Exists(runtimeLcil), runtime.ToString());
@@ -405,20 +412,21 @@ public class ClojureCompilerTests
         File.WriteAllText(wideSrc, "(ns rtspec135)\n"
             + "(defn rt6 [a b c d e n] (if (= n 0) a (rt6 (inc a) b c d e (dec n))))\n"
             + "(dotimes [_ 20] (rt6 1 2 3 4 5 3))\n(prn (rt6 2 3 4 5 6 2))\n");
-        var wide = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", wideLcil) }, wideSrc);
+        var wide = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_RT_LCIL", wideLcil), t16 }, wideSrc);
         Assert.That(wide.ExitCode, Is.EqualTo(0), wide.ToString());
         Assert.That(wide.Out, Is.EqualTo("4\n"), wide.ToString());
         string wideText = File.ReadAllText(wideLcil);
         Assert.That(wideText, Does.Contain("(call \"rtSpec$"));
         Assert.That(wideText, Does.Contain(
-            "(\"System.Object\" \"System.Int64\" \"System.Int64\" \"System.Int64\" \"System.Int64\" \"System.Int64\" \"System.Int64\") \"System.Int64\")"));
+            // cleat-138 形参掩码：b ~ e 只原样传给自调用，不进 key，保持 object
+            "(\"System.Object\" \"System.Int64\" \"System.Object\" \"System.Object\" \"System.Object\" \"System.Object\" \"System.Int64\") \"System.Int64\")"));
 
         string tableSrc = Path.Combine(_dir, "rtspec-table.clj");
         File.WriteAllText(tableSrc, "(defn rt-multi [xs n] (if (= n 0) (aget xs 0) (rt-multi xs (dec n))))\n"
             + "(dotimes [_ 20] (rt-multi (int-array [3]) 2))\n(prn (rt-multi (int-array [7]) 1))\n"
             + "(dotimes [_ 24] (rt-multi (long-array [11]) 2))\n(prn (rt-multi (long-array [13]) 1))\n"
             + "(prn (rt-multi (int-array [17]) 1))\n");
-        var table = HostProcessTests.CleatIn(_dir, null, null, tableSrc);
+        var table = HostProcessTests.CleatIn(_dir, null, new[] { t16 }, tableSrc);
         Assert.That(table.ExitCode, Is.EqualTo(0), table.ToString());
         Assert.That(table.Out, Is.EqualTo("7\n13\n17\n"), table.ToString());
     }

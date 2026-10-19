@@ -542,3 +542,109 @@ public class RuntimeSigFnTests
         return new RuntimeSigFn(new[] { typeof(int[]) }, new MarkerFn("int"), "test$recycle", assembly);
     }
 }
+
+// cleat-138：单一签名 key、最优路径（兼容条目）、哨兵未命中与负表。
+[NonParallelizable]
+public class RuntimeSigTableTests
+{
+    private sealed class ConstFn : AFn
+    {
+        private readonly object _value;
+        public ConstFn(object value) { _value = value; }
+        public override object invoke(object a) => _value;
+        public override object invoke(object a, object b) => _value;
+    }
+
+    private sealed class BailFn : AFn
+    {
+        public override object invoke(object a) => throw TypedBailout.Instance;
+    }
+
+    private static T WithCompiler<T>(Func<string, object[], object, object> compiler, Func<T> body)
+    {
+        var saved = RuntimeSigSpec.SpecCompiler;
+        var enabled = RuntimeSigSpec.Enabled;
+        RuntimeSigSpec.Enabled = true;
+        RuntimeSigSpec.SpecCompiler = compiler;
+        try { return body(); }
+        finally
+        {
+            RuntimeSigSpec.SpecCompiler = saved;
+            RuntimeSigSpec.Enabled = enabled;
+        }
+    }
+
+    [Test]
+    public void TypeCodesAreExactAndPackedPerSlot()
+    {
+        Assert.That(RuntimeSigKey.Code(1L), Is.EqualTo(RuntimeSigKey.Int64));
+        Assert.That(RuntimeSigKey.Code(1.0), Is.EqualTo(RuntimeSigKey.Double));
+        Assert.That(RuntimeSigKey.Code(1), Is.EqualTo(RuntimeSigKey.Int32));
+        Assert.That(RuntimeSigKey.Code(new int[0]), Is.EqualTo(RuntimeSigKey.Int32Array));
+        Assert.That(RuntimeSigKey.Code(new uint[0]), Is.EqualTo(RuntimeSigKey.Other));   // 数组协变不混入
+        Assert.That(RuntimeSigKey.Code(new ulong[0]), Is.EqualTo(RuntimeSigKey.Other));
+        Assert.That(RuntimeSigKey.Code(null), Is.EqualTo(RuntimeSigKey.Other));
+        Assert.That(RuntimeSigKey.Code("s"), Is.EqualTo(RuntimeSigKey.String));
+        Assert.That(RuntimeSigKey.Of(0b11, 1L, 2.0), Is.EqualTo(RuntimeSigKey.Int64 | (RuntimeSigKey.Double << 4)));
+        Assert.That(RuntimeSigKey.Of(0b10, 1L, 2.0), Is.EqualTo(RuntimeSigKey.Double << 4), "slot outside the mask is 0");
+        var many = new object[16];
+        for (var i = 0; i < 16; i++) many[i] = 1L;
+        Assert.That(RuntimeSigKey.Slot(RuntimeSigKey.Of(0xFFFF, many), 15), Is.EqualTo(RuntimeSigKey.Int64));
+        Assert.That(RuntimeSigKey.Compatible(RuntimeSigKey.Int64, RuntimeSigKey.Int64 | (RuntimeSigKey.Double << 4)), Is.True);
+        Assert.That(RuntimeSigKey.Compatible(RuntimeSigKey.Double, RuntimeSigKey.Int64), Is.False);
+    }
+
+    [Test]
+    public void InstallCompilesFirstKeyAndNilResultIsNotAMiss()
+    {
+        var calls = 0;
+        var table = WithCompiler((name, args, generic) =>
+        {
+            calls++;
+            return new RuntimeSigCompiled(new ConstFn(null), RuntimeSigKey.Int64, false, null);
+        }, () => (RuntimeSigTable)RuntimeSigSpec.Install("test$nil", 1, new object[] { 5L }, null));
+        Assert.That(calls, Is.EqualTo(1));
+        Assert.That(table, Is.Not.Null);
+        Assert.That(table.Invoke(7L), Is.Null, "a specialized nil is a result, not a miss");
+        Assert.That(table.Invoke("x"), Is.SameAs(RuntimeSigTable.Miss));
+        Assert.That(RuntimeSigSpec.Install("test$zero", 1, new object[] { "x" }, null), Is.Null, "key 0 never installs");
+    }
+
+    [Test]
+    public void BestCompatibleEntryIsChosenAndCachedAsAlias()
+    {
+        var table = WithCompiler((name, args, generic) => args[0] is long
+                ? new RuntimeSigCompiled(new ConstFn("wide"), RuntimeSigKey.Int64, false, null)   // 第二槽没固定：通配
+                : null,
+            () =>
+            {
+                var t = (RuntimeSigTable)RuntimeSigSpec.Install("test$best", 0b11, new object[] { 1L, 2.0 }, null);
+                return t;
+            });
+        Assert.That(table.CompiledCount, Is.EqualTo(1));
+        Assert.That(table.Invoke(1L, 2.0), Is.EqualTo("wide"));
+        Assert.That(table.Invoke(1L, "other"), Is.EqualTo("wide"), "slot 0 of the entry is a wildcard");
+        Assert.That(table.Invoke(1.0, 2.0), Is.SameAs(RuntimeSigTable.Miss));
+        Assert.That(table.CompiledCount, Is.EqualTo(1));
+        Assert.That(table.Count, Is.GreaterThan(1), "compatible keys are cached as aliases");
+    }
+
+    [Test]
+    public void GuardedEntryBailoutBecomesMissAndFailedKeysAreNotRetried()
+    {
+        var compiles = 0;
+        WithCompiler<object>((name, args, generic) =>
+        {
+            compiles++;
+            return args[0] is long ? new RuntimeSigCompiled(new BailFn(), RuntimeSigKey.Int64, true, null) : null;
+        }, () =>
+        {
+            var table = (RuntimeSigTable)RuntimeSigSpec.Install("test$bail", 1, new object[] { 1L }, null);
+            Assert.That(table.Invoke(1L), Is.SameAs(RuntimeSigTable.Miss), "TypedBailout → Miss → generic body");
+            for (var i = 0; i < RuntimeSigSpec.Threshold * 3; i++)
+                Assert.That(table.Invoke(1.5), Is.SameAs(RuntimeSigTable.Miss));
+            Assert.That(compiles, Is.EqualTo(2), "a failed key is compiled once, then remembered");
+            return null;
+        });
+    }
+}
