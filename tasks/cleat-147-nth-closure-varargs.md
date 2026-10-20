@@ -81,3 +81,16 @@ closure-mutable / fixed / rest0 / rest2），读数是"进程总分配 + 类型�
 - 改 codegen 后种子不动点：本任务只改 `RT.cs` 运行时，不动 Clojure 源码 → 种子不受影响。
 - 同窗口 A/B（peval / dynamic / divrec / array1）：交 cleat-150 的整体三臂，`nthfast` 需并入
   `bench/r7rs/m16full.py` 的 `DEFAULT_NO_OPT` 名单，否则关侧不是真 M15 行为。
+
+## cleat-150 收口时抓到并修正的回归（2026-10-20，commit c960f7c）
+
+- 合并 main 后的 CTS 复跑发现 `clojure.core-test.nth` 由 78/0 变 76/2：
+  `(list)` 返回 `PersistentList+EmptyList`，它也实现 `ISeq` 但 `seq()` 为 nil；
+  快路径直接把 ref 形参当节点走，空列表的 `first()` 恒为 nil，
+  arity-2 的 `(nth (list) 0)` 因此不抛、arity-3 返回 nil 而不是默认值
+  （arity-3 里 `is PersistentList` 的 O(1) count 守卫对 EmptyList 恒不成立——它是嵌套子类，不是 `PersistentList` 实例）。
+- 修正：arity-2 / arity-3 的 ISeq 分支统一先过 `RT.seq(iseq)` 归一
+  （ASeq 仍是一条 isinst 直接返回自身，LazySeq 的 realize 已在 `RT.seq` 内完成，去掉手写 lazy 分支），
+  非空遍历与 StringSeq 直读成本不变，空列表 / 耗尽序列路径与旧 `NthFromSeq` 逐字一致。
+- `nthfast_semantics.clj/.out` 补空 list / 空 vector / `(seq (list))` 五条，开 / 关逐字相同；
+  修正后 CTS 6868 / 29 / 6、test-clojure 384 / 3877 / 25 / 4 回到基线（关侧 357 / 3688 / 18 不变）。
