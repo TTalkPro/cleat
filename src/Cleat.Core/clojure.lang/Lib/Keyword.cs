@@ -47,6 +47,29 @@ namespace clojure.lang
         private static readonly JavaConcurrentDictionary<Symbol,WeakReference> _symKeyMap
             = new JavaConcurrentDictionary<Symbol, WeakReference>();
 
+        // cleat-146：热路径先持有 ns / name 字符串，旧实现要先分配 Symbol 才能查表。
+        // 用字符串键先行查找，命中时完全不再分配；组合键是 struct，查找本身也不装箱。
+        private readonly struct StringKey(string ns, string name)
+        {
+            public string Ns { get; } = ns;
+            public string Name { get; } = name;
+        }
+
+        // 两表必须在同一把锁下更新：字符串表负责热路径命中，_symKeyMap 仍是 intern(Symbol) /
+        // All() / 反序列化的权威表；分开加锁会让弱引用清理出现一表新一表旧。
+        private static readonly object _keyMapSync = new();
+        private static readonly JavaConcurrentDictionary<StringKey, WeakReference> _stringKeyMap
+            = new JavaConcurrentDictionary<StringKey, WeakReference>();
+
+        // cleat-146：intern(nsname) 命中时不做 Substring。规范化 ns/name 之外再留一个原文键；
+        // 只在第一次见到这个原文时登记，命中路径只做一次字符串表查找。
+        private static readonly JavaConcurrentDictionary<string, WeakReference> _fullNameKeyMap
+            = new JavaConcurrentDictionary<string, WeakReference>();
+
+        // cleat-146：CLEAT_NO_OPT=intern 完整退回“先建 Symbol 再查表”的旧路径。
+        private static readonly bool s_internEnabled =
+            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("intern");
+
         public Symbol Symbol
         {
           get { return _sym; }
@@ -68,29 +91,39 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static Keyword intern(Symbol sym)
         {
-            Keyword k = null;
-            WeakReference existingRef = _symKeyMap.Get(sym);
-            if (existingRef == null)
+            // cleat-146：Symbol 输入（含带元数据的 symbol）仍走这条慢路径。这是有意保留现状：
+            // Symbol 不做唯一化，带元数据副本也不能当作身份可丢弃的新键；只有 ns/name 字符串入口
+            // 才能安全地先查字符串表。字符串命中时同样不会新建 Symbol，身份/元数据语义不变。
+            lock (_keyMapSync)
             {
-                if (sym.meta() != null)
-                    sym = (Symbol)sym.withMeta(null);
-                k = new Keyword(sym);
-
-                WeakReference wr = new WeakReference(k)
+                Keyword k = null;
+                WeakReference existingRef = _symKeyMap.Get(sym);
+                if (existingRef == null)
                 {
-                    Target = k
-                };
-                existingRef = _symKeyMap.PutIfAbsent(sym, wr);
+                    if (sym.meta() != null)
+                        sym = (Symbol)sym.withMeta(null);
+                    k = new Keyword(sym);
+
+                    WeakReference wr = new WeakReference(k)
+                    {
+                        Target = k
+                    };
+                    existingRef = _symKeyMap.PutIfAbsent(sym, wr);
+                    // 同一关键字可能刚由字符串路径登记过；只有真正成为胜者时才补字符串表，
+                    // 并用胜者的 Symbol 作为键，避免元数据副本进入两张表。
+                    if (existingRef == null)
+                        _stringKeyMap.PutIfAbsent(new StringKey(sym.Namespace, sym.Name), wr);
+                }
+                if (existingRef == null)
+                    return k;
+                Keyword existingk = (Keyword)existingRef.Target;
+                if (existingk != null)
+                    return existingk;
+                // entry died in the interim, do over
+                // let's not get confused, remove it.  (else infinite loop).
+                RemoveDiedEntry(sym, existingRef);
+                return intern(sym);
             }
-            if (existingRef == null)
-                return k;
-            Keyword existingk = (Keyword)existingRef.Target;
-            if (existingk != null)
-                return existingk;
-            // entry died in the interim, do over
-            // let's not get confused, remove it.  (else infinite loop).
-            _symKeyMap.Remove(sym);
-            return intern(sym);
         }
 
         /// <summary>
@@ -102,7 +135,57 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static Keyword intern(string ns, string name)
         {
-            return intern(Symbol.intern(ns, name));
+            // cleat-146：开关保留先建 Symbol 的旧路径，便于优化收益和语义做同窗口对照。
+            if (!s_internEnabled)
+                return intern(Symbol.intern(ns, name));
+
+            var key = new StringKey(ns, name);
+            lock (_keyMapSync)
+            {
+                var existing = FindStringEntry(key);
+                if (existing != null)
+                    return existing;
+
+                var sym = Symbol.intern(ns, name);
+                var k = new Keyword(sym);
+                var wr = new WeakReference(k)
+                {
+                    Target = k
+                };
+                _stringKeyMap.PutIfAbsent(key, wr);
+                _symKeyMap.PutIfAbsent(sym, wr);
+                return k;
+            }
+        }
+
+        /// <summary>读字符串表并顺带清理两端都可见的死项：弱引用目标被 GC 后不能留下假命中。</summary>
+        private static Keyword FindStringEntry(StringKey key)
+        {
+            var wr = _stringKeyMap.Get(key);
+            if (wr == null)
+                return null;
+            var k = (Keyword)wr.Target;
+            if (k != null)
+                return k;
+
+            // 只移除当前死引用，避免并发复活时误删新关键字；sym 分配只发生在罕见清理路径。
+            if (ReferenceEquals(_stringKeyMap.Remove(key), wr))
+                _symKeyMap.Remove(Symbol.intern(key.Ns, key.Name));
+            // 原文缓存也可能仍持有同一个死引用；拼键只在清理路径发生。
+            var fullName = key.Ns == null ? key.Name : key.Ns + "/" + key.Name;
+            _fullNameKeyMap.Remove(fullName);
+            return null;
+        }
+
+        private static void RemoveDiedEntry(Symbol sym, WeakReference diedRef)
+        {
+            if (ReferenceEquals(_symKeyMap.Remove(sym), diedRef))
+            {
+                var key = new StringKey(sym.Namespace, sym.Name);
+                _stringKeyMap.Remove(key);
+                // intern(nsname) 的原文缓存同样不能留下死引用。
+                _fullNameKeyMap.Remove(sym.Namespace == null ? sym.Name : sym.Namespace + "/" + sym.Name);
+            }
         }
 
         /// <summary>
@@ -114,12 +197,40 @@ namespace clojure.lang
         /// <summary>所有仍存活的关键字（REPL 的 Tab 补全用，cleat-034）。顺序不确定。</summary>
         public static System.Collections.Generic.IEnumerable<Keyword> All()
         {
-            foreach (var wr in _symKeyMap.Values)
+            WeakReference[] snapshot;
+            lock (_keyMapSync)
+                snapshot = _symKeyMap.Values;
+            // Values 已复制快照；枚举放到锁外，调用方慢慢消费也不会阻塞 intern。
+            foreach (var wr in snapshot)
                 if (wr?.Target is Keyword k) yield return k;
         }
 
         public static Keyword intern(String nsname)
         {
+            // cleat-146：原文键先命中，避免为切出 ns / name 分配 Substring；未命中才按旧规则切分。
+            if (s_internEnabled)
+            {
+                lock (_keyMapSync)
+                {
+                    var wr = _fullNameKeyMap.Get(nsname);
+                    if (wr != null && (Keyword)wr.Target is Keyword hit)
+                        return hit;
+                    if (wr != null)
+                        _fullNameKeyMap.Remove(nsname);
+
+                    int slash = nsname.IndexOf('/');
+                    var k = slash == -1 || nsname.Equals("/")
+                        ? intern(null, nsname)
+                        : intern(nsname.Substring(0, slash), nsname.Substring(slash + 1));
+                    if (wr == null)
+                    {
+                        wr = _symKeyMap.Get(k.Symbol);
+                        if (wr != null)
+                            _fullNameKeyMap.PutIfAbsent(nsname, wr);
+                    }
+                    return k;
+                }
+            }
             return intern(Symbol.intern(nsname));
         }
 
@@ -473,22 +584,50 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static Keyword find(Symbol sym)
         {
-            WeakReference wr = _symKeyMap.Get(sym);
-            if (wr != null)
-                return (Keyword)wr.Target;
-            else
-                return null;
+            lock (_keyMapSync)
+            {
+                WeakReference wr = _symKeyMap.Get(sym);
+                if (wr != null)
+                    return (Keyword)wr.Target;
+                else
+                    return null;
+            }
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static Keyword find(String ns, String name)
         {
+            // cleat-146：find 不建立新关键字，所以字符串键查找在这里尤其重要。
+            if (s_internEnabled)
+            {
+                lock (_keyMapSync)
+                    return FindStringEntry(new StringKey(ns, name));
+            }
             return find(Symbol.intern(ns, name));
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         public static Keyword find(String nsname)
         {
+            if (s_internEnabled)
+            {
+                lock (_keyMapSync)
+                {
+                    var wr = _fullNameKeyMap.Get(nsname);
+                    if (wr != null)
+                    {
+                        var k = (Keyword)wr.Target;
+                        if (k != null)
+                            return k;
+                        _fullNameKeyMap.Remove(nsname);
+                    }
+
+                    int slash = nsname.IndexOf('/');
+                    return slash == -1 || nsname.Equals("/")
+                        ? find(null, nsname)
+                        : find(nsname.Substring(0, slash), nsname.Substring(slash + 1));
+                }
+            }
             return find(Symbol.intern(nsname));
         }
 

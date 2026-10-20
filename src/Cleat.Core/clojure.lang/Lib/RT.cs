@@ -107,6 +107,11 @@ namespace clojure.lang
 
         static public readonly Object REQUIRE_LOCK = new();
 
+        // cleat-146：str 整数快路径与 Keyword intern 快路径共用 CLEAT_NO_OPT=intern 开关；
+        // static readonly 保证热路径只读字段，不重复读环境变量。
+        internal static readonly bool s_internEnabled =
+            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("intern");
+
         #endregion
 
         #region  It's true (or not)
@@ -3517,6 +3522,15 @@ namespace clojure.lang
             string jvm = Cleat.Core.Runtime.JvmText.ToStr(x);
             if (jvm != null)
                 return jvm;
+            // cleat-146：整数是 (str) 的热形状。直接不变区域性格式化，避开 IsNumeric 的类型检查与
+            // 复合格式解析；long / int 的十进制文本与 String.Format("{0}") 完全一致。
+            if (s_internEnabled)
+            {
+                if (x is long l)
+                    return l.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (x is int i)
+                    return i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
             if (Util.IsNumeric(x))
                 return String.Format(System.Globalization.CultureInfo.InvariantCulture, "{0}", x);
             else

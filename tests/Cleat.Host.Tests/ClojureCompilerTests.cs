@@ -311,6 +311,23 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-146：keyword 的字符串键 intern 命中不新建 Symbol；str 的 long / int 用不变区域性格式化。
+    /// 用例 tests/Cleat.Host.Tests/data/intern_semantics.clj 覆盖 identity / 元数据 / find-keyword /
+    /// symbol 的文本语义 / gensym 唯一性；CLEAT_NO_OPT=intern 退回旧路径时输出逐字相同。
+    /// </summary>
+    [Test]
+    public void InternAndIntegerStringFastPaths()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "intern_semantics.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "intern") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "intern on:\n" + on.Out + "\nintern off:\n" + off.Out);
+        Assert.That(on.Out, Does.StartWith("[true true true \":a\""), on.ToString());
+    }
+
+    /// <summary>
     /// cleat-108：回边实参是 if / begin 时，两支里对原始类型循环变量的引用算原始用途，汇合处原始发射（不装箱）。语义用例
     /// （tests/Cleat.Host.Tests/data/joinraw_semantics.clj：计数器、嵌套 if、带副作用的 do、throw 与提前退出的分支、溢出、两支类型不同、Ratio、double、
     /// 无提示初值、循环里另有装箱用途）在 CLEAT_NO_OPT=joinraw 与开两种设置下输出逐字相同；计数器循环里只剩返回值处一次 Int64 装箱。
