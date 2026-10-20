@@ -682,6 +682,9 @@ keyword intern；P1 = `RT.nth` 非 Indexed 路径的类型判断链与 `NthFromR
   Cleat.Core.Tests 123/123；Cleat.Host.Tests 278/278（27 m 58 s）；语料门禁 `gate: OK (521)`；
   CTS `cts` 6868 pass / 29 fail / 6 error、`test-clojure` 3688 / 18 与基线逐字一致；
   `clojure-seed` 重生成后 `src/boot/seed` 无改动（种子已含 142 的 codegen 改动）。
+- **修正构建 4b29e38 上的同一套收口**：Release 0 warning / 0 error、Core 123/123、
+  Host 278/278（28 m 50 s）、`gate: OK (521)`、CTS 6868 / 29 / 6 与 test-clojure 3688 / 18
+  与基线逐字一致 —— 分支顺序只调位置，不改任何语义读数。
 
 ### 4. 噪声与测量注意事项（本轮实际遇到的）
 

@@ -55,3 +55,5 @@
   dynamic -1.9%；string / nucleic / slatex / scheme / peval 差异在噪声内。
   修正分支顺序后复测：wc 6.308 → 3.895、browse 5.963 → 5.687（收益不变），
   lattice 1.063 → 1.014（回退基本消除）。详见 notes 的 M16 §1 / §2。
+- 修正构建 4b29e38 的收口：Release 0 warning / 0 error、Core 123/123、Host 278/278、
+  `gate: OK (521)`、CTS 6868 / 29 / 6 与 test-clojure 3688 / 18 与基线逐字一致。
