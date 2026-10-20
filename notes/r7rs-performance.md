@@ -321,3 +321,285 @@ double-sum 3.204 / 8.820 ms、object-count 3.253 / 3.892 ms。eval-only 类型�
 `isinst` 守卫，再引用还未绑定的 `g$t$…$inl`。cleat-131 现在收集循环体内的 `let` / label / 形参绑定；
 候选命中这些名字时保留原循环。`arrayspec_semantics` 已补循环体内已知调用返回数组的用例，
 nohint `maze` 也能用原始输入完整运行。
+
+## M15 验证（cleat-141，2026-10-20）：192.168.3.111，各 3 次取最小
+
+> 版本：cleat 65d407d（cleat-141 收口，M15）；OpenJDK 25.0.4（Red Hat，HotSpot C2）；56 项 × 3 次取最小（秒）。
+> 只计基准内部计时。cleat 用 .NET SDK 10.0.100 的 Release 构建。
+
+| 基准 | cleat | JVM (C2) | 倍数 |
+|---|---:|---:|---:|
+| sum | 0.721 | 6.559 | 0.11x |
+| sumfp | 0.394 | 0.986 | 0.40x |
+| ack | 1.844 | 5.126 | 0.36x |
+| fibfp | 0.670 | 0.975 | 0.69x |
+| lattice | 10.363 | 18.279 | 0.57x |
+| takl | 17.209 | 34.773 | 0.50x |
+| fib | 2.651 | 2.959 | 0.90x |
+| pi | 1.103 | 1.150 | 0.96x |
+| sboyer | 5.371 | 5.565 | 0.97x |
+| tak | 1.519 | 1.513 | 1.00x |
+| cat | 2.817 | 2.807 | 1.00x |
+| mazefun | 6.057 | 5.957 | 1.02x |
+| paraffins | 13.193 | 11.945 | 1.10x |
+| conform | 9.898 | 9.139 | 1.08x |
+| nqueens | 16.880 | 15.083 | 1.12x |
+| ctak | 1.012 | 0.871 | 1.16x |
+| destruc | 3.118 | 2.716 | 1.15x |
+| chudnovsky | 0.584 | 0.475 | 1.23x |
+| mperm | 25.316 | 19.983 | 1.27x |
+| triangl | 2.576 | 2.036 | 1.27x |
+| sum1 | 1.979 | 1.488 | 1.33x |
+| quicksort | 4.753 | 3.476 | 1.37x |
+| ntakl | 16.337 | 11.816 | 1.38x |
+| fibc | 1.853 | 1.304 | 1.42x |
+| graphs | 8.996 | 5.515 | 1.63x |
+| matrix | 5.373 | 3.266 | 1.65x |
+| diviter | 7.963 | 4.656 | 1.71x |
+| simplex | 7.399 | 4.792 | 1.54x |
+| tail | 0.892 | 0.511 | 1.75x |
+| divrec | 11.486 | 6.361 | 1.81x |
+| mbrot | 0.614 | 0.337 | 1.82x |
+| primes | 3.779 | 1.997 | 1.89x |
+| slatex | 10.705 | 5.787 | 1.85x |
+| read1 | 3.290 | 1.660 | 1.98x |
+| nboyer | 10.933 | 5.600 | 1.95x |
+| equal | 3.032 | 1.503 | 2.02x |
+| mbrotZ | 2.180 | 1.014 | 2.15x |
+| pnpoly | 3.164 | 1.493 | 2.12x |
+| string | 2.112 | 0.875 | 2.41x |
+| nucleic | 5.898 | 2.367 | 2.49x |
+| wc | 6.288 | 2.283 | 2.76x |
+| maze | 3.131 | 1.121 | 2.79x |
+| fft | 2.253 | 0.804 | 2.80x |
+| ray | 3.771 | 1.291 | 2.92x |
+| deriv | 9.887 | 3.350 | 2.95x |
+| earley | 12.086 | 4.495 | 2.69x |
+| parsing | 10.892 | 4.700 | 2.32x |
+| puzzle | 7.158 | 1.959 | 3.65x |
+| array1 | 24.054 | 6.758 | 3.56x |
+| bv2string | 2.797 | 0.717 | 3.90x |
+| scheme | 17.056 | 4.914 | 3.47x |
+| cpstak | 18.299 | 4.509 | 4.06x |
+| dynamic | 16.710 | 3.669 | 4.55x |
+| browse | 5.761 | 1.310 | 4.40x |
+| gcbench | 1.989 | 0.412 | 4.82x |
+| peval | 21.428 | 4.323 | 4.96x |
+| **几何平均（56 项）** | | | **1.61x** |
+
+- 同机同 JVM 口径下从 cleat-119 的 1.88x 进步到 1.61x。最大的修复来自 M14/M15 的续延与异常路径：
+  ctak 56.0x → 1.16x、fibc 32.5x → 1.42x；dynamic 4.0x → 4.6x、scheme 3.35x → 3.47x 略有回退待查。
+- cleat 更快的有 12 项（sum 0.11x、sumfp、ack、lattice、takl、fib、fibfp、pi、sboyer，
+  及约持平的 tak、cat、mazefun）。
+- 最慢的仍是 peval、gcbench、dynamic、cpstak、browse、scheme、array1、puzzle、bv2string：
+  解释/元编程、GC 压力与续延密集型负载是后续优化的主要空间。
+
+## M15 差异归因（2026-10-20，192.168.3.111）
+
+> 三组实验，脚本 `bench/r7rs/attr.py`（GC / JVM 内联 / takl 复核）与 `bench/r7rs/src/micro.cljc`
+> （调用与分配路径微基准，同一份 cljc 跑两宿主：`dotnet …/cleat.dll -I src -m micro` 与
+> `java -Xss8m -cp src:$(clojure -Spath) clojure.main -m micro`）。
+
+### 1. 微基准：差异几乎全部在"分配"和"小访问器的内联"上
+
+每格 ns/次，各 3 次取最小（循环 2×10^7）。
+
+| 微基准 | cleat | JVM C2 | cleat / JVM |
+|---|---:|---:|---:|
+| mcar 读（defn 包装 + 接口调用） | 2.9 | 1.3 | 2.2x |
+| mcdr 读 | 4.4 | 1.0 | 4.4x |
+| 可变字段写 + 读（set-car!/car） | 14.1 | 4.8 | 2.9x |
+| 两参普通函数调用（未提示装箱算术） | 3.9 | 4.4 | **0.9x** |
+| 无提示循环里的减法 | 0.6 | 0.6 | 1.0x |
+| 分配可变序对后读（不逃逸） | 13.6 | 1.1 | **12.4x** |
+| 分配不可变 cons 后 first（不逃逸） | 13.4 | 1.2 | **11.2x** |
+| 分配并写入对象数组（真逃逸） | 28.9 | 5.8 | 5.0x |
+| 装箱整数写入对象数组 | 10.2 | 2.2 | 4.6x |
+
+- 不逃逸的小对象在 JVM 上是 1.1 ns/次 — C2 的标量替换（escape analysis）把分配整个消掉；.NET 没有对应优化，
+  13.6 ns 是一次真实堆分配 + 写屏障 + GC 摊销。r7rs 里 pair / cons 密集的项（peval、dynamic、browse、scheme、
+  nboyer、takl、cpstak、lattice、paraffins）主要就吃在这个差别上。
+- 真逃逸的分配仍是 5.0 倍（28.9 vs 5.8），装箱写数组 4.6 倍 — 这是分配路径本身（`RhpAllocate` 的线程上下文取值、
+  `JIT_ByRefWriteBarrier`、随后的回收），与 §2 的 GC 配置对照一致。
+- 反过来，普通函数调用与算术循环 cleat 已经不输甚至略赢 JVM（0.9x / 1.0x）：M12~M15 的 loopspec / rtspec /
+  数值快路径到位了。这解释了 cleat 明显更快的 sum / sumfp / ack / fibfp / fib（C2 在这些形状上没能消掉装箱，
+  sum 的 GraalVM 数字 0.64 s 对比 C2 的 6.56 s 就是同一件事）。
+
+### 2. GC 只在一部分项上是主因
+
+cleat 单次（秒），workstation 默认 对比 server + gen0 256MB；JVM 侧同项跑一次带 `-Xlog:gc` 统计 GC 时间占内部计时的比例。
+
+| 基准 | cleat ws | cleat server+gen0 | Δ | JVM 总时长 | JVM GC 时间 | JVM GC 占比 |
+|---|---:|---:|---:|---:|---:|---:|
+| array1 | 24.04 | 8.95 | **-63%** | 6.56 | 3.44 | 52% |
+| dynamic | 16.84 | 12.25 | -27% | 3.67 | 0.08 | 2% |
+| fft | 2.24 | 1.70 | -24% | 0.81 | 0.04 | 5% |
+| gcbench | 1.91 | 1.53 | -20% | 0.42 | 0.03 | 8% |
+| nboyer | 10.53 | 8.64 | -18% | 5.79 | 0.44 | 8% |
+| scheme | 18.11 | 17.05 | -6% | 4.90 | 0.05 | 1% |
+| peval | 21.72 | 21.80 | 0% | 4.28 | 0.05 | 1% |
+| cpstak | 18.19 | 18.24 | 0% | 4.62 | 0.07 | 2% |
+| browse | 5.99 | 5.99 | 0% | 1.30 | 0.04 | 3% |
+| puzzle | 7.15 | 7.26 | 0% | 2.04 | 0.02 | 1% |
+| deriv | 9.94 | 10.39 | +5% | 3.39 | 0.07 | 2% |
+| bv2string | 2.67 | 3.05 | +14% | 0.73 | 0.03 | 4% |
+
+- array1 是唯一的 GC 主导项（连 JVM 自己也有 52% 时间在 GC）：500 × 两个 8MB 数组（LOH）+ 每轮一百万个装箱 long。
+  改 GC 配置能到 8.9 s，但 JVM 仍 6.6 s — 剩下的差在分配本身（§1 的 4.6 ~ 5.0 倍）。与 notes/array1.md、
+  notes/gc-config-and-tier0-two-machines.md 的结论一致（这两个旋钮仍不做默认值）。
+- peval / cpstak / browse / puzzle / bv2string 对 GC 配置完全不动 → 它们的 3 ~ 5 倍差距是纯代码生成与调用/分配路径的成本，
+  不是回收策略问题。
+- JVM 侧这些项的 GC 占比只有 1 ~ 8%：JVM 的时间几乎全在计算本身，所以 cleat 与它的差距只能从单次分配与单次调用来解释。
+
+### 3. 关掉 JVM 内联后，两边基本回到同一水平
+
+JVM 各跑一次（秒），默认 对比 `-XX:+UnlockDiagnosticVMOptions -XX:-Inline`：
+
+| 基准 | JVM 内联 | JVM 关内联 | cleat |
+|---|---:|---:|---:|
+| dynamic | 3.74 | 10.76 | 16.84 |
+| browse | 1.31 | 7.00 | 5.99 |
+| peval | 4.30 | 18.37 | 21.72 |
+| array1 | 6.48 | 21.82 | 24.04 |
+| scheme | 5.01 | 18.78 | 17.06 |
+| takl | 14.47 | 63.15 | 17.21 |
+
+- pair / 闭包密集型项在 JVM 关掉内联后掉到 cleat 的量级（browse、scheme、peval 与 cleat 已在 ±20% 内）：
+  这些项 3 ~ 5 倍的差距基本等于 **C2 的内联收益**，不是 .NET 后端更差。cleat 的对应手段是把 `mcar` / `mcdr` /
+  `set-mcar!` 这类小访问器在调用点内联（cleat-116 只对 eval 单元的小函数开了口子），以及 pair 的字段直读
+  （deftype 字段绕过接口调用）。
+- 例外是 dynamic（关内联 10.8 而 cleat 16.8）与 array1：dynamic 还吃 scheme-read 的字符串/符号处理，array1 还吃 GC。
+
+### 4. takl 的 JVM 数字是双态，本表的 0.50x 不可信
+
+- 本次批测 JVM takl 三次 34.77 / 37.29 / 35.02，单复跑三次 34.46 / 37.35 / **12.05**；cleat 三次稳定 17.21 ~ 17.71。
+  cleat-119 同机同源码的 JVM 最小值是 14.20 — 也就是说 JVM 现在大部分时候落在慢态。takl 的 `mas` / `shorterp`
+  在 C2 下有明显的取舍差异（快态约 12 s，慢态约 35 s），推测是热点方法的编译时机 / 去优化路径不同。
+- 按快态算 takl 是 1.43x（cleat 更慢），几何平均从 1.61x 变成 **1.64x**。除 takl 外其余 55 项的 JVM 数字与
+  cleat-119 都在 ±5% 内，说明本轮批测本身稳定。
+
+### 5. cleat 侧相对 cleat-119 的变动（同机同 JVM，各自 3 次取最小）
+
+- 大改进（M14/M15 的成果）：ctak 48.52 → 1.01、fibc 43.26 → 1.85（语言层 escape* 的 marker 协议替代异常，见 cleat-125）、
+  destruc 6.64 → 3.12、mbrotZ 3.61 → 2.18、browse 7.96 → 5.76、sum 0.90 → 0.72。
+- 需要复查的回退：parsing 8.80 → 10.89（+24%）、pi 0.96 → 1.10（+15%）、dynamic 14.47 → 16.71（+15%）、
+  mbrot 0.48 → 0.61（+28%）、equal 2.75 → 3.03、deriv 9.01 → 9.89、cpstak 16.62 → 18.30（各 +8 ~ 10%）。
+  这些项对 GC 配置不敏感（§2），更像 M14/M15 的入口 / 特化规则改动带进来的副作用，建议按 parsing、pi、mbrot 三项做 A/B。
+
+### 6. 口径提醒
+
+- 远程机只有 .NET 运行时 10.0.0（本地 10.0.12）：JIT / GC 的服务更新差集会体现在这些数字上，跨机对比时先对齐 runtime 版本。
+- JVM 的 min-of-3 对双态项（takl）不可靠；要比较这类项应分别取快态或报告区间。
+
+## M15 优化建议（2026-10-20，基于上面的归因与 `bench/r7rs/src/shapes2.cljc` 探针）
+
+### 0. 单个操作的对照（ns/次，各 1×10^7，3 次取最小；`java -Xss8m` / `dotnet cleat.dll`）
+
+| 形状 | cleat | JVM | cleat / JVM |
+|---|---:|---:|---:|
+| `(= \a \a)`（char 常量比较） | 8.2 | 0.7 | **11.7x** |
+| `(nth (list 1 2 3) 1)` | 15.2 | 0.7 | **22x** |
+| `(first "abc")` | 41.5 | 9.8 | 4.2x |
+| `(seq "abc")` | 13.0 | 4.2 | 3.1x |
+| `(nth "abc" 0)` | 4.3 | 0.9 | 4.8x |
+| `(keyword (str 7))` | 52.5 | 18.5 | 2.8x |
+| `(mcons 1 2)`（工厂函数建 pair） | 7.2 | 0.8 | 9.0x |
+| `(first xs)` / `(count xs)` / `(= kw :abc)` | 6.1 / 1.4 / 1.6 | 2.3 / 0.8 / 0.5 | 2.7x / 1.8x / 3.2x |
+| `@volatile` | 5.0 | 1.6 | 3.1x |
+| `(= 1 1)` / 三参普通调用 / `volatile-set!` | 0.2 / 0.5 / 1.2 | 0.4 / 0.8 / 1.7 | **cleat 更快** |
+
+（探针：`dotnet …/cleat.dll -I bench/r7rs/src -m shapes2`、`java -Xss8m -cp bench/r7rs/src:$(clojure -Spath) clojure.main -m shapes2`；
+分配构成用 `dotnet run tools/alloc.cs -- --top 8 -I bench/r7rs/src -m r7rs.<名字>`，工作目录须是仓库根，否则找不到 boot 镜像。）
+
+### 1. 优先级 P0：核心序列访问器与 `=` 的快路径（改动都在 analyzer / codegen / RT，成本最低、覆盖最广）
+
+- **`nth` 对 seq**：15.2 ns vs JVM 0.7 ns，是表里最差的一项。`nth` 目前走通用的 seq 遍历 + not-found 处理；
+  按 cleat-106（数组静态决议）与 `not` 的 `:inline` 同样的做法，给 2 / 3 元 `nth` 加 `:inline` 与具体类型（PersistentList /
+  PersistentVector / String / chunked seq）的直取快路径。
+- **`seq` / `first` 对 String**：每次调用新建 `clojure.lang.StringSeq`（探针里 457 MB / 1×10^7，占 browse 分配的一部分）。
+  串是不可变的：按（串, offset）复用已建的 seq，或换成基于索引的 struct / deftype 序列，避免每次堆分配。
+- **char / 其他基元常量**：`(= \a \a)` 8.2 ns、browse 里 `System.Char` 占分配 28%。已有 `CharBox`（RT.nth 用），
+  但常量加载点仍在装箱 —— 把基元常量的装箱放进常量池 / 静态字段（与 `(:inline (unchecked-add …))` 的整型常量折叠同一路，
+  `(= 1 1)` 已经是 0.2 ns），并给 `=` / `==` 加已知基元类型的内联比较。
+- **`keyword` / `symbol` 的 intern**：52.5 ns 与 `clojure.lang.Symbol` 占探针分配 42%。命中已有实例时不应先建对象：
+  intern 表按字符串比较直接返回，未命中才分配；`(str <long>)` 用专门的整数→串路径，避免中间 String + 哈希。
+  命中 browse / scheme / dynamic / lattice / paraffins 的 `generate-symbol`。
+- 收益面：这些形状出现在除纯算术外的几乎每一项里，是当前 1.61x 差距的最大来源。
+
+### 2. 优先级 P1：pair / 闭包的分配与访问（对应 §1 的 9 ~ 12 倍）
+
+- **打通跨 ns 的 deftype / definterface 生成类在编译期的决议**（实测：`(:import (r7rs.util MPair))`、`^IMPair` 提示、
+  `(MPair. 1 2)` 在 cleat 上全部 "Unable to resolve classname"，JVM 正常）。不修这个，用户代码只能走工厂函数 +
+  接口访问器（`mcons` / `mcar`），既多一层调用（7.2 vs 0.8 ns）又拿不到字段直读，也使第 3 条的内联无从下手。
+  与 cleat-042 的内联接口文件、cleat-106 的类型决议是同一套机制的延伸。
+- **工厂 / 构造路径**：确认 deftype 构造发的是 `newobj` + 字段直存，而不是经辅助方法 / 参数数组
+  （alloc.cs 里 `System.Object[]` 在 peval 占 4.0%、browse 占 1.8%，需要确认其中多少是调用参数数组）。
+- **小访问器（mcar / mcdr / set-mcar! / first / rest）的调用点内联跨编译单元**：现在内联接口文件只在 eval 单元注册
+  （`register-eval-inlines!`，镜像 / 包构建不启用），所以 r7rs 用到的普通 ns 里的访问器都不会被内联；
+  `clojure.core/not` 加 `:inline` 让 tak 从 3.7 → 1.9 s，说明这一层的收益在 r7rs 尺度上是被验证过的。
+  先给 `restrict-loop-inlines?` 的保守条件做一次开关对照，再决定是否放开。
+- **每调用重建的闭包**：peval 的 `ref_count$rc$fn__20` 占该项分配 17%（1.02 GB）。捕获变量全为静态 / 未被改写时
+  把闭包提升成单例（lambda 提升 + 常量闭包缓存），能同时削掉分配与随后的回收。
+- 长期：不逃逸对象的标量提升 / 栈分配（.NET 没有 C2 的 escape analysis）——这是拿回 §1 那 12 倍的唯一路子，
+  受益项是 mbrotZ、destruc、sum、以及所有 pair 密集项；难度也最大，建议单独开任务做可行性 spike。
+
+### 3. 优先级 P2：GC 与部署形态
+
+- array1 / gcbench / nboyer / fft / dynamic 在 server GC + gen0 256MB 下 -18 ~ -63%（§2 的表）。照 designs/22 §6 的结论
+  **不改默认值**，但值得把它做成可声明的 profile（例如 `cleat.edn` 的 `{:gc {:mode :server :gen0-budget "256MB"}}`
+  或 `--gc-profile batch`），让批处理 / 服务化部署一行开启，基准脚本也统一用它。
+- 分配速率本身：browse 1.05 GB/s、array1 0.68 GB/s。除减少分配（上面两条）之外，大数组（LOH）的初始化写入
+  走无屏障路径（数组填充时用 `spans` / 直接指针而非常规 `stelem.ref`）值得评估，array1 的 Object[] 占它分配的 40%。
+- 先对齐 runtime 版本（远端只有 10.0.0）再谈跨轮数字比较。
+
+### 4. 优先级 P3：先还的债
+
+- parsing +24%、mbrot +28%、pi / dynamic +15%、equal / deriv / cpstak +8 ~ 10%（相对 cleat-118，§5）：
+  这些项对 GC 配置不敏感，怀疑 M14/M15 的入口选择与特化规则（cleat-138 的 RuntimeSigTable 兼容条目 / 负表 / LRU）
+  带进来的副作用。建议对 parsing、pi、mbrot 三项做 `CLEAT_NO_OPT` 开关矩阵 + `git bisect 6ed0da4..65d407d`。
+- 测量脚本：双态项（takl）要报告区间而不是 min-of-3；把 `micro.cljc` / `shapes2.cljc` 的对照纳入每次里程碑收尾。
+
+### 5. 复核修正：`shapes3.cljc` 推翻了上面两条论据（同日）
+
+同一 ns 内"直调 vs 经 defn 包装 vs 直接调 RT"的对照（ns/次，3 次取最小）：
+
+| 形状 | cleat | JVM | 说明 |
+|---|---:|---:|---|
+| 接口方法直调 `.getCar` | 1.3 | 0.7 ~ 1.9 | |
+| 同一方法经 defn 包装 | 3.1 ~ 3.5 | 0.6 ~ 0.7 | **包装在 cleat 上多 2 ns，在 JVM 上被内联掉** |
+| deftype 直接 `new`（死结果） | 5.1 ~ 5.6 | 0.4 ~ 0.7 | JVM 侧是 EA + LICM 的产物，不可比 |
+| deftype 经 defn 包装 `new` | 5.1 ~ 5.5 | 0.6 ~ 0.7 | 同上 |
+| `(nth xs 1)` | 15.7 ~ 16.9 | 0.7 ~ 0.8 | JVM 侧被提出循环（LICM） |
+| `(. clojure.lang.RT (nth xs 1))` | 12.4 ~ 16.9 | 0.6 ~ 0.8 | **与通用调用同价 → 不是分派问题** |
+| `(first xs)` / RT 直调 | 1.5 ~ 1.6 / 0.6 ~ 0.7 | 2.0 ~ 2.2 / 1.8 ~ 1.9 | cleat 略快 |
+| `(seq "abc")` / RT 直调 | 25.3 ~ 27.4 / 12.3 ~ 13.3 | 7.8 / 0.5 ~ 0.6 | |
+
+**要撤回的**：
+
+- §0 表里 `nth` 的 22x、char 常量比较的 11.7x、`first` / `seq` on String 的 3 ~ 4x 这些"倍数"不成立：
+  JVM 那侧的结果是死值 / 循环不变量，C2 做了 LICM + 标量替换，等于把整个调用提出循环。
+  cleat 的数字才是每次调用的真实成本。这类探针只能论证"cleat 这一项的绝对成本是多少"，不能论证倍数。
+- "分配慢 9 ~ 12 倍"同样撤回：cleat 建一个两字段 deftype 是 5.1 ~ 5.6 ns，与 micro.cljc 里 JVM **真逃逸**
+  分配（5.8 ns）同量级；§1 表里 12x 的差来自 JVM 把不逃逸的分配整个消掉，不是 .NET 的分配路径慢。
+- §1 里 `nth` / `first` 加 `:inline` 的建议收益有限：RT 直调与通用调用同价（16.9 vs 15.2），成本在本体
+  （`RT.nth` 对非 Indexed 走 `NthFromRef` → `NthFrom` 的类型判断链，那个 ref 转发是 cleat-117 为绕开
+  tier-0 的形参活性问题加的），不在调用点。
+
+**仍然成立、且有真实基准证据的**：
+
+- char 常量在每次求值时装箱：browse 的真实分配里 `System.Char` 占 28%（1.84 GB），来源是 `my-match` 里
+  `(= (nth (name …) 0) \?)` / `\*` 的字面量。`CharBox` 只覆盖了 `RT.nth` 的返回路径，没覆盖常量加载。
+- `first` / `seq` 对 String 每次新建 `StringSeq`：cleat 侧绝对成本 18 ~ 27 ns（`RT.seqFrom` 对 string 直接
+  `StringSeq.create`）。给 CharSequence 加直读快路径是语义保持的改动，受益 slatex / string / wc / read1 /
+  nucleic 与 dynamic 的 scheme-read。
+- `keyword` / `symbol` intern：cleat 侧 52.5 ns，探针里 `clojure.lang.Symbol` 占分配 42%；browse 的
+  `generate-symbol`（`(keyword (str @current-gensym))`）是真实热路径。注意 JVM 的 intern 也先建 Symbol，
+  所以这条按"绝对成本 + 分配量"论证，不按倍数。
+- 包装调用比直调贵约 2 ns（3.4 vs 1.3），JVM 侧为 0：从 §1 P1 提到 P0 —— pair 密集项每轮有几次到十几次
+  访问器调用，累计是几十 % 的时间，修它需要打通跨编译单元的小函数内联（配合跨 ns 的 deftype 类决议）。
+- GC 配置（array1 -63% 等）、takl 双态、parsing / mbrot / pi 的回退排查：不受这次复核影响。
+
+**修正后的优先级**：P0 = char 常量装箱 + String 的 seq / first 直读 + 访问器内联（含跨 ns deftype 决议）+
+keyword intern；P1 = `RT.nth` 非 Indexed 路径的类型判断链与 `NthFromRef` 转发、每调用重建的闭包提升
+（peval 17%）、变长调用的参数数组；P2 = GC profile 与 LOH 初始化；P3 = 回归排查 + 测量口径
+（"探针必须让结果参与数据依赖，否则 JVM 侧数字不可用"这条要写进 run.py / 探针的注释）。
