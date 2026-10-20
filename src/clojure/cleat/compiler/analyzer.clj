@@ -19,7 +19,8 @@
   (:require [clojure.string :as str]
             [cleat.nanopass :as np :refer [with-output-language out in-context]]
             [cleat.compiler.languages :as l :refer [L0]])
-  (:import [Cleat.Core.Compiler HostSyntax AotPaths]
+  (:import [Cleat.Core.Compiler HostSyntax AotPaths CompileTimeTypes]
+           [Cleat.Core.Runtime ClojureOps]
            [Cleat.Core.Expand ExpanderException LocalBinding]
            [clojure.lang Symbol Keyword Var Namespace RT IObj IMeta IPersistentMap IPersistentVector IPersistentSet ISeq IPersistentList]))
 
@@ -62,9 +63,57 @@
 (defn- clj-list? [x] (and (some? x) (or (instance? IPersistentList x) (instance? ISeq x))))
 (defn- munge* [s] (HostSyntax/Munge s))
 (defn- tag-of [x] (HostSyntax/TagOf x))
-(defn- tag-type [t] (when t (HostSyntax/TagType t)))
+;; cleat-144：生成类的跨 ns 决议与缺失依赖的编译期加载共用这个开关。
+(def ^:private opt-crossns-type?
+ (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "crossnstype")))
+
+(declare require-type-ns!)
+
+(defn- tag-type [t]
+  (when t
+    (or (HostSyntax/TagType t)
+        (when opt-crossns-type?
+          (let [n (cond
+                    (symbol? t) (name t)
+                    (string? t) t
+                    (instance? Type t) (.FullName ^Type t))]
+            (when (and n (.Contains ^String n "."))
+              (require-type-ns! n)
+              (HostSyntax/TagType t)))))))
 (defn- type-name [t] (HostSyntax/TypeName t))
-(defn- class-for-name [n] (try (RT/classForName ^String n) (catch Exception _ nil)))
+
+;; cleat-144：同进程刚分析过的 deftype / definterface 还没有求值时，RT.classForName 看不到；
+;; import* 在旧路径失败后按编译期登记表重试。CLEAT_NO_OPT=crossnstype 退回旧决议。
+(defn- class-for-name [n]
+  (or (try (RT/classForName ^String n) (catch Exception _ nil))
+      (when opt-crossns-type?
+        (try (CompileTimeTypes/Get n)
+             (catch Exception _ nil)))))
+
+(defn- require-type-ns! [n]
+  (when (and opt-crossns-type? (string? n))
+    (when-let [dot (.LastIndexOf ^String n \.)]
+      (when (pos? dot)
+        (let [type-ns (subs n 0 dot)
+              require-var (RT/var "clojure.core" "require")]
+          ;; 当前 ns 里刚分析 / 即将求值的生成类不该回头 require 自己；否则 core 加载自己的 gvec 类会记成循环依赖。
+          (when-not (= (symbol type-ns) (.Name ^Namespace (current-ns)))
+          ;; require 失败必须吞掉：宿主包名（java.lang.reflect.Field / clojure.lang.Compiler /
+          ;; clojure.clr.api.Clojure）不是 Clojure ns，require 会抛 FileNotFoundException，
+          ;; 让调用方原本要报的 ExpanderException "Unable to resolve classname: X" 变成另一条信息，
+          ;; test-clojure 基线里五条 load-error 就是这么被换掉的（cleat-144 复评）。
+          ;; 决议成功与否由 class-for-name 的返回值决定，不靠 require 的异常。
+          (try (.invoke ^clojure.lang.IFn require-var (vector (symbol type-ns)))
+               (catch Exception _ nil))))))))
+
+(defn- import-class-for-name [n]
+  (or (class-for-name n)
+      (do (require-type-ns! n)
+          ;; require 本身常返回 nil；类型 ns 解析完成后重试。编译期同层 import* 还没执行，
+          ;; 当前 ns 也要立刻看到别名；产物运行时仍会执行同一条 import*。
+          (let [t (class-for-name n)]
+            (when t (ClojureOps/ImportOf t))
+            t))))
 
 (def ^:private kw-line :line)
 (def ^:private source-keys [:line :column :file :source-span :end-line :end-column])
@@ -666,6 +715,9 @@
     (and (clj-list? form) (seq form)) (analyze-seq form ctx)
     :else (analyze-datum form ctx)))
 
+;; cleat-144：ns 的 require 必须在编译期发生，后面的 :import 才能看到被 require 命名空间里的生成类
+;; （JVM 的类加载器按名字可见；这里包构建时依赖与使用者在同一个 L0 单元，运行时 require 还没有执行）。
+;; 仍然保留展开后的 require 调用：包程序集在另一个进程加载时按顺序运行它。门控同类型决议。
 ;; —— 特殊形式（syntax.sls，逐个对照）——
 
 (defn- source-file [pos] (or (nth pos 2 nil) (source-path)))
@@ -777,7 +829,7 @@
 (defn- sp-import* [form ctx]
   (let [nm (second form)]
     (when-not (and (= 2 (count form)) (string? nm)) (err form ctx "import* requires a string"))
-    (let [t (class-for-name nm)]
+    (let [t (import-class-for-name nm)]
       (when-not t (err form ctx (str "Unable to resolve classname: " nm)))
       (clj-call "ImportOf" false (q t)))))
 
@@ -1481,17 +1533,29 @@
   (let [resolve-type (fn [x]
                        (let [t (if (instance? Type x) x (maybe-type ctx x))]
                          (when-not t (err form ctx (str "Unable to resolve classname: " x)))
-                         (type-desc (type-name t))))
+                         t))
+        typed-sigs (map (fn [sig]
+                          (let [items (vec sig)]
+                            (when (< (count items) 3) (err form ctx "Malformed gen-interface method signature"))
+                            [(if (keyword? (items 0)) (name (items 0)) (str (items 0)))
+                             (resolve-type (items 2))
+                             (mapv (fn [p]
+                                     (when (clj-list? p) (err form ctx "by-ref parameters are not supported in gen-interface"))
+                                     (resolve-type p))
+                                   (items 1))]))
+                        sigs)
         ifaces (host-check form ctx (HostSyntax/ResolveInterfaces extends))
+        _ (when opt-crossns-type?
+            (HostSyntax/DefineInterfaceStub
+             class-name ifaces
+             (object-array (map (fn [[mname ret params]]
+                                  (object-array [mname ret (object-array params)]))
+                                typed-sigs))))
         specs (map (fn [sig]
-                     (let [items (vec sig)]
-                       (when (< (count items) 3) (err form ctx "Malformed gen-interface method signature"))
-                       [false (if (keyword? (items 0)) (name (items 0)) (str (items 0))) (resolve-type (items 2))
-                        (mapv (fn [p]
-                                (when (clj-list? p) (err form ctx "by-ref parameters are not supported in gen-interface"))
-                                (resolve-type p))
-                              (items 1))]))
-                   sigs)
+                     (let [[mname ret params] sig]
+                       [false mname (type-desc (type-name ret))
+                        (mapv #(type-desc (type-name %)) params)]))
+                   typed-sigs)
         info [class-name :interface [] (mapv type-name ifaces) (vec specs) [] false]]
     (L0-out (clj-deftype ~info ()))))
 

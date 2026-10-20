@@ -2937,6 +2937,11 @@ namespace clojure.lang
 
         internal static readonly char[] _triggerTypeChars = ['`', ',', '[', '&', '*'];
 
+        // cleat-144：deftype / definterface 生成类可以按命名空间前缀在包程序集里决议。默认开；关侧保留旧的
+        // “类型必须已在已载入程序集里”的决议路径，用于编译产物对照。
+        internal static readonly bool s_crossNsTypes =
+            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("crossnstype");
+
         public static Type classForName(string p)
         {
             return classForName(p, CurrentNSVar.deref() as Namespace, true);
@@ -3085,6 +3090,15 @@ namespace clojure.lang
             t = Cleat.Core.Runtime.Loader.FindTypeOnLoadPath(p);
             if (t != null)
                 return t;
+
+            // CLEAT-144: a generated type in another package namespace may be used before that package's entry has run.
+            // PackageIndex.FindType loads the defining assembly (without running its entry), like a class-path type lookup.
+            if (s_crossNsTypes)
+            {
+                t = Cleat.Core.Runtime.Loader.LoadAssemblyDefining(p);
+                if (t != null)
+                    return t;
+            }
 
             // Search by simple type name (slow path).
             // At some point this became a no-op unless running on Mono, so I restricted it to that.

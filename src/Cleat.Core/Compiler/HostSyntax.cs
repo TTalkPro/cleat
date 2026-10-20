@@ -244,6 +244,35 @@ public static partial class HostSyntax
         return t;
     }
 
+    /// <summary>
+    /// cleat-144：gen-interface 的编译期桩。包构建时接口本身还没有求值，后续命名空间的 :import / 提示也要能
+    /// 按接口方法签名做静态决议；真正接口求值后按同名取最新定义。
+    /// methods 的每项为 object[] { 方法名, 返回 Type, 参数 Type[] }。
+    /// </summary>
+    public static Type DefineInterfaceStub(string name, object interfaces, object methods)
+    {
+        var asmName = new AssemblyName("cleat$ifc-stub$" + Guid.NewGuid().ToString("N"));
+        var ab = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(asmName, System.Reflection.Emit.AssemblyBuilderAccess.RunAndCollect);
+        var tb = ab.DefineDynamicModule(asmName.Name).DefineType(
+            name, TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract);
+        foreach (var it in ((object[])interfaces).Cast<Type>()) tb.AddInterfaceImplementation(it);
+        foreach (object[] m in (object[])methods)
+        {
+            var ps = ((object[])m[2]).Cast<Type>().ToArray();
+            var mb = tb.DefineMethod(
+                Munge((string)m[0]),
+                MethodAttributes.Public | MethodAttributes.Abstract | MethodAttributes.Virtual |
+                MethodAttributes.NewSlot | MethodAttributes.HideBySig,
+                (Type)m[1], ps);
+            for (int i = 0; i < ps.Length; i++) mb.DefineParameter(i + 1, ParameterAttributes.None, "p" + i);
+        }
+        var t = tb.CreateType();
+        s_stubs.AddOrUpdate(t, null);
+        lock (s_pendingStubs) s_pendingStubs[name] = t;
+        CompileTimeTypes.Add(t);
+        return t;
+    }
+
     public static bool IsStub(object t) => t is Type ty && s_stubs.TryGetValue(ty, out _);
 
     /// <summary>桩类型 → 同名的真正类型（已登记时）；其余原样。</summary>

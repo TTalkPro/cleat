@@ -328,6 +328,49 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-144：另一个 ns / 编译单元里的 deftype 与 definterface 在编译期可决议。用例
+    /// tests/Cleat.Host.Tests/data/crossns_semantics.clj 覆盖 :import、全名与短名类型提示、构造、instance?；
+    /// CLEAT_NO_OPT=crossnstype 走旧决议时输出仍与 .out 逐字相同。另编两个包程序集验证消费者单独编译时能从
+    /// 依赖包按类名找到生成类型，运行时 :import / 构造 / 接口提示行为不变。
+    /// </summary>
+    [Test]
+    public void CrossNamespaceGeneratedTypesResolve()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "crossns_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "crossnstype") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
+        Assert.That(off.Out, Is.EqualTo(expected), off.ToString());
+
+        string src = Path.Combine(_dir, "src"), outDir = Path.Combine(_dir, "out");
+        Directory.CreateDirectory(src);
+        Directory.CreateDirectory(Path.Combine(src, "crossns"));
+        Directory.CreateDirectory(outDir);
+        File.WriteAllText(Path.Combine(src, "crossns", "gen.clj"),
+            "(ns crossns.gen)\n"
+            + "(definterface Shape (area []))\n"
+            + "(deftype Box [^long side] Shape (area [_] (* side side)))\n");
+        File.WriteAllText(Path.Combine(src, "crossns", "use.clj"),
+            "(ns crossns.use (:require [crossns.gen]) (:import (crossns.gen Box Shape)))\n"
+            + "(defn area ^long [^Shape x] (.area x))\n(defn side ^long [^Box x] (.side x))\n"
+            + "(defn -main [& _] (let [b (Box. 7)] (prn [(instance? Box b) (area b) (side b)])))\n");
+        var dep = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", src, "--compile-package", Path.Combine(outDir, "crossns.gen.dll"),
+            "--package", "crossns.gen", "--root", src, "crossns.gen");
+        Assert.That(dep.ExitCode, Is.EqualTo(0), dep.ToString());
+        var use = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", outDir, "-I", src, "--compile-package", Path.Combine(outDir, "crossns.use.dll"),
+            "--package", "crossns.use", "--root", src, "crossns.use");
+        Assert.That(use.ExitCode, Is.EqualTo(0), use.ToString());
+        var run = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", outDir, "-e", "(require 'crossns.use)", "-e", "(crossns.use/-main)");
+        Assert.That(run.ExitCode, Is.EqualTo(0), run.ToString());
+        Assert.That(run.Out, Is.EqualTo("[true 49 7]\n"), run.ToString());
+    }
+
+    /// <summary>
     /// cleat-146：keyword 的字符串键 intern 命中不新建 Symbol；str 的 long / int 用不变区域性格式化。
     /// 用例 tests/Cleat.Host.Tests/data/intern_semantics.clj 覆盖 identity / 元数据 / find-keyword /
     /// symbol 的文本语义 / gensym 唯一性；CLEAT_NO_OPT=intern 退回旧路径时输出逐字相同。
