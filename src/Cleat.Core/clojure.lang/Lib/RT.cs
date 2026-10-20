@@ -92,6 +92,10 @@ namespace clojure.lang
 
         public static readonly object[] EmptyObjectArray = [];
 
+        // cleat-143：String 的 first / seq / next / more 直读快路径。默认开；CLEAT_NO_OPT=strseq 时保留原来的
+        // RT.seq → StringSeq 路径（包括装箱方式），使开 / 关成为完整的分配与时间对照。
+        private static readonly bool s_strseq = !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("strseq");
+
         static readonly RTProperties _versionProperties = [];
 
         public static RTProperties GetVersionProperties() { return _versionProperties; }
@@ -596,6 +600,9 @@ namespace clojure.lang
 
         public static ISeq seq(object coll)
         {
+            if (s_strseq && coll is string str)
+                return StringSeq.create(str);   // cleat-143：字符串不走 seqFrom 的长类型链；仍每次新建，保持返回对象 identity 语义
+
             if (coll is ASeq aseq)
                 return aseq;
 
@@ -611,6 +618,9 @@ namespace clojure.lang
 
             if (coll is Seqable seq)
                 return seq.seq();
+
+            if (s_strseq && coll is string text)
+                return StringSeq.create(text);   // cleat-143：类型检查比 GetType().IsArray 便宜，字符串先判
 
             if (coll.GetType().IsArray)
                 return ArraySeq.createFromObject(coll);
@@ -773,6 +783,9 @@ namespace clojure.lang
 
         public static object first(object x)
         {
+            if (s_strseq && x is string s)
+                return s.Length == 0 ? null : Cleat.Core.Runtime.CharBox.Get(s[0]);   // cleat-143：不建 StringSeq
+
             // cleat-111：ASeq（Cons、PersistentList……）先判——类检查加虚调用，避开接口转换与接口分派的存根
             // Cons 是 sealed、PersistentList 按精确类型：一次方法表比较，first() 直接调用可内联；ASeq 不是 sealed，isinst 要走 CastHelpers
             if (x is Cons c) return c.first();
@@ -807,6 +820,9 @@ namespace clojure.lang
 
         public static ISeq next(object x)
         {
+            if (s_strseq && x is string s)
+                return StringSeq.create(s, 1);   // cleat-143：直接给剩余串建同一个 StringSeq 类型；空串 / 单字符仍返回 null
+
             // Cons 是 sealed、PersistentList 按精确类型：一次方法表比较，next() 直接调用可内联；ASeq 不是 sealed，isinst 要走 CastHelpers
             if (x is Cons c) return c.next();
             if (x != null && x.GetType() == typeof(PersistentList)) return Unsafe.As<PersistentList>(x).next();
@@ -822,6 +838,9 @@ namespace clojure.lang
 
         public static ISeq more(object x)
         {
+            if (s_strseq && x is string s)
+                return s.Length <= 1 ? PersistentList.EMPTY : StringSeq.create(s, 1);   // cleat-143：与 seq(s).more() 同类型同边界
+
             // Cons 是 sealed：一次方法表比较，more() 直接调用可内联；ASeq 不是 sealed，isinst 要走 CastHelpers
             if (x is Cons c) return c.more();
             if (x is ASeq a) return a.more();   // cleat-111

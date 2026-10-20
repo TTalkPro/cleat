@@ -1,0 +1,6 @@
+\a nil nil (\a) (\b \c) nil (\b \c) ()
+\b \b :nf 0 true false [\a \b \c]
+"abc" [\a \b \c] \a 294
+true true false true false clojure.lang.StringSeq clojure.lang.StringSeq
+false "(\\a \\b \\c)"
+5 [97 55357 56832 98 99] [97 55357 56832 98 99] 112483 [55357 56832 98] 55357

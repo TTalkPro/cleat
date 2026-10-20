@@ -19,6 +19,9 @@ namespace clojure.lang
     [Serializable]
     public class StringSeq : ASeq, IndexedSeq, IDrop, IReduceInit
     {
+        // cleat-143：RT 的 String 快路径与这里的 CharBox 返回路径共用一个对照开关；关闭时回到原来的隐式装箱。
+        private static readonly bool s_strseq = !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("strseq");
+
         #region Data
 
         /// <summary>
@@ -57,9 +60,19 @@ namespace clojure.lang
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
         static public StringSeq create(string s)
         {
-            return s.Length == 0
-                ? null
-                : new StringSeq(null, s, 0);
+            return create(s, 0);
+        }
+
+        /// <summary>
+        /// Create a <see cref="StringSeq">StringSeq</see> from a String at the given position.
+        /// cleat-143：RT.next / RT.more 直接按剩余偏移建同类对象，避免再经 RT.seq 的往返。
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "ClojureJVM name match")]
+        static public StringSeq create(string s, int i)
+        {
+            return i < s.Length
+                ? new StringSeq(null, s, i)
+                : null;
         }
 
         /// <summary>
@@ -85,7 +98,8 @@ namespace clojure.lang
         /// <returns>The first item.</returns>
         public override object first()
         {
-            return _s[_i];
+            // cleat-143：nth 已用 CharBox；first 是 map / reduce / 序列遍历更常经过的入口，同样避免反复分配 char。
+            return s_strseq ? Cleat.Core.Runtime.CharBox.Get(_s[_i]) : _s[_i];
         }
 
         /// <summary>
@@ -163,7 +177,7 @@ namespace clojure.lang
             object acc = start;
             for (int ii = _i; ii < _s.Length; ii++)
             {
-                acc=f.invoke(acc, _s[ii]);
+                acc=f.invoke(acc, s_strseq ? Cleat.Core.Runtime.CharBox.Get(_s[ii]) : _s[ii]);   // cleat-143：与 first 的返回路径一致
                 if (RT.isReduced(acc))
                     return ((IDeref)acc).deref();
             }

@@ -293,6 +293,24 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-143：String 的 first / seq / next / more 直读路径与 StringSeq 的 CharBox 返回路径不改变值、类型、identity 边界。
+    /// 用例（tests/Cleat.Host.Tests/data/strseq_semantics.clj：空串、单字符、代理对码元、subs / map / reduce / into、
+    /// nth 默认值、seq 的 = 与 identical?、打印形态）与 .out 逐字相同（已对照 JVM Clojure），
+    /// CLEAT_NO_OPT=strseq 回到原来的 RT.seq → StringSeq 和隐式装箱时也相同。
+    /// </summary>
+    [Test]
+    public void StringSeqDirectReads()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "strseq_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "strseq") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
+        Assert.That(off.Out, Is.EqualTo(expected), off.ToString());
+    }
+
+    /// <summary>
     /// cleat-108：回边实参是 if / begin 时，两支里对原始类型循环变量的引用算原始用途，汇合处原始发射（不装箱）。语义用例
     /// （tests/Cleat.Host.Tests/data/joinraw_semantics.clj：计数器、嵌套 if、带副作用的 do、throw 与提前退出的分支、溢出、两支类型不同、Ratio、double、
     /// 无提示初值、循环里另有装箱用途）在 CLEAT_NO_OPT=joinraw 与开两种设置下输出逐字相同；计数器循环里只剩返回值处一次 Int64 装箱。
