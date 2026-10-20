@@ -99,6 +99,11 @@ public static class Program
 
     public static int Main(string[] args)
     {
+        if (GcProfile.ValidateEnvironment() is string gcError)
+        {
+            Console.Error.WriteLine("cleat: " + gcError);
+            return 2;
+        }
         int exitCode = 0;
         var thread = new System.Threading.Thread(() => exitCode = MainBody(args), 512 * 1024 * 1024);
         thread.Start();
