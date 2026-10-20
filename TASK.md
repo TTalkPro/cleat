@@ -148,11 +148,11 @@
 | [cleat-139](tasks/cleat-139-whole-function-specialization.md) | 整体函数特化（O 模式）：任意体重新生成、object 兜底、身份守卫自调用 | M15 | cleat-138 | 完成 |
 | [cleat-140](tasks/cleat-140-call-path-type-inference.md) | 编译期调用路径类型推导：调用图、类型摘要、确认的快速路径编译期生成 | M15 | cleat-139 | 完成 |
 | [cleat-141](tasks/cleat-141-m15-validation.md) | M15 收口：压力模式全量基线、种子重生成、r7rs 三方重跑 | M15 | cleat-140 | 完成 |
-| [cleat-142](tasks/cleat-142-char-constant-boxing.md) | char 常量装箱缓存：常量发射点不再每次 box，`=` 的 char 原始比较 | M16 | 无 | 未开始 |
-| [cleat-143](tasks/cleat-143-string-seq-direct-read.md) | String 的 seq / first / nth 直读快路径，不再每次新建 StringSeq | M16 | 无 | 未开始 |
+| [cleat-142](tasks/cleat-142-char-constant-boxing.md) | char 常量装箱缓存：常量发射点不再每次 box（`=` 的 char 原始比较留给 147） | M16 | 无 | 完成 |
+| [cleat-143](tasks/cleat-143-string-seq-direct-read.md) | String 的 seq / first / next / more 直读快路径，不再每次新建 StringSeq（含分支顺序修正） | M16 | 无 | 完成 |
 | [cleat-144](tasks/cleat-144-cross-ns-deftype-resolution.md) | 跨 ns 的 deftype / definterface 编译期决议（`:import` 兼容缺口） | M16 | 无 | 未开始 |
 | [cleat-145](tasks/cleat-145-accessor-inlining.md) | 小访问器跨编译单元内联（含镜像 / 包构建，与 restrict-loop-inlines 协调） | M16 | cleat-144 | 未开始 |
-| [cleat-146](tasks/cleat-146-keyword-symbol-intern.md) | keyword / symbol intern 命中不新建对象，`(str <long>)` 专用路径 | M16 | 无 | 未开始 |
+| [cleat-146](tasks/cleat-146-keyword-symbol-intern.md) | keyword intern 的字符串键命中不新建 Symbol，`(str <long>)` 专用路径 | M16 | 无 | 完成 |
 | [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链、闭包提升（peval 17%）、变长参数数组量化 | M16 | 无 | 未开始 |
 | [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 未开始 |
 | [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 未开始 |
@@ -187,7 +187,7 @@
 
 ## 关键路径
 
-**M16（2026-10-20 起，现行）**：149（先还债、稳口径）→ 142 / 143 / 144 / 146 / 148 并列 → 145（依赖 144）→ 147 → 150（[28 §7](designs/28-hot-path-optimizations.md)）。
+**M16（2026-10-20 起，现行）**：142 / 143 / 146 完成（远端同窗口开 / 关 A/B：wc -39%、browse -4%、read1 -2.5%，lattice 的 strseq 分支位置回退已修正，见 [notes M16](notes/r7rs-performance.md)）→ 149（先还债、稳口径）/ 144 / 148 并列 → 145（依赖 144）→ 147 → 150（[28 §7](designs/28-hot-path-optimizations.md)）。
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 

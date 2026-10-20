@@ -1,6 +1,8 @@
 # 28 热路径优化：M15 归因复核后的修正优先级
 
-> 状态：**提案**（2026-10-20，M16）。来源：[notes/r7rs-performance.md](../notes/r7rs-performance.md) 的
+> 状态：**进行中**（2026-10-20，M16）——§2.1 / §2.2 / §2.4 已实现并在 192.168.3.111 上完成同窗口开 / 关验证
+> （[notes 的 M16 一节](../notes/r7rs-performance.md)：wc -39%、browse -4%、read1 -2.5%；lattice 因 strseq
+> 分支位置回退 +6.3%，已按 §6 的教训修正）。§2.3 / §3 / §4 / §5 未开始。来源：[notes/r7rs-performance.md](../notes/r7rs-performance.md) 的
 > "M15 差异归因"与"M15 优化建议 §5 复核修正"、探针 `bench/r7rs/src/{micro,shapes2,shapes3}.cljc`、
 > 归因脚本 `bench/r7rs/attr.py`。承接 [21](21-r7rs-gaps.md)、[22](22-gc-and-performance-followups.md)
 > 与 [27](27-jit-style-runtime-specialization.md)；任务 cleat-142 ~ 150。
@@ -124,6 +126,12 @@ cleat 65d407d（cleat-141）对 JVM Clojure 的 r7rs 56 项 × 3 轮取最小：
 ## §6 语义与验证纪律
 
 沿用 22 §0.1：每个优化有 `CLEAT_NO_OPT=...` 开关或改前构建对照；语义逐字不变；不为基准改语义。
+
+**142 / 143 / 146 验证后新增的纪律**（M16 §2 的实际教训）：在 `RT.first` / `next` / `more` / `seq`
+这类**多类型判断链**里加快的路径分支时，分支**位置对其它类型是纯成本**——string 分支放在 `Cons` /
+`ASeq` 之前让 lattice 这类纯列表负载回退 6.3%，而受益项（wc / browse / read1）与位置无关。
+所以：快路径分支一律排在既有热分支之后；A/B 名单必须同时含受益项与**不受利的列表 / 序列密集项**；
+差异 < 3% 记为噪声，回退用"只关一个开关"的隔离定位（本轮就是靠它指认到 strseq）。
 每项验证固定为：Release 构建 0 warning、语料门禁（gate 521 分类）、CTS 与 test-clojure 基线、
 Core / Host 全量测试、改 `src/clojure` 时种子不动点（stage2 == stage3）、
 受影响 r7rs 项的同窗口 A/B；里程碑收尾跑全量 56 项 × 3（cleat-150）。
