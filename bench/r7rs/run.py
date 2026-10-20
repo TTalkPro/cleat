@@ -5,6 +5,19 @@
 # JAVA=<java 可执行文件>（缺省 PATH 里的 java）；JVM 的结果记下 `java -version` 的版本行（GraalVM 与 HotSpot C2 的数字可能差很多，表头必须注明）。
 # R7_OUT=<名字> 把结果写到 results/<名字>.jsonl（缺省 <impl>.jsonl），便于并排保存两种 JVM。
 # 工作目录为 r7rs-benchmarks 仓库（读文件的基准按相对路径读 inputs/），标准输入是 inputs/<名字>.input。结果追加到 results/<impl>.jsonl。
+#
+# ── 口径（cleat-149 补，两条都是踩过的坑）────────────────────────────────────
+# 1. **双态项不能取 min-of-3**：JVM 的 takl 有快态 ~12 s / 慢态 34 ~ 37 s 两种状态（同机同源码，
+#    取决于热点方法的编译时机 / 去优化），最小值落在哪个态是随机的。这类项要报告**区间**
+#    （min ~ max，连同全部轮次），并在几何平均里注明取了哪个态；compare.py 按 max/min > 1.5 自动标 `双态?`。
+#    开关矩阵 / A/B 用 bench/r7rs/triage149.py（同窗口交替 + 每格 min/median + 双态标记）。
+# 2. **微探针的结果必须参与数据依赖**（写进 sink / 条件分支，实参随循环变量变化），否则 C2 / Graal
+#    会用 LICM + 标量替换把整个调用提出循环，**JVM 侧的数字只是循环开销，不是操作的成本**；
+#    cleat 侧不做这种消除，于是死值探针上的跨宿主倍数全是伪影（shapes3 的教训，designs/28 §1）。
+#    探针一律用 bench/r7rs/src/r7rs/probe.cljc 的 timed 宏（含环底对照与 ARTIFACT? 自检），
+#    micro.cljc / shapes2.cljc / shapes3.cljc 的 JVM 侧数字以 net 列为准，标 ARTIFACT? / HOISTED? 的行不可用。
+# 3. 跑前看 load（本机若有并发构建，只信同窗口交替对照）；里程碑收尾把 micro / shapes2 / shapes3
+#    三个探针与全量 56 项一起重跑（designs/28 §5.2）。
 import json, os, re, subprocess, sys, time
 B = os.path.dirname(os.path.abspath(__file__))
 SRC = os.environ.get('CLEAT_R7RS_SRC', os.path.join(B, 'src'))
