@@ -150,13 +150,13 @@
 | [cleat-141](tasks/cleat-141-m15-validation.md) | M15 收口：压力模式全量基线、种子重生成、r7rs 三方重跑 | M15 | cleat-140 | 完成 |
 | [cleat-142](tasks/cleat-142-char-constant-boxing.md) | char 常量装箱缓存：常量发射点不再每次 box（`=` 的 char 原始比较留给 147） | M16 | 无 | 完成 |
 | [cleat-143](tasks/cleat-143-string-seq-direct-read.md) | String 的 seq / first / next / more 直读快路径，不再每次新建 StringSeq（含分支顺序修正） | M16 | 无 | 完成 |
-| [cleat-144](tasks/cleat-144-cross-ns-deftype-resolution.md) | 跨 ns 的 deftype / definterface 编译期决议（`:import` 兼容缺口） | M16 | 无 | 未开始 |
+| [cleat-144](tasks/cleat-144-cross-ns-deftype-resolution.md) | 跨 ns 的 deftype / definterface 编译期决议（`:import` 兼容缺口） | M16 | 无 | 进行中（worktree 并行） |
 | [cleat-145](tasks/cleat-145-accessor-inlining.md) | 小访问器跨编译单元内联（含镜像 / 包构建，与 restrict-loop-inlines 协调） | M16 | cleat-144 | 未开始 |
 | [cleat-146](tasks/cleat-146-keyword-symbol-intern.md) | keyword intern 的字符串键命中不新建 Symbol，`(str <long>)` 专用路径 | M16 | 无 | 完成 |
-| [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链、闭包提升（peval 17%）、变长参数数组量化 | M16 | 无 | 未开始 |
-| [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 未开始 |
-| [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 未开始 |
-| [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项重跑与开关贡献分解 | M16 | cleat-142 ~ 149 | 未开始 |
+| [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链 + 闭包提升与变长参数数组的量化 | M16 | 无 | 进行中（worktree 并行） |
+| [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 进行中（worktree 并行） |
+| [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 进行中（worktree 并行） |
+| [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项三臂整体重跑与开关贡献分解（runner `bench/r7rs/m16full.py` 已就位） | M16 | cleat-142 ~ 149 | 进行中 |
 
 ## 里程碑
 
