@@ -112,6 +112,11 @@ namespace clojure.lang
         internal static readonly bool s_internEnabled =
             !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("intern");
 
+        // cleat-147：nth 的 ASeq / LazySeq / StringSeq 快路径。默认开；CLEAT_NO_OPT=nthfast 时
+        // NthFromRef 完整回到 NthFrom 的旧判断链，开 / 关是同一份运行时的完整对照。
+        private static readonly bool s_nthfast =
+            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("nthfast");
+
         #endregion
 
         #region  It's true (or not)
@@ -1077,6 +1082,48 @@ namespace clojure.lang
         {
             object coll = slot;
             slot = null;
+            if (s_nthfast)
+            {
+                if (coll == null)
+                    return null;
+
+                // 既有热分支（string / array）仍在 ISeq 前面；ISeq 换掉旧 NthFrom 二次调用与 RT.seq。
+                if (coll is string str)
+                    return Cleat.Core.Runtime.CharBox.Get(str[n]);
+
+                if (coll.GetType().IsArray)
+                    return ((Array)coll).GetValue(n);
+
+                if (coll is ISeq iseq)
+                {
+                    ISeq seq = iseq;
+                    iseq = null;
+                    if (seq is LazySeq lazy)
+                    {
+                        seq = lazy.seq();
+                        lazy = null;
+                    }
+
+                    if (seq is StringSeq ss)
+                    {
+                        int i = ss.I + n;
+                        string text = ss.S;
+                        if (n < 0 || i >= text.Length)
+                            throw new ArgumentOutOfRangeException("n");
+                        return Cleat.Core.Runtime.CharBox.Get(text[i]);
+                    }
+
+                    // 直接在 ref 入口遍历：去掉旧 NthFrom → RT.seq 的第二层调用；coll 已清空。
+                    coll = null;
+                    for (int i = 0; i <= n && seq != null; ++i, seq = seq.next())
+                    {
+                        if (i == n)
+                            return seq.first();
+                    }
+                    throw new ArgumentOutOfRangeException("n");
+                }
+            }
+
             return NthFrom(coll, n);
         }
 
@@ -1155,6 +1202,18 @@ namespace clojure.lang
             throw new ArgumentOutOfRangeException("n");
         }
 
+        private static object NthFromSeq(ISeq seq, int n, object notFound)
+        {
+            ISeq current = seq;
+            seq = null;
+            for (int i = 0; i <= n && current != null; ++i, current = current.next())
+            {
+                if (i == n)
+                    return current.first();
+            }
+            return notFound;
+        }
+
 
         //static public Object nth(Object coll, long n, Object notFound)
         //{
@@ -1192,6 +1251,36 @@ namespace clojure.lang
                 if (n < a.Length)
                     return a.GetValue(n); // CLEAT-005: was Reflector.prepRet(elemType, value); prepRet is the identity in ClojureCLR
                 return notFound;
+            }
+
+            if (s_nthfast)
+            {
+                if (coll is ISeq iseq)
+                {
+                    if (iseq is StringSeq ss)
+                    {
+                        int i = ss.I + n;
+                        string text = ss.S;
+                        return n >= 0 && i < text.Length ? Cleat.Core.Runtime.CharBox.Get(text[i]) : notFound;
+                    }
+
+                    // Counted 只对 O(1) count 的持久 list 用来提前判 miss；一般 seq 的 count 可能是 O(n)，不能放热路径。
+                    if (iseq is PersistentList plist && n >= 0 && n >= plist.count())
+                        return notFound;
+
+                    if (n < 0)
+                        return notFound;
+
+                    ISeq seq = iseq;
+                    iseq = null;
+                    if (seq is LazySeq lazy)
+                    {
+                        seq = lazy.seq();
+                        lazy = null;
+                    }
+                    coll = null;
+                    return NthFromSeq(seq, n, notFound);
+                }
             }
 
             // Causes a problem with infinite LazySequences

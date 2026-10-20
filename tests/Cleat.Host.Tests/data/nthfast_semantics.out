@@ -1,0 +1,42 @@
+vector-hit 1
+vector-last 3
+vector-default-hit 3
+vector-default-miss :missing
+vector-negative-default :missing
+vector-negative <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'i')>
+list-hit 1
+list-last 3
+list-default-hit 2
+list-default-miss :missing
+list-negative <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+list-oob <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+string-hit \a
+string-surrogate-low \�
+string-surrogate-high \�
+string-last \b
+string-default-hit \b
+string-default-miss :missing
+string-negative <System.IndexOutOfRangeException:Index was outside the bounds of the array.>
+string-oob <System.IndexOutOfRangeException:Index was outside the bounds of the array.>
+string-seq-hit \a
+string-seq-surrogate-high \�
+string-seq-last \b
+string-seq-default-miss :missing
+string-seq-oob <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+chunk-hit 1
+chunk-cross 5
+chunk-default-miss :missing
+chunk-oob <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+chunk-negative <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+lazy-hit 10
+lazy-last 14
+lazy-default-miss :missing
+lazy-oob <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+lazy-infinite-hit 3
+lazy-negative <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+object-array-hit :a
+object-array-last :c
+object-array-default-miss :missing
+object-array-oob <System.IndexOutOfRangeException:Index was outside the bounds of the array.>
+long-array-hit 8
+long-array-default-miss :missing

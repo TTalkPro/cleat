@@ -311,6 +311,23 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-147：RT.nth 的 ISeq / LazySeq / StringSeq / counted list 快路径不改变值、默认值与异常边界。
+    /// 用例（tests/Cleat.Host.Tests/data/nthfast_semantics.clj：vector / list / string 代理对 / StringSeq /
+    /// chunked / lazy / 无穷 lazy / object 与 long array，以及负索引与越界）在 CLEAT_NO_OPT=nthfast 时输出逐字相同。
+    /// </summary>
+    [Test]
+    public void NthFastPaths()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "nthfast_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "nthfast") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
+        Assert.That(off.Out, Is.EqualTo(expected), off.ToString());
+    }
+
+    /// <summary>
     /// cleat-146：keyword 的字符串键 intern 命中不新建 Symbol；str 的 long / int 用不变区域性格式化。
     /// 用例 tests/Cleat.Host.Tests/data/intern_semantics.clj 覆盖 identity / 元数据 / find-keyword /
     /// symbol 的文本语义 / gensym 唯一性；CLEAT_NO_OPT=intern 退回旧路径时输出逐字相同。
