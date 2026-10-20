@@ -1096,13 +1096,11 @@ namespace clojure.lang
 
                 if (coll is ISeq iseq)
                 {
-                    ISeq seq = iseq;
+                    // 必须过 RT.seq 归一：PersistentList+EmptyList 也实现 ISeq 但 first() 恒为 nil，
+                    // 不经 seq() 会把「空列表越界」读成「元素是 nil」（cleat-150 的 CTS 回归）。
+                    // ASeq 分支是 isinst 直接返回、LazySeq 只多一次 seq()，非空遍历仍是引用直走。
+                    ISeq seq = RT.seq(iseq);
                     iseq = null;
-                    if (seq is LazySeq lazy)
-                    {
-                        seq = lazy.seq();
-                        lazy = null;
-                    }
 
                     if (seq is StringSeq ss)
                     {
@@ -1271,13 +1269,10 @@ namespace clojure.lang
                     if (n < 0)
                         return notFound;
 
-                    ISeq seq = iseq;
+                    // 同 arity-2：先过 RT.seq 归一（PersistentList+EmptyList 是 ISeq 但 seq() 为 nil），
+                    // ASeq 直接返回自身，LazySeq 的 realize 也已在 RT.seq 内完成。
+                    ISeq seq = RT.seq(iseq);
                     iseq = null;
-                    if (seq is LazySeq lazy)
-                    {
-                        seq = lazy.seq();
-                        lazy = null;
-                    }
                     coll = null;
                     return NthFromSeq(seq, n, notFound);
                 }

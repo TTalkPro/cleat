@@ -10,6 +10,11 @@ list-default-hit 2
 list-default-miss :missing
 list-negative <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
 list-oob <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+empty-list-oob <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'n')>
+empty-list-default :missing
+empty-vector-oob <System.ArgumentOutOfRangeException:Specified argument was out of the range of valid values. (Parameter 'i')>
+empty-vector-default :missing
+empty-seq-oob nil
 string-hit \a
 string-surrogate-low \�
 string-surrogate-high \�

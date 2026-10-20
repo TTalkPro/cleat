@@ -28,6 +28,14 @@
 (show "list-negative" #(nth xs -1))
 (show "list-oob" #(nth xs 3))
 
+;; 空 list：PersistentList+EmptyList 实现 ISeq 但 seq() 为 nil，快路径必须先过 RT.seq 归一，
+;; 否则「越界」会被读成「元素是 nil」（cleat-150 在 CTS clojure.core-test.nth 抓到的回归）。
+(show "empty-list-oob" #(nth (list) 0))
+(show "empty-list-default" #(nth (list) 0 nf))
+(show "empty-vector-oob" #(nth [] 0))
+(show "empty-vector-default" #(nth [] 10 nf))
+(show "empty-seq-oob" #(nth (seq (list)) 0))
+
 ;; string 的 UTF-16 码元语义：代理对占两个 nth 下标，末端与越界异常。
 (show "string-hit" #(nth s 0))
 (show "string-surrogate-low" #(nth s 1))
