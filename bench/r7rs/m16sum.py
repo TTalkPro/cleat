@@ -17,6 +17,8 @@ import subprocess
 import sys
 
 B = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, B)
+from quiet import MAXLOAD      # 安静窗口门槛（与 m16full.py / triage149.py 同一出处）
 INCLUDE_LOADED = '--include-loaded' in sys.argv
 OUT = next((a for a in sys.argv[1:] if not a.startswith('-')), None) or os.environ.get('R7_OUT', 'm16full')
 SRC = os.path.join(B, 'results', OUT + '.jsonl')
@@ -50,32 +52,49 @@ for a in arms:
     paths[a] = p
     print('%s: %d 条记录 -> %s' % (a, len(recs[a]), os.path.basename(p)), flush=True)
 
-for pair, title in ((('cleat-on', 'cleat-off'), '开关贡献（cleat-on / cleat-off，<1 才是收益）'),
-                    (('cleat-on', 'jvm'), '对 JVM（cleat-on / jvm，M15 口径的 1.61x 在这里比）')):
-    print('\n===== %s =====' % title, flush=True)
-    subprocess.run([sys.executable, os.path.join(B, 'compare.py'), '--md',
-                    '--cleat', paths[pair[0]], '--jvm', paths[pair[1]]])
+# 只比"这一份数据里真的有"的臂：单项归因常是两臂跑（ARMS=cleat-on,cleat-off），
+# 这时不要拿空的 jvm 表冒充读数。按臂最小值的 compare.py 表放在配对比值之后（本机先看配对）。
+COMPARISONS = [(peer, key, title) for peer, key, title in (
+    ('cleat-off', 'off', '开关贡献（cleat-on / cleat-off，<1 才是收益）'),
+    ('jvm', 'jvm', '对 JVM（cleat-on / jvm，M15 口径的 1.61x 在这里比）')) if recs[peer]]
 
 # 同轮配对比值：按 (基准, rep) 配对，两侧都要有这一轮才算一对（rep 号是 m16full 每轮统一打的）。
 by_rep = {a: {} for a in arms}
+ld_rep = {a: {} for a in arms}
 for a in arms:
     for r in recs[a]:
         if r.get('secs') is not None:
             by_rep[a][(r['name'], r.get('rep'))] = r['secs']
+            ld_rep[a][(r['name'], r.get('rep'))] = r.get('load') or 0.0
 
-PEERS = (('off', 'cleat-off'), ('jvm', 'jvm'))
+PEERS = tuple((key, peer) for peer, key, _ in COMPARISONS)
+dropped_by_load = 0
 
 
 def paired_ratios(name, peer_arm):
-    """cleat-on 与该臂在同一 (基准, 轮) 里的秒数比；>1 = cleat-on 更慢。"""
+    """cleat-on 与该臂在同一 (基准, 轮) 里的秒数比；>1 = cleat-on 更慢。
+    两侧任一边的采样 load 超过安静窗口门槛（quiet.py 的 R7_MAXLOAD）就不算一对：
+    loaded 只记"跑前没等到窗口"，跑分中途被别人的构建挤掉要靠这列事后筛（111 离线后本机常见）。"""
     peer = by_rep[peer_arm]
-    return [v / peer[(nm, rp)] for (nm, rp), v in sorted(by_rep['cleat-on'].items())
-            if nm == name and (nm, rp) in peer]
+    lds = ld_rep[peer_arm]
+    out = []
+    for (nm, rp), v in sorted(by_rep['cleat-on'].items()):
+        if nm != name or (nm, rp) not in peer:
+            continue
+        if not INCLUDE_LOADED and max(ld_rep['cleat-on'][(nm, rp)], lds[(nm, rp)]) > MAXLOAD:
+            global dropped_by_load
+            dropped_by_load += 1
+            continue
+        out.append(v / peer[(nm, rp)])
+    return out
 
 
 print('\n===== 同轮配对比值（本机口径：判定只认这张表） =====', flush=True)
-print('剔除 loaded 轮 %d 条%s' % (drops, '（--include-loaded 已保留全部轮）' if INCLUDE_LOADED else ''), flush=True)
-print('%-12s %-30s %-6s %-30s %-6s' % ('基准', 'on/off 配对比值', '同向<1', 'on/jvm 配对比值', '同向<1'), flush=True)
+print('剔除 loaded 记录 %d 条；load > %.1f 的配对剔除 %d 对%s' % (
+    drops, MAXLOAD, dropped_by_load,
+    '（--include-loaded 已保留全部轮）' if INCLUDE_LOADED else ''), flush=True)
+print('%-12s %s' % ('基准', ' '.join('%-30s %-6s' % ('on/' + key + ' 配对比值', '同向<1')
+                                    for key, _ in PEERS)), flush=True)
 meds = {k: [] for k, _ in PEERS}
 for n in sorted({k[0] for k in by_rep['cleat-on']}):
     cells = []
@@ -88,15 +107,20 @@ for n in sorted({k[0] for k in by_rep['cleat-on']}):
         meds[key].append(md)
         cells.append(('x%.3f (%d 对: %s)' % (md, len(rs), ' '.join('%.3f' % x for x in rs)),
                       '%d/%d' % (sum(1 for x in rs if x < 1.0), len(rs))))
-    print('%-12s %-30s %-6s %-30s %-6s' % (
-        n, cells[0][0], cells[0][1], cells[1][0], cells[1][1]), flush=True)
+    print('%-12s %s' % (n, ' '.join('%-30s %-6s' % c for c in cells)), flush=True)
 
 # 几何平均按“各项配对比值中位”算（compare.py 的几何平均按各臂最小值，本机噪声下会漂）
-for key, label in (('off', 'M16 开关贡献 on/off'), ('jvm', '对 JVM 的倍数 on/jvm')):
+for key, label in ((k, lbl) for k, lbl in (('off', 'M16 开关贡献 on/off'), ('jvm', '对 JVM 的倍数 on/jvm'))
+                   if k in meds):
     if meds[key]:
         g = math.exp(sum(math.log(m) for m in meds[key]) / len(meds[key]))
         print('%s：配对比值中位的几何平均 x%.3f（%d 项；<1 = 开优化更快 / cleat 更快）' % (
             label, g, len(meds[key])), flush=True)
+
+for peer, key, title in COMPARISONS:
+    print('\n===== %s（compare.py 按臂最小值口径，与历史表并列用） =====' % title, flush=True)
+    subprocess.run([sys.executable, os.path.join(B, 'compare.py'), '--md',
+                    '--cleat', paths['cleat-on'], '--jvm', paths[peer]])
 
 print('\n===== 采样负载 load（每项各臂最大值） =====', flush=True)
 print('| 基准 | on | off | jvm |')

@@ -721,3 +721,43 @@ keyword intern；P1 = `RT.nth` 非 Indexed 路径的类型判断链与 `NthFromR
   string 在本轮持平，与 143 任务书"string 收益主要是零分配"的记录一致。
 - 待跑：150 的三臂全量（56 项 × 5 轮 × 3 臂，本机单轮约 20 ~ 25 分钟）与 145 的 pair 密集项 A/B。
   跑分窗口内不做任何构建 / 测试（本节的全部口径就为了让"等不到安静窗口"变成可筛的数据而不是结论污染）。
+
+### 6. 本机第一批可用读数（cleat-150 工作内容 3 的一部分，2026-10-20 17:15 ~ 18:20）
+
+五开关合起来关（`NOPT=charbox,strseq,intern,nthfast,crossnstype` = 回 M15 收口行为）× 10 项 × 5 轮，
+两臂同轮交替、每格等安静窗口（`R7_OUT=m150-all5`，quiet ≤ 2.0，0 条 loaded）：
+
+| 基准 | on/off 配对比值中位 | 同向（<1 的对数） |
+|---|---:|---:|
+| wc | x0.562 | 5/5 |
+| browse | x0.900 | 5/5 |
+| dynamic | x0.963 | 4/5 |
+| scheme | x0.984 | 4/5 |
+| read1 | x0.989 | 4/5 |
+| lattice | x0.993 | 3/5 |
+| string | x1.025 | 2/5 |
+| peval | x1.027 | 1/5 |
+| paraffins | x1.026 | 1/5 |
+| slatex | x1.044 | 0/5 |
+
+配对比值中位的几何平均 **x0.938**（10 项）。可声明的部分只有方向：
+- **wc 与 browse 的收益在本机复现**（5/5 同向；111 上是 -39% / -3.9%，本机比值更陡，属噪声地板差，不报量级）。
+- dynamic / scheme / read1 / lattice / string 落在"同向 2 ~ 4/5、量级 < 5%"→ 本机不可判定。
+  lattice 值得单独记一句：111 上曾测出开优化 +6.3% 回退、按 §2 的分支顺序修正后，本机 5 轮里 3 轮 <1、
+  中位 x0.993，方向不再一致地偏慢，与"修正后余量在噪声内"的远端结论一致。
+- **两个待归因的疑点**：slatex 开优化后 5 轮全部略慢（中位 x1.044、0/5 同向）、peval 4/5 轮略慢（x1.027）。
+  第一格隔离已跑：`NOPT=charbox` → slatex x1.027（0/3）、peval x0.992（2/3），charbox 不是 slatex 的主因。
+  其余三格（strseq / intern / nthfast / crossnstype）在跑到 strseq 第 3 轮时被其它任务的本地构建打断
+  （load 冲到 5.9，配对被新的 load 筛除规则剔除），**不在污染窗口里凑数**，留到安静窗口续跑：
+
+```
+for sw in strseq intern nthfast crossnstype; do
+  NOPT=$sw ARMS=cleat-on,cleat-off R7_OUT=m150-no-$sw \
+  R7RS_BENCH=$HOME/workspace/r7rs-benchmarks CLEAT=$HOME/workspace/cleat \
+    python3 bench/r7rs/m16full.py 3 slatex peval
+done
+```
+
+- 汇总工具随之修正（`m16sum.py`）：配对比值表缺省**剔除两侧任一采样 load 超门槛的配对**（`loaded` 只记
+  跑前没等到窗口的情况，跑分中途被别人挤掉只能靠 `load` 列事后筛）；两臂数据不再拿空的 jvm 表冒充读数；
+  compare.py 的按臂最小值表排在配对比值之后，并注明它是"与历史表并列用"的口径。

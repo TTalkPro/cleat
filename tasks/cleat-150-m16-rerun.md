@@ -1,7 +1,9 @@
 # cleat-150 M16 收口：r7rs 全量重跑与三方对照
 
 - 里程碑：M16　依赖：cleat-142 ~ 149　状态：进行中（runner 就位；**2026-10-20 下午 192.168.3.111 离线，
-  三臂全量改在本机重跑**，口径见 [notes 的 M16 §5](../notes/r7rs-performance.md)）
+  三臂全量改在本机重跑**，口径见 [notes 的 M16 §5](../notes/r7rs-performance.md)。
+  已在本机拿到第一批配对读数：五开关 on/off × 10 项 × 5 轮，几何平均 x0.938，
+  wc / browse 方向与远端一致，slatex / peval 待单开关归因 —— 见 [notes M16 §6](../notes/r7rs-performance.md)。）
 - 设计依据：[28 §6 ~ §7](../designs/28-hot-path-optimizations.md)
 
 ## 问题
