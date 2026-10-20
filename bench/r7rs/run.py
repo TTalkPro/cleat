@@ -35,7 +35,8 @@ def jvm_version():
     return _jvm
 
 def names():
-    return sorted(f[:-5] for f in os.listdir(os.path.join(SRC, 'r7rs')) if f.endswith('.cljc') and f not in ('common.cljc', 'util.cljc'))   # 共用的辅助命名空间不是基准
+    # 共用的辅助命名空间不是基准；probe.cljc 是 cleat-149 的探针宏库（无 inputs，会被上一版误当基准跑炸 m16full）。
+    return sorted(f[:-5] for f in os.listdir(os.path.join(SRC, 'r7rs')) if f.endswith('.cljc') and f not in ('common.cljc', 'util.cljc', 'probe.cljc'))
 
 _cp = None
 def classpath():
