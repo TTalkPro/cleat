@@ -26,30 +26,14 @@
 #   --shuffle            每轮打乱设置顺序：去掉「固定顺序 + 负载随时间漂移」的系统性偏差（base 永远第一个跑）
 #   原始记录追加到 results/triage149-<R7_OUT>.jsonl（默认时间戳）；跑一半也能读：summarize149.py。
 import json, os, re, random, subprocess, sys, time, statistics
+from quiet import LOAD_CAP, MAXLOAD, load1, wait_quiet   # 安静窗口门槛的唯一出处（cleat-150 起 m16full.py 也用它）
 
 
-def load1():
-    return os.getloadavg()[0]
-
-
-def wait_quiet(maxload, cap, log=sys.stdout):
-    """等到 1 分钟平均负载 <= maxload（或等满 cap 秒）。并发机器上这是唯一能让 min-of-N 有意义的办法：
-    别人的构建 / 测试只会把我们的时间变长，不会变短，所以宁可等窗口也不要拿被污染的最小值。"""
-    waited = 0
-    while load1() > maxload and waited < cap:
-        time.sleep(5); waited += 5
-    l = load1()
-    if waited or l > maxload:
-        print('# load=%.1f waited=%ds limit=%.1f%s' % (l, waited, maxload, ' 仍然忙（本轮标记 loaded）' if l > maxload else ''), flush=True)
-    return l, l > maxload
 B = os.path.dirname(os.path.abspath(__file__))
 R = os.environ['R7RS_BENCH']
 DEFAULT_CLEAT = os.environ.get('CLEAT', os.path.dirname(os.path.dirname(B)))
 SRC = os.environ.get('CLEAT_R7RS_SRC', os.path.join(B, 'src'))
 DUAL_STATE_RATIO = float(os.environ.get('R7_DUAL_RATIO', '1.5'))
-# 安静窗口门槛：默认 8 核机器上 load1 <= 2（R7_MAXLOAD 可调，R7_LOAD_CAP 是最长等待秒数）
-MAXLOAD = float(os.environ.get('R7_MAXLOAD', str(0.25 * (os.cpu_count() or 4))))
-LOAD_CAP = int(os.environ.get('R7_LOAD_CAP', '1800'))
 os.environ.setdefault('DOTNET_ROOT', os.path.expanduser('~/.dotnet'))
 os.environ['PATH'] = os.environ['DOTNET_ROOT'] + ':' + os.environ['PATH']
 

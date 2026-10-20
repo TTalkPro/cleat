@@ -156,7 +156,7 @@
 | [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链 + 闭包提升与变长参数数组的量化 | M16 | 无 | 部分完成（第 1 条 nthfast 落地，150 抓到并修正空列表回归；第 2 / 3 条交 M17） |
 | [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 完成 |
 | [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 完成 |
-| [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项三臂整体重跑与开关贡献分解（runner `bench/r7rs/m16full.py` 已就位） | M16 | cleat-142 ~ 149 | 进行中（三臂全量在 111 重跑） |
+| [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项三臂整体重跑与开关贡献分解（runner `bench/r7rs/m16full.py` 已就位） | M16 | cleat-142 ~ 149 | 进行中（2026-10-20 下午起 111 离线：三臂全量改本机，5 轮 + 同轮配对比值口径，见 notes M16 §5；等 145 落地后一起跑） |
 
 ## 里程碑
 

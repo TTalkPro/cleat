@@ -2,13 +2,22 @@
 
 > 状态：**进行中**（2026-10-20，M16）——§2.1 / §2.2 / §2.4 已实现并在 192.168.3.111 上完成同窗口开 / 关验证
 > （[notes 的 M16 一节](../notes/r7rs-performance.md)：wc -39%、browse -4%、read1 -2.5%；lattice 因 strseq
-> 分支位置回退 +6.3%，已按 §6 的教训修正）。§2.3 / §3 / §4 / §5 未开始。来源：[notes/r7rs-performance.md](../notes/r7rs-performance.md) 的
+> 分支位置回退 +6.3%，已按 §6 的教训修正）。§3 的第 1 条（RT.nth 快路径 nthfast）与 §4（GC profile 声明化 /
+> LOH 判定不做）、§5（回归排查与口径修正）已完成；**还剩 §2.3（cleat-145 访问器跨编译单元内联）与
+> §3 的第 2 / 3 条**（闭包提升、变长参数数组：147 量不出每次迭代成本，按 designs/28 §3 交 M17），
+> 以及 §6 之后的收口重跑 cleat-150。来源：[notes/r7rs-performance.md](../notes/r7rs-performance.md) 的
 > "M15 差异归因"与"M15 优化建议 §5 复核修正"、探针 `bench/r7rs/src/{micro,shapes2,shapes3}.cljc`、
 > 归因脚本 `bench/r7rs/attr.py`。承接 [21](21-r7rs-gaps.md)、[22](22-gc-and-performance-followups.md)
 > 与 [27](27-jit-style-runtime-specialization.md)；任务 cleat-142 ~ 150。
 >
 > 本文的第一职责是**修正 M15 优化建议里被微探针伪影污染的论据**（§1），然后给出复核后仍然成立、
 > 且每条都有真实基准分配画像或开关对照支撑的优先级（§2 ~ §5）。
+>
+> **测量机变更（2026-10-20 下午）**：192.168.3.111 离线（ping 100% 丢包、ssh 不通），本文剩下的
+> 同窗口开 / 关 A/B 与 §5 的全量重跑改在本机（i9-13900H / 8 线程 / .NET 10.0.12 /
+> OpenJDK 25.0.4 HotSpot）执行，口径见 [notes 的 M16 §5](../notes/r7rs-performance.md)：
+> 判定只认**同轮配对比值**（每格先等安静窗口，至少 5 轮），本机噪声地板 17 ~ 43%，
+> 任何 <10% 的单臂最小值差只报方向、不报量级；跨机绝对值不等（111 的 runtime 是 10.0.0）。
 
 ## §0 基线与归因结论
 
@@ -112,7 +121,8 @@ cleat 65d407d（cleat-141）对 JVM Clojure 的 r7rs 56 项 × 3 轮取最小：
   （`cleat.edn` 的 `{:gc …}` 或 `--gc-profile batch` / env 旋钮），基准脚本统一用它；不改默认值。
 - LOH 大数组初始化写入评估无屏障路径（`spans` / 直接指针替代常规 `stelem.ref`）：
   array1 的 `Object[]` 占其分配 40%。
-- 测量环境：192.168.3.111 只有 .NET runtime 10.0.0（本地 10.0.12），跨轮比较前先对齐版本。
+- 测量环境：192.168.3.111 只有 .NET runtime 10.0.0（本地 10.0.12），跨轮比较前先对齐版本；
+  111 离线后统一在本机 10.0.12 上测，与 111 的历史数字只比方向不比绝对值。
 
 ## §5 P3：回归排查与测量口径（cleat-149）
 
