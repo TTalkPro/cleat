@@ -1,0 +1,12 @@
+true true 97 "\\a" "a"
+(System.Char System.Char System.Char System.Char)
+false true true
+true
+2 true (\a \b \c)
+"System.IndexOutOfRangeException: Index was outside the bounds of the array." "System.IndexOutOfRangeException: Index was outside the bounds of the array."
+0 true nil nil nil (\a)
+[\a \b] "(\\a \\b \\c)" true
+:a :b :no :no
+"abc"
+"1010101" ""
+[true true true] [false true true] [false true true] [false true true]

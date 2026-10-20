@@ -37,6 +37,7 @@
 (def long-box-type "Cleat.Core.Runtime.LongBox")   ; 小整数装箱缓存（cleat-109）
 (def ^:private narrow-value-types #{"System.Byte" "System.SByte" "System.Int16" "System.UInt16" "System.Single"})   ; 较窄的数值类型（cleat-111）
 (def char-type "System.Char")
+(def char-box-type "Cleat.Core.Runtime.CharBox")   ; char 装箱缓存（cleat-121 / 142）
 (def string-type "System.String")
 (def void-type "System.Void")
 (def exception-type "System.Exception")
@@ -75,6 +76,7 @@
 (def opt-joinraw? (not (opt-off? "joinraw")))     ; 原始用途穿过 if / begin 的尾位置（cleat-108）
 (def ^:private live-unit? (atom false))   ; 当前编译单元是内存模式（eval）：生成的代码与先前求值生成的类在同一进程（cleat-110）；分层编译时 if 的值经局部变量汇合（cleat-114）
 (def opt-boxcache? (not (opt-off? "boxcache")))   ; long 装箱走 LongBox（cleat-109）
+(def opt-charbox? (not (opt-off? "charbox")))   ; char 装箱与 char 常量走 CharBox（cleat-142）
 (def opt-imagetier? (not (opt-off? "imagetier")))   ; 镜像与包里的函数类也按 cleat-114 的规则分层编译（cleat-117）
 (def opt-arrayspec? (not (opt-off? "arrayspec")))
 (def opt-scalar? (not (opt-off? "scalar")))         ; 循环变量的 deftype 标量替换（cleat-123）
@@ -82,6 +84,7 @@
 (def opt-typefeedback? (not (opt-off? "typefeedback")))   ; eval 候选的剖面记录（cleat-128；量化后 129 关闭）
 (def opt-sigspec? (not (opt-off? "sigspec")))     ; 运行时签名特化（cleat-133 ~ 140；cleat-137 删除了 cleat-132 的 LL / DD 预生成）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
+(defn- box-char [] (if opt-charbox? (i 'call char-box-type "Get" (i char-type) obj) (i 'box char-type)))
 ;; double 经不内联的 LongBox.Double 装箱：内联的 box 在值存活期间调用分配，SysV 的 xmm 寄存器都由调用方保存，
 ;; RyuJIT 于是把循环里的 double 变量整个放在栈上（每次迭代一次存取，sumfp 慢 4 倍）
 (def opt-boxdouble? (not (opt-off? "boxdouble")))
@@ -289,7 +292,7 @@
     (instance? Int32 d) (emit! mc (i 'ldc.i4 d) (i 'box int32-type))   ; 读入器给元数据的行号等；Clojure 的整数是 long
     (boolean? d) (emit! mc (i 'ldsfld truth-type (if d "True" "False")))
     (nil? d) (emit! mc (i 'ldnull))
-    (and (char? d) (< (int d) 0x10000)) (emit! mc (i 'ldc.i4 (int d)) (i 'box char-type))
+    (char? d) (emit! mc (i 'ldc.i4 (int d)) (if opt-charbox? (box-char) (i 'box char-type)))
     (and (string? d) (bmp-safe-string? d)) (emit! mc (i 'ldstr d))
     :else (emit! mc (i 'ldconst (constant-index! (:unit mc) d)))))
 

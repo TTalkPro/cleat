@@ -275,6 +275,24 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-142：char 常量与 char 装箱走 CharBox（cleat-121 的缓存扩到 0 ~ 255）。常量发射的 (char?) 分支原来每次求值都
+    /// `ldc.i4 + box char-type`，browse 的真实分配里 System.Char 占 28%（1.84 GB）；现在读缓存。CLR 的 char 装箱按值比较
+    /// （Util.identical 对 char 比值），所以引用同一性不外露：用例 tests/Cleat.Host.Tests/data/charbox_semantics.clj 的
+    /// = / hash / pr-str / str / condp / 集合键 / nth / seq / mapv / 越界异常输出与 .out 逐字相同，CLEAT_NO_OPT=charbox 时也相同。
+    /// </summary>
+    [Test]
+    public void CharConstantsAreBoxedThroughTheCache()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "charbox_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "charbox") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
+        Assert.That(off.Out, Is.EqualTo(expected), off.ToString());
+    }
+
+    /// <summary>
     /// cleat-108：回边实参是 if / begin 时，两支里对原始类型循环变量的引用算原始用途，汇合处原始发射（不装箱）。语义用例
     /// （tests/Cleat.Host.Tests/data/joinraw_semantics.clj：计数器、嵌套 if、带副作用的 do、throw 与提前退出的分支、溢出、两支类型不同、Ratio、double、
     /// 无提示初值、循环里另有装箱用途）在 CLEAT_NO_OPT=joinraw 与开两种设置下输出逐字相同；计数器循环里只剩返回值处一次 Int64 装箱。
