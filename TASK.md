@@ -148,6 +148,15 @@
 | [cleat-139](tasks/cleat-139-whole-function-specialization.md) | 整体函数特化（O 模式）：任意体重新生成、object 兜底、身份守卫自调用 | M15 | cleat-138 | 完成 |
 | [cleat-140](tasks/cleat-140-call-path-type-inference.md) | 编译期调用路径类型推导：调用图、类型摘要、确认的快速路径编译期生成 | M15 | cleat-139 | 完成 |
 | [cleat-141](tasks/cleat-141-m15-validation.md) | M15 收口：压力模式全量基线、种子重生成、r7rs 三方重跑 | M15 | cleat-140 | 完成 |
+| [cleat-142](tasks/cleat-142-char-constant-boxing.md) | char 常量装箱缓存：常量发射点不再每次 box，`=` 的 char 原始比较 | M16 | 无 | 未开始 |
+| [cleat-143](tasks/cleat-143-string-seq-direct-read.md) | String 的 seq / first / nth 直读快路径，不再每次新建 StringSeq | M16 | 无 | 未开始 |
+| [cleat-144](tasks/cleat-144-cross-ns-deftype-resolution.md) | 跨 ns 的 deftype / definterface 编译期决议（`:import` 兼容缺口） | M16 | 无 | 未开始 |
+| [cleat-145](tasks/cleat-145-accessor-inlining.md) | 小访问器跨编译单元内联（含镜像 / 包构建，与 restrict-loop-inlines 协调） | M16 | cleat-144 | 未开始 |
+| [cleat-146](tasks/cleat-146-keyword-symbol-intern.md) | keyword / symbol intern 命中不新建对象，`(str <long>)` 专用路径 | M16 | 无 | 未开始 |
+| [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链、闭包提升（peval 17%）、变长参数数组量化 | M16 | 无 | 未开始 |
+| [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 未开始 |
+| [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 未开始 |
+| [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项重跑与开关贡献分解 | M16 | cleat-142 ~ 149 | 未开始 |
 
 ## 里程碑
 
@@ -173,9 +182,12 @@
 | M13 按参数类型特化（2026-10-16 起） | cleat-127 ~ cleat-131 | 无提示数组形参的推测、运行时类型反馈特化与候选作用域修复（[23](designs/23-type-specialization.md)） |
 | M14 运行时签名特化（2026-10-18 起） | cleat-132 ~ cleat-136 | 观察 → 按需生成 → 查表分发、引用形参、多签名表与回收（[24](designs/24-runtime-signature-specialization.md) ~ [26](designs/26-runtime-signature-tables.md)） |
 | M15 JIT 式特化（2026-10-19 起） | cleat-137 ~ cleat-141 | 删除 LL / DD 预生成、单一签名 key、整体函数特化、编译期调用路径类型推导（[27](designs/27-jit-style-runtime-specialization.md)） |
+| M16 热路径优化（2026-10-20 起） | cleat-142 ~ cleat-150 | M15 归因复核后的修正优先级：char 装箱、String 直读、跨 ns deftype 决议与访问器内联、intern、nth / 闭包 / 变长、GC profile、回归排查（[28](designs/28-hot-path-optimizations.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
+
+**M16（2026-10-20 起，现行）**：149（先还债、稳口径）→ 142 / 143 / 144 / 146 / 148 并列 → 145（依赖 144）→ 147 → 150（[28 §7](designs/28-hot-path-optimizations.md)）。
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 
@@ -185,7 +197,7 @@
 
 **M12（2026-10-16 起）**：119 收口后，122（先统计）、120（先复测）、121、123、124 并列，125 在 122 之后，最后 126（[22 §8](designs/22-gc-and-performance-followups.md)）。
 
-**M11（2026-10-15 起，现行）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117 → 118 → 119（[21 §2](designs/21-r7rs-gaps.md)）。
+**M11（2026-10-15 起）**：108 → 109 → 110 → 111 → 112 → 113 → 114 → 115 → 116 → 117 → 118 → 119（[21 §2](designs/21-r7rs-gaps.md)）。
 
 **M10（2026-10-15，完成）**：100 → 101 → 102 → 106 → 103 → 104 → 105 → 107（[20 §7](designs/20-skeg-optimizations.md)）。
 

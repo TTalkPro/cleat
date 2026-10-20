@@ -32,5 +32,6 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（`
 | [25-runtime-reference-signature-specialization.md](25-runtime-reference-signature-specialization.md) | **实现**（2026-10-18，M14）：引用类型运行时签名特化——签名仍用 `L/D/O`、精确 `Type[]` 分发、特化体 `Tagged` 静态决议；任务 cleat-134 |
 | [26-runtime-signature-tables.md](26-runtime-signature-tables.md) | **实现**（2026-10-18，M14）：运行时签名表与高元数特化——5～20 参候选、多签名补生成、每函数与进程生成上限；任务 cleat-135 |
 | [27-jit-style-runtime-specialization.md](27-jit-style-runtime-specialization.md) | **现行方向**（2026-10-19，M15）：JIT 式运行时重新编译——删除 LL / DD 预生成、单一签名 key 与最优路径查表、含原生类型形参的函数整体特化并以 object 兜底、编译期调用路径类型推导；任务 cleat-137 ~ 141 |
+| [28-hot-path-optimizations.md](28-hot-path-optimizations.md) | **提案**（2026-10-20，M16）：M15 归因复核（shapes3 推翻 nth 22x / 分配 12x 论据，LICM / EA 伪影）后的修正优先级——char 常量装箱、String seq / first 直读、跨 ns deftype 决议与访问器内联、keyword intern（P0），nth / 闭包 / 变长（P1），GC profile（P2），回归排查与测量口径（P3）；任务 cleat-142 ~ 150 |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。
