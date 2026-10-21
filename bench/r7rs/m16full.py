@@ -7,8 +7,8 @@
 #     python3 bench/r7rs/m16full.py REPS [基准名 …]
 #   不给基准名则跑 src/r7rs 下全部 56 项；结果追加到 results/m16full.jsonl（用 R7_OUT 改名）。
 #
-# 关优化臂的环境变量是 CLEAT_NO_OPT，默认一次全关 M16 落地的五项开关
-# （charbox,strseq,intern,nthfast,crossnstype），回到 M15 收口（cleat-141）的行为。
+# 关优化臂的环境变量是 CLEAT_NO_OPT，默认一次全关 M16 落地的六项开关
+# （charbox,strseq,intern,nthfast,crossnstype,accinline），回到 M15 收口（cleat-141）的行为。
 # 名单的唯一出处是 notes/m16-regression-triage.md §1 的开关表（cleat-149 待办第 3 条）：
 # 加新开关时两边一起改，否则关侧残留新优化，"开关贡献分解"就是错的（本轮已踩过一次）。
 # 不进名单的两项：gcprofile 关掉只关掉声明校验、不改任何 GC 配置（对时间零影响）；
@@ -49,7 +49,7 @@ sys.path.insert(0, B)
 import run
 from quiet import LOAD_CAP, MAXLOAD, wait_quiet
 
-DEFAULT_NOPT = 'charbox,strseq,intern,nthfast,crossnstype'
+DEFAULT_NOPT = 'charbox,strseq,intern,nthfast,crossnstype,accinline'
 NOPT = os.environ.get('NOPT', DEFAULT_NOPT)
 ARMS = os.environ.get('ARMS', 'cleat-on,cleat-off,jvm').split(',')
 OUT = os.environ.get('R7_OUT', 'm16full')

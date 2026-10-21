@@ -151,12 +151,12 @@
 | [cleat-142](tasks/cleat-142-char-constant-boxing.md) | char 常量装箱缓存：常量发射点不再每次 box（`=` 的 char 原始比较留给 147） | M16 | 无 | 完成 |
 | [cleat-143](tasks/cleat-143-string-seq-direct-read.md) | String 的 seq / first / next / more 直读快路径，不再每次新建 StringSeq（含分支顺序修正） | M16 | 无 | 完成 |
 | [cleat-144](tasks/cleat-144-cross-ns-deftype-resolution.md) | 跨 ns 的 deftype / definterface 编译期决议（`:import` 兼容缺口） | M16 | 无 | 完成 |
-| [cleat-145](tasks/cleat-145-accessor-inlining.md) | 小访问器跨编译单元内联（含镜像 / 包构建，与 restrict-loop-inlines 协调） | M16 | cleat-144 | 未开始 |
+| [cleat-145](tasks/cleat-145-accessor-inlining.md) | 小访问器跨编译单元内联（含镜像 / 包构建，与 restrict-loop-inlines 协调） | M16 | cleat-144 | 完成（2026-10-21，开关 `accinline`；只做 eval / 包两条路径，"扩展到镜像"半段明确不做——内联决定不进种子） |
 | [cleat-146](tasks/cleat-146-keyword-symbol-intern.md) | keyword intern 的字符串键命中不新建 Symbol，`(str <long>)` 专用路径 | M16 | 无 | 完成 |
 | [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链 + 闭包提升与变长参数数组的量化 | M16 | 无 | 部分完成（第 1 条 nthfast 落地，150 抓到并修正空列表回归；第 2 / 3 条交 M17） |
 | [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 完成 |
 | [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 完成 |
-| [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项三臂整体重跑与开关贡献分解（runner `bench/r7rs/m16full.py` 已就位） | M16 | cleat-142 ~ 149 | 进行中（2026-10-20 下午起 111 离线：三臂全量改本机，5 轮 + 同轮配对比值口径，见 notes M16 §5；等 145 落地后一起跑） |
+| [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项三臂整体重跑与开关贡献分解（runner `bench/r7rs/m16full.py` 已就位，`DEFAULT_NOPT` 已含六项开关） | M16 | cleat-142 ~ 149 | 进行中（145 已于 2026-10-21 落地，前置全部完成；111 也已于 2026-10-21 恢复在线 → 56 项 × 5 轮 × 三臂全量与开关贡献分解按 notes M16 §7 的口径在 111 上跑） |
 | [cleat-151](tasks/cleat-151-noise-floor-and-full-rerun.md) | M17 口径：本机噪声地板标定（判定门槛写进汇总器）+ r7rs 56 项三臂全量重跑 | M17 | cleat-150 | 未开始 |
 | [cleat-152](tasks/cleat-152-m1415-regression-bisect.md) | M14 / M15 回退（mbrot / pi / dynamic）的 commit 级定位与机制归因 | M17 | cleat-151 | 未开始 |
 | [cleat-153](tasks/cleat-153-callsite-type-feedback.md) | 调用点的运行时类型反馈：接口调用单态化（复用 M14 / M15 的签名表基建） | M17 | cleat-145 | 未开始 |
@@ -191,9 +191,9 @@
 
 ## 关键路径
 
-**M16（2026-10-20 起，现行）**：142 / 143 / 146 完成（远端同窗口开 / 关 A/B：wc -39%、browse -4%、read1 -2.5%，lattice 的 strseq 分支位置回退已修正，见 [notes M16](notes/r7rs-performance.md)）→ 149（先还债、稳口径）/ 144 / 148 并列 → 145（依赖 144）→ 147 → 150（[28 §7](designs/28-hot-path-optimizations.md)）。
+**M16（2026-10-20 起，现行）**：142 / 143 / 146 完成（远端同窗口开 / 关 A/B：wc -39%、browse -4%、read1 -2.5%，lattice 的 strseq 分支位置回退已修正，见 [notes M16](notes/r7rs-performance.md)）→ 149（先还债、稳口径）/ 144 / 148 并列 → 145（依赖 144，2026-10-21 落地）→ 147 → **只剩 150 收口**（56 项三臂全量 + 开关贡献分解，[28 §7](designs/28-hot-path-optimizations.md)）。
 
-**M17（2026-10-21 起）**：151（先标定，否则后面每一项都在猜）→ 152（依赖 151 的门槛；与 145 的落地并行）→ 153（依赖 145 的守卫形态）。147 的第 2 / 3 条（闭包提升、变长参数数组）也在 M17 内做，任务书仍挂在 cleat-147。
+**M17（2026-10-21 起）**：151（先标定，否则后面每一项都在猜）→ 152（依赖 151 的门槛）→ 153（依赖 145 的守卫形态，**145 已于 2026-10-21 落地，依赖已就位**）。147 的第 2 / 3 条（闭包提升、变长参数数组）也在 M17 内做，任务书仍挂在 cleat-147。
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 

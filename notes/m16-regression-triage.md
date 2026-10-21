@@ -19,7 +19,7 @@
 
 ## 1. 代码里真实存在的 `CLEAT_NO_OPT` 开关（先枚举再谈矩阵）
 
-判据都是"环境变量含某个子串"（前 23 个是本里程碑之前的存量，后 3 个是 M16 的 144 / 147 / 148 新增；新增三个的行号按各自分支，合进 main 后会下移，**定位以符号名为准**）（`codegen.clj` 的 `opt-off?` 还额外把 `CLEAT_NO_OPT=1` 当作全关）：
+判据都是"环境变量含某个子串"（前 23 个是本里程碑之前的存量，后 4 个是 M16 的 144 / 145 / 147 / 148 新增；新增几个的行号按各自分支，合进 main 后会下移，**定位以符号名为准**）（`codegen.clj` 的 `opt-off?` 还额外把 `CLEAT_NO_OPT=1` 当作全关）：
 
 | 开关 | 出处 | 关掉的东西 |
 |---|---|---|
@@ -48,6 +48,7 @@
 | tiered | `Emitter.cs:93` | eval 单元的分层编译，回到 RunAndCollect（cleat-114，**发射器**） |
 | nthfast | `RT.cs:117`（`s_nthfast`） | `RT.nth` 的 ISeq / LazySeq / StringSeq / counted-list 快路径（cleat-147，**运行时代码**） |
 | crossnstype | `RT.cs:2853`（`s_crossNsTypes`）/ `analyzer.clj:67`（`opt-crossns-type?`） | 跨 ns 生成类决议与 gen-interface 编译期桩（cleat-144，**分析器 + 运行时**） |
+| accinline | `analyzer.clj`（`opt-accinline?` / `inline-target`）/ `driver.clj`（`register-eval-accessors!` / `specialize-accessor-clause`）/ `codegen.clj`（`cg-set-instance-field!`）/ `PackageIndex.cs`（`PrepareNamespaceInterface`） | 小访问器的跨编译单元内联：具体类型守卫后的字段直读 / 直存（cleat-145，**分析器 + 驱动 + codegen + 运行时**） |
 | gcprofile | `src/Cleat.Host/GcProfile.cs` | `CLEAT_GC_PROFILE` 的声明校验（cleat-148，**宿主**；关掉只是不校验，不改 GC 配置） |
 
 两个坑（写进矩阵的解读，别当成开关失效）：
@@ -225,7 +226,7 @@
 |---|---|---|---|
 | 1 | 111 上 bisect 6ed0da4..65d407d（dynamic + mbrot，5 步，3 轮取最小 + 同轮配对） | cleat-150 之后 | 只在 111 上做；找到 commit 后单开关 A/B 复认 |
 | 2 | 候选修复面：`sigspec` 负表 / LRU、`tiered` / `imagetier` 落点（§3 里关掉更快的四项） | 新任务（M17） | 修复不得撤销 ctak / fibc / destruc 的收益 |
-| 3 | `m16full.py` 的 `DEFAULT_NO_OPT` 补 `nthfast` / `crossnstype` / `gcprofile`（合并后按需补 `accinline`） | cleat-150 | 名单与 §1 表同源，逐条带出处 |
+| 3 | ~~`m16full.py` 的 `DEFAULT_NO_OPT` 补 `nthfast` / `crossnstype`（合并后按需补 `accinline`）~~ **已做**（2026-10-21：名单现为 `charbox,strseq,intern,nthfast,crossnstype,accinline`，与本节 §1 表同源；`gcprofile` 按 §1 的解读明确不进名单 —— 关掉只关掉声明校验、不改任何 GC 配置，对时间零影响） | cleat-150 | 名单与 §1 表同源，逐条带出处 |
 | 4 | 闭包提升（`closurlift`）与变长参数数组（`varargs`）：cleat-147 本轮只落 `nth`，两条量化探针留在 `bench/r7rs/src/cleat147_alloc_probe.cljc` | cleat-147 后续 / M17 | peval 闭包占分配 17%，需同窗口 alloc.cs 证据 |
 | 5 | `CLEAT_GC_PROFILE=batch` 在 111 上做 array1 / peval / cpstak 同窗口 A/B（三变量前缀见 cleat-148 任务书） | cleat-148 后续 | 收益若 < 3% 只记录，不接进默认 |
 | 6 | 把 `selfhost` / bootstrap 测试的固定 `/tmp` 目录改为 per-test 临时目录 | 工程性小任务 | 并行 worktree 与 CI 都会踩 |
