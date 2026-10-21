@@ -208,3 +208,8 @@ Core / Host 全量测试、改 `src/clojure` 时种子不动点（stage2 == stag
 按"量不出就不改"的纪律先用同 n 相减或 `GC.GetAllocatedBytesForCurrentThread` 重做量化）与
 **149 §3 记下的退化路径健壮性缺陷**（`CLEAT_NO_OPT=host` 让 mbrot 从 0.7 s 变 147 ~ 158 s、`infer` 14x：
 单开关关闭的成本非线性，说明退路本身没有被维护过）。
+
+还有一处口径欠账（2026-10-21 登记，留给下一个动 `src/clojure` 的任务顺手做，见 cleat-153 第 6 条）：
+`driver.clj` 的 `register-eval-accessors!` docstring 仍写着"CLEAT_NO_OPT=accinline 时保持空表"，
+而 145 收口时把 `accinline` 改成了**默认关的 opt-in**（要 `CLEAT_OPT_ACCINLINE=1`）。
+docstring 是编译进种子的字符串，单独改它也要重走一次不动点 + 全套验证 —— 为一个注释开一次不值得，合并做。

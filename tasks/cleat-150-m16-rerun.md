@@ -4,6 +4,11 @@
   三臂全量改在本机重跑**，口径见 [notes 的 M16 §5](../notes/r7rs-performance.md)。
   已在本机拿到第一批配对读数：五开关 on/off × 10 项 × 5 轮，几何平均 x0.938，
   wc / browse 方向与远端一致，slatex / peval 待单开关归因 —— 见 [notes M16 §6](../notes/r7rs-performance.md)。）
+  **2026-10-21 更新**：111 已恢复在线，三臂全量回到远端跑。远端工作位 `~/workspace/cleat-145-git`
+  已同步到 main 的最终提交（工作树干净、Release 构建产物与 m145-ab2 的 jsonl 都留着），非交互 shell 里要先
+  `export PATH=/home/david/.local/share/mise/dotnet-root:$PATH`。跑分前的纪律：种子换代 → boot image id 变，
+  `/tmp` 里上一代留下的 `cleat-nuget-*` / `cleat-tools-build-*` 缓存里的包程序集是按旧镜像编的，
+  不清会在用例开头的 `BootInterface.Check` 抛 StaleModuleException（本轮踩过，见 notes M16 §8）。
 - 设计依据：[28 §6 ~ §7](../designs/28-hot-path-optimizations.md)
 
 ## 问题
