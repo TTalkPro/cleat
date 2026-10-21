@@ -17,8 +17,9 @@
             [cleat.compiler.analyzer :as an]
             [cleat.compiler.pipeline :as pl]
             [cleat.compiler.codegen :as cg])
-  (:import [Cleat.Core.Compiler AotPaths Diagnostics DriverOps]
-           [Cleat.Core.Runtime InterfaceFile InterfaceFile+Entry]))
+  (:import [Cleat.Core.Compiler AotPaths CompileTimeTypes Diagnostics DriverOps]
+           [Cleat.Core.Runtime InterfaceFile InterfaceFile+Entry]
+           [clojure.lang RT]))
 
 (def ^:private run-form DriverOps/RunForm)
 (def ^:private take-result DriverOps/TakeResult)
@@ -42,6 +43,12 @@
 
 (declare fn-node fn-class fn-arities inline-clauses lcil-types prod-of)
 
+;; eval 单元的小访问器映射：deftype 顶层形式先记下“接口方法 → 唯一实现的字段”，
+;; 后续顶层 defn 包装生成 .inl 时把接口调用改成“具体类型守卫 + 字段直读 / 直存”。
+(def ^:private eval-accessors (atom {}))
+
+(declare accessors-of merge-accessors)
+
 (defn- register-eval-inlines!
   "eval 的顶层 (def v (fn* …))（cleat-116）：登记已知函数与可内联的小子句，之后的调用点在类型守卫后内联（与接口文件里的同样）。
   只认顶层形式本身（嵌在 let 里的 defn 可能引用外层局部变量）；宏与动态 Var 不登记。"
@@ -58,7 +65,7 @@
                   (set! (.-ClassName e) (str cls ", " asm))
                   (set! (.-Arities e) (int-array (fn-arities le)))
                   (set! (.-HasStatic e) true)
-                  (doseq [[n bytes] (inline-clauses e0)] (DriverOps/AddInline e n bytes))
+                  (doseq [[n bytes] (inline-clauses e0 @eval-accessors)] (DriverOps/AddInline e n bytes))
                   (InterfaceFile/RegisterEntry e))))))))))
 
 (defn- run-compiled
@@ -75,6 +82,24 @@
     ;; 构建镜像 / 包时不登记：产物里的调用点不能链接到 eval 程序集里的类
     (when-not (or (:boot (st)) (:package (st))) (register-eval-inlines! l0 nm lcil))
     (take-result)))
+
+(defn- register-eval-accessors!
+  "扫描 eval 的顶层 L0，更新接口访问器实现表；CLEAT_NO_OPT=accinline 时保持空表，退回旧内联体。"
+  [l0]
+  (when an/opt-accinline?
+    (let [found (atom {})]
+      (letfn [(walk [x]
+                (cond
+                  (r/node? x)
+                  (let [[k fs] (prod-of x)]
+                    (when (= 'clj-deftype k)
+                      (let [sx (np/unparse x)]
+                        (when (and (seq? sx) (false? (nth (second sx) 1)))
+                          (swap! found merge-accessors (accessors-of sx)))))
+                    (run! walk fs))
+                  (sequential? x) (run! walk x)))]
+        (walk l0)
+        (swap! eval-accessors merge-accessors @found)))))
 
 ;; —— 简单形式的解释（原版 Driver.TryEvalSimple，designs/04 §9：Chez 的 compile-interpret-simple）——
 ;; 不创建函数 / 类型的形式（常量、局部变量、Var 的读写与 def、调用、ClojureOps 的 clj-call、关键字调用、let、if、begin）直接解释，
@@ -207,6 +232,7 @@
 (defn- eval-form [form]
   (run-form (fn []
               (let [l0 (an/analyze-top form)
+                    _ (register-eval-accessors! l0)
                     v (eval-l0 l0)]
                 (when-let [u (:unit (st))] (swap! u conj l0))
                 v))
@@ -312,19 +338,21 @@
 
 (defn- walk-l0
   "顶层形式里的 clj-def 与 fn*：数 fn 类名与 Var 的定义次数，记下 (def v (fn* …)) 的候选。"
-  [x fn-names defs cands]
+  [x fn-names defs cands accessors]
   (cond
     (r/node? x)
     (let [[k fs] (prod-of x)]
       (case k
         lambda (when (l/clj-fn-name? (first fs)) (swap! fn-names update (:class (first fs)) (fnil inc 0)))
+        clj-deftype (when (and (false? (nth (first fs) 1)))
+                      (swap! accessors merge-accessors (accessors-of (np/unparse x))))
         clj-def (let [[d _ _ e0] fs]
                    (swap! defs update d (fnil inc 0))
                    (when-let [le (fn-node e0)] (swap! cands conj [d (fn-class le) (fn-arities le) e0])))
         nil)
       (when-not (= k 'quote)
-        (doseq [f fs] (walk-l0 f fn-names defs cands))))
-    (sequential? x) (doseq [y x] (walk-l0 y fn-names defs cands))
+        (doseq [f fs] (walk-l0 f fn-names defs cands accessors))))
+    (sequential? x) (doseq [y x] (walk-l0 y fn-names defs cands accessors))
     :else nil))
 
 ;; 可内联的小函数（原版 Driver.InlineClauses / InlineOk）：顶层 (def v (fn* …)) 的固定子句足够小、只含 let / loop / if / 调用这类
@@ -350,6 +378,190 @@
                         (= 'clj-call h) (and (contains? arith-only-calls (second x)) (every? ok? (drop 3 x)))
                         :else (every? ok? x)))))]
     (ok? sexpr)))
+
+;; —— deftype 字段访问器的识别（cleat-145）——
+
+(defn- interface-name-of [x]
+  (let [s (str x)] (if (str/starts-with? s ",") s (first (str/split s #"\s*,\s*" 2)))))
+
+(defn- quoted-of
+  "分析器把宿主调用的类型 / 成员名 / 泛型实参编成 (quote x)（sp-dot）：取回里面的原对象，不是这个形状时 nil。"
+  [x]
+  (when (and (seq? x) (= 'quote (first x)) (= 2 (count x))) (second x)))
+
+(defn- untagged-of
+  "剥掉引用类型实参外层的 (clj-call \"Tagged\" #f 'T e)（host-args）：只剥一层，形状不符原样返回。"
+  [x]
+  (if (and (seq? x) (= 'clj-call (first x)) (= "Tagged" (second x)) (= 5 (count x))) (nth x 4) x))
+
+(defn- accessor-class-type
+  "deftype 的 CLR 类名 → System.Type（cleat-145）：先按名决议（eval 路径里 deftype 已求值，取到真正的类型；
+  144 的按包索引同样走这里），再取本进程刚编译、还没求值的编译期登记类型（包构建里是桩：
+  codegen 决议不出 stfld / isinst 时自动退回反射路径，行为与内联前相同）。取不到就不做守卫内联。"
+  [class-name]
+  (when (string? class-name)
+    (or (try (RT/classForName ^String class-name) (catch Exception _ nil))
+        (try (CompileTimeTypes/Get ^String class-name) (catch Exception _ nil)))))
+
+(defn- method-real-body
+  "剥掉 deftype 方法体统一生成的 named-let 外壳 (call (letrec ([lp (lambda \"recur\" (clause ys false 体))]) lp) 实参 …)，
+  返回 [形参 真正的方法体]；形状不合返回 nil。零实参方法的外壳是 (call (letrec …) )，所以只要求 call 至少两项。"
+  [body]
+  (when (and (seq? body) (= 'call (first body)) (>= (count body) 2))
+    (let [callee (nth body 1)
+          inits (drop 2 body)]
+      (when (and (seq? callee) (= 'letrec (first callee)) (= 3 (count callee)))
+        (let [bs (nth callee 1)
+              lp (nth callee 2)
+              binding (when (and (sequential? bs) (= 1 (count bs))) (first bs))]
+          (when (and (sequential? binding) (= 2 (count binding))
+                     (= (nth binding 0) lp)
+                     (let [lam (nth binding 1)]
+                       (and (seq? lam) (= 'lambda (first lam)) (= 3 (count lam)))))
+            (let [cl2 (nth (nth binding 1) 2)]
+              (when (and (seq? cl2) (= 'clause (first cl2)) (= 4 (count cl2))
+                         (sequential? (nth cl2 1))
+                         (= (count (nth cl2 1)) (count inits)))
+                [(nth cl2 1) (nth cl2 3)]))))))))
+
+(defn- read-accessor-field
+  "方法体就是一个字段引用：返回该字段在绑定里的位置。"
+  [body _ field-names]
+  (when (symbol? body) (field-names body)))
+
+(defn- set-accessor-field
+  "方法体是「把形参 v 经一层临时绑定存进字段 f，并返回同一个 v」：返回字段位置。
+  值必须来自本方法的形参（ys），否则调用点传进来的实参对不上，不做特化。"
+  [body ys field-names]
+  (when (and (seq? body) (= 'begin (first body)) (= 3 (count body)))
+    (let [[_ wrapper result] body
+          [_ lambda-form value] (when (and (seq? wrapper) (= 'call (first wrapper)) (= 3 (count wrapper))) wrapper)
+          [_ _ clause] (when (and (seq? lambda-form) (= 'lambda (first lambda-form)) (= 3 (count lambda-form))) lambda-form)
+          [_ temps _ inner] (when (and (seq? clause) (= 'clause (first clause)) (= 4 (count clause))) clause)
+          [_ assignment returned] (when (and (seq? inner) (= 'begin (first inner)) (= 3 (count inner))) inner)
+          [_ target tmp] (when (and (seq? assignment) (= 'set! (first assignment)) (= 3 (count assignment))) assignment)]
+      (when (and (= 1 (count temps))
+                 (symbol? value) (symbol? result) (symbol? tmp) (symbol? target)
+                 (= result value) (some #(= % value) ys)
+                 (= returned tmp) (= tmp (first temps)))
+        (field-names target)))))
+
+(defn- accessors-of
+  "deftype 的 S 表达式 → {[接口 方法 实参个数] {:class :field :kind}}。只认读一个字段、或“存一个字段并返回新值”的方法。"
+  [sx]
+  (let [[_ info field-bindings & lambdas] sx
+        class-name (nth info 0)
+        field-descs (vec (nth info 2))
+        fields (vec field-bindings)
+        field-names (zipmap fields (range))
+        by-index (fn [i] (nth (nth field-descs i) 0))
+        read-field (fn [ys body] (some-> (read-accessor-field body ys field-names) by-index))
+        ;; 写访问器返回的是字段下标（下面还要按下标查可变性），字段名由 by-index 在决议成立时再取
+        set-field (fn [ys body] (set-accessor-field body ys field-names))]
+    (loop [ms (vec (nth info 4)) ls (vec lambdas) acc {}]
+      (if (or (empty? ms) (empty? ls))
+        acc
+        (let [[iface method _ ptypes] (first ms)
+              lambda-form (first ls)
+              clause (when (and (seq? lambda-form) (= 'lambda (first lambda-form)) (= 3 (count lambda-form)))
+                       (nth lambda-form 2))
+              mb (when (and (seq? clause) (= 'clause (first clause)) (= 4 (count clause)))
+                   (method-real-body (nth clause 3)))
+              ys (first mb)
+              body (second mb)
+              n (count ptypes)
+              spec (cond
+                     (and iface (= n 0) body) (when-let [f (read-field ys body)] {:class class-name :field f :kind :read})
+                     (and iface (= n 1) body) (when-let [i (set-field ys body)]
+                                                ;; 可变且非 volatile：直存用普通 stfld，volatile 字段需要 volatile. 前缀，不做特化
+                                                (when (and (true? (nth (nth field-descs i) 1))
+                                                           (not (true? (nth (nth field-descs i) 2))))
+                                                  {:class class-name :field (by-index i) :kind :write}))
+                     :else nil)]
+          (recur (rest ms) (rest ls)
+                 (if (and iface spec)
+                   (assoc acc [(interface-name-of iface) (str method) n] spec)
+                   acc)))))))
+
+(defn- merge-accessors
+  "合并访问器表；同一个接口方法有多个不同实现时删掉该项，调用点保留接口调用。相同实现的重新定义覆盖。"
+  [m add]
+  (reduce (fn [m [k v]]
+            (if-let [old (m k)]
+              (if (= old v) m (dissoc m k))
+              (assoc m k v)))
+          m add))
+
+(defn- peel-named-let
+  "剥一层「外层是纯转发实参的命名 let」：(call (letrec ([lp (lambda nm (clause (y* ...) false body))]) lp) x* ...)
+  → [[[y x] …] body]（内层形参 → 外层表达式的改名表 + 里面的体）；形状不合或实参个数对不上时 nil。"
+  [x]
+  (when (and (seq? x) (= 'call (first x)) (>= (count x) 2))
+    (let [callee (nth x 1)
+          inits (vec (drop 2 x))]
+      (when (and (seq? callee) (= 'letrec (first callee)) (= 3 (count callee)))
+        (let [bs (nth callee 1)
+              lp (nth callee 2)]
+          (when (and (sequential? bs) (= 1 (count bs)))
+            (let [pair (first bs)]
+              (when (and (sequential? pair) (= 2 (count pair)) (= (nth pair 0) lp))
+                (let [lam (nth pair 1)]
+                  (when (and (seq? lam) (= 'lambda (first lam)) (= 3 (count lam)))
+                    (let [cl2 (nth lam 2)]
+                      (when (and (seq? cl2) (= 'clause (first cl2)) (= 4 (count cl2))
+                                 (sequential? (nth cl2 1))
+                                 (= (count (nth cl2 1)) (count inits)))
+                        [(vec (map vector (vec (nth cl2 1)) inits)) (nth cl2 3)]))))))))))))
+
+(defn- specialize-accessor-clause
+  "把纯接口访问的包装子句改成“具体类型守卫 + 字段直读 / 直存，失败走原接口调用”（cleat-145）。
+  只认剥掉纯转发的命名 let 之后**整个剩下的体就是那一个 CallInstance**：接收者 / 实参必须一路映射到本
+  子句的形参（守卫与直读各用一次，不重复求值，内层改名不泄漏到外层）。形状不合、类型决议不出、
+  任何异常都原样返回子句（调用点保持接口调用）。"
+  [cl accessors]
+  (try
+    (let [top (set (second cl))
+          [body ren] (loop [x (nth cl 3) r {}]
+                       (if-let [[b nb] (peel-named-let x)]
+                         (recur nb (reduce (fn [m [y i]] (if (or (top i) (m i)) (assoc m y i) m)) r b))
+                         [x r]))
+          ;; 逐层改名表可能有多跳：一路走到本子句的形参才算“同一个表达式、求值一次”，
+          ;; 停在中间层的内层符号上是自由变量，停在非符号的表达式上会被守卫与直读各求值一次 —— 都不特化
+          resolve (fn [s] (loop [x s seen #{}]
+                            (cond (top x) x
+                                  (or (not (symbol? x)) (seen x)) nil
+                                  :else (if-let [r (ren x)] (recur r (conj seen x)) nil))))
+          call (when (and (seq? body) (= 'clj-call (first body)) (= "CallInstance" (second body))
+                          (= 4 (nth body 2)) (>= (count body) 7))
+                 body)
+          iface (when call (quoted-of (nth call 3)))
+          method (when call (quoted-of (nth call 4)))
+          obj (when call (untagged-of (nth call 5)))
+          args (when call (mapv untagged-of (drop 7 call)))
+          o (when (symbol? obj) (resolve obj))
+          vs (when (and (some? o) (every? symbol? args)) (mapv resolve args))
+          vs (when (and (some? vs) (every? some? vs)) vs)
+          n (count vs)
+          spec (when (and (some? iface) (some? method))
+                 (get accessors [(interface-name-of iface) (str method) n]))
+          ty (when spec (accessor-class-type (:class spec)))]
+      (if-not (and o (some? vs) ty)
+        cl
+        (let [concrete (list 'quote ty)
+              field (list 'quote (:field spec))
+              direct (case (:kind spec)
+                       :read (when (zero? n)
+                               (list 'clj-call "GetInstanceField" false concrete field o))
+                       :write (when (= 1 n)
+                                (list 'clj-call "SetInstanceField" false concrete field o (first vs)))
+                       nil)]
+          (if direct
+            ;; cl 是 np/unparse 出来的普通 list（不是 Associative）：按下标换体后重新拼回 list
+            (apply list (assoc (vec cl) 3
+                               (list 'if (list 'clj-call "IsInstanceOf" false concrete o)
+                                     direct (nth cl 3))))
+            cl))))
+    (catch Exception _ cl)))
 
 (defn- inline-ok?
   "序对个数不超过上限（同 原版按表的格子数），不含赋值、定义、类型、try 与嵌套的 fn*；只有字段读、算术与构造的子句上限放宽（cleat-123）"
@@ -397,7 +609,7 @@
 
 (defn- inline-clauses
   "def 的初值（不带自引用的 fn*，或外包 WithMetaOf）的可内联固定子句：[[参数个数 fasl 字节] …]"
-  [e0]
+  [e0 accessors]
   (let [fn-le? (fn [x] (and (r/node? x) (let [[k [a]] (prod-of x)] (and (= 'lambda k) (l/clj-fn-name? a)))))
         le (cond
              (fn-le? e0) e0
@@ -410,7 +622,13 @@
         (vec (keep (fn [cl]
                      (let [[_ [x*]] (prod-of cl)
                            sig (some (fn [[k sg]] (when (= (long k) (count x*)) sg)) (:prims nm))
-                           sexpr (prim-sig-wrap (np/unparse cl) sig)]
+                           raw (prim-sig-wrap (np/unparse cl) sig)
+                           sp (when (and an/opt-accinline? (seq accessors))
+                                (specialize-accessor-clause raw accessors))
+                           ;; 特化把守卫与直读多包了一层调用，可能超出内联上限；这时退回未特化的
+                           ;; 子句，绝不能因为特化失败把 cleat-144 已有的内联整体丢掉
+                           sexpr (let [cand (or sp raw)]
+                                   (if (inline-ok? cand) cand raw))]
                        ;; 有原始签名的子句（^long / ^double 形参或返回）：体外包上与 invokePrim 相同的入口 / 返回转换后内联（cleat-123；cleat-116 时不内联）
                        (when (inline-ok? sexpr)
                          (try [(count x*) (Cleat.Core.Runtime.Fasl/Write [:cleat/l0 sexpr])]
@@ -419,9 +637,9 @@
 
 (defn- build-interface-file [asm l0s lcil image-id]
   (let [types (lcil-types lcil)
-        fn-names (atom {}) defs (atom {}) cands (atom [])
+        fn-names (atom {}) defs (atom {}) cands (atom []) accessors (atom {})
         file (InterfaceFile.)]
-    (run! #(walk-l0 % fn-names defs cands) l0s)
+    (run! #(walk-l0 % fn-names defs cands accessors) l0s)
     (set! (.-AssemblyName file) asm)
     (set! (.-ImageId file) image-id)
     (doseq [[^clojure.lang.Var v cls arities e0] @cands
@@ -433,7 +651,7 @@
         (set! (.-Arities e) (int-array arities))
         (set! (.-HasStatic e) true)
         (when-not (.IsMacro v)
-          (doseq [[n bytes] (inline-clauses e0)] (DriverOps/AddInline e n bytes)))
+          (doseq [[n bytes] (inline-clauses e0 @accessors)] (DriverOps/AddInline e n bytes)))
         (.Add (.-Entries file) e)))
     file))
 
@@ -572,9 +790,10 @@
   (let [unit (atom [])
         runtime-spec? Cleat.Core.Runtime.RuntimeSigSpec/Enabled]
     (reset! form-ordinal 0)
-    ;; 构建镜像时不内联：镜像里的子句不含内联结果，各级镜像的接口文件相同，不动点成立
-    ;; 也不报反射警告（cleat-099）：core_print / gvec / instant 等开着 *warn-on-reflection*，镜像构建的输出不变
     (let [inl @an/inline-calls? rw @an/reflection-warnings?]
+      ;; 构建镜像时不做“新”内联决定（cleat-144）：种子与两级镜像的 .inl 必须逐字一致，内联决定留到包与 eval 单元。
+      ;; cleat-145 的具体类型守卫同样留在包 / eval 两条路径，不动镜像构建口径。
+      ;; 也不报反射警告（cleat-099）：core_print / gvec / instant 等开着 *warn-on-reflection*，镜像构建的输出不变
       (reset! an/inline-calls? false)
       (reset! an/reflection-warnings? false)
       (set! Cleat.Core.Runtime.RuntimeSigSpec/Enabled false)

@@ -2178,6 +2178,32 @@
                       :else nil)
                 (finish-value! mc ctx)))))
 
+(defn- cg-set-instance-field!
+  "cleat-145：(SetInstanceField 'T 'f x v) 按源顺序求值 x、v 各一次，stfld 直存并返回 v。
+  生产该节点的内联子句已经有具体类型守卫；类型 / 字段决议不出时（桩、嵌套类）退回 ClojureOps.SetFieldOf 的反射赋值，
+  与原来的接口调用同义。原始字段（^long / ^double，cleat-112）同 store-var! 的 :dfield 做入口转换。"
+  [e* mc ctx]
+  (let [[t field x v] e*
+        ty (quoted-datum t)
+        fname (quoted-datum field)
+        ^objects sig (when (and (instance? Type ty) (string? fname))
+                       (Cleat.Core.Runtime.ClojureStaticCalls/ResolveField ty fname false))
+        decl (when (and sig (pos? (alength sig))) (aget sig 0))
+        fret (when (and sig (pos? (alength sig))) (str (aget sig 3)))]
+    (if (nil? decl)
+      (cg (list 'clj-call "SetFieldOf" false t field x v) mc ctx)
+      (let [temp (new-local! mc obj)]
+        (cg x mc :value)
+        (emit! mc (i 'castclass decl))
+        (cg v mc :value)
+        (emit! mc (i 'stloc temp) (i 'ldloc temp))
+        (case fret
+          "System.Int64" (emit! mc (i 'call static-calls-type "PrimArgLong" (i obj) int64-type))
+          "System.Double" (emit! mc (i 'call static-calls-type "PrimArgDouble" (i obj) double-type))
+          nil)
+        (emit! mc (i 'stfld decl (aget sig 1)) (i 'ldloc temp))
+        (finish-value! mc ctx)))))
+
 ;; —— 变量与局部变量清除（cleat-042 第 5 项，原版同名）——
 
 (defn- var-location [mc x]
@@ -2598,6 +2624,8 @@
        (= d0 "RuntimeSigEntry") (cg-runtime-sig-entry! e* mc ctx)   ; cleat-133 / 138
        (= d0 "RtSpecEntry") (cg-rtspec-entry! e* mc ctx)   ; cleat-138
        (= d0 "KnownCall") (cg-known-call! e* mc ctx)   ; cleat-110
+       (and (= d0 "SetInstanceField") (false? d1) (= 4 (count e*)))
+       (cg-set-instance-field! e* mc ctx)   ; cleat-145
        (and (= d0 "EscapePropagate") (= 1 (count e*))) (cg-escape-propagate! (first e*) mc ctx)   ; cleat-125
        (and (= d0 "IsInstanceOf") (= 2 (count e*))
             (let [t (quoted-datum (first e*))]

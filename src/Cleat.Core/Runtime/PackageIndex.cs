@@ -42,6 +42,7 @@ public static class PackageIndex
     private static readonly ConcurrentDictionary<Assembly, object> s_initialized = new();
     private static readonly ConcurrentDictionary<Assembly, object> s_gates = new();
     private static readonly ConcurrentDictionary<Assembly, bool> s_prepared = new();
+    private static readonly ConcurrentDictionary<string, bool> s_preparedNamespaces = new(StringComparer.Ordinal);
     private static int s_tpaScanned;
 
     static PackageIndex()
@@ -157,6 +158,23 @@ public static class PackageIndex
             if (t is not null) return t;
         }
         return null;
+    }
+
+    /// <summary>
+    /// 包构建期消费依赖包已固化的接口文件（cleat-145）：按命名空间找到包程序集并载入，<see cref="Prepare"/>
+    /// 只登记嵌入的 cleat.ifc / cleat.inl，不运行包入口；<c>*compile-files*</c> 为真时依赖照旧不被执行。
+    /// 没有对应包程序集时返回 false（源码路径按旧规则自己加载）。
+    /// </summary>
+    public static bool PrepareNamespaceInterface(string namespaceName)
+    {
+        if (string.IsNullOrEmpty(namespaceName)) return false;
+        if (s_preparedNamespaces.ContainsKey(namespaceName)) return true;
+        ScanTrustedAssemblies();
+        var key = namespaceName.Replace('.', '/').Replace('-', '_');
+        if (!s_index.TryGetValue(key, out var e) || EnsureAssembly(e) is null) return false;
+        // 只记住成功的：调用点在每次解析内联目标时都会问，省掉重复的字符串替换与查表；失败时下次仍会重试
+        s_preparedNamespaces[namespaceName] = true;
+        return true;
     }
 
     // ---- 内部 ----

@@ -371,6 +371,101 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-145：deftype 的小访问器（读一个字段、或存一个字段并返回新值）的包装函数在内联时换成
+    /// 「具体类型守卫 + 字段直读 / 直存」，守卫不成立时走原来的接口调用。语义用例
+    /// tests/Cleat.Host.Tests/data/accinline_semantics.clj（读写与返回值、接收者与实参各只求值一次及其顺序、
+    /// nil 与错误类型的异常文本、volatile 字段、^long 原始字段、同接口的两个实现、非访问器方法、
+    /// 循环里连续写、中途重定义包装 Var）在 CLEAT_NO_OPT=accinline 时输出逐字相同。
+    /// IL 取证两条路径：eval 单元与两个包程序集（消费者单独编译）的开侧都有 isinst 守卫与 ldfld / stfld，
+    /// 关侧只剩接口调用。最后退化路径探针（同名重定义 deftype、reify 的另一个实现、错误类型）逐字对照开 / 关。
+    /// </summary>
+    [Test]
+    public void AccessorInliningCrossCompileUnits()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "accinline_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
+        Assert.That(off.Out, Is.EqualTo(expected), off.ToString());
+
+        // eval 单元：守卫后的直读 / 直存只在开侧出现（deftype 自身方法的字段访问两侧都有，故比带程序集名的跨单元引用）
+        string onLcil = Path.Combine(_dir, "eval-on.lcil"), offLcil = Path.Combine(_dir, "eval-off.lcil");
+        var onDump = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_EVAL_LCIL", onLcil) }, script);
+        var offDump = HostProcessTests.CleatIn(_dir, null,
+            new[] { ("CLEAT_NO_OPT", "accinline"), ("CLEAT_DUMP_EVAL_LCIL", offLcil) }, script);
+        Assert.That(onDump.Out, Is.EqualTo(expected), onDump.ToString());
+        Assert.That(offDump.Out, Is.EqualTo(expected), offDump.ToString());
+        string onText = File.ReadAllText(onLcil), offText = File.ReadAllText(offLcil);
+        Assert.That(onText, Does.Contain("(isinst \"accinline.gen.Foo"), "开侧应有具体类型守卫");
+        Assert.That(onText, Does.Contain("(ldfld \"accinline.gen.Foo, "), "开侧应有跨单元的字段直读");
+        Assert.That(onText, Does.Contain("(stfld \"accinline.gen.Foo, "), "开侧应有跨单元的字段直存");
+        Assert.That(offText, Does.Not.Contain("(isinst \"accinline.gen.Foo"), offText);
+        Assert.That(offText, Does.Not.Contain("(stfld \"accinline.gen.Foo, "), offText);
+
+        // 包路径：gen 与 use 各编一个程序集，use 单独编译时只消费 gen 固化的 .inl（不跑 gen 的入口）
+        string src = Path.Combine(_dir, "p"), outOn = Path.Combine(_dir, "p-on"), outOff = Path.Combine(_dir, "p-off");
+        Directory.CreateDirectory(Path.Combine(src, "accinlinep"));
+        Directory.CreateDirectory(outOn);
+        Directory.CreateDirectory(outOff);
+        File.WriteAllText(Path.Combine(src, "accinlinep", "gen.clj"),
+            "(ns accinlinep.gen)\n(definterface IFoo (getA []) (getB []) (setA [v]))\n"
+            + "(deftype Foo [^:unsynchronized-mutable a ^:unsynchronized-mutable b]\n"
+            + "  IFoo (getA [_] a) (getB [_] b) (setA [_ v] (set! a v) v))\n"
+            + "(defn mk [x y] (Foo. x y))\n"
+            + "(defn ga [p] (.getA ^IFoo p))\n(defn gb [p] (.getB ^IFoo p))\n(defn sa! [p v] (.setA ^IFoo p v))\n");
+        File.WriteAllText(Path.Combine(src, "accinlinep", "use.clj"),
+            "(ns accinlinep.use (:require [accinlinep.gen :as g]))\n"
+            + "(defn spin [n] (let [p (g/mk 1 2)] (loop [i 0 acc 0]\n"
+            + "  (if (< i n) (do (g/sa! p (+ acc (g/ga p))) (recur (inc i) (g/gb p))) acc))))\n"
+            + "(defn -main [& _] (prn (spin 3) :ok))\n");
+        void BuildPair(string outDir, (string, string)[] env)
+        {
+            var gen = HostProcessTests.CleatIn(_dir, null, env,
+                "-I", src, "--compile-package", Path.Combine(outDir, "accinlinep.gen.dll"),
+                "--package", "accinlinep.gen", "--root", src, "accinlinep.gen");
+            Assert.That(gen.ExitCode, Is.EqualTo(0), gen.ToString());
+            var use = HostProcessTests.CleatIn(_dir, null, env,
+                "-I", outDir, "-I", src, "--compile-package", Path.Combine(outDir, "accinlinep.use.dll"),
+                "--package", "accinlinep.use", "--root", src, "accinlinep.use");
+            Assert.That(use.ExitCode, Is.EqualTo(0), use.ToString());
+        }
+        BuildPair(outOn, new[] { ("CLEAT_DUMP_LCIL", "1") });
+        BuildPair(outOff, new[] { ("CLEAT_NO_OPT", "accinline"), ("CLEAT_DUMP_LCIL", "1") });
+        string useOn = File.ReadAllText(Path.Combine(outOn, "accinlinep.use.dll.lcil"));
+        string useOff = File.ReadAllText(Path.Combine(outOff, "accinlinep.use.dll.lcil"));
+        Assert.That(useOn, Does.Contain("(isinst \"accinlinep.gen.Foo\""), "消费者的 IL 应有守卫");
+        Assert.That(useOn, Does.Contain("(ldfld \"accinlinep.gen.Foo\" \"a\")"), useOff);
+        Assert.That(useOn, Does.Contain("(stfld \"accinlinep.gen.Foo\" \"a\")"), useOff);
+        Assert.That(useOff, Does.Not.Contain("(isinst \"accinlinep.gen.Foo\""), useOff);
+        Assert.That(useOff, Does.Not.Contain("(stfld \"accinlinep.gen.Foo\""), useOff);
+        var runOn = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", outOn, "-e", "(require 'accinlinep.use)", "-e", "(accinlinep.use/-main)");
+        var runOff = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") },
+            "-I", outOff, "-e", "(require 'accinlinep.use)", "-e", "(accinlinep.use/-main)");
+        Assert.That(runOn.ExitCode, Is.EqualTo(0), runOn.ToString());
+        Assert.That(runOn.Out, Is.EqualTo("2 :ok\n"), runOn.ToString());
+        Assert.That(runOff.Out, Is.EqualTo("2 :ok\n"), runOff.ToString());
+
+        // 退化路径：同名重定义 deftype（守卫与直读用的是同一个按名决议的类型）、reify 的另一个实现、
+        // 错误的接收者类型 —— 开 / 关的输出必须逐字相同
+        string probe = Path.Combine(_dir, "probe.clj");
+        File.WriteAllText(probe,
+            "(definterface IFoo (getA []))\n(deftype Foo [a b] IFoo (getA [_] a))\n(defn ga [p] (.getA ^IFoo p))\n"
+            + "(def o1 (Foo. 1 2))\n(deftype Foo [a b] IFoo (getA [_] b))\n(def o2 (Foo. 1 2))\n"
+            + "(println 'redef (ga o1) (ga o2) (ga (Foo. 1 2)))\n"
+            + "(println 'reify (ga (reify IFoo (getA [_] 42))))\n"
+            + "(deftype G [^:unsynchronized-mutable x] IFoo (getA [_] x))\n(println 'foreign (ga (G. 7)))\n"
+            + "(println 'wrong (try (ga \"s\") (catch Exception e (.GetType e))))\n");
+        var probeOn = HostProcessTests.CleatIn(_dir, null, null, probe);
+        var probeOff = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") }, probe);
+        Assert.That(probeOn.ExitCode, Is.EqualTo(0), probeOn.ToString());
+        Assert.That(probeOn.Out, Is.EqualTo(probeOff.Out), "accinline on:\n" + probeOn.Out + "\noff:\n" + probeOff.Out);
+        Assert.That(probeOn.Out.Split('\n').Length, Is.GreaterThanOrEqualTo(5), probeOn.ToString());
+    }
+
+    /// <summary>
     /// cleat-146：keyword 的字符串键 intern 命中不新建 Symbol；str 的 long / int 用不变区域性格式化。
     /// 用例 tests/Cleat.Host.Tests/data/intern_semantics.clj 覆盖 identity / 元数据 / find-keyword /
     /// symbol 的文本语义 / gensym 唯一性；CLEAT_NO_OPT=intern 退回旧路径时输出逐字相同。

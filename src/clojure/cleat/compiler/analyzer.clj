@@ -19,8 +19,8 @@
   (:require [clojure.string :as str]
             [cleat.nanopass :as np :refer [with-output-language out in-context]]
             [cleat.compiler.languages :as l :refer [L0]])
-  (:import [Cleat.Core.Compiler HostSyntax AotPaths CompileTimeTypes]
-           [Cleat.Core.Runtime ClojureOps]
+  (:import [Cleat.Core.Compiler HostSyntax AotPaths CompileTimeTypes DriverOps]
+           [Cleat.Core.Runtime ClojureOps PackageIndex]
            [Cleat.Core.Expand ExpanderException LocalBinding]
            [clojure.lang Symbol Keyword Var Namespace RT IObj IMeta IPersistentMap IPersistentVector IPersistentSet ISeq IPersistentList]))
 
@@ -66,6 +66,11 @@
 ;; cleat-144：生成类的跨 ns 决议与缺失依赖的编译期加载共用这个开关。
 (def ^:private opt-crossns-type?
  (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "crossnstype")))
+
+;; cleat-145：小访问器跨编译单元内联。镜像构建只消费上一级固化 .inl；包构建按 ns 消费依赖包嵌入 .inl
+;; （不运行依赖入口）；纯 deftype 字段访问器在具体类型守卫后直读 / 直存。CLEAT_NO_OPT=accinline 完整退回旧路径。
+(def opt-accinline?
+ (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "accinline")))
 
 (declare require-type-ns!)
 
@@ -572,6 +577,15 @@
 (defn- inline-target
   "Var 是接口文件里的已知函数、有参数个数为 n 的可内联子句（Clojure 编译器写的 L0 子句）时返回 [函数类 子句的 S 表达式]，否则 nil。"
   [^Var v n]
+ ;; 包构建期（驱动状态里绑着 :package）依赖包的入口不执行，它固化的 cleat.ifc / cleat.inl 因此没登记过；
+ ;; 这里按命名空间载入依赖程序集补上这一步（不跑入口，见 PackageIndex/PrepareNamespaceInterface）。
+ ;; **只在包构建期做**：eval / 加载期不能这么按需载入 —— 登记好接口文件后本单元会直接链接依赖包里的函数，
+ ;; 第一次用到时就要跑那个包的入口（CleatModule：开头是镜像核对），进程里留着按**另一个** boot 镜像编出来的
+ ;; 包程序集时，那里抛的 StaleModuleException 会把一条与内联无关的加载整个打断
+ ;; （111 实测：examples/WebServer 的 neorepl 热替换与 tools.build 跑 neorepl 两条用例，主机镜像与打出去
+ ;;  的 Cleat.Cli 包里的镜像不是同一份）。eval 路径上依赖命名空间本来就已被加载并登记过，问了也是白问。
+ (when (and opt-accinline? (contains? (or (.-Value DriverOps/State) {}) :package))
+   (PackageIndex/PrepareNamespaceInterface ^String (str (.Name (.Namespace v)))))
   (let [e (Cleat.Core.Runtime.InterfaceFile/FindKnown (symbol (str (.Name (.Namespace v))) (str (.Symbol v))))
         bytes (when e (Cleat.Core.Runtime.InterfaceFile/FindInline e (int n)))]
     (when bytes
