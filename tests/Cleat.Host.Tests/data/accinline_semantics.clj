@@ -1,5 +1,6 @@
 ;; cleat-145：小访问器的跨编译单元内联（具体类型守卫 + 字段直读 / 直存）不改变语义；
-;; CLEAT_NO_OPT=accinline 关掉识别与特化时输出必须逐字相同。
+;; 开关 accinline 是 opt-in（默认关，见 analyzer.clj 的 opt-accinline? 与 notes M16 §8）：
+;; 开（CLEAT_OPT_ACCINLINE=1）与关（默认，或 CLEAT_NO_OPT=accinline）两种设置下输出必须逐字相同。
 (ns accinline.gen)
 
 (definterface IFoo

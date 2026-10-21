@@ -378,13 +378,16 @@ public class ClojureCompilerTests
     /// 循环里连续写、中途重定义包装 Var）在 CLEAT_NO_OPT=accinline 时输出逐字相同。
     /// IL 取证两条路径：eval 单元与两个包程序集（消费者单独编译）的开侧都有 isinst 守卫与 ldfld / stfld，
     /// 关侧只剩接口调用。最后退化路径探针（同名重定义 deftype、reify 的另一个实现、错误类型）逐字对照开 / 关。
+    /// 开关口径（111 的 A/B 后定为默认关，见 notes M16 §8）：开侧要显式 CLEAT_OPT_ACCINLINE=1，
+    /// 默认与 CLEAT_NO_OPT=accinline 一样不发守卫直读 —— 因此额外取证一次"默认设置下 IL 里没有任何跨单元守卫"。
     /// </summary>
     [Test]
     public void AccessorInliningCrossCompileUnits()
     {
         string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "accinline_semantics.clj");
         string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
-        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        // 开臂要显式开：accinline 默认关（opt-in）
+        var on = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_OPT_ACCINLINE", "1") }, script);
         var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") }, script);
         Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
         Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
@@ -392,7 +395,8 @@ public class ClojureCompilerTests
 
         // eval 单元：守卫后的直读 / 直存只在开侧出现（deftype 自身方法的字段访问两侧都有，故比带程序集名的跨单元引用）
         string onLcil = Path.Combine(_dir, "eval-on.lcil"), offLcil = Path.Combine(_dir, "eval-off.lcil");
-        var onDump = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_EVAL_LCIL", onLcil) }, script);
+        var onDump = HostProcessTests.CleatIn(_dir, null,
+            new[] { ("CLEAT_OPT_ACCINLINE", "1"), ("CLEAT_DUMP_EVAL_LCIL", onLcil) }, script);
         var offDump = HostProcessTests.CleatIn(_dir, null,
             new[] { ("CLEAT_NO_OPT", "accinline"), ("CLEAT_DUMP_EVAL_LCIL", offLcil) }, script);
         Assert.That(onDump.Out, Is.EqualTo(expected), onDump.ToString());
@@ -403,6 +407,30 @@ public class ClojureCompilerTests
         Assert.That(onText, Does.Contain("(stfld \"accinline.gen.Foo, "), "开侧应有跨单元的字段直存");
         Assert.That(offText, Does.Not.Contain("(isinst \"accinline.gen.Foo"), offText);
         Assert.That(offText, Does.Not.Contain("(stfld \"accinline.gen.Foo, "), offText);
+
+        // 读侧取证（实测的 browse x1.54 / destruc x1.22 回退根因就在这里）：守卫之后到字段指令之间
+        // 不得再插入通用发射器给实例位置补的 ldstr + Instance(=NotNil)，object 字段也不得再过 RetObject。
+        // 标记用"守卫 → 字段指令"这一整段，不能只用 ldfld / stfld：直接 `(.-a ^Foo o)` 走通用字段读路径时
+        // 本来就发跨单元的 `(ldfld "accinline.gen.Foo, eval$c4" "a")`（实测默认臂就有），只有配上前面的
+        // isinst 守卫才是特化产生的
+        string guardedPat = @"\(isinst ""accinline\.gen\.(?:Foo|Vol|J)[^""]*""\)(?:.{0,300}?)\((?:ldfld|stfld) ";
+        var guardedReads = System.Text.RegularExpressions.Regex.Matches(onText, guardedPat);
+        Assert.That(guardedReads.Count, Is.GreaterThanOrEqualTo(20), "开侧应有足够多的守卫后直读 / 直存");
+        foreach (System.Text.RegularExpressions.Match m in guardedReads)
+        {
+            Assert.That(m.Value, Does.Not.Contain("Instance"), "守卫后的直读不该再补 NotNil 检查：" + m.Value);
+            Assert.That(m.Value, Does.Not.Contain("RetObject"), "守卫后的直读不该再过 RetObject：" + m.Value);
+        }
+        Assert.That(onText, Does.Contain("(volatile.) (ldfld \"accinline.gen.Vol"), "volatile 字段的守卫直读要带 volatile. 前缀");
+
+        // 默认设置 = 关：输出与关臂逐字相同，且 IL 里一段"守卫 → 字段直读 / 直存"都没有（默认关这个口径要有可执行的取证）
+        string defaultLcil = Path.Combine(_dir, "eval-default.lcil");
+        var defaultDump = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_EVAL_LCIL", defaultLcil) }, script);
+        Assert.That(defaultDump.Out, Is.EqualTo(expected), defaultDump.ToString());
+        string defaultText = File.ReadAllText(defaultLcil);
+        Assert.That(defaultText, Does.Not.Contain("(isinst \"accinline.gen.Foo"), "默认不该开访问器内联");
+        Assert.That(System.Text.RegularExpressions.Regex.Matches(defaultText, guardedPat).Count, Is.EqualTo(0),
+            "默认不该有守卫后的字段直读 / 直存");
 
         // 包路径：gen 与 use 各编一个程序集，use 单独编译时只消费 gen 固化的 .inl（不跑 gen 的入口）
         string src = Path.Combine(_dir, "p"), outOn = Path.Combine(_dir, "p-on"), outOff = Path.Combine(_dir, "p-off");
@@ -431,7 +459,7 @@ public class ClojureCompilerTests
                 "--package", "accinlinep.use", "--root", src, "accinlinep.use");
             Assert.That(use.ExitCode, Is.EqualTo(0), use.ToString());
         }
-        BuildPair(outOn, new[] { ("CLEAT_DUMP_LCIL", "1") });
+        BuildPair(outOn, new[] { ("CLEAT_OPT_ACCINLINE", "1"), ("CLEAT_DUMP_LCIL", "1") });
         BuildPair(outOff, new[] { ("CLEAT_NO_OPT", "accinline"), ("CLEAT_DUMP_LCIL", "1") });
         string useOn = File.ReadAllText(Path.Combine(outOn, "accinlinep.use.dll.lcil"));
         string useOff = File.ReadAllText(Path.Combine(outOff, "accinlinep.use.dll.lcil"));
@@ -440,7 +468,7 @@ public class ClojureCompilerTests
         Assert.That(useOn, Does.Contain("(stfld \"accinlinep.gen.Foo\" \"a\")"), useOff);
         Assert.That(useOff, Does.Not.Contain("(isinst \"accinlinep.gen.Foo\""), useOff);
         Assert.That(useOff, Does.Not.Contain("(stfld \"accinlinep.gen.Foo\""), useOff);
-        var runOn = HostProcessTests.CleatIn(_dir, null, null,
+        var runOn = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_OPT_ACCINLINE", "1") },
             "-I", outOn, "-e", "(require 'accinlinep.use)", "-e", "(accinlinep.use/-main)");
         var runOff = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") },
             "-I", outOff, "-e", "(require 'accinlinep.use)", "-e", "(accinlinep.use/-main)");
@@ -458,7 +486,7 @@ public class ClojureCompilerTests
             + "(println 'reify (ga (reify IFoo (getA [_] 42))))\n"
             + "(deftype G [^:unsynchronized-mutable x] IFoo (getA [_] x))\n(println 'foreign (ga (G. 7)))\n"
             + "(println 'wrong (try (ga \"s\") (catch Exception e (.GetType e))))\n");
-        var probeOn = HostProcessTests.CleatIn(_dir, null, null, probe);
+        var probeOn = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_OPT_ACCINLINE", "1") }, probe);
         var probeOff = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") }, probe);
         Assert.That(probeOn.ExitCode, Is.EqualTo(0), probeOn.ToString());
         Assert.That(probeOn.Out, Is.EqualTo(probeOff.Out), "accinline on:\n" + probeOn.Out + "\noff:\n" + probeOff.Out);

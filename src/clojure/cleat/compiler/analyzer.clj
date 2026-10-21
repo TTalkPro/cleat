@@ -68,9 +68,15 @@
  (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "crossnstype")))
 
 ;; cleat-145：小访问器跨编译单元内联。镜像构建只消费上一级固化 .inl；包构建按 ns 消费依赖包嵌入 .inl
-;; （不运行依赖入口）；纯 deftype 字段访问器在具体类型守卫后直读 / 直存。CLEAT_NO_OPT=accinline 完整退回旧路径。
+;; （不运行依赖入口）；纯 deftype 字段访问器在具体类型守卫后直读 / 直存。
+;; **默认关闭**（与其余开关的"默认开 + CLEAT_NO_OPT 关"相反）：111 的同轮配对 A/B（notes M16 §8）显示
+;; 开侧整体只是中性（10 项中位几何平均 x1.002），没有任何一项跑出可声明的收益，而 browse 仍 5/5 同向慢 5.8%
+;; —— 机制也对得上：r7rs 的热访问器多是直接 .getA 调用点（没有 defn 包装、不走 .inl），本任务的特化根本碰不到，
+;; 剩下的守卫分支只是净成本；调用点类型反馈（cleat-153）才是能吃到这批调用点的那一半。
+;; 要开：CLEAT_OPT_ACCINLINE=1；CLEAT_NO_OPT=accinline 仍能单独关掉（两个都设时关优先）。
 (def opt-accinline?
- (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "accinline")))
+ (and (= "1" (System.Environment/GetEnvironmentVariable "CLEAT_OPT_ACCINLINE"))
+      (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "accinline"))))
 
 (declare require-type-ns!)
 

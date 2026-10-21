@@ -804,3 +804,69 @@ python3 bench/r7rs/m16full.py 3 slatex peval`，每格 2 项 × 3 轮 × 2 臂 =
   不要再从 M16 的五项开关入手 —— 本节已经把单开关维度做完并否证。
 - 口径提醒（本节踩到的）：111 的 3 轮取最小 / 配对比值适合判 3% 以上的差，本机的 5 轮配对比值只能判方向；
   跨机比较时"某项在 A 机可声明、在 B 机不可声明"是地板不同，不是结论冲突。
+
+### 8. cleat-145 访问器内联的 A/B：读侧复用通用发射器导致整体回退，修完仍只是中性（2026-10-21）
+
+跑法（111 的 `~/workspace/cleat-145-git`，两臂同轮交替 × 5 轮 × 10 项，0 条 loaded，采样 load ≤ 1.4）：
+
+```
+R7RS_BENCH=~/workspace/r7rs-benchmarks CLEAT=~/workspace/cleat-145-git \
+R7_MAXLOAD=1.2 R7_LOAD_CAP=1200 ARMS=cleat-on,cleat-off NOPT=accinline R7_OUT=m145-ab2 \
+  python3 bench/r7rs/m16full.py 5 browse destruc lattice string wc array1 peval conform scheme maze
+R7_PAIR_MAXLOAD=1.5 python3 bench/r7rs/m16sum.py m145-ab2
+```
+
+（`m145-ab` = 读侧修复前、`m145-ab2` = 修复后；两份数据都在同一台 111、同一构建目录，只差 codegen 的读侧发射。）
+汇总口径的坑（本轮踩到，已在 `m16sum.py` 修）：**111 的 4 vCPU 让 `R7_MAXLOAD` 缺省 = 1.0，而跑分时采样 load 常在
+1.0 ~ 1.4**，用缺省门槛汇总会把绝大多数配对静默筛掉 —— 表里每项只剩 1 对，看起来像"这项只跑了一次"。
+现在配对筛轮单独用 `R7_PAIR_MAXLOAD`（缺省跟 `R7_MAXLOAD`），筛空时退回全部配对并给格子打 `*`、表头打印门槛。
+
+同轮配对比值中位（on / off，<1 = 开优化更快；括号 = 同向 <1 的轮数 / 总配对；门槛 1.5）：
+
+| 基准 | 修复前 m145-ab | 修复后 m145-ab2 |
+|---|---:|---:|
+| browse | **x1.538 (0/5)** | **x1.058 (0/5)** |
+| destruc | **x1.215 (0/5)** | x0.970 (3/5) |
+| lattice | x1.034 (0/5) | x0.986 (3/5) |
+| wc | x1.021 (1/5) | x1.020 (1/5) |
+| maze | x1.011 (2/5) | x0.974 (4/5) |
+| string | x1.013 (1/5) | x1.000 (2/5) |
+| array1 | x1.009 (2/5) | x0.992* (3/4) |
+| peval | x1.002 (2/5) | x1.002 (1/5) |
+| conform | x0.962 (3/5) | x0.996 (3/5) |
+| scheme | x0.984 (4/5) | x1.021 (1/5) |
+| **各项中位的几何平均** | **x1.068** | **x1.002** |
+
+- **根因（IL 级，不是猜测）**：特化子句最初发的是通用的 `GetInstanceField`，而通用发射器给 object 接收者
+  要补 `ldstr + ClojureStaticCalls.Instance`（= NotNil 检查），结果类型是 `System.Object` 时还要再过一道 `RetObject`。
+  守卫（`isinst`）成立时接收者必然非 nil，这两笔纯属白付，合起来比原来的接口调用更贵 —— browse x1.54 / destruc x1.22
+  就是这么来的。修复后的快路径只剩四条指令（`eval` dump 实测）：
+  `(isinst "accinline.gen.Foo") (ldnull) (cgt.un) (brfalse else)` → `(castclass Foo) (ldfld "a")`，
+  else 分支才是原来的 `ldstr "getA" + Instance + callvirt IFoo.getA`。`volatile.` 前缀与 `^long` 字段的
+  `LongBox.Get` 都保留。代价是新增一个专用节点 `GetInstanceFieldDirect`（`arith-only-calls`、`host-call-layout`、
+  派发 cond 三处配套），以及 `cg-static-host-call!` 多收一个 `guarded?` 参数（默认 `false`，其余调用点行为逐字不变）。
+- **修完的判定（照实写）**：destruc 回到 3% 地板内、browse 从 +54% 压到 +5.8%，整体中性（几何平均 x1.002）；
+  但**没有任何一项跑出可声明的收益**，browse 仍 5/5 同向 +5.8% > 地板 → 一条可声明的残余回退；
+  array1 未回退（cleat-120 的关注点过关，那格 1 对被 load 筛掉，故带 `*`）。
+  收益为零的机制解释写在 [tasks/cleat-145 结论 9](../tasks/cleat-145-accessor-inlining.md)：
+  这批基准的热访问器多是**直接 `.getA` 调用点**（没有 defn 包装、不走 `.inl`），145 的特化只在包装函数被内联时生效，
+  碰不到那一批；生效的点只多付一次分支。能吃到裸调用点的是 cleat-153 的调用点类型反馈。
+- **口径因此定为默认关**：`accinline` 是这轮唯一的 **opt-in** 开关（`CLEAT_OPT_ACCINLINE=1` 才开，
+  `CLEAT_NO_OPT=accinline` 仍可单独关，两个都设时关优先）。`m16full.py` 的 `DEFAULT_NOPT` 随之**去掉** `accinline`
+  ——默认关的开关不该进 150 的关侧名单（关一个本来就不开的东西没有意义，名单口径回到 M16 的五项）。
+  归因 opt-in 开关时两臂反过来：`CLEAT_OPT_ACCINLINE=1 ARMS=cleat-on,cleat-off NOPT=accinline …`。
+  默认关这件事本身有用例取证（`AccessorInliningCrossCompileUnits` 现在额外 dump 一份**默认设置**的 eval IL，
+  断言里面既没有 `isinst "accinline.gen.Foo"` 也没有跨单元的 `ldfld` / `stfld "accinline.gen.Foo"`）。
+
+- 另外两条纪律（本节与 §8 的用例矩阵实测，产品代码的写法教训记在 [designs/28 §6](../designs/28-hot-path-optimizations.md)）：
+  1. **编译期"顺手多载入一个程序集"必须按构建阶段门控。** 145 的 `inline-target` 原先无条件按命名空间
+     按需载入依赖包，eval / 加载期也生效 → 接口文件一登记，本单元就直接链接依赖包里的函数，第一次用到就执行
+     那个包入口开头的镜像核对，主机镜像与包内镜像不是同一份时抛 StaleModuleException，打断一条与内联无关的加载。
+     判据收窄成"驱动状态里绑着 `:package`（正在编包）才问"。
+  2. **改 `src/clojure` 重生成种子后，boot image id 换代，Bootstrap / NuGet 那批用例会变得筛法敏感。**
+     本轮全套 Cleat.Host 的 3 条失败里只有 `ConsoleExampleQueriesCsvWithSqlite` 是环境缺依赖
+     （111 的离线 NuGet 源没有 `Microsoft.Data.Sqlite`，main 对照同样只输这条）；另外两条
+     （`ExampleProjectBuildsServesAndDevelopsInteractively`、`NreplAndNeoreplBuiltWithToolsBuildRestoreFromTheFeed`）
+     是旧 `/tmp/cleat-nuget-*` 缓存里留着**上一代镜像**编出的包程序集 —— 用整夹具的筛法重跑同一构建得到
+     **3 passed / 1 failed**，只挑这两条时连 main 也失败。判"我改坏了没有"必须**同一种筛法做对照**，
+     且种子换代后要先把这些缓存目录清掉再看。

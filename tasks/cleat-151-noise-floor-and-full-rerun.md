@@ -22,7 +22,9 @@ M16 的收口数字还没有：56 项全量的三臂对照（对 JVM 的倍数 v
 2. **判定门槛落地**：把标定结果写成 `m16sum.py` 能读的缺省（每项的最小可声明量级 + 最少同向轮数），
    低于门槛的格子输出"不可判定"而不是数字，避免 notes 里再出现"x0.984（4/5）"这种被当作结论的读数。
 3. **全量三臂**：56 项 × 5 轮 × cleat-on / cleat-off / jvm（`m16full.py`，关侧
-   `NOPT=charbox,strseq,intern,nthfast,crossnstype,accinline` 回 M15 收口行为；
+   `NOPT=charbox,strseq,intern,nthfast,crossnstype` 回 M15 收口行为 —— `accinline` 不在名单里，
+   它是 cleat-145 落地后按 111 A/B 定为**默认关**的 opt-in 开关（`CLEAT_OPT_ACCINLINE=1` 才开），
+   两边都默认不开，进名单只是空转；要单独量它就 `CLEAT_OPT_ACCINLINE=1 … NOPT=accinline`，见 notes M16 §8；
    JVM 臂 `JAVA=/usr/lib/jvm/java-25-openjdk-amd64/bin/java`），出 `m16sum.py` 两张表：
    开关贡献分解与对 JVM 的倍数。192.168.3.111 在线时优先在 111 跑（轮内极差 < 3%），
    本机只作补充并注明 runtime 版本（本机 .NET 10.0.12 / SDK 10.0.402，与 111 的历史绝对值不同口径）。

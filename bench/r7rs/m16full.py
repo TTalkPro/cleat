@@ -7,14 +7,18 @@
 #     python3 bench/r7rs/m16full.py REPS [基准名 …]
 #   不给基准名则跑 src/r7rs 下全部 56 项；结果追加到 results/m16full.jsonl（用 R7_OUT 改名）。
 #
-# 关优化臂的环境变量是 CLEAT_NO_OPT，默认一次全关 M16 落地的六项开关
-# （charbox,strseq,intern,nthfast,crossnstype,accinline），回到 M15 收口（cleat-141）的行为。
+# 关优化臂的环境变量是 CLEAT_NO_OPT，默认一次全关 M16 落地的五项开关
+# （charbox,strseq,intern,nthfast,crossnstype），回到 M15 收口（cleat-141）的行为。
 # 名单的唯一出处是 notes/m16-regression-triage.md §1 的开关表（cleat-149 待办第 3 条）：
 # 加新开关时两边一起改，否则关侧残留新优化，"开关贡献分解"就是错的（本轮已踩过一次）。
 # 不进名单的两项：gcprofile 关掉只关掉声明校验、不改任何 GC 配置（对时间零影响）；
 # tiered / known / loopinl / infer 那些是 M14 / M15 的开关，关下去就不是与 M15 的对照了。
+# 也不进名单的第三类：**默认关闭的 opt-in 开关**（accinline，cleat-145 按 111 的 A/B 定为默认关，
+# 见 notes M16 §8）—— 关臂关一个本来就不开的东西没有意义，开臂要显式带 CLEAT_OPT_ACCINLINE=1。
 # 单项归因：ARMS=cleat-on,cleat-off NOPT=charbox python3 bench/r7rs/m16full.py 3 browse wc lattice
 # （只关一项时开臂 / 关臂只差那一项，JVM 臂不用重复跑）。
+# 归因一个 opt-in 开关时反过来：CLEAT_OPT_ACCINLINE=1 ARMS=cleat-on,cleat-off NOPT=accinline …
+# （开臂 = 显式开 + 不清 NOPT，关臂 = NOPT 里含同名，两个都设时关优先）。
 #
 # 口径（与 notes/r7rs-performance.md 的 M15 §6、M16 §4 一致）：
 #   - 每项取各轮最小值；**轮内极差 > 3% 的差异一律视为噪声**，不据此声明收益或回退。
@@ -49,7 +53,7 @@ sys.path.insert(0, B)
 import run
 from quiet import LOAD_CAP, MAXLOAD, wait_quiet
 
-DEFAULT_NOPT = 'charbox,strseq,intern,nthfast,crossnstype,accinline'
+DEFAULT_NOPT = 'charbox,strseq,intern,nthfast,crossnstype'
 NOPT = os.environ.get('NOPT', DEFAULT_NOPT)
 ARMS = os.environ.get('ARMS', 'cleat-on,cleat-off,jvm').split(',')
 OUT = os.environ.get('R7_OUT', 'm16full')

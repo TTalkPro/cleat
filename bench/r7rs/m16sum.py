@@ -19,6 +19,11 @@ import sys
 B = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, B)
 from quiet import MAXLOAD      # 安静窗口门槛（与 m16full.py / triage149.py 同一出处）
+
+# 配对比值的负载筛门槛单独可指（R7_PAIR_MAXLOAD，缺省跟着 R7_MAXLOAD）：
+# 汇总时忘了带跑分用的 R7_MAXLOAD 会让整项配对被静默丢光，只剩一两个格子还能出数
+# （111 的 4 vCPU 上缺省门槛是 1.0，实际跑分的采样 load 常在 1.0 ~ 1.4 之间，踩过一次）
+PAIR_MAXLOAD = float(os.environ.get('R7_PAIR_MAXLOAD', str(MAXLOAD)))
 INCLUDE_LOADED = '--include-loaded' in sys.argv
 OUT = next((a for a in sys.argv[1:] if not a.startswith('-')), None) or os.environ.get('R7_OUT', 'm16full')
 SRC = os.path.join(B, 'results', OUT + '.jsonl')
@@ -73,25 +78,29 @@ dropped_by_load = 0
 
 def paired_ratios(name, peer_arm):
     """cleat-on 与该臂在同一 (基准, 轮) 里的秒数比；>1 = cleat-on 更慢。
-    两侧任一边的采样 load 超过安静窗口门槛（quiet.py 的 R7_MAXLOAD）就不算一对：
+    两侧任一边的采样 load 超过配对门槛（R7_PAIR_MAXLOAD，缺省 = R7_MAXLOAD）就不算一对：
     loaded 只记"跑前没等到窗口"，跑分中途被别人的构建挤掉要靠这列事后筛（111 离线后本机常见）。"""
     peer = by_rep[peer_arm]
     lds = ld_rep[peer_arm]
+    all_pairs = []
     out = []
     for (nm, rp), v in sorted(by_rep['cleat-on'].items()):
         if nm != name or (nm, rp) not in peer:
             continue
-        if not INCLUDE_LOADED and max(ld_rep['cleat-on'][(nm, rp)], lds[(nm, rp)]) > MAXLOAD:
+        all_pairs.append(v / peer[(nm, rp)])
+        if not INCLUDE_LOADED and max(ld_rep['cleat-on'][(nm, rp)], lds[(nm, rp)]) > PAIR_MAXLOAD:
             global dropped_by_load
             dropped_by_load += 1
             continue
         out.append(v / peer[(nm, rp)])
-    return out
+    # 筛完一对不剩时退回"全部配对"的中位，但打上星号：静默丢光整项会让表里只剩个别格子，
+    # 读者以为那是全部轮次的结论（本轮踩过：browse 只报了 1 对，手工按 (name, rep) 配是 5 对）
+    return out or all_pairs, len(all_pairs)
 
 
 print('\n===== 同轮配对比值（本机口径：判定只认这张表） =====', flush=True)
-print('剔除 loaded 记录 %d 条；load > %.1f 的配对剔除 %d 对%s' % (
-    drops, MAXLOAD, dropped_by_load,
+print('剔除 loaded 记录 %d 条；load > %.1f 的配对剔除 %d 对%s（R7_PAIR_MAXLOAD 可另指门槛；带 * 的格子 = 筛后无配对、退回全部配对）' % (
+    drops, PAIR_MAXLOAD, dropped_by_load,
     '（--include-loaded 已保留全部轮）' if INCLUDE_LOADED else ''), flush=True)
 print('%-12s %s' % ('基准', ' '.join('%-30s %-6s' % ('on/' + key + ' 配对比值', '同向<1')
                                     for key, _ in PEERS)), flush=True)
@@ -99,13 +108,14 @@ meds = {k: [] for k, _ in PEERS}
 for n in sorted({k[0] for k in by_rep['cleat-on']}):
     cells = []
     for key, peer_arm in PEERS:
-        rs = paired_ratios(n, peer_arm)
+        rs, total = paired_ratios(n, peer_arm)
         if not rs:
             cells.append(('—', '—'))
             continue
         md = statistics.median(rs)
         meds[key].append(md)
-        cells.append(('x%.3f (%d 对: %s)' % (md, len(rs), ' '.join('%.3f' % x for x in rs)),
+        star = '*' if len(rs) != total else ''
+        cells.append(('x%.3f%s (%d/%d 对: %s)' % (md, star, len(rs), total, ' '.join('%.3f' % x for x in rs)),
                       '%d/%d' % (sum(1 for x in rs if x < 1.0), len(rs))))
     print('%-12s %s' % (n, ' '.join('%-30s %-6s' % c for c in cells)), flush=True)
 

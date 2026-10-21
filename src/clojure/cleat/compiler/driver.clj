@@ -362,7 +362,8 @@
 (def ^:private no-inline-heads '#{set! clj-def clj-var-set! clj-deftype try-catch try-finally})
 
 (def ^:private inline-max-pairs-arith 400)
-(def ^:private arith-only-calls #{"CallStatic" "GetInstanceField" "NewOf" "Tagged"})
+;; GetInstanceFieldDirect 是 cleat-145 读侧的直读节点（具体类型守卫之后），与 GetInstanceField 同等资格
+(def ^:private arith-only-calls #{"CallStatic" "GetInstanceField" "GetInstanceFieldDirect" "NewOf" "Tagged"})
 
 (defn- arith-only?
   "子句只有字段读、Numbers / RT 的静态运算、构造与局部结构（没有经 Var 的调用、关键字调用、直接链接）：deftype 的运算函数（cleat-123）"
@@ -551,7 +552,10 @@
               field (list 'quote (:field spec))
               direct (case (:kind spec)
                        :read (when (zero? n)
-                               (list 'clj-call "GetInstanceField" false concrete field o))
+                               ;; 读侧用直读节点（守卫保证 x 已是 concrete）：通用 GetInstanceField 发射器要为实例位置
+                               ;; 补 ldstr + Instance(=NotNil) 的空检查、object 结果还要过 RetObject，两条都比原来的
+                               ;; 可内联接口调用更贵（实测 browse x1.54 / destruc x1.22 的回退），cleat-145 修正
+                               (list 'clj-call "GetInstanceFieldDirect" false concrete field o))
                        :write (when (= 1 n)
                                 (list 'clj-call "SetInstanceField" false concrete field o (first vs)))
                        nil)]

@@ -1,10 +1,12 @@
 # 28 热路径优化：M15 归因复核后的修正优先级
 
-> 状态：**进行中**（2026-10-20，M16）——§2.1 / §2.2 / §2.4 已实现并在 192.168.3.111 上完成同窗口开 / 关验证
+> 状态：**进行中**（2026-10-20 起，M16）——§2.1 / §2.2 / §2.4 已实现并在 192.168.3.111 上完成同窗口开 / 关验证
 > （[notes 的 M16 一节](../notes/r7rs-performance.md)：wc -39%、browse -4%、read1 -2.5%；lattice 因 strseq
 > 分支位置回退 +6.3%，已按 §6 的教训修正）。§3 的第 1 条（RT.nth 快路径 nthfast）与 §4（GC profile 声明化 /
-> LOH 判定不做）、§5（回归排查与口径修正）已完成；**还剩 §2.3（cleat-145 访问器跨编译单元内联）与
-> §3 的第 2 / 3 条**（闭包提升、变长参数数组：147 量不出每次迭代成本，按 designs/28 §3 交 M17），
+> LOH 判定不做）、§5（回归排查与口径修正）已完成；**§2.3 已于 2026-10-21 完成**（cleat-145 落地，
+> 开关 `accinline` 但**默认关闭**（opt-in：`CLEAT_OPT_ACCINLINE=1`），见 [tasks/cleat-145](../tasks/cleat-145-accessor-inlining.md) 与
+> [notes M16 §8](../notes/r7rs-performance.md)）；**还剩 §3 的第 2 / 3 条**（闭包提升、变长参数数组：
+> 147 量不出每次迭代成本，按 designs/28 §3 交 M17），
 > 以及 §6 之后的收口重跑 cleat-150。来源：[notes/r7rs-performance.md](../notes/r7rs-performance.md) 的
 > "M15 差异归因"与"M15 优化建议 §5 复核修正"、探针 `bench/r7rs/src/{micro,shapes2,shapes3}.cljc`、
 > 归因脚本 `bench/r7rs/attr.py`。承接 [21](21-r7rs-gaps.md)、[22](22-gc-and-performance-followups.md)
@@ -86,6 +88,16 @@ cleat 65d407d（cleat-141）对 JVM Clojure 的 r7rs 56 项 × 3 轮取最小：
   2. **cleat-145**：小访问器（deftype 字段读、mcar / mcdr 一类）在调用点内联，扩展到镜像 / 包构建；
      内联决定必须跨自举阶段稳定（不动点），并对照 `restrict-loop-inlines?`（cleat-120 的循环内联限制）
      避免重新引入 array1 回退。
+     **落地范围（2026-10-21）**：只做 **eval 单元**与**包构建**两条路径（开关 `accinline`）；
+     "扩展到镜像"这半段**明确不做** —— 镜像构建仍 `inline-calls? = false`，内联决定不进种子，
+     否则 `BuildFromTheSeedReproducesTheSeed` 的逐字节一致口径会被打破（cleat-144 同口径）。
+     `restrict-loop-inlines?` 的协调结论：访问器特化只发生在被内联的包装函数子句内部，不新增循环体内的
+     用户函数内联，也没有为此新增豁免评估；array1 是否在开侧回退以 [notes M16 §8](../notes/r7rs-performance.md) 的
+     同轮配对比值为准。直接 `.getA` 的调用点（无 defn 包装、不走 `.inl`）不在本任务，交 cleat-153。
+     **口径（111 的 A/B 之后）：代码全落地但开关默认关（opt-in `CLEAT_OPT_ACCINLINE=1`）** —— 10 项 × 5 轮的
+     同轮配对里开侧整体只是中性（中位几何平均 x1.002）、没有任何一项达到可声明的收益，browse 反而 5/5 同向
+     慢 5.8%；机制对得上：这批基准的热访问器多是**直接 `.getA` 裸调用点**，本任务只在"包装函数被内联"时生效，
+     碰不到那一整批，生效的点只多付一次守卫分支。**没有收益就不进默认路径**，等 cleat-153 把裸调用点接上再重开。
 
 ### 2.4 keyword / symbol intern 与 `(str <long>)`（cleat-146）
 
@@ -146,6 +158,28 @@ cleat 65d407d（cleat-141）对 JVM Clojure 的 r7rs 56 项 × 3 轮取最小：
 Core / Host 全量测试、改 `src/clojure` 时种子不动点（stage2 == stage3）、
 受影响 r7rs 项的同窗口 A/B；里程碑收尾跑全量 56 项 × 3（cleat-150）。
 
+**145 验证后新增的纪律**（M16 §8 的实际教训）：
+1. **编译期"顺手多载入一个程序集"是行为改变，不是零成本。** `inline-target` 里无条件调用
+   `PackageIndex/PrepareNamespaceInterface` 让 eval / 加载期也按需载入依赖程序集，接口文件一登记，
+   本单元就直接链接依赖包的函数，第一次用到就跑那个包入口开头的镜像核对（`BootInterface.Check`），
+   主机镜像与包内镜像不是同一份时抛 StaleModuleException，打断一条与内联完全无关的加载。
+   判据收窄成"正在编包才问"（驱动线程局部状态里绑着 `:package`）。所以：新增的编译期按需载入一律按
+   **构建阶段门控**，并且跑一遍 neorepl / tools.build 那类**跨进程热替换**用例。
+2. **Bootstrap / NuGet 那批用例是筛法敏感的 flaky。** 同一个 main 构建，跑整个夹具时 4 条只输 Sqlite 那条，
+   换 `--filter` 只挑其中两条时 **main 也失败**（dotnet 的本地工具解析缓存按 包+版本 记安装路径，
+   cleat-078 已记过同一个坑）。判"我改坏了没有"必须**用同一种筛法做 main 对照**，不能只看一次结果。
+   补一条同类的：改了 `src/clojure` 重生成种子后 **boot image id 换代**，`/tmp/cleat-nuget-*` 那类
+   旧缓存里留着上一代镜像编出的包程序集，会把 Bootstrap 用例跑成 StaleModuleException ——
+   跑全套之前先把这些缓存目录移走，别把环境问题记成产品回退。
+3. **特化 / 内联时不要复用通用宿主调用发射器。** 145 的读侧最初直接发通用的 `GetInstanceField`，
+   而通用发射器要为 object 接收者补 `ldstr + ClojureStaticCalls.Instance`（= NotNil 检查）、
+   结果为 `System.Object` 时还要再过一道 `RetObject`；守卫成立时接收者必然非 nil，这两笔纯属白付，
+   合起来**比原来的接口调用更贵**（browse x1.538 / destruc x1.215 的可声明回退就是这么来的）。
+   改成专用节点 `GetInstanceFieldDirect`（`castclass` + `ldfld`，不发 NotNil / RetObject）后回到地板内。
+   纪律：新增的守卫内特化一律**自带发射器**，通用发射器的空值检查与返回值协议是**默认行为**的税，
+   要省就显式加参数（本轮是 `cg-static-host-call!` 的第 4 参 `guarded?`，默认 `false` 保持原行为）；
+   并且 A/B 的取证要落到 **IL 序列**，只看输出相同看不出这类纯成本回退。
+
 ## §7 任务拆分与依赖
 
 | 任务 | 内容 | 依赖 | 设计 |
@@ -168,7 +202,7 @@ Core / Host 全量测试、改 `src/clojure` 时种子不动点（stage2 == stag
 |---|---|---|---|
 | cleat-151 | 本机噪声地板标定（把"< 3% 记为噪声"换成分项门槛）+ 56 项三臂全量重跑 | cleat-150 | §6、notes M16 §5 ~ §6 |
 | cleat-152 | M14 / M15 回退（mbrot x0.904 / pi x0.937 / dynamic x0.829）的 commit 级 bisect 与机制归因 | cleat-151 | §5、cleat-149 §1 / §5 |
-| cleat-153 | 接口调用点的运行时类型反馈（145 之后剩下的那 1.3 ~ 4.4 ns/次） | cleat-145 | §2.3、§3、notes M15 归因 §1 |
+| cleat-153 | 接口调用点的运行时类型反馈（145 之后剩下的那 1.3 ~ 4.4 ns/次，含直接 `.getA` 一类的裸调用点） | cleat-145（**已落地 2026-10-21，依赖已就位；守卫形态可复用**） | §2.3、§3、notes M15 归因 §1 |
 
 另外两项仍挂在原任务书里，M17 一并处理：**147 的第 2 / 3 条**（每调用重建的闭包提升、变长参数数组，§3.2 / §3.3，
 按"量不出就不改"的纪律先用同 n 相减或 `GC.GetAllocatedBytesForCurrentThread` 重做量化）与

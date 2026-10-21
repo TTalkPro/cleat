@@ -520,6 +520,8 @@
         (and (= d0 "CallInstance") (= d1 4) (>= (count e*) 4)) [false (nth e* 2) (drop 4 e*)]
         (and (= d0 "GetStaticField") (false? d1) (= (count e*) 2)) [true nil ()]
         (and (= d0 "GetInstanceField") (false? d1) (= (count e*) 3)) [false (nth e* 2) ()]
+        ;; cleat-145 读侧直读（守卫保证实例已是具体类型）：布局与普通字段读相同，类型推断因此仍能拿到字段类型
+        (and (= d0 "GetInstanceFieldDirect") (false? d1) (= (count e*) 3)) [false (nth e* 2) ()]
         :else nil))
 
 (declare static-arg-type)
@@ -2045,7 +2047,7 @@
       (do (cg-raw-num e mc) (emit! mc (i 'call num-type (if (= t :fl) "ToDouble" "ToInt64") (i num-type) (type-clr t))))
       (and oa (numbers-long-ops (first oa))) (numbers-raw-emit-args! (rest oa) (first oa) mc)
       (raw-prim-invoke e t) (cg-prim-invoke! (raw-prim-invoke e t) mc :raw)
-      (raw-host-call e t) (cg-static-host-call! (raw-host-call e t) mc :raw)
+      (raw-host-call e t) (cg-static-host-call! (raw-host-call e t) mc :raw false)
       (and opt-joinraw? (cg-raw-join! e mc t)) nil
       :else (cg-raw-default e mc t))))
 
@@ -2119,8 +2121,12 @@
    "System.Byte" "ArgByte" "System.SByte" "ArgSByte" "System.Int16" "ArgInt16" "System.UInt16" "ArgUInt16" "System.Single" "ArgSingle"})
 
 (defn- cg-static-host-call!
-  "静态决议的宿主调用（原版 cg-static-host-call!）。sl：[签名 static? 实例 实参]。"
-  [sl mc ctx]
+  "静态决议的宿主调用（原版 cg-static-host-call!）。sl：[签名 static? 实例 实参]。
+  guarded? 为真表示接收者已经被具体类型守卫过（cleat-145 的字段直读）：实例位置不再补 ldstr + Instance(=NotNil)
+  的空检查（isinst 失败本来就走 else 分支，nil 接收者与错误类型仍由原接口调用报同样的错），
+  object 结果也不再过 RetObject（Clojure 定义的 deftype 字段本来就是 Clojure 的表示，与 cleat-113 对方法返回值
+  的跳过同理）；其余上下文（:raw / :native / :effect、Boolean、窄数值、装箱）的逻辑不变。"
+  [sl mc ctx guarded?]
   (let [[^objects sig static? inst args] sl
         decl (aget sig 0) nm (aget sig 1) pts (vec (aget sig 2)) ret (str (aget sig 3)) virt? (aget sig 4)
         convert! (fn [pt]
@@ -2138,11 +2144,13 @@
         opnds (concat (if static? [] [inst]) args)
         types (concat (if static? [] [:instance]) pts)
         raws (mapv (fn [x pt] (when-not (= pt :instance) (raw-long? x pt))) opnds types)
-        codes (mapv (fn [x raw?] (with-buffer mc #(cond (= raw? :native) (cg-static-host-call! (native-host-call x nil) mc :native)
+        codes (mapv (fn [x raw?] (with-buffer mc #(cond (= raw? :native) (cg-static-host-call! (native-host-call x nil) mc :native false)
                                                          raw? (cg-raw x mc raw?)
                                                          :else (cg x mc :value)))) opnds raws)
         conv! (fn [pt raw?]
-                (cond (= pt :instance) (emit! mc (i 'ldstr nm) (i 'call static-calls-type "Instance" (i obj obj) obj) (i 'castclass decl))
+                (cond (= pt :instance) (if guarded?
+                                        (emit! mc (i 'castclass decl))
+                                        (emit! mc (i 'ldstr nm) (i 'call static-calls-type "Instance" (i obj obj) obj) (i 'castclass decl)))
                       (and raw? (= pt "System.Int32")) (emit! mc (i 'call "clojure.lang.RT" "intCast" (i int64-type) int32-type))
                       raw? nil
                       :else (convert! pt)))]
@@ -2165,7 +2173,8 @@
       (= (str (aget sig 5)) "ctor") (finish-value! mc ctx)
       (= ret "System.Boolean") (finish-bool! mc ctx)
       :else (do (cond (= ret "System.Void") (emit! mc (i 'ldnull))
-                      (= ret "System.Object") (when-not (and (> (alength sig) 6) (true? (aget sig 6)))   ; Clojure 定义的类型的方法：已是 Clojure 表示（cleat-113）
+                      (= ret "System.Object") (when-not (or guarded?   ; 守卫过的字段读（cleat-145）：同 cleat-113，Clojure 定义的类型的字段已是 Clojure 表示
+                                                           (and (> (alength sig) 6) (true? (aget sig 6))))   ; Clojure 定义的类型的方法：已是 Clojure 表示（cleat-113）
                                                 (emit! mc (i 'call static-calls-type "RetObject" (i obj) obj)))
                       (= ret "System.Int32") (emit! mc (i 'call static-calls-type "RetInt32" (i int32-type) obj))
                       (= ret "System.Int64") (emit! mc (box-long))
@@ -2203,6 +2212,21 @@
           nil)
         (emit! mc (i 'stfld decl (aget sig 1)) (i 'ldloc temp))
         (finish-value! mc ctx)))))
+
+(defn- cg-get-instance-field-direct!
+  "cleat-145 的读侧直读（cg-set-instance-field! 的镜像）：(GetInstanceFieldDirect 'T 'f x)。
+  生产该节点的内联子句已经有具体类型守卫（isinst + ldnull + cgt.un），守卫对 nil 为假，所以 nil 接收者与
+  错误类型都落在 else 分支的原接口调用上，异常文本与求值次数不变；这里因此可以省掉通用发射器给实例位置补的
+  ldstr + Instance(=NotNil) 与 object 结果的 RetObject。
+  决议不出类型 / 字段时（桩、嵌套类、opt-host? 关闭）退回普通的 GetInstanceField 节点，发射与优化前逐字相同。
+  有意不做的一件：field-read-of 只认 GetInstanceField，新节点因此不进循环标量替换（cleat-123）的改写路径 ——
+  少一类改写机会，换零风险（守卫节点与标量替换叠在一起的形状没有被验证过）。"
+  [e* mc ctx]
+  (let [[t field x] e*
+        sl (host-call-signature "GetInstanceFieldDirect" false e*)]
+    (if (vector? sl)
+      (cg-static-host-call! sl mc ctx true)
+      (cg (list 'clj-call "GetInstanceField" false t field x) mc ctx))))
 
 ;; —— 变量与局部变量清除（cleat-042 第 5 项，原版同名）——
 
@@ -2624,6 +2648,8 @@
        (= d0 "RuntimeSigEntry") (cg-runtime-sig-entry! e* mc ctx)   ; cleat-133 / 138
        (= d0 "RtSpecEntry") (cg-rtspec-entry! e* mc ctx)   ; cleat-138
        (= d0 "KnownCall") (cg-known-call! e* mc ctx)   ; cleat-110
+       (and (= d0 "GetInstanceFieldDirect") (false? d1) (= 3 (count e*)))
+       (cg-get-instance-field-direct! e* mc ctx)   ; cleat-145 读侧直读（守卫之后）
        (and (= d0 "SetInstanceField") (false? d1) (= 4 (count e*)))
        (cg-set-instance-field! e* mc ctx)   ; cleat-145
        (and (= d0 "EscapePropagate") (= 1 (count e*))) (cg-escape-propagate! (first e*) mc ctx)   ; cleat-125
@@ -2640,7 +2666,7 @@
          :num (do (box-raw! mc :num) (finish-value! mc ctx))
          (let [sig (host-call-signature d0 d1 e*)]
            (if (vector? sig)
-             (cg-static-host-call! sig mc ctx)
+             (cg-static-host-call! sig mc ctx false)   ; 普通静态决议调用：接收者没有被具体类型守卫过
              (let [argc (count e*)]
                (operands! mc (map (fn [x] #(cg x mc :value)) e*))
                (when d1 (pack-array! mc (- argc d1)))
