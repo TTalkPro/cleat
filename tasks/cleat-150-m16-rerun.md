@@ -9,6 +9,14 @@
   `export PATH=/home/david/.local/share/mise/dotnet-root:$PATH`。跑分前的纪律：种子换代 → boot image id 变，
   `/tmp` 里上一代留下的 `cleat-nuget-*` / `cleat-tools-build-*` 缓存里的包程序集是按旧镜像编的，
   不清会在用例开头的 `BootInterface.Check` 抛 StaleModuleException（本轮踩过，见 notes M16 §8）。
+  **收口跑已启动**：56 项 × 5 轮 × 三臂（cleat-on / cleat-off / jvm，同轮交替）在 `~/workspace/cleat-145-git`
+  （= main 最终态）上后台跑，`R7_MAXLOAD=1.2 R7_LOAD_CAP=1200`、`JAVA=/usr/bin/java`
+  （111 的运行时是 OpenJDK 25.0.4+7，与 M15 的 1.61x 基线同版本号；但 .NET 已升到 10.0.13，绝对值不与 §1 ~ §4 并列），
+  结果追加 `results/m150-full-111.jsonl`，日志 `/tmp/m150-full.log`。按 10-20 那份 `m16ab-full` 的实测墙钟
+  （同一台 111、同样 56 项 × 三臂，那份的墙钟只用来估时间不是估性能：第 2 / 3 轮各 1336 / 1330 s）
+  估算 5 轮 ≈ 1.9 ~ 2.5 h（等安静窗口的时间另计）。
+  跑分期间这台机器不再做别的构建 / 测试。
+  汇总用 `R7_PAIR_MAXLOAD=1.5 python3 bench/r7rs/m16sum.py m150-full-111`，之后才是第 3 条的单开关贡献分解。
 - 设计依据：[28 §6 ~ §7](../designs/28-hot-path-optimizations.md)
 
 ## 问题
