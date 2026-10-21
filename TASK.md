@@ -157,6 +157,9 @@
 | [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 完成 |
 | [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 完成 |
 | [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项三臂整体重跑与开关贡献分解（runner `bench/r7rs/m16full.py` 已就位） | M16 | cleat-142 ~ 149 | 进行中（2026-10-20 下午起 111 离线：三臂全量改本机，5 轮 + 同轮配对比值口径，见 notes M16 §5；等 145 落地后一起跑） |
+| [cleat-151](tasks/cleat-151-noise-floor-and-full-rerun.md) | M17 口径：本机噪声地板标定（判定门槛写进汇总器）+ r7rs 56 项三臂全量重跑 | M17 | cleat-150 | 未开始 |
+| [cleat-152](tasks/cleat-152-m1415-regression-bisect.md) | M14 / M15 回退（mbrot / pi / dynamic）的 commit 级定位与机制归因 | M17 | cleat-151 | 未开始 |
+| [cleat-153](tasks/cleat-153-callsite-type-feedback.md) | 调用点的运行时类型反馈：接口调用单态化（复用 M14 / M15 的签名表基建） | M17 | cleat-145 | 未开始 |
 
 ## 里程碑
 
@@ -183,11 +186,14 @@
 | M14 运行时签名特化（2026-10-18 起） | cleat-132 ~ cleat-136 | 观察 → 按需生成 → 查表分发、引用形参、多签名表与回收（[24](designs/24-runtime-signature-specialization.md) ~ [26](designs/26-runtime-signature-tables.md)） |
 | M15 JIT 式特化（2026-10-19 起） | cleat-137 ~ cleat-141 | 删除 LL / DD 预生成、单一签名 key、整体函数特化、编译期调用路径类型推导（[27](designs/27-jit-style-runtime-specialization.md)） |
 | M16 热路径优化（2026-10-20 起） | cleat-142 ~ cleat-150 | M15 归因复核后的修正优先级：char 装箱、String 直读、跨 ns deftype 决议与访问器内联、intern、nth / 闭包 / 变长、GC profile、回归排查（[28](designs/28-hot-path-optimizations.md)） |
+| M17 口径与回退收口（2026-10-21 起） | cleat-151 ~ cleat-153 | 本机噪声地板标定 + 56 项三臂全量、M14 / M15 回退的 commit 级定位、调用点类型反馈（承接 147 第 2 / 3 条与 149 遗留的三项待办） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
 
 **M16（2026-10-20 起，现行）**：142 / 143 / 146 完成（远端同窗口开 / 关 A/B：wc -39%、browse -4%、read1 -2.5%，lattice 的 strseq 分支位置回退已修正，见 [notes M16](notes/r7rs-performance.md)）→ 149（先还债、稳口径）/ 144 / 148 并列 → 145（依赖 144）→ 147 → 150（[28 §7](designs/28-hot-path-optimizations.md)）。
+
+**M17（2026-10-21 起）**：151（先标定，否则后面每一项都在猜）→ 152（依赖 151 的门槛；与 145 的落地并行）→ 153（依赖 145 的守卫形态）。147 的第 2 / 3 条（闭包提升、变长参数数组）也在 M17 内做，任务书仍挂在 cleat-147。
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 
