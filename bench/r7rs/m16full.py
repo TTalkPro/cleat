@@ -59,6 +59,26 @@ ARMS = os.environ.get('ARMS', 'cleat-on,cleat-off,jvm').split(',')
 OUT = os.environ.get('R7_OUT', 'm16full')
 
 
+def completed(out_path):
+    # 断点续跑（cleat-150 的 111 全量被会话断开杀掉过一次）：已写进 jsonl 的
+    # (label, rep, name) 直接跳过，避免重跑已完成的三臂格子造成同一格两份记录。
+    # 设 R7_RESUME=0 强制从头（新开 R7_OUT 时不受影响，缺省对空 / 不存在文件是空集）。
+    done = set()
+    if os.environ.get('R7_RESUME', '1') == '0' or not os.path.exists(out_path):
+        return done
+    with open(out_path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            done.add((r.get('label'), r.get('rep'), r.get('name')))
+    return done
+
+
 def one(arm, rep, name):
     saved = os.environ.get('CLEAT_NO_OPT')
     try:
@@ -101,7 +121,14 @@ if __name__ == '__main__':
         ','.join(ARMS), reps, len(names), NOPT, MAXLOAD, LOAD_CAP,
         os.environ.get('JAVA', 'java（PATH 缺省）'),
         run.jvm_version() if 'jvm' in ARMS else '-'), flush=True)
+    out_path = os.path.join(B, 'results', OUT + '.jsonl')
+    done = completed(out_path)
+    if done:
+        print('# resume: skipping %d completed (label, rep, name) cells in %s'
+              % (len(done), out_path), flush=True)
     for rep in range(1, reps + 1):
         for name in names:
             for arm in ARMS:
+                if (arm, rep, name) in done:
+                    continue
                 one(arm, rep, name)
