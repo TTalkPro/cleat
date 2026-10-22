@@ -1,7 +1,8 @@
 # cleat-153 调用点的运行时类型反馈（接口调用单态化）
 
 - 里程碑：M17　依赖：cleat-145（访问器内联，同一套"具体类型守卫 + 直读 / 直存"发射；**145 已于 2026-10-21 落地但默认关**，
-  守卫形态与专用节点 `GetInstanceFieldDirect`（`codegen.clj` 的 `cg-get-instance-field-direct!`）可直接复用）　状态：未开始
+  守卫形态与专用节点 `GetInstanceFieldDirect`（`codegen.clj` 的 `cg-get-instance-field-direct!`）可直接复用）
+  状态：完成（2026-10-22，按"量化 + 记账"收口，不落调用点类型反馈的默认实现）
 - 设计依据：[27](../designs/27-jit-style-runtime-specialization.md)、[28 §2.3 / §3](../designs/28-hot-path-optimizations.md)、
   [notes 的 M15 差异归因 §1](../notes/r7rs-performance.md)
 
@@ -40,6 +41,13 @@ CallInstance 的收益基线）、`callsite-concrete`（`^r7rs.util.MPair` 具�
 probes.py 无需注册行名（解析全部 16 个形状）。本机初读数（min-of-3，噪声地板待 151，只报量级）：
 接口直调 12.6 ns、具体提示 11.2 ns、双态 14.1 ns；145 直读 13.5 ns（accinline 开）——接口直调到
 直读的差距约 1 ns/次，是否够格由 153 的量化判定决定。跑分与裁决一律按默认路径（accinline 关）。
+
+**五轮判定（2026-10-22，本机，net-empty ns/iter 中位）**：默认臂接口 12.3 / 具体提示 10.7
+（**+1.6 ns/次，5/5 同向**）/ 默认臂包装 + 接口 14.8（只证明能跑）/ 双态 13.9（**+1.6 ns/次，5/5 同向**）。
+`CLEAT_OPT_ACCINLINE=1` 臂接口 13.8 / 145 直读 12.6（**+1.2 ns/次，5/5 同向**）/ 具体提示 10.6 /
+双态 13.9。**结论：单态上限明确但只有 ~1.6 ns/次，双态已付出同量级代价；叠上反馈计数 / 签名表查表
+后，预期净收益在零附近。按 28 §3 "量不出收益就不改默认路径"，本任务收口为量化 + 记账，不落调用点
+运行时反馈。量化全文见 [notes M17 §4](../notes/r7rs-performance.md)。**
 
 ## 工作内容
 
