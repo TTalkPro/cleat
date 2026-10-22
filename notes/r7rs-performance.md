@@ -870,3 +870,38 @@ R7_PAIR_MAXLOAD=1.5 python3 bench/r7rs/m16sum.py m145-ab2
      是旧 `/tmp/cleat-nuget-*` 缓存里留着**上一代镜像**编出的包程序集 —— 用整夹具的筛法重跑同一构建得到
      **3 passed / 1 failed**，只挑这两条时连 main 也失败。判"我改坏了没有"必须**同一种筛法做对照**，
      且种子换代后要先把这些缓存目录清掉再看。
+
+## M16 收口（cleat-150，2026-10-22）：111 三臂全量、单开关归因与分配画像
+
+- **跑法**：56 项 × 5 轮 × 三臂（cleat-on / cleat-off / jvm，同轮交替），111 上的 `~/workspace/cleat-145-git`
+  （= main 最终态 b407f65，.NET 10.0.13 / OpenJDK 25.0.4+7，绝对值不与 §1 ~ §4 的旧口径并列）。
+  第一次后台跑被会话断开杀掉（只到 rep3 中段），`m16full.py` 补了断点续跑（按 jsonl 里已有的
+  (label, rep, name) 跳过，`R7_RESUME=0` 强制从头）后补完 —— 结果 `results/m150-full-111.jsonl` 840 条、
+  0 条 loaded、0 对被 load > 1.5 筛掉，全部配对有效。汇总：`R7_PAIR_MAXLOAD=1.5 m16sum.py m150-full-111`。
+- **总口径**：对 JVM 的倍数（on/jvm 配对比值中位）几何平均 **x1.594**（min/min x1.595；双态上下界
+  1.450 ~ 1.690），相对 M15 的 1.61x 是可声明的整体改善。M16 五项开关的整体贡献（on/off 配对）
+  几何平均 **x0.981**。双态项（ntakl / puzzle / takl / triangl）按区间报告，只让单项换态的敏感性
+  分别是 +2.5% / +1.0% / +2.1% / +0.8%。
+- **收益项**（5/5 同向，超 3% 地板）：wc **x0.558**、cat x0.830、browse x0.901、tail x0.921、
+  parsing x0.949、string x0.965、gcbench x0.972、fibc x0.972、triangl x0.978、fibfp x0.675（对 JVM
+  已反超）、sum x0.113、lattice x0.549。
+- **回退项与归因**（单开关归因：每开关 4 项 × 5 轮 × 双臂，`results/m150-attr-*.jsonl`）：
+  - **array1 x1.029（5/5 同向，可声明）→ 主因是 intern**：单关 intern 时 array1 x1.022（0/5），
+    其余四项开关都 ≤ x1.007。机制上 array1 的分配画像（Int64 59% + Object[] 40%，19.4 GB 总分配）
+    与 intern 的字符串键快路径没省到它的热路径一致。**记账保留默认开**：intern 换来 wc -44%、
+    cat -17% 这批收益，array1 +2.2~2.9% 是值得付的价；要动它属于后续任务（比如给 array 类热路径
+    绕开 intern 判断），不在 M16 内做。
+  - **lattice x1.025（0/5 同向，可声明）→ strseq x1.047（0/5）是主项**，crossnstype x1.024（0/5）
+    次之，charbox x0.982 部分抵消。strseq 的分支位置回退在 142/143 轮已修过一次，这是修完后的
+    残余成本，照实记账（净额仍是 lattice 整体受益，对 JVM x0.549）。
+  - simplex x1.026（2/5）、matrix x1.020（1/5）：五个单开关都落在 3% 地板内且方向混杂
+    （simplex 上 charbox x0.962、nthfast / crossnstype x0.980 还是收益），**归因不到单一开关**，
+    按地板口径记"组合效应，地板附近，不可判定"。
+  - ntakl x1.064 只有 1/5 同向（JVM 侧双态），不可判定。
+- **分配画像**（111，`tools/alloc.cs --top 8`，与 M15 画像对照）：browse 4.78 GB，`System.Char`
+  已退出 top（142 生效）；peval 5.86 GB，`Object[]` 4.0% → 3.8%，此前占 17% 的 `ref_count$rc$fn__N`
+  闭包类退出 top8；scheme 4.64 GB，`Object[]` 45.4% 仍是最大项（147 第 3 条的量化基建已就位，
+  M17 按新净值口径决策）；array1 19.4 GB（Int64 59% + Object[] 40%）。
+- **语义门禁**：本轮跑分不落产品代码，语义门禁沿用同一棵树在 145 收口时过掉的完整矩阵
+  （种子不动点 stage2 == stage3、conformance gate 521 OK、CTS 6868/29/6、test-clojure 基线逐字一致、
+  Core 123/123、Host 283/285——唯一失败是 111 缺 `Microsoft.Data.Sqlite` 的既有环境项）。
