@@ -3262,6 +3262,14 @@
   (or @live-unit?
       (let [a (.Assembly t)] (and (not (.IsDynamic a)) (not (str/blank? (.Location a)))))))
 
+(defn- exact-rest-invoke-method
+  "cleat-154：变长函数类的必需元数直达入口（没有 RestFn 的 arity switch，也不为恰好必需元数建尾数组）。
+  只认我们生成的公开实例方法；旧镜像 / 普通函数类自然回退 KnownCall 的静态入口或 IFn.invoke。"
+  [^Type t n]
+  (when (and (known-call-target-ok? t) (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))
+    (let [m (.GetMethod t "invokeExact" ^|System.Type[]| (into-array Type (repeat (long n) Object)))]
+      (when (and m (not (.IsStatic m)) (.IsPublic m) (= t (.DeclaringType m))) m))))
+
 (defn- cg-rt-spec-call!
   "(clj-call \"RtSpecCall\" #f '[Var 类 签名 key 类型码] Var读 实参 …)（cleat-140）：Var 值仍是编译时通用函数时
   直调同一单元里的特化类；Var 重定义后走 IFn.invoke。实参已由编译期证明，但仍然只求值一次。"
@@ -3311,9 +3319,17 @@
 
 (defn- cg-known-call!
   "(clj-call \"KnownCall\" #f '类 Var读 实参 …)（cleat-110）：先求函数值再求实参（同 IFn 调用的顺序），isinst 类时 call 类.invokeStatic(f, 实参 …)，
-  否则 IFn.invoke。临时变量按局部变量清除的规则读（不让实参在调用期间被临时变量抓住）。目标类不能引用时就是普通的 IFn 调用。"
+  否则 IFn.invoke。临时变量按局部变量清除的规则读（不让实参在调用期间被临时变量抓住）。目标类不能引用时就是普通的 IFn 调用。
+  cleat-154：有 invokeExact 的变长函数类在同一个 isinst 守卫后直发必需元数，省掉 RestFn 的 arity switch 与尾数组。"
   [e* mc ctx]
   (let [t (quoted-datum (first e*)) f (second e*) args (drop 2 e*) n (count args)]
+    (let [static (when (instance? Type t)
+                   (.GetMethod ^Type t "invokeStatic"
+                               ^|System.Type[]| (into-array Type (repeat (inc (long n)) Object))))
+          ;; cleat-154：同一个变长函数类可能既有 fixed 子句的 invokeStatic（如 (fn ([] …) (& …) …)），
+          ;; 又有 required-0 的 invokeExact。固定入口优先，只有没有静态固定入口时才直达 doInvoke。
+          exact (and (nil? static) (instance? Type t) (<= n 20)
+                     (exact-rest-invoke-method ^Type t n))]
     (if-not (and (instance? Type t) (known-call-target-ok? t) (<= n 20)
                  (pos? (count (Cleat.Core.Runtime.ClojureStaticCalls/IsinstName t))))
       (cg* (with-output-language [L3 Expr] (out (clj-invoke ~f ~args ...))) mc ctx)
@@ -3326,7 +3342,9 @@
         (ldloc-clear! mc root)
         (doseq [l temps] (ldloc-clear! mc l))
         (let [merge (when *tiered-method* (new-local! mc obj))]   ; 结果不留在栈上跨过汇合点（同 if，cleat-114）
-          (emit! mc (i 'call cname "invokeStatic" (apply i (objs (inc n))) obj))
+          (if exact
+            (emit! mc (i 'callvirt cname "invokeExact" (apply i (objs n)) obj))
+            (emit! mc (i 'call cname "invokeStatic" (apply i (objs (inc n))) obj)))
           (when merge (emit! mc (i 'stloc merge)))
           (emit! mc (i 'br end) (i 'label slow))
           (ldloc-clear! mc root)
@@ -3336,7 +3354,7 @@
           (when merge (emit! mc (i 'stloc merge)))
           (emit! mc (i 'label end))
           (when merge (emit! mc (i 'ldloca merge)) (take-slot! mc)))
-        (finish-value! mc ctx)))))
+        (finish-value! mc ctx))))))
 
 (defn- cg-escape-propagate!
   "(clj-call \"EscapePropagate\" #f 子表达式)（cleat-125）：marker 是跨调用返回的信号。不在保护区内时，
@@ -3415,6 +3433,16 @@
     (when variadic
       (add! (i 'method "getRequiredArity" (i 'attrs 'override) (i 'params) (i 'ret int32-type)
                (i 'body (i 'ldc.i4 variadic) (i 'ret)))))
+    ;; cleat-154：KnownCall 已知函数类且实参个数恰为变长子句必需元数时，跳过 RestFn.invoke 的 arity switch；
+    ;; null 是 `&` 尾参数。超过必需元数的调用仍走通用协议，因为那里本来就要构造 rest seq/array。
+    (when variadic
+      (add! (i 'method "invokeExact" (i 'attrs 'optimize)
+               (apply i 'params (objs variadic)) (i 'ret obj)
+               (apply i 'body (concat [(i 'ldarg 0)]
+                                      (map #(i 'ldarg %) (range 1 (inc variadic)))
+                                      [(i 'ldnull)
+                                       (i 'call cname "doInvoke" (apply i (objs (inc variadic))) obj)
+                                       (i 'ret)])))))
     (add! (i 'method "HasArity" (i 'attrs 'override) (i 'params int32-type) (i 'ret bool-type)
              (apply i 'body (concat (mapcat (fn [k] [(i 'ldarg 1) (i 'ldc.i4 k) (i 'beq 'YES)]) fixed)
                                     (if variadic [(i 'ldarg 1) (i 'ldc.i4 variadic) (i 'bge 'YES)] [])

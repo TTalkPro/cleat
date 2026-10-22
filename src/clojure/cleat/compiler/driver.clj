@@ -84,7 +84,7 @@
     (take-result)))
 
 (defn- register-eval-accessors!
-  "扫描 eval 的顶层 L0，更新接口访问器实现表；CLEAT_NO_OPT=accinline 时保持空表，退回旧内联体。"
+  "扫描 eval 的顶层 L0，更新接口访问器实现表；CLEAT_OPT_ACCINLINE=1 才启用，缺省保持空表，退回旧内联体。"
   [l0]
   (when an/opt-accinline?
     (let [found (atom {})]

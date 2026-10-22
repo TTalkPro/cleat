@@ -328,6 +328,20 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
+    /// cleat-154：变长函数类生成必需元数直达入口，KnownCall 在 isinst 守卫后直发；恰好必需元数不经过
+    /// RestFn.invoke 的 arity switch，也不构造尾数组。超过必需元数、apply、闭包、重定义与错误边界输出不变。
+    /// </summary>
+    [Test]
+    public void KnownArityVariadicCallsSendDirectly()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "varargs_semantics.clj");
+        string expected = File.ReadAllText(Path.ChangeExtension(script, ".out")).Replace("\r\n", "\n");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(on.Out, Is.EqualTo(expected), on.ToString());
+    }
+
+    /// <summary>
     /// cleat-144：另一个 ns / 编译单元里的 deftype 与 definterface 在编译期可决议。用例
     /// tests/Cleat.Host.Tests/data/crossns_semantics.clj 覆盖 :import、全名与短名类型提示、构造、instance?；
     /// CLEAT_NO_OPT=crossnstype 走旧决议时输出仍与 .out 逐字相同。另编两个包程序集验证消费者单独编译时能从

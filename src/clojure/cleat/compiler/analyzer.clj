@@ -533,6 +533,19 @@
           (when (and m (.IsStatic m) (.IsPublic t) (not (.IsNested t)) (not (.IsGenericType t)))
             t))))))
 
+(defn- exact-rest-call-class
+  "cleat-154：非动态 Var 的当前值是变长函数类，且有参数个数为 n 的公开实例 invokeExact（必需元数直达入口）。
+  该入口在 codegen 生成；这里只做发现，语义仍由 KnownCall 的 isinst 守卫保证重定义后回落。"
+  [^Var v n]
+  (when (and opt-known-calls? (not (.isDynamic v)) (.hasRoot v))
+    (let [r (.getRawRoot v)]
+      (when (instance? clojure.lang.RestFn r)
+        (let [^Type t (class r)
+              m (.GetMethod t "invokeExact" ^|System.Type[]| (into-array Type (repeat (long n) Object)))]
+          (when (and m (not (.IsStatic m)) (.IsPublic m) (.IsPublic t)
+                     (not (.IsNested t)) (not (.IsGenericType t)) (= t (.DeclaringType m)))
+            t))))))
+
 (defn- direct-link-target [v n]
   (let [r (AotPaths/DirectLinkTarget v n)] (when (string? r) r)))
 
@@ -683,7 +696,7 @@
       :else
       (if-let [cls (direct-link-target v n)]
         (L0-out (clj-static-call ~cls ~n ~(var-reference v) ~@(mapv #(analyze % (assoc nt :pos pos)) args)))
-        (if-let [kc (known-call-class v n)]
+        (if-let [kc (or (known-call-class v n) (exact-rest-call-class v n))]
           ;; cleat-110：Var 的当前值是有 invokeStatic 的函数类——codegen 在可以引用该类时生成 isinst 守卫后的直接调用
           (apply clj-call "KnownCall" false (q kc) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
           (invoke-node (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args)))))))

@@ -1,6 +1,6 @@
 # cleat-154 变长调用已知元数直发
 
-- 里程碑：M18　依赖：无（建议最先做：M18 收益上限最大）　状态：未开始
+- 里程碑：M18　依赖：无（建议最先做：M18 收益上限最大）　状态：本地实现完成，待 111 同轮 A/B
 - 设计依据：[28 §3.3 / §7.2](../designs/28-hot-path-optimizations.md)、
   [notes M17 §3](../notes/r7rs-performance.md)、cleat-147 的量化结论
 
@@ -45,4 +45,15 @@ cleat-147 已把变长调用的成本量化到可判定的量级：111 口径下
   真实负载至少看 peval / browse / dynamic，同时看 list / lattice 这类不受利项不回退。
 - 门禁：Release 0 warning、gate 521 分类不变、CTS 6868/29/6、test-clojure 基线、Core / Host 全量。
 - stage2 == stage3，BuildFromTheSeed 通过；111 同轮配对给出逐项门槛表，不达标不声称收益。
+
+## 进展（2026-10-22）
+
+- 已生成 `invokeExact(required arity)` 直达入口；KnownCall 的 `isinst` 守卫不变。命中静态固定入口时仍优先固定入口，
+  避免 `(sorted-map)` 这类 fixed/variadic 双子句函数把必需元数 0 的变长入口误当成当前元数。
+- `register-eval-accessors!` 的 accinline docstring 已并入同一个种子不动点窗口；无新增优化开关。
+- 新增语义矩阵覆盖恰好必需元数、越过必需元数、`apply`、闭包、重定义、副作用顺序与 arity 错误。
+- 本地已过：Release 0 warning、种子 stage2 == stage3、BuildFromTheSeed、Host 286/286、Core 123/123、
+  conformance gate 521/521、CTS 6868/29/6、test-clojure 3877/25/4 基线。
+- cleat-147 的 `rest0` / `rest2` 探针调用元数越过 required arity，按本任务范围仍保留 RestFn 协议；
+  恰好 required arity 的路径需在 111 补独立探针并和真实负载一起配对，完成前不声称收益。
 
