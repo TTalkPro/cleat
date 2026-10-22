@@ -1,6 +1,7 @@
 # cleat-151 M17：本机噪声地板标定与 r7rs 全量三臂重跑
 
-- 里程碑：M17　依赖：cleat-150（沿用它的 runner 与配对口径）　状态：未开始（2026-10-21：111 已恢复在线，
+- 里程碑：M17　依赖：cleat-150（沿用它的 runner 与配对口径）　状态：完成（2026-10-22，四条工作内容全做，见文末结论）
+（历史：2026-10-21：111 已恢复在线，
   M16 §6 的单开关归因已在 111 上收尾并否证了那两个疑点，见 [notes M16 §7](../notes/r7rs-performance.md) ——
   本任务的地板标定与全量三臂仍全部待做）
 - 设计依据：[28 §6 ~ §7](../designs/28-hot-path-optimizations.md)、[notes 的 M16 §5 ~ §6](../notes/r7rs-performance.md)
@@ -35,3 +36,21 @@ M16 的收口数字还没有：56 项全量的三臂对照（对 JVM 的倍数 v
 - notes/r7rs-performance.md 新增 M17 节：地板表 + 全量三臂表 + 对 M15 1.61x 的结论（改善可声明才写量级）。
 - `designs/28` §6 的验证纪律块按标定结果改写（把"< 3% 记为噪声"换成分项门槛）。
 - 跑分窗口内不做任何构建 / 测试；被 load 筛除的轮次留在 jsonl 里可追溯。
+
+## 结论（2026-10-22）
+
+1. **地板标定**（本机 Debian-VM01，10 项 × 9 轮）：轮内极差 max/min 从 pi 1.050 到 takl 1.456，
+   分项相差一个数量级；检出 5% 差异需要的同轮配对数 pi/mbrot 5 对即可、wc 要 156 对、takl 要 175 对。
+   工具 `bench/r7rs/floor.py`、门槛 `results/floor-Debian-VM01.json`，原始数据 `results/floor.jsonl`
+   （rep8 时被外部 SIGTERM 杀过一次，缺格补齐后汇总重算，无影响）。结论与本机只作补充、判定优先 111。
+2. **门槛落地**：`m16sum.py` 读 `R7_FLOOR`（缺省 `bench/r7rs/floor.json`，不存在则行为与旧版逐字
+   一致——已用 m150-full-111 的输出 diff 验证为空）；门槛表存在时低于 `min_declared_ratio_delta`
+   或同向轮数不足的格子输出"不可判定"。`designs/28` §6 的"< 3% 记为噪声"按此改写成按项门槛的引用。
+3. **全量三臂**（111，`m151-full-111.jsonl` 840 格 0 loaded）：对 JVM **x1.596**、开关贡献
+   **x0.983** —— 与 150 的 x1.594 / x0.981 复核一致，M16 结论可复现。回退项读数：array1 x1.022
+   （5/5，与 intern 归因一致）、lattice x1.031、simplex x1.026（均在地板附近，151 的按项门槛下
+   lattice / simplex 已落到"不可判定"），ntakl 不可判定。
+4. **双态项口径**沿用 149：takl / ntakl / triangl / puzzle 报区间，不参与 min-of-N。
+
+notes/r7rs-performance.md 新增 M17 §1（地板表）与 §2（三臂重跑）。M17 剩余：cleat-152（bisect）、
+153（调用点反馈）、147 第 2/3 条。

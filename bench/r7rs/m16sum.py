@@ -30,6 +30,25 @@ SRC = os.path.join(B, 'results', OUT + '.jsonl')
 if not os.path.exists(SRC):
     raise SystemExit('没有数据：' + SRC)
 
+# cleat-151 的判定门槛：缺省读 bench/r7rs/floor.json；文件不存在时不做任何新判定，
+# 后面的输出与没有地板表的旧版逐字一致（3% 只停留在旧的口头口径，不改旧表）。
+# 支持的键：items.<name>.min_declared_ratio_delta / min_same_direction；
+# default 是全局缺省；某个文件里没有 default 时，没有条目的项回落到 0.03 / 不加同向门槛。
+FLOOR_PATH = os.path.abspath(os.environ.get('R7_FLOOR', os.path.join(B, 'floor.json')))
+FLOOR = None
+if os.path.exists(FLOOR_PATH):
+    with open(FLOOR_PATH, encoding='utf-8') as f:
+        FLOOR = json.load(f)
+
+
+def floor_rule(name):
+    if FLOOR is None:
+        return None
+    cfg = (FLOOR.get('items') or {}).get(name) or FLOOR.get('default') or {}
+    delta = cfg.get('min_declared_ratio_delta', 0.03)
+    same = cfg.get('min_same_direction')
+    return float(delta), (int(same) if same is not None else None)
+
 arms = ('cleat-on', 'cleat-off', 'jvm')
 recs = {a: [] for a in arms}
 loads = {}
@@ -74,6 +93,7 @@ for a in arms:
 
 PEERS = tuple((key, peer) for peer, key, _ in COMPARISONS)
 dropped_by_load = 0
+UND = '不可判定'
 
 
 def paired_ratios(name, peer_arm):
@@ -99,6 +119,13 @@ def paired_ratios(name, peer_arm):
 
 
 print('\n===== 同轮配对比值（本机口径：判定只认这张表） =====', flush=True)
+if FLOOR is not None:
+    default = FLOOR.get('default') or {}
+    default_delta = default.get('min_declared_ratio_delta', 0.03)
+    print('判定门槛：%s（全局缺省量级 %s%% / 同向 %s 轮；无全局缺省的项回落 3%%）' % (
+        FLOOR_PATH,
+        ('%.0f' % (100 * default_delta) if isinstance(default_delta, (int, float)) else default_delta),
+        default.get('min_same_direction', '无')), flush=True)
 print('剔除 loaded 记录 %d 条；load > %.1f 的配对剔除 %d 对%s（R7_PAIR_MAXLOAD 可另指门槛；带 * 的格子 = 筛后无配对、退回全部配对）' % (
     drops, PAIR_MAXLOAD, dropped_by_load,
     '（--include-loaded 已保留全部轮）' if INCLUDE_LOADED else ''), flush=True)
@@ -110,13 +137,28 @@ for n in sorted({k[0] for k in by_rep['cleat-on']}):
     for key, peer_arm in PEERS:
         rs, total = paired_ratios(n, peer_arm)
         if not rs:
-            cells.append(('—', '—'))
+            cells.append((UND, UND) if FLOOR is not None else ('—', '—'))
             continue
         md = statistics.median(rs)
+        # 有地板表时同向取中位方向；没有地板表时保持旧列名和旧算法（只数 <1）。
+        if md > 1.0:
+            same_dir = sum(1 for x in rs if x > 1.0)
+        elif md < 1.0:
+            same_dir = sum(1 for x in rs if x < 1.0)
+        else:
+            same_dir = sum(1 for x in rs if x == 1.0)
+        rule = floor_rule(n)
+        under_threshold = (rule is not None and
+                           (abs(md - 1.0) < rule[0] or
+                            (rule[1] is not None and same_dir < rule[1])))
+        if under_threshold:
+            cells.append((UND, UND))
+            continue
         meds[key].append(md)
         star = '*' if len(rs) != total else ''
         cells.append(('x%.3f%s (%d/%d 对: %s)' % (md, star, len(rs), total, ' '.join('%.3f' % x for x in rs)),
-                      '%d/%d' % (sum(1 for x in rs if x < 1.0), len(rs))))
+                      '%d/%d' % ((same_dir if FLOOR is not None else
+                                  sum(1 for x in rs if x < 1.0)), len(rs))))
     print('%-12s %s' % (n, ' '.join('%-30s %-6s' % c for c in cells)), flush=True)
 
 # 几何平均按“各项配对比值中位”算（compare.py 的几何平均按各臂最小值，本机噪声下会漂）

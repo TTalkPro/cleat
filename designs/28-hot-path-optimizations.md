@@ -180,6 +180,17 @@ Core / Host 全量测试、改 `src/clojure` 时种子不动点（stage2 == stag
    要省就显式加参数（本轮是 `cg-static-host-call!` 的第 4 参 `guarded?`，默认 `false` 保持原行为）；
    并且 A/B 的取证要落到 **IL 序列**，只看输出相同看不出这类纯成本回退。
 
+**151 验证后改写的判定门槛（2026-10-22）**："`< 3%` 记为噪声"这条口头规则作废，换成**按项门槛**
+（唯一出处是 `bench/r7rs/floor.py` 生成的 `results/floor-<host>.json`，`m16sum.py` 用 `R7_FLOOR` 读，
+没有门槛表时回落旧行为）。理由：151 的本机地板标定实测"同一构建同一项连跑 9 轮的轮内 max/min"从
+pi 的 5% 到 takl 的 46% 不等（wc 1.416 / browse 1.244 / lattice 1.143 / slatex 1.186 / peval 1.205 /
+mbrot 1.107 / parsing 1.300 / array1 1.299 / takl 1.456），单一的 3% 门槛在 half 的项上是假的"可判定"。
+现在每项有 `min_declared_ratio_delta`（最小可声明量级）与 `min_same_direction`（最少同向轮数），
+低于门槛的配对格一律输出"不可判定"；检出 5% / 10% 差异各需要多少同轮配对由符号检验近似给出
+（floor.py 的 stdout 表与门槛 json 的 `recommendations`），如本机 wc 需要 156 / 42 对、
+takl 175 / 44 对——**本机 5 轮配对的表只能声明个位百分比以上的差异**，这是 149 §2 那句话的成表版。
+双态项（takl 等）照样按区间报告。跑分优先在 111（地板 < 3%，R7_PAIR_MAXLOAD=1.5 口径不变）。
+
 ## §7 任务拆分与依赖
 
 | 任务 | 内容 | 依赖 | 设计 |
