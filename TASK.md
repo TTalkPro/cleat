@@ -153,7 +153,7 @@
 | [cleat-144](tasks/cleat-144-cross-ns-deftype-resolution.md) | 跨 ns 的 deftype / definterface 编译期决议（`:import` 兼容缺口） | M16 | 无 | 完成 |
 | [cleat-145](tasks/cleat-145-accessor-inlining.md) | 小访问器跨编译单元内联（含镜像 / 包构建，与 restrict-loop-inlines 协调） | M16 | cleat-144 | 完成（2026-10-21，代码全落地但**开关默认关**：`accinline` 是 opt-in，要 `CLEAT_OPT_ACCINLINE=1` 才开 —— 111 的同轮配对 A/B 只是中性（中位几何平均 x1.002）且 browse 5/5 同向慢 5.8%，没有一项可声明收益，见 notes M16 §8；只做 eval / 包两条路径，"扩展到镜像"半段明确不做——内联决定不进种子） |
 | [cleat-146](tasks/cleat-146-keyword-symbol-intern.md) | keyword intern 的字符串键命中不新建 Symbol，`(str <long>)` 专用路径 | M16 | 无 | 完成 |
-| [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链 + 闭包提升与变长参数数组的量化 | M16 | 无 | 部分完成（第 1 条 nthfast 落地，150 抓到并修正空列表回归；第 2 / 3 条交 M17） |
+| [cleat-147](tasks/cleat-147-nth-closure-varargs.md) | `RT.nth` 非 Indexed 判断链 + 闭包提升与变长参数数组的量化 | M16 | 无 | 完成（2026-10-22：第 1 条 nthfast 已落地并修复空列表回归；第 2 / 3 条 M17 量化 + 决策收口——闭包提升上限 ~17 ns/iter、变长参数数组 +57~63 ns/iter，均只记量化上限，不在 M17 塞实现） |
 | [cleat-148](tasks/cleat-148-gc-profile-loh.md) | GC profile 可声明化（不改默认值）与 LOH 初始化无屏障写入评估 | M16 | 无 | 完成 |
 | [cleat-149](tasks/cleat-149-regression-and-measurement.md) | parsing / mbrot / pi 回归排查（开关矩阵 + bisect）与测量口径修正 | M16 | 无 | 完成 |
 | [cleat-150](tasks/cleat-150-m16-rerun.md) | M16 收口：全量验证、r7rs 56 项三臂整体重跑与开关贡献分解（runner `bench/r7rs/m16full.py` 已就位，`DEFAULT_NOPT` 已含 M16 的五项默认开关；`accinline` 是默认关的 opt-in，不进名单） | M16 | cleat-142 ~ 149 | 完成（2026-10-22：对 JVM x1.594（M15 1.61x → 可声明改善）、开关贡献 x0.981；array1 +2.9% 归因 intern、lattice +2.5% 归因 strseq/crossnstype，记账保留默认开；runner 补断点续跑；notes M16 收口节） |
@@ -193,7 +193,7 @@
 
 **M16（2026-10-20 起，2026-10-22 完成）**：142 / 143 / 146 完成（远端同窗口开 / 关 A/B：wc -39%、browse -4%、read1 -2.5%，lattice 的 strseq 分支位置回退已修正，见 [notes M16](notes/r7rs-performance.md)）→ 149（先还债、稳口径）/ 144 / 148 并列 → 145（依赖 144，2026-10-21 落地，实测只是中性因此**默认关**、开关 opt-in）→ 147 → 150 收口完成（56 项三臂全量 + 开关贡献分解：对 JVM x1.594、开关贡献 x0.981，array1 / lattice 回退已归因记账，[28 §7](designs/28-hot-path-optimizations.md)）。
 
-**M17（2026-10-21 起，现行）**：151（先标定）已于 2026-10-22 完成 → 152（依赖 151 的门槛，判据改造已于 2026-10-22 落地，下一步跑 bisect）→ 153（依赖 145 的守卫形态，**145 已于 2026-10-21 落地，依赖已就位**；量化探针已于 2026-10-22 落地）。147 的第 2 / 3 条（闭包提升、变长参数数组，量化基建已于 2026-10-22 落地）也在 M17 内做，任务书仍挂在 cleat-147。
+**M17（2026-10-21 起，现行）**：151（先标定）已于 2026-10-22 完成 → 152（依赖 151 的门槛，判据改造已于 2026-10-22 落地，下一步跑 bisect）→ 153（依赖 145 的守卫形态，**145 已于 2026-10-21 落地，依赖已就位**；量化探针已于 2026-10-22 落地）。147 的第 2 / 3 条（闭包提升、变长参数数组，量化基建已于 2026-10-22 落地，2026-10-22 量化 + 决策收口）也在 M17 内做，任务书仍挂在 cleat-147。
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 

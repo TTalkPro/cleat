@@ -200,7 +200,7 @@ takl 175 / 44 对——**本机 5 轮配对的表只能声明个位百分比以�
 | cleat-144 | 跨 ns deftype / definterface 编译期决议（兼容性修复） | 无 | §2.3 |
 | cleat-145 | 小访问器跨编译单元内联（含镜像 / 包构建） | cleat-144 | §2.3 |
 | cleat-146 | keyword / symbol intern 与 `(str <long>)` 快路径 | 无 | §2.4 |
-| cleat-147 | `RT.nth` 非 Indexed 路径、闭包提升、变长参数数组 | 无（建议排在 142 ~ 146 后） | §3 |
+| cleat-147 | `RT.nth` 非 Indexed 路径、闭包提升、变长参数数组 | 无（建议排在 142 ~ 146 后） | §3；第 2 / 3 条已完成"量化 + 决策"（闭包上限 ~17 ns/iter、变长参数数组 +57~63 ns/iter，均记量化上限不进 M17 实现，notes M17 §3） |
 | cleat-148 | GC profile 可声明化与 LOH 初始化评估 | 无 | §4 |
 | cleat-149 | parsing / mbrot / pi 回归排查与测量口径修正 | 无（宜早做，避免污染后续 A/B） | §5 |
 | cleat-150 | M16 收口：r7rs 56 项全量重跑与三方对照 | cleat-142 ~ 149 | §6 |

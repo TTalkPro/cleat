@@ -949,3 +949,28 @@ SIGTERM 杀掉过一次，缺的 12 格（rep8 的 array1 / takl、全部 rep9�
 在 3% 地板附近）、simplex x1.026（1/5，地板内）、ntakl x1.006（不可判定）。收益项方向不变：
 wc x0.551 / cat x0.831 / browse x0.931 / parsing x0.931 / fibfp x0.985。汇总全文在 111 的
 `/tmp/m151-sum.txt`。
+
+## M17 §3：cleat-147 第 2 / 3 条的时间量化与决策（2026-10-22）
+
+`bench/r7rs/src/cleat147_alloc_probe.cljc` 在分配净值之外补了同一计时段的 `Stopwatch` / `nanoTime`
+时间净值（同进程、同 n=20M、warm-up 后包住迭代段）。本机 5 个独立进程、cleat 侧 5 轮中位：
+
+| 形状 | ns/iter 中位 | bytes/iter 中位 | 配对差（ns/iter / B/iter） |
+|---|---:|---:|---:|
+| none | 0.247 | 0 | — |
+| closure-none | 17.537 | 24.000 | 相对 none +17.290 ns、+24 B |
+| closure-static | 30.150 | 56.000 | 相对 closure-none +12.613 ns、+32 B |
+| closure-mutable | 34.473 | 80.000 | 相对 closure-none +16.936 ns、+56 B |
+| fixed | 0.788 | 0 | — |
+| rest0 | 64.081 | 120.000 | 相对 fixed +63.293 ns、+120 B |
+| rest2 | 58.168 | 112.000 | 相对 fixed +57.380 ns、+112 B |
+
+- **第 2 条闭包提升**：单态闭包的建立 + 一次调用的总代价上界是 ~17.3 ns/iter、24 B/iter；
+  捕获静态变量再多 +12.6 ns / +32 B，`volatile!` 再多 +16.9 ns / +56 B。无捕获 /
+  纯静态捕获确实值得专项化（lambda 提升 / 常量闭包缓存），但本探针只量化"可提升"的闭包形状，
+  还不足以直接给出 r7rs peval 的实际可提升比例；动编译器前要另做一次"捕获组静态性"全量统计。
+- **第 3 条变长参数数组**：RestFn 调用相对固定元数的总增量 ~57 ~ 63 ns/iter、112 ~ 120 B/iter，
+  是本表里最大的单项成本；但"已知元数直发"要动 invoke 路径的形参展开与 RestFn 协议，
+  语义面（副作用顺序 / apply / `&` 尾数组共享）比闭包提升大。M17 只把这两组数记成可落地收益的
+  **量化上限**，不再把未实施的实现塞进 M17 收口。
+

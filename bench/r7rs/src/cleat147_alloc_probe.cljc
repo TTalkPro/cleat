@@ -73,18 +73,26 @@
    :rest2 :fixed})
 
 ;; warm-up 让首相位和后续相位都越过首次 JIT/编译；归一只用包在计数器里的 n 次。
+(defn elapsed-ns ^long []
+  #?(:cljr (long (* 1e9 (/ (double (System.Diagnostics.Stopwatch/GetTimestamp))
+                           (double (System.Diagnostics.Stopwatch/Frequency)))))
+     :clj (System/nanoTime)))
+
 (defn measure [phase n]
   (let [sink (long-array 1)
         warmup (min 10000 n)]
     (run phase warmup 0)
-    (let [start (thread-allocated-bytes)]
+    (let [start (thread-allocated-bytes)
+          t0 (elapsed-ns)]
       (let [acc (run phase n 0)]
         (aset sink 0 acc)
-        (let [end (thread-allocated-bytes)]
-          {:phase phase :bytes (- end start) :sink (aget sink 0)})))))
+        (let [end (thread-allocated-bytes)
+              t1 (elapsed-ns)]
+          {:phase phase :bytes (- end start) :ns (- t1 t0)
+           :sink (long (aget sink 0))})))))
 
-(defn- normalize [bytes n]
-  (double (/ bytes n)))
+(defn- normalize [value n]
+  (double (/ value n)))
 
 (defn print-rows [results n]
   (println (str "metric " (case allocation-mode
@@ -92,20 +100,21 @@
                             :jvm-thread "ThreadMXBean.getThreadAllocatedBytes"
                             "unavailable")))
   (println (str "n " n))
-  (println (format "%-17s %16s %18s %17s %18s %14s"
-                   "phase" "raw-bytes" "bytes/iter" "baseline" "delta/iter" "sink"))
+  (println (format "%-17s %16s %18s %17s %18s %12s %14s"
+                   "phase" "raw-bytes" "bytes/iter" "baseline" "delta/iter" "ns/iter" "sink"))
   (doseq [phase phases]
-    (let [{:keys [bytes sink]} (get results phase)
+    (let [{:keys [bytes ns sink]} (get results phase)
           baseline-phase (get baselines phase)
           baseline-bytes (if baseline-phase (:bytes (get results baseline-phase)) bytes)
           delta (- bytes baseline-bytes)]
-      (println (format "%-17s %16d %18.3f %17s %18.3f %14d"
+      (println (format "%-17s %16s %18s %17s %18s %12s %14s"
                        (name phase)
-                       bytes
-                       (normalize bytes n)
+                       (str bytes)
+                       (str (format "%.3f" (normalize bytes n)))
                        (or (some-> baseline-phase name) "-")
-                       (normalize delta n)
-                       sink)))))
+                       (str (format "%.3f" (normalize delta n)))
+                       (str (format "%.3f" (normalize ns n)))
+                       (str sink))))))
 
 (defn -main [& args]
   (let [n (or (and (first args) (parse-long (first args))) 20000000)
