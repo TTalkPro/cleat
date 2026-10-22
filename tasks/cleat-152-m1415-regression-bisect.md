@@ -3,7 +3,14 @@
 - 里程碑：M17　依赖：cleat-151（同轮配对的判定门槛）　状态：未开始（M16 §6 的两个疑点已被 §7 否证，见下方"前置进展"）
 - 设计依据：[28 §5](../designs/28-hot-path-optimizations.md)、[notes 的 M16 §7](../notes/r7rs-performance.md)、cleat-149 §2 / §5
 
-## 前置进展（2026-10-21）
+## 前置进展（2026-10-21，判据改造 2026-10-22）
+
+- **工作内容第 1 条已做（2026-10-22，只动工具）**：`bench/r7rs/bisect149.py` 从"各轮最小值 + 聚合
+  score + --ratio-threshold"改成 151 定下的同轮配对口径——每个 rep 内同一基准先 ref 后 cur 紧邻
+  配对，判定用每项配对比值中位 + 同向轮数，`|中位-1| < R7_BISECT_MIN_RATIO`（env，缺省 0.10）一律
+  判不可判定（退出 125 让 bisect 跳过，不猜）；mbrot / pi / dynamic 三项全部同向且过门槛才给
+  good / bad；留档扩为 `results/bisect152.jsonl`（每格带逐轮配对比值与中位）。用法示例与退出码
+  约定见脚本头注释。fake-runner dry-run 验证了配对顺序与判定逻辑，未真跑 bisect。
 
 - **不必再做的部分**：M16 §6 留的"slatex x1.044 / peval x1.027 待单开关归因"已在 111 上把五个开关各跑一格
   （[notes M16 §7](../notes/r7rs-performance.md)）：**没有任何单项能复现那两个回退**，唯一"开侧更慢"的

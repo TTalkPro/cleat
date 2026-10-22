@@ -29,6 +29,18 @@ RuntimeSigEntry 签名表、139 的整体函数特化、140 的编译期调用�
 **缺的是把同一套观察 / 特化机制用到"接口调用点"上**：观察该点的实际接收者类型分布，单态时把调用点重编成
 具体类型守卫 + 字段直读 / 直调（与 145 的守卫同形），守卫失败退回原来的接口调用。
 
+## 前置进展（2026-10-22）：量化探针已就位（工作内容第 1 条，只动 bench）
+
+`bench/r7rs/src/micro.cljc` 新增四格对照（net-empty 口径，接收者按循环变量从不透明数组取、
+结果累计进 acc，防 LICM / 死码）：`callsite-iface`（`^r7rs.util.IMPair` 接口直调，默认
+CallInstance 的收益基线）、`callsite-concrete`（`^r7rs.util.MPair` 具体类型提示直调，单态上限）、
+`callsite-accinline`（经 `r7rs.util/mcar` 包装，只有 `CLEAT_OPT_ACCINLINE=1` 才是 145 的守卫 +
+字段直读——已 dump IL 确认开侧发 `isinst → castclass → ldfld "a"`；默认臂这格只是包装 + 接口调用，
+不参与收益对比）、`callsite-bimorphic`（同一接口调用点交替 `MPair` / 本地 `CallsiteAltPair`，双态代价）。
+probes.py 无需注册行名（解析全部 16 个形状）。本机初读数（min-of-3，噪声地板待 151，只报量级）：
+接口直调 12.6 ns、具体提示 11.2 ns、双态 14.1 ns；145 直读 13.5 ns（accinline 开）——接口直调到
+直读的差距约 1 ns/次，是否够格由 153 的量化判定决定。跑分与裁决一律按默认路径（accinline 关）。
+
 ## 工作内容
 
 1. **先量化，不动代码**：`bench/r7rs/src/micro.cljc` 补三格对照 —— 同一 deftype 上"接口直调 / 提示为具体类型的

@@ -16,6 +16,13 @@
 
 (def ^:const n 20000000)
 
+;; cleat-153 的调用点形状：同一 deftype 上的读访问器。单态格用 r7rs.util 的 MPair/IMPair：
+;; 145 的访问器内联只在包装函数跨 ns 被内联时生效（同 ns 的小 defn 不走 .inl）。另一个实现
+;; 只在最后一格的单调用点双态交替里出现。
+(deftype CallsiteAltPair [v]
+  r7rs.util.IMPair
+  (getCar [_] v))
+
 #?(:clj  (defn start [] (System/nanoTime))
    :cljr (defn start [] (System.Diagnostics.Stopwatch/StartNew)))
 #?(:clj  (defn elapsed-ns [s] (double (- (System/nanoTime) s)))
@@ -57,7 +64,12 @@
 
 (defn -main [& _]
   (let [p (mcons 1 2)
-        ps (let [a (object-array 8)] (dotimes [k 8] (aset ^objects a k p)) a)]
+        ps (let [a (object-array 8)] (dotimes [k 8] (aset ^objects a k p)) a)
+        cp (mcons 1 2)
+        cps (let [a (object-array 8)] (dotimes [k 8] (aset ^objects a k cp)) a)
+        alt-cps (let [a (object-array 8)]
+                  (dotimes [k 8] (aset ^objects a k (if (odd? k) (CallsiteAltPair. 2) (mcons 1 2))))
+                  a)]
     (measure-floors!)
     ;; 1) 可变序对读（defn 包装 + 接口调用）
     (let [t0 (start)]
@@ -110,4 +122,36 @@
     ;; 9) 装箱整数写进对象数组（clojure 数据的常见形态）
     (let [arr (object-array 65536) t0 (start)]
       (loop [i 0] (if (< i n) (do (aset arr (bit-and i 65535) (num i)) (recur (inc i)))))
-      (report "box-store" t0))))
+      (report "box-store" t0))
+    ;; 10) cleat-153：同一 deftype 的接口直调（默认 CallInstance 的收益基线）
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (recur (inc i)
+                 (unchecked-add-int acc (.getCar ^r7rs.util.IMPair (aget ^objects cps (bit-and i 7)))))
+          acc))
+      (report "callsite-iface" t0))
+    ;; 10b) 同一调用点，接收器提示为具体类型：单态直调上限（不含运行时反馈 / 守卫）
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (recur (inc i)
+                 (unchecked-add-int acc (.getCar ^r7rs.util.MPair (aget ^objects cps (bit-and i 7)))))
+          acc))
+      (report "callsite-concrete" t0))
+    ;; 10c) 经 145 的小访问器包装：只有 CLEAT_OPT_ACCINLINE=1 时才特化成守卫 + 字段直读；
+    ;;      默认进程里这格退回接口调用，只证明探针 / runner 能跑，不参与收益对比。
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (recur (inc i) (unchecked-add-int acc (mcar (aget ^objects cps (bit-and i 7)))))
+          acc))
+      (report "callsite-accinline" t0))
+    ;; 10d) 同一接口调用点按 A/B 交替：多态（这里是双态）调用点的代价
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (recur (inc i)
+                 (unchecked-add-int acc (.getCar ^r7rs.util.IMPair (aget ^objects alt-cps (bit-and i 7)))))
+          acc))
+      (report "callsite-bimorphic" t0))))

@@ -62,7 +62,7 @@
 确认是并行污染（submodule 未 checkout、共享 `/tmp/cleat-clojure-bootstrap`、nREPL 端口与捕获 stderr 串台、
 load 5 ~ 8 的超时），不是 `nthfast` 的语义问题。分类见 `notes/m16-regression-triage.md` §6。
 
-**第 2 条闭包提升、第 3 条变长参数数组：本轮量化不足以支撑改动，未实施。**
+**第 2 条闭包提升、第 3 条变长参数数组：M16 当轮量化不足以支撑改动，未实施。**
 `bench/r7rs/src/cleat147_alloc_probe.cljc` 落了七相位探针（none / closure-none / closure-static /
 closure-mutable / fixed / rest0 / rest2），读数是"进程总分配 + 类型直方图"：闭包相位每次迭代多
 `cleat147_alloc_probe$run$fn__N` 一类闭包对象，`rest0` / `rest2` 里 `System.Object[]` 从 2340 MB 升到
@@ -72,6 +72,17 @@ closure-mutable / fixed / rest0 / rest2），读数是"进程总分配 + 类型�
 "量不出就不改"：闭包单例化要动捕获可变性（`volatile!` / 循环变量 / `set!`），
 没有可归一的分配证据 + 语义用例不足以安全落地。M17 重做方式：同一 `n` 跑基线相位并逐项相减，
 或直接改用 `GC.GetAllocatedBytesForCurrentThread()` 包住计时段。
+
+**M17 量化基建已就位（2026-10-22，探针重写）**：`cleat147_alloc_probe.cljc` 改成七相位同进程、
+同 `n`（缺省 2000 万，可传参），每相位 warm-up 后用 `GC.GetAllocatedBytesForCurrentThread()`
+（.NET 线程累计分配）包住迭代段，JVM 侧用 HotSpot `ThreadMXBean.getThreadAllocatedBytes`
+（不支持则明确报 unavailable，不混用进程级读数），输出 bytes/iter 净值与配对差值
+（closure-* 相对 none / closure-none，rest* 相对 fixed）；热循环改 primitive 累加器，
+消掉旧 sink 数组约 240 B/iter 的 `Int64` 装箱基线，`fixed3` 改 primitive 签名后固定元数基线归一到 0。
+本机读数（net-empty 口径，cleat）：无捕获闭包 24 B/iter，捕获静态变量 +32，捕获 `volatile!` +56，
+`rest0` / `rest2` 相对固定元数基线 +120 / +112（RestFn 调用总增量，含 `Object[]`、装箱与
+`ArraySeq_object`，不是单独的 `Object[]` 尺寸）——可分辨、可归一，第 2 / 3 条的决策可以在这份
+表上做；注意这是分配成本，是否转成活体实现仍要回到 28 §3 的"量不出时间收益就不改默认路径"。
 
 ## 验收对照
 
