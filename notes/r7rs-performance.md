@@ -989,3 +989,36 @@ opt-in 145 直读（`CLEAT_OPT_ACCINLINE=1`）读数：接口 13.8、直读 12.6
 - 145 的守卫形态仍保留在 opt-in `accinline` 下；若以后补一个"调用点级计数开销 ≤ 单态节省"的原型，
   才能重开这一层。双态探测也说明未来的反馈实现必须带成本门槛 / 回退，不能只收单态收益曲线。
 
+## M17 §5：cleat-152 M14 / M15 回退定位与处置（2026-10-22，111）
+
+**定位链条（照实记录）**：
+1. 先用 151 之前的旧判据跑过一轮 3-rep 二分（`/tmp/bisect152-run.log` + 本地留档
+   `results/bisect152-run.log`）：`ae61cfa` good → `a837e9f` / `1fdcd29` uncertain → `20d536a` bad →
+   `83ee79f` good → `13b55d8` bad，给出 first bad = **`13b55d8`**（cleat-133"运行时签名特化：
+   观察、按需生成与精确匹配分发"）。
+2. 151 的同轮配对口径改完后，用新判据（mbrot / pi / dynamic × 5 轮、每项 10% 且全轮同向）补跑
+   边界两格（`results/bisect152.jsonl`）：`83ee79f` 与 `13b55d8` 都判 **undecidable**
+   （geomean x1.010 / x1.015；单项在 1.5% ~ 4.7% 且 pi / dynamic 方向不完全稳定）。所以旧的
+   "first bad"是候选定位，不能按新判据写成已证实的逐 commit 二分结论。
+3. 直接在同一构建 `13b55d8` 上做 **sigspec 单开关归因**（双臂 × 5 轮，`results/m152-attr-sigspec*.jsonl`）：
+   dynamic **x1.144（5/5）**、pi **x1.126（5/5）**、mbrot x1.035（4/5，单项未过 10% 门槛）。
+   也就是说，回退机制确实来自 cleat-133 的运行时签名特化入口；13b55d8 正是这个机制落地的那次提交，
+   只是跨提交边界相对参照端的效应被其他噪声压到 10% 逐格门槛以下。
+
+**机制归因**：cleat-133 把候选函数包装成 `RuntimeSigEntry` / `RuntimeSigFn`，通用调用每次要多付
+观察计数、签名表查找与精确类型守卫（[24 §2](../designs/24-runtime-signature-specialization.md) 估计
+一次字段读 + `TryGetValue` + `isinst` ×N ≈ 10 ~ 20 ns）。dynamic / pi 这两类大量通用调用的负载
+没有从后续特化里拿回足够的摊销，因此关 `CLEAT_NO_OPT=sigspec` 就快 11 ~ 14%；这与 149 的开关矩阵
+把候选面收到 sigspec 的交叉结论一致。
+
+**边界项 parsing**：在 `13b55d8` 补跑 5 轮单开关（`results/m152-attr-parsing.jsonl`），
+parsing on/off 中位 **x0.985（2/5 同向 >1）**，方向混杂 —— 149 那轮 parsing +24% 不是 sigspec
+的系统性成本，不并入 152 的处置判据。
+
+**处置**：**保留 sigspec 默认开，记账不修复**。理由：
+- sigspec 是 M14 / M15 整体从 cleat-119 的 1.88x 进步到 1.61x 的主要机制之一（ctak / fibc 等
+  由它显著受益），cleat-133 验收时也有 fib35 分配下降的证据；
+- 本轮实证到的代价集中在 dynamic / pi 两类，单独关掉 sigspec 会牺牲全局收益；针对这两项再调阈值 /
+  特化规则需要单独任务，不值得在 152 里硬塞半成品。
+照 152 的验收口径，本项按"修不动或有取舍 → 记账"收口。
+
