@@ -160,7 +160,7 @@
 | [cleat-151](tasks/cleat-151-noise-floor-and-full-rerun.md) | M17 口径：本机噪声地板标定（判定门槛写进汇总器）+ r7rs 56 项三臂全量重跑 | M17 | cleat-150 | 完成（2026-10-22：本机地板成表（pi 1.050 ~ takl 1.456，检出 5% 需 5~175 对），门槛落进 m16sum.py（R7_FLOOR，无表时行为逐字不变）；111 三臂复核 x1.596 / x0.983 与 150 一致） |
 | [cleat-152](tasks/cleat-152-m1415-regression-bisect.md) | M14 / M15 回退（mbrot / pi / dynamic）的 commit 级定位与机制归因 | M17 | cleat-151 | 完成（2026-10-22：机制定位到 cleat-133 sigspec；同构建单开关 dynamic x1.144 5/5、pi x1.126 5/5；旧 first bad=13b55d8 但新 10% 逐格门槛补跑边界为 undecidable，照实记账；保留默认开） |
 | [cleat-153](tasks/cleat-153-callsite-type-feedback.md) | 调用点的运行时类型反馈：接口调用单态化（复用 M14 / M15 的签名表基建） | M17 | cleat-145 | 完成（2026-10-22：量化 + 记账收口；单态上限 ~1.6 ns/次、双态代价同量级，反馈计数 / 查表后预期净收益在零附近，不落调用点运行时反馈） |
-| [cleat-154](tasks/cleat-154-varargs-known-arity-direct-send.md) | 变长调用已知元数直发（含 `driver.clj` 的 accinline docstring 欠账） | M18 | 无 | 未开始 |
+| [cleat-154](tasks/cleat-154-varargs-known-arity-direct-send.md) | 变长调用已知元数直发（含 `driver.clj` 的 accinline docstring 欠账） | M18 | 无 | 完成（2026-10-23：111 A/B 不达标——恰好必需元数路径收益趋零（RestFn 本就是小 switch 零分配），真实负载五项全不可判定；src / seed / tests 已回退到 153 收口验证态，探针与机制归因记账保留；docstring 欠账重新挂回） |
 | [cleat-155](tasks/cleat-155-closure-lifting.md) | 无捕获 / 静态捕获闭包提升（`volatile!` 等可变捕获不提升） | M18 | 无（建议排在 154 后） | 未开始 |
 | [cleat-156](tasks/cleat-156-sigspec-dynamic-pi-tuning.md) | sigspec 对 dynamic / pi 的候选、安装、key 与逐出规则调优 | M18 | cleat-155 | 未开始 |
 | [cleat-157](tasks/cleat-157-callsite-type-feedback-prototype.md) | 调用点类型反馈原型：先证计数后净收益，通过则默认启用，不通过则停手 | M18 | cleat-156 | 未开始 |
