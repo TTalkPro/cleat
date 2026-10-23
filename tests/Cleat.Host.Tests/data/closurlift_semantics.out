@@ -1,0 +1,16 @@
+:no-capture :no-capture
+700000
+10
+2 40 44
+[2 1]
+[0 1 2]
+1
+2
+[6 6]
+2
+[2 3 4]
+:delay-val :delay-val
+[1 4 9]
+:created-ok
+"System.ArithmeticException: Divide by zero"
+{:tag :m} 1
