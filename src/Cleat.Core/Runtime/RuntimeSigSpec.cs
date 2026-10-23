@@ -58,6 +58,12 @@ public static class RuntimeSigSpec
     /// </summary>
     public static Func<string, object[], object, object> SpecCompiler { get; set; }
 
+    /// <summary>
+    /// 建表前的候选过滤器（cleat-156）：编译器可在观察到实参时拒绝确定无收益的形状。
+    /// false 使入口永久回通用体，避免“先生表、后台编译失败后每调用仍付 miss”的成本。
+    /// </summary>
+    public static Func<string, int, object[], object, bool> SpecFilter { get; set; }
+
     private static long s_compiled, s_failed, s_compileTicks;
     private static readonly bool s_debug = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLEAT_RTSPEC_DEBUG"));
 
@@ -72,6 +78,7 @@ public static class RuntimeSigSpec
     public static object Install(string className, int mask, object[] args, object generic)
     {
         if (!Enabled || SpecCompiler is null) return null;
+        if (SpecFilter is not null && !SpecFilter(className, mask, args, generic)) return null;
         var key = RuntimeSigKey.Of(mask, args);
         if (key == 0) return null;
         var table = new RuntimeSigTable(className, mask, generic);

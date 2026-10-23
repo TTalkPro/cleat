@@ -690,11 +690,13 @@ public class ClojureCompilerTests
         Assert.That(stress.Out, Is.EqualTo(off.Out), "stress:\n" + stress.Out + "\nsigspec off:\n" + off.Out);
         var m = System.Text.RegularExpressions.Regex.Match(on.Err, @"rtspec: compiled (\d+) failed (\d+)");
         Assert.That(m.Success, on.Err);   // "rtspec: compiled N failed M compile-ms T"
-        Assert.That(int.Parse(m.Groups[1].Value), Is.GreaterThanOrEqualTo(8), on.Err);   // 收益门槛：有循环 / 自调用 / 数组的函数
+        // cleat-156 淘汰纯数值 R-fail 的 O 条目后，默认仍保留循环 / 自调用 / 数组 / 非纯体的主要收益
+        Assert.That(int.Parse(m.Groups[1].Value), Is.GreaterThanOrEqualTo(6), on.Err);
         Assert.That(int.Parse(m.Groups[2].Value), Is.EqualTo(0), on.Err);
         var ms = System.Text.RegularExpressions.Regex.Match(stress.Err, @"rtspec: compiled (\d+) failed (\d+)");
         Assert.That(ms.Success, stress.Err);
-        Assert.That(int.Parse(ms.Groups[1].Value), Is.GreaterThanOrEqualTo(25), stress.Err);
+        // ALL 模式也会被同一条纯数值 R-fail 过滤器否决
+        Assert.That(int.Parse(ms.Groups[1].Value), Is.GreaterThanOrEqualTo(18), stress.Err);
         Assert.That(int.Parse(ms.Groups[2].Value), Is.EqualTo(0), stress.Err);
     }
 

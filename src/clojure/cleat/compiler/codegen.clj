@@ -65,6 +65,7 @@
 ;; —— 测量开关：CLEAT_NO_OPT=1 关掉全部，或含 known / inline / infer 关掉对应的一项 ——
 
 (defn- env [n] (or (System.Environment/GetEnvironmentVariable n) ""))
+(defn- env-set? [n] (pos? (count (env n))))
 (def ^:private no-opt (env "CLEAT_NO_OPT"))
 (defn- opt-off? [nm] (or (= no-opt "1") (str/includes? no-opt nm)))
 (def opt-034? (not (opt-off? "known")))
@@ -1621,6 +1622,39 @@
 
 (def ^:private spec-runtime-max-nodes 4000)
 
+(defn- runtime-numeric-r-provable?
+  "数值-only key 的 R 模式预检（cleat-156）：进 key 的槽位统一按 long / double 试证明；
+  两种原始返回都不成立时，运行时只会得到 O 模式（形参仍 object），不再为它建签名表。
+  预检只改 fixed-types 推断草稿，返回前后恢复原表，不影响正在进行的编译单元推断。"
+  [x* body v mask]
+  (let [guess (mapv (fn [p k] (when (pos? (bit-and (long mask) (bit-shift-left 1 k))) :l64))
+                    x* (range))
+        saved (into {} (map (fn [k] [k (hget fixed-types k)]) (keys-of fixed-types)))
+        prove (fn [r]
+                (try
+                  (run! hclear! [fixed-types])
+                  (spec-entry-try x* body v guess r)
+                  (catch Exception _ nil)))
+        ok? (some prove [:l64 :fl])]
+    (run! hclear! [fixed-types])
+    (doseq [[k t] saved] (when t (hput! fixed-types k t)))
+    (some? ok?)))
+
+(defn acceptable-runtime-specialization?
+  "RuntimeSigSpec.Install 的建表前过滤（cleat-156）：纯体、有效实参只含数值码且 R 模式证明不了时，
+  O 模式没有原始自调用收益，先生表只会留下 negative-key miss 路径；非纯体的 O 模式整体特化保持不变。"
+  [cname mask args _generic]
+  (if-let [{:keys [params body v]} (hget runtime-sig-specs cname)]
+    (when (= (count params) (count args))
+      (let [codes (mapv (fn [k x] (if (and (< k 16) (pos? (bit-and (long mask) (bit-shift-left 1 k))))
+                                    (long (Cleat.Core.Runtime.RuntimeSigKey/Code x))
+                                    0))
+                        (range) args)
+            numeric-only? (every? #(let [c (long %)] (or (zero? c) (= 1 c) (= 2 c))) codes)]
+        (or (not numeric-only?) (not (:pure? (hget runtime-sig-specs cname)))
+            (runtime-numeric-r-provable? params body v (long mask)))))
+    true))
+
 (defn- rt-tagged-code
   "Tagged 精确引用类型（cleat-101）→ RuntimeSigKey 码；不是精确登记类型时 0。"
   [e]
@@ -1700,7 +1734,7 @@
                                        (map vector params codes)))
                   snap (save-infer-tables)
                   note (fn [what e]
-                         (when (some? (env "CLEAT_RTSPEC_DEBUG"))
+                         (when (env-set? "CLEAT_RTSPEC_DEBUG")
                            (binding [*out* *err*] (println "rtspec-compile:" (:class nm) what (when e (.Message ^Exception e))))))
                   entry (try (spec-entry-try params body v guess :o exact guard
                                              ;; O 模式数值也按 object 传入：特化类是普通 fn 类，避免装箱来回
@@ -1749,7 +1783,8 @@
       [(clause (~x* ...) ~x ~body)
        (when (and (not x) (<= 1 (count x*) 16) (not (bigger-than? body spec-runtime-max-nodes)))
          ;; 收益门槛：只看热区（循环体 / 自递归函数）里的类型化用途；CLEAT_RTSPEC_ALL=1（验证用）不看门槛
-         (let [m (spec-param-mask x* body (when-not (some? (env "CLEAT_RTSPEC_ALL")) v))] (when (pos? m) m)))])))
+         (let [m (spec-param-mask x* body (when-not (env-set? "CLEAT_RTSPEC_ALL") v))]
+           (when (pos? m) m)))])))
 
 (define-pass speculate-entries L3 [ir] -> L3 []
   (Expr [ir] -> Expr []
@@ -4083,14 +4118,19 @@
             ;; 上一个编译单元的推断表按符号索引：清掉，免得同名局部带进旧类型
             _ (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
             _ (collect-assigned! body)
-            debug? (some? (env "CLEAT_RTSPEC_DEBUG"))
+            debug? (env-set? "CLEAT_RTSPEC_DEBUG")
             note (fn [what e] (when debug? (binding [*out* *err*] (println "rtspec:" cname what (when e (.Message ^Exception e))))) nil)
             try-mode (fn [r] (try (spec-entry-try params body v guess r exact guard
                                                   ;; O 模式形参一律 object 存储：特化类是普通 fn 类，入口快路径直接 IFn.invoke
                                                   (if (= r :o) (mapv (constantly nil) guess) guess))
                                   (catch Exception e (note (str "prove " r) e))))
             r-entry (when (and (pos? key) pure?) (some try-mode [:l64 :fl]))
-            entry (or r-entry (when (pos? key) (try-mode :o)))]
+            ;; 纯数值 key 只在 R 模式有存储 / 原始调用收益；落回 O 模式时形参仍是 object，
+            ;; 常见的可溢出算术也无法换成原始静态路径，只留下入口观察 / 包装成本（cleat-156 事件归因）。
+            numeric-only? (every? #(let [c (long %)] (or (zero? c) (= 1 c) (= 2 c))) eff)
+            entry (or r-entry
+                      (when (and (pos? key) (or (seq exact) (not numeric-only?) (not pure?)))
+                        (try-mode :o)))]
         (if entry
           (try (set! Cleat.Emit.LcilEmitter/PreferredAssemblies
                      (into-array System.Reflection.Assembly [(.Assembly (.GetType ^Object generic))]))
