@@ -23,6 +23,17 @@
   r7rs.util.IMPair
   (getCar [_] v))
 
+(definterface ICallsiteState
+  (bump []))
+
+(deftype CallsiteState [^:unsynchronized-mutable ^long n]
+  ICallsiteState
+  (bump [this] (set! n (unchecked-inc n)) nil))
+
+;; cleat-157 的计数模型：真实调用点状态必须是跨迭代可见的运行时状态（这里用具体状态对象里的
+;; mutable long 字段），不能用循环局部让 JIT 把递增折叠掉。方法调用带着通用宿主发射器的空值检查，
+;; 不能把这里的差值当成一次字段递增的精确成本；它量的是“经状态对象维护反馈”的可复现 Clojure 形状。
+
 #?(:clj  (defn start [] (System/nanoTime))
    :cljr (defn start [] (System.Diagnostics.Stopwatch/StartNew)))
 #?(:clj  (defn elapsed-ns [s] (double (- (System/nanoTime) s)))
@@ -67,6 +78,7 @@
         ps (let [a (object-array 8)] (dotimes [k 8] (aset ^objects a k p)) a)
         cp (mcons 1 2)
         cps (let [a (object-array 8)] (dotimes [k 8] (aset ^objects a k cp)) a)
+        callsite-state (CallsiteState. 0)
         alt-cps (let [a (object-array 8)]
                   (dotimes [k 8] (aset ^objects a k (if (odd? k) (CallsiteAltPair. 2) (mcons 1 2))))
                   a)]
@@ -154,4 +166,66 @@
           (recur (inc i)
                  (unchecked-add-int acc (.getCar ^r7rs.util.IMPair (aget ^objects alt-cps (bit-and i 7)))))
           acc))
-      (report "callsite-bimorphic" t0))))
+      (report "callsite-bimorphic" t0))
+    ;; 10e) cleat-157：接口调用 + 调用点状态递增。与 10) 的差是本探针可复现的状态维护增量。
+    ;;      绑定 r 是公平口径：守卫路径必须先求值并保存接收者，不能在守卫与调用里各取一次数组。
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (let [r (aget ^objects cps (bit-and i 7))]
+            (.bump ^CallsiteState callsite-state)
+            (recur (inc i) (unchecked-add-int acc (.getCar ^r7rs.util.IMPair r))))
+          acc))
+      (report "callsite-count" t0))
+    ;; 10f) 单态类型守卫 + 具体直调，守卫失败回落原接口调用（源级形状；专用发射器能去掉这里的部分通用税）。
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (let [r (aget ^objects cps (bit-and i 7))]
+            (recur (inc i)
+                   (unchecked-add-int acc
+                                      (if (instance? r7rs.util.MPair r)
+                                        (.getCar ^r7rs.util.MPair r)
+                                        (.getCar ^r7rs.util.IMPair r)))))
+          acc))
+      (report "callsite-guard" t0))
+    ;; 10g) 10f + 10e 的计数：反馈实现若在安装后仍每次计数，能拿到的净值。
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (let [r (aget ^objects cps (bit-and i 7))]
+            (.bump ^CallsiteState callsite-state)
+            (recur (inc i)
+                   (unchecked-add-int acc
+                                      (if (instance? r7rs.util.MPair r)
+                                        (.getCar ^r7rs.util.MPair r)
+                                        (.getCar ^r7rs.util.IMPair r)))))
+          acc))
+      (report "callsite-guard-count" t0))
+    ;; 10h) 双态形状的两个类型守卫 + 接口回落：多态调用点被反馈机制误装后的最坏热路径。
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (let [r (aget ^objects alt-cps (bit-and i 7))]
+            (recur (inc i)
+                   (unchecked-add-int acc
+                                      (cond
+                                        (instance? r7rs.util.MPair r) (.getCar ^r7rs.util.MPair r)
+                                        (instance? CallsiteAltPair r) (.getCar ^CallsiteAltPair r)
+                                        :else (.getCar ^r7rs.util.IMPair r)))))
+          acc))
+      (report "callsite-bimorphic-guard" t0))
+    ;; 10i) 10h + 计数：双态 / 失效观察不能拿“计数只在预热期发生”当假设时的退化读数。
+    (let [t0 (start)]
+      (loop [i 0 acc 0]
+        (if (< i n)
+          (let [r (aget ^objects alt-cps (bit-and i 7))]
+            (.bump ^CallsiteState callsite-state)
+            (recur (inc i)
+                   (unchecked-add-int acc
+                                      (cond
+                                        (instance? r7rs.util.MPair r) (.getCar ^r7rs.util.MPair r)
+                                        (instance? CallsiteAltPair r) (.getCar ^CallsiteAltPair r)
+                                        :else (.getCar ^r7rs.util.IMPair r)))))
+          acc))
+      (report "callsite-bimorphic-guard-count" t0))))
