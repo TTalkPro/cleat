@@ -57,3 +57,22 @@ cleat-147 已把变长调用的成本量化到可判定的量级：111 口径下
 - cleat-147 的 `rest0` / `rest2` 探针调用元数越过 required arity，按本任务范围仍保留 RestFn 协议；
   恰好 required arity 的路径需在 111 补独立探针并和真实负载一起配对，完成前不声称收益。
 
+## 进展（2026-10-22，111 同轮 A/B）
+
+- 双构建配对：ref = 6a7194c、cur = 948fcc4（+ 19b3e3a 只动 bench 的探针相位，运行时产物与 948fcc4 相同），
+  各自 Release 0 error；`CLEAT_DUMP_EVAL_LCIL` 取证确认机制成立——ref 的恰好必需元数调用点发
+  `castclass IFn` → `IFn.invoke`（进 RestFn 的 arity switch 后 doInvoke），cur 发 `isinst` 守卫 →
+  `callvirt invokeExact`（rest 直接 `ldnull`）。
+- alloc 探针补 `req0` / `req2` 相位（19b3e3a），20M 次 × 5 进程同轮配对：分配逐相位两臂完全相同
+  （预期——恰好必需元数本就不建尾数组）；时间 `req0` x1.026（0/5 同向偏慢）、`req2` x1.015（1/5），
+  都在 10% 门槛内、无可声明收益，`rest0` / `rest2` 与闭包相位 ±2% 噪声内不变。
+- 真实负载（bisect149 同轮配对 × 5 轮，111）：peval x1.020（5/5 偏慢）、browse x0.957（3/5）、
+  dynamic x0.985（5/5 偏快）、lattice x0.987（4/5）、sum x1.248（4/5，秒以下启动主导）、
+  几何平均 x1.034——全部 10% 门槛内不可判定；数据 results/bisect154.jsonl（111 cleat-154-cur 工作树）。
+- 机制归因：ref 的 RestFn 恰好必需元数入口本来就是"小 int switch → doInvoke(…, null)"，无分配；
+  154 换成 isinst 分支 + 具体类 callvirt，两笔相抵，净值趋零——收益上限本来就在噪声里。
+  有代价的部分（>必需元数的 RestFn 参数数组）按范围刻意不动。
+- **判定：不达标，不声称收益**。peval 的 5/5 +2% 低于门槛且与地板不可区分，不构成可声明回退；
+  按 M18 口径"已证明有效即默认全面启用"的反面，收益未证明就不该留在默认路径，
+  待收口决定回退 src 改动（保留探针相位与本节取证）还是按中性记账保留。
+
