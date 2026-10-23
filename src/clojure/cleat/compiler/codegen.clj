@@ -2813,25 +2813,8 @@
 
 ;; 创建闭包：newobj 后逐个写自由变量字段
 (defn- make-closure! [mc c fv*]
-  (let [cname (second c)]
-    (if (and (empty? fv*) (nth c 3 false))
-      ;; cleat-155：单例。创建仍发生在首次求值处（不把时机提前）；并发的双创建是良性竞争，
-      ;; 两个对象都合法，留下哪个都满足无捕获 fn 的语义（无可变字段、meta 走 withMeta 拷贝）。
-      ;; 两条路径到汇合点各留一个值（dup 保住 ldsfld 的结果给 brtrue 判空）；tiered 方法值不跨块留栈（cleat-114，同 if）。
-      (let [ok (new-label! mc)
-            merge (when *tiered-method* (new-local! mc obj))]
-        (emit! mc (i 'ldsfld cname "__lifted")
-                 (i 'dup)
-                 (i 'brtrue ok)
-                 (i 'pop)
-                 (i 'newobj cname ())
-                 (i 'dup)
-                 (i 'stsfld cname "__lifted")
-                 (i 'label ok))
-        (when merge (emit! mc (i 'stloc merge)))
-        (when merge (emit! mc (i 'ldloca merge)) (take-slot! mc)))
-      (do (emit! mc (i 'newobj cname ()))
-          (fill-fields! mc c fv* nil)))))
+  (emit! mc (i 'newobj (second c) ()))
+  (fill-fields! mc c fv* nil))
 
 ;; —— Clojure 的 fn* → AFunction / RestFn 子类（cleat-051，原版 clj-fn-class! 等）——
 
@@ -3401,10 +3384,6 @@
         arities (map #(first (clause-shape %)) cl*)
         fixed (if variadic (take (dec n) arities) arities)
         async? (:async? nm)
-        ;; cleat-155：无捕获 / 非异步 / 非 ^:once 的 fn 类提为模块级单例（惰性静态字段，首次求值时创建）。
-        ;; ^:once 单独核对（任务书第 4 条）：零字段时 117 的字段清除是空操作，但保守起见首批不提升；
-        ;; 异步闭包可能携带状态机上下文，同样不提升。
-        lift? (and (empty? fields) (not async?) (not *once-fn*))
         methods (atom [])
         add! #(swap! methods conj %)
         profile-n (when (and opt-typefeedback? @live-unit?) (hget spec-profiles (:class nm)))
@@ -3446,13 +3425,12 @@
       (add-class! u (apply i 'type cname (i 'base base) (i 'attrs 'sealed)
                            (concat (if (seq sigs) [(apply i 'interfaces (map #(str primifs-prefix %) sigs))] [])
                                    (map #(i 'field % obj) field-names)
-                                   (when lift? [(i 'field "__lifted" cname 'static)])
                                    (when profile-n (profile-fields cname profile-n))
                                    (when (hget runtime-sig-ir (:class nm))
                                      [(i 'field "__rtSpec" obj 'static)
                                       (i 'field "__rtCount" int32-type 'static)])
                                    (if *tiered-method* (map #(if (contains? @fwd-methods %) % (add-tiered-attr %)) @methods) @methods)))))
-    [static? cname "Instance" lift?])))
+    [static? cname "Instance"])))
 
 ;; —— deftype* / reify* / gen-interface / proxy-class* / gen-class* → CLR 类型（cleat-089，原版 cleat-051 / 043 / 053）——
 ;; 描述 d 是分析器算好的 Clojure 数据（向量；类型写作 ["类型名" 值类型?]），见 原版各 deftype-info-* 的注释。

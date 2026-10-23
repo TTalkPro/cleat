@@ -161,51 +161,6 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
-    /// cleat-155：无捕获 / 非异步 / 非 ^:once 的 fn 类提升为模块级单例（惰性静态字段 __lifted，首次求值时创建，
-    /// 时机不提前；并发双创建是良性竞争）。语义用例 tests/Cleat.Host.Tests/data/closurlift_semantics.clj
-    /// （无捕获、静态捕获、volatile! 每环境一份、循环变量捕获、Var 引用按调用时解析、跨返回调用、
-    /// ^:once / lazy-seq / delay、错误抛出时机、meta 拷贝）的输出与 .out 逐字相同；
-    /// IL 取证：无捕获 fn 类带 __lifted 静态字段、volatile! 捕获的 fn 类不提升（只有 c0，没有 __lifted）。
-    /// </summary>
-    [Test]
-    public void ClosureLiftingSingleton()
-    {
-        string data = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data");
-        string script = Path.Combine(data, "closurlift_semantics.clj");
-        var r = HostProcessTests.CleatIn(_dir, null, null, script);
-        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        string[] expected = File.ReadAllLines(Path.Combine(data, "closurlift_semantics.out"));
-        string[] lines = r.Out.Replace("\r", "").Split('\n');
-        Assert.That(lines.Length, Is.GreaterThanOrEqualTo(expected.Length), r.ToString());
-        for (int i = 0; i < expected.Length; i++)
-            Assert.That(lines[i], Is.EqualTo(expected[i]), $"line {i + 1}:\n{r.Out}");
-
-        // IL 取证：无捕获 fn 单例化；volatile! 捕获的 fn 不提升
-        string src = Path.Combine(_dir, "closurliftgen.clj");
-        File.WriteAllText(src,
-            "(ns closurliftgen)\n" +
-            "(defn loop-make [n]\n" +
-            "  (loop [i 0 acc 0] (if (< i n) (let [f (fn [] 7)] (recur (inc i) (+ acc (f)))) acc)))\n" +
-            "(defn make-counter [] (let [v (volatile! 0)] (fn [] (vswap! v inc))))\n");
-        var p = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
-            "-I", _dir, "--compile-package", Path.Combine(_dir, "closurliftgen.dll"), "--package", "closurliftgen",
-            "--root", _dir, "closurliftgen");
-        Assert.That(p.ExitCode, Is.EqualTo(0), p.ToString());
-        string lcil = File.ReadAllText(Path.Combine(_dir, "closurliftgen.dll.lcil"));
-        int mk = lcil.IndexOf("(type \"closurliftgen$loop_make$fn", StringComparison.Ordinal);
-        Assert.That(mk, Is.GreaterThanOrEqualTo(0), lcil);
-        int mkEnd = lcil.IndexOf("\n  (type ", mk + 1, StringComparison.Ordinal);
-        string mkType = lcil.Substring(mk, (mkEnd < 0 ? lcil.Length : mkEnd) - mk);
-        Assert.That(mkType, Does.Contain("(field \"__lifted\""), mkType);
-        int vc = lcil.IndexOf("(type \"closurliftgen$make_counter$fn", StringComparison.Ordinal);
-        Assert.That(vc, Is.GreaterThanOrEqualTo(0), lcil);
-        int vcEnd = lcil.IndexOf("\n  (type ", vc + 1, StringComparison.Ordinal);
-        string vcType = lcil.Substring(vc, (vcEnd < 0 ? lcil.Length : vcEnd) - vc);
-        Assert.That(vcType, Does.Contain("(field \"c0\""), vcType);
-        Assert.That(vcType, Does.Not.Contain("__lifted"), vcType);
-    }
-
-    /// <summary>
     /// cleat-114：Numbers 的 object 版本（+ - * inc dec < <= > >= ==）先判 long / double。tests/Cleat.Host.Tests/data/arith_semantics.cljc
     /// （long、负数、零、double、负零、NaN、Ratio、BigInt、MaxValue 两两组合）的输出与 .out 逐字相同——.out 与 JVM Clojure 1.12 的输出逐行一致。
     /// </summary>
