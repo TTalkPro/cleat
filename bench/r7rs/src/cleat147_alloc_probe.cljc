@@ -1,5 +1,6 @@
 (ns cleat147-alloc-probe
   "cleat-147 量化探针：同 n 下测闭包三态、固定调用与 RestFn 参数数组。
+  cleat-154 补 :req0 / :req2 —— 变长函数按恰好 required arity 调用（直达入口的判定相位）。
   每个相位用宿主的线程分配计数包住 warm-up 后的迭代段，输出 raw、bytes/iter
   和与配对基线的差值；alloc.cs 的进程总分配只用于粗看类型，不再是这里的读数。")
 
@@ -51,6 +52,14 @@
             (if (< i n)
               (recur (unchecked-add i 1) (unchecked-add acc (fixed3 1 2 3)))
               acc))
+    :req0 (loop [i 0 acc acc]
+            (if (< i n)
+              (recur (unchecked-add i 1) (unchecked-add acc (variadic0)))
+              acc))
+    :req2 (loop [i 0 acc acc]
+            (if (< i n)
+              (recur (unchecked-add i 1) (unchecked-add acc (variadic2 1 2)))
+              acc))
     :rest0 (loop [i 0 acc acc]
             (if (< i n)
               (recur (unchecked-add i 1) (unchecked-add acc (variadic0 1 2 3)))
@@ -62,13 +71,18 @@
     0))
 
 (def phases
-  [:none :closure-none :closure-static :closure-mutable :fixed :rest0 :rest2])
+  [:none :closure-none :closure-static :closure-mutable
+   :fixed :req0 :req2 :rest0 :rest2])
 
 ;; closure-none 隔掉“每循环建函数但无捕获环境”的成本；fixed 是 RestFn 的固定元数基线。
+;; req0 / req2（恰好 required arity）与 rest0 / rest2（越过 required arity）同一对照：
+;; 前者经 154 的直达入口应落向 fixed，后者按口径保留 RestFn 协议、不应变化。
 (def baselines
   {:closure-none :none
    :closure-static :closure-none
    :closure-mutable :closure-none
+   :req0 :fixed
+   :req2 :fixed
    :rest0 :fixed
    :rest2 :fixed})
 
