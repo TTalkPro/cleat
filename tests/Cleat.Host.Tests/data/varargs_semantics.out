@@ -1,6 +1,0 @@
-[0 nil] [1 2 0 nil] [1 2 1 (3)]
-[0 nil] [4 5 0 nil] [4 5 2 (6 7)]
-[7 0 0] [7 1 1] [7 2 3]
-[:a :b 1 (:c)] [:a :b :c]
-["clojure.lang.ArityException" "Wrong number of args (1) passed to: user/r2"] [1 2 2 (3 4)]
-:redefined :redefined
