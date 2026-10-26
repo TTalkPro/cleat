@@ -77,7 +77,7 @@ public static class Program
         foreach (var lcil in lcils)
         {
             string dll = Path.ChangeExtension(lcil, ".dll");
-            LcilEmitter.Save(File.ReadAllText(lcil), lcil, dll);
+            LcilEmitter.Save(File.ReadAllText(lcil), lcil, dll, true);
             // 后面的单元按类型名（不带程序集名）引用它里面的类（编译器包里内联的守卫引用镜像的函数类）：装进本进程
             System.Reflection.Assembly.LoadFrom(dll);
         }

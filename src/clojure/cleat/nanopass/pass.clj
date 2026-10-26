@@ -744,8 +744,10 @@
                                                  (let [[pat & b] c] (into [pat] (map #(walk-outs (out-ctx p) %) b)))
                                                  c))
                                              (:clauses p))]
+                            ;; cleat-158：分派期间绑 *src-node*，输出节点构造时复制被匹配节点的元数据（源位置随 pass 走）
                             `(~(:name p) ~(:formals p)
-                              ~(dispatch-code ctx ir clauses true (str pname " " (:name p)))))
+                              (binding [r/*src-node* ~ir]
+                                ~(dispatch-code ctx ir clauses true (str pname " " (:name p))))))
                           ;; 终结符或 * 的处理器：普通的体
                           `(~(:name p) ~(:formals p)
                             ~@(map #(walk-outs (out-ctx p) %) (:clauses p)))))))
@@ -811,8 +813,8 @@
           code (dispatch-code ctx ir clauses false "nanopass-case")]
       (realize
         (if uses-cata
-          `(letfn [(~self [~ir] ~code)] (~self ~e))
-          `(let [~ir ~e] ~code))))))
+          `(letfn [(~self [~ir] (binding [r/*src-node* ~ir] ~code))] (~self ~e))
+          `(let [~ir ~e] (binding [r/*src-node* ~ir] ~code)))))))
 
 (defn expand-with-output-language [spec body]
   (binding [*fresh* (fresh-fn)]

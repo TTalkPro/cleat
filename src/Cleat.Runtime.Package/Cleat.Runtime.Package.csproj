@@ -33,7 +33,7 @@
 
   <ItemGroup>
     <None Include="buildTransitive\Cleat.Runtime.targets" Pack="true" PackagePath="buildTransitive\" />
-    <None Include="$(BootDir)cleat.boot.dll;$(BootDir)cleat.boot.ifc;$(BootDir)cleat.boot.inl;$(BootDir)cleat.compiler.dll;$(BootDir)Cleat.Clojure.Libs.dll"
+    <None Include="$(BootDir)cleat.boot.dll;$(BootDir)cleat.boot.pdb;$(BootDir)cleat.boot.ifc;$(BootDir)cleat.boot.inl;$(BootDir)cleat.compiler.dll;$(BootDir)cleat.compiler.pdb;$(BootDir)Cleat.Clojure.Libs.dll;$(BootDir)Cleat.Clojure.Libs.pdb"
           Pack="true" PackagePath="runtime\" Visible="false" />
   </ItemGroup>
 </Project>

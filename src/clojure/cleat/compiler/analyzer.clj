@@ -18,6 +18,7 @@
   (:refer-clojure :exclude [macroexpand-1])
   (:require [clojure.string :as str]
             [cleat.nanopass :as np :refer [with-output-language out in-context]]
+            [cleat.nanopass.records :as r]
             [cleat.compiler.languages :as l :refer [L0]])
   (:import [Cleat.Core.Compiler HostSyntax AotPaths CompileTimeTypes DriverOps]
            [Cleat.Core.Runtime ClojureOps PackageIndex]
@@ -623,7 +624,8 @@
                (cond
                  (temp? x) (rn x)
                  (and (seq? x) (= 'quote (first x))) x
-                 (seq? x) (apply list (map walk x))
+                 ;; cleat-158：unparse 写回的源位置 metadata 不能在改名时丢掉
+                 (seq? x) (with-meta (apply list (map walk x)) (meta x))
                  :else x))]
     (walk cl)))
 
@@ -681,9 +683,10 @@
       (and (<= 1 n 4) (var-prim-sig vm n))
       (apply clj-call "PrimInvoke" false (q (var-prim-sig vm n)) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
       :else
-      (if-let [cls (direct-link-target v n)]
+      ;; -g / CLEAT_NO_INLINE：保留物理栈帧，直接链接与 KnownCall 也可能被 JIT 内联掉
+      (if-let [cls (and @inline-calls? (direct-link-target v n))]
         (L0-out (clj-static-call ~cls ~n ~(var-reference v) ~@(mapv #(analyze % (assoc nt :pos pos)) args)))
-        (if-let [kc (known-call-class v n)]
+        (if-let [kc (and @inline-calls? (known-call-class v n))]
           ;; cleat-110：Var 的当前值是有 invokeStatic 的函数类——codegen 在可以引用该类时生成 isinst 守卫后的直接调用
           (apply clj-call "KnownCall" false (q kc) (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args))
           (invoke-node (var-reference v) (mapv #(analyze % (assoc nt :pos pos)) args)))))))
@@ -730,10 +733,14 @@
 (defn analyze
   "Clojure 形式 → L0 的 Expr。"
   [form ctx]
-  (cond
-    (symbol? form) (analyze-symbol form ctx)
-    (and (clj-list? form) (seq form)) (analyze-seq form ctx)
-    :else (analyze-datum form ctx)))
+  (let [n (cond
+            (symbol? form) (analyze-symbol form ctx)
+            (and (clj-list? form) (seq form)) (analyze-seq form ctx)
+            :else (analyze-datum form ctx))]
+    ;; cleat-158：给节点记源位置（形式自己的 :line，没有时沿用外层），codegen 据此发序列点
+    (when (and (r/node? n) (nil? (r/node-meta n)))
+      (r/set-node-meta! n {:pos (position form ctx)}))
+    n))
 
 ;; cleat-144：ns 的 require 必须在编译期发生，后面的 :import 才能看到被 require 命名空间里的生成类
 ;; （JVM 的类加载器按名字可见；这里包构建时依赖与使用者在同一个 L0 单元，运行时 require 还没有执行）。

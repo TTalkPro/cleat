@@ -313,7 +313,8 @@
     :else p))
 
 (defn unparse-node
-  "节点 → S 表达式（列表；终结符原样）。不是节点的值原样返回。raw? 为假（缺省）时按 => 美化。"
+  "节点 → S 表达式（列表；终结符原样）。不是节点的值原样返回。raw? 为假（缺省）时按 => 美化。
+   节点上的 :pos 转成 S 表达式的 :line / :column / :file 元数据（cleat-158）：跨单元内联的 .inl 子句保留定义处源位置。"
   ([x] (unparse-node x false))
   ([x raw?]
    (if-not (r/node? x)
@@ -324,10 +325,17 @@
            ctx {:env (zipmap (map :name (:fields prod)) (.nanoFields n))
                 :fields (into {} (map (juxt :name identity) (:fields prod)))
                 :lang lang :raw? raw?}]
-       (cond
-         (and (not raw?) (:pretty prod)) (unparse-elt (:pretty prod) ctx)
-         (:keyword prod) (apply list (:keyword prod) (unparse-elts (rest (:pattern prod)) ctx))
-         :else (apply list (unparse-elts (:pattern prod) ctx)))))))
+       (let [sx (cond
+                  (and (not raw?) (:pretty prod)) (unparse-elt (:pretty prod) ctx)
+                  (:keyword prod) (apply list (:keyword prod) (unparse-elts (rest (:pattern prod)) ctx))
+                  :else (apply list (unparse-elts (:pattern prod) ctx)))
+             ;; .inl 会把 metadata 写进 fasl：只留文件名，stage2 / stage3 的临时目录不影响不动点；
+             ;; PDB 里的完整路径仍由普通方法体自己的 source 指令携带
+             [line column file] (let [[l c f] (:pos (r/node-meta n))]
+                                  [l c (when f (System.IO.Path/GetFileName f))])]
+         (if (and (seq? sx) line (pos? line) (instance? clojure.lang.IObj sx))
+           (with-meta sx {:line line :column (max 1 (or column 1)) :file file})
+           sx))))))
 
 ;; —— 按描述的解析（S 表达式 → 节点）——
 
@@ -369,7 +377,7 @@
   "S 表达式 → 非终结符 nt-name 的值；不匹配返回 ::fail。"
   [lang nt-name x]
   (let [desc (:desc lang)]
-    (loop [ps (:prods (nonterminal desc nt-name))]
+    (let [v (loop [ps (:prods (nonterminal desc nt-name))]
       (if-let [[p & more] (seq ps)]
         (let [v (case (:kind p)
                   :terminal (if ((get (:preds lang) (:term p)) x) x ::fail)
@@ -384,4 +392,12 @@
                               ::fail))
                           ::fail))]
           (if (identical? v ::fail) (recur more) v))
-        ::fail))))
+        ::fail)) ]
+      ;; cleat-158：(unparse-node …) 把节点 :pos 放在 S 表达式 metadata 上；读回（尤其 .inl）时还原，
+      ;; 否则跨单元内联体只会得到调用点行号
+      (when (and (r/node? v) (not (identical? v ::fail)) (instance? clojure.lang.IMeta x))
+        (when-let [m (meta x)]
+          (let [{:keys [line column file]} m]
+            (when (and line (pos? line))
+              (r/set-node-meta! v {:pos [line column file]})))))
+      v)))

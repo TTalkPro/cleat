@@ -274,8 +274,11 @@ str-or-pattern."
 					  (when-let [info (ex-data e)] (str " " (pr-str info)))))
        (let [st  (get-stack-trace e)                                               ;;; (.getStackTrace e)
 	         cause (.InnerException e)]                                            ;;; .getCause
+	     ;; cleat-158：单元入口 #Module.Init0 是实现细节；JVM 栈没有这一帧
 	     (doseq [el (take depth
-	                      (remove #(#{"clojure.lang.RestFn" "clojure.lang.AFn" "clojure.lang.AFnImpl" "clojure.lang.RestFnImpl"}	(stack-element-classname %))   ;;;  (.getClassName %)
+	                      (remove #(let [cls (stack-element-classname %)]
+	                                 (or (#{"clojure.lang.RestFn" "clojure.lang.AFn" "clojure.lang.AFnImpl" "clojure.lang.RestFnImpl"} cls)
+	                                     (re-find #"^#Module(?:\.|$)" cls)))
 			  			        st))]
            (println (str \tab (stack-element-str el))))
          (when cause

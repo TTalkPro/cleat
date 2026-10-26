@@ -94,13 +94,18 @@
        (lang/register-description! '~desc)
        (definterface ~marker)
        ~@(for [[_ p] prods]
-           (let [fs (mapv :name (:fields p))]
-             `(deftype ~(:type p) ~fs
-                ~node
-                (~'nanoTag [~'_] ~(:tag p))
-                (~'nanoFields [~'_] ~fs)
-                (~'nanoLang [~'_] '~qname)
-                ~marker)))
+          (let [fs (mapv :name (:fields p))
+                mfield (with-meta 'meta {:unsynchronized-mutable true})]
+            `(deftype ~(:type p) [~@fs ~mfield]
+               ~node
+               (~'nanoTag [~'_] ~(:tag p))
+               (~'nanoFields [~'_] [~@fs])
+               (~'nanoLang [~'_] '~qname)
+               clojure.lang.IMeta
+               (~'meta [~'_] ~'meta)
+               clojure.lang.IObj
+               (~'withMeta [~'this m#] (set! ~'meta m#) ~'this)
+               ~marker)))
        (declare ~@(map #(nonterminal-pred-name desc (:name %)) (:nonterminals desc)))
        ~@(for [nt (:nonterminals desc)]
            (let [{:keys [tags terms]} (lang/nonterminal-tags desc (:name nt))
@@ -113,7 +118,7 @@
            (let [fs (mapv :name (:fields p))]
              `(defn ~(constructor-name desc (:name nt) (:name p)) ~fs
                 ~@(when *check-constructors* (map #(field-check desc (:name nt) p %) (:fields p)))
-                (new ~(:type p) ~@fs))))
+               (r/propagate-src-meta! (new ~(:type p) ~@fs nil)))))
        ~@(for [[nt p] prods]
            (let [x 'nanopass-x]
              `(defn ~(production-pred-name desc (:name nt) (:name p)) [~x] (instance? ~(:type p) ~x))))

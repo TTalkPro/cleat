@@ -1,6 +1,6 @@
 # cleat-158 源位置、序列点、PDB 与栈帧
 
-- 里程碑：M19　依赖：无　状态：未开始
+- 里程碑：M19　依赖：无　状态：进行中（实现与语义门禁已过；56 项 5 轮性能配对未完成）
 - 设计依据：[29 §1 第 1 条 / §2](../designs/29-usability-and-engineering.md)
 
 ## 问题
@@ -42,3 +42,21 @@
 - PDB 不参与种子逐字节比较；`clojure-seed` 不动点仍然成立。
 - r7rs 56 项同轮配对（本机 5 轮）没有可声明的回退；镜像 / 编译器包体积变化写进任务书。
 - 29 §9 的全套门禁。
+
+## 进度（2026-10-26）
+
+- 实现已落地：IR 节点源位置与 nanopass 元数据传播、方法 `(source …)` 与节点 `(line …)`、
+  Portable PDB（镜像 / 编译器包 / 库包 / 发布 / eval 内存程序集）、`-g` 关跨 fn 内联、
+  顶层错误位置取最内层用户源帧、`pst` 隐藏单元入口帧。
+- 驱动的源文件名放线程局部 `DriverOps.SourceFile`，不用 Clojure 动态绑定；被求值代码自己的
+  `pushThreadBindings` 不会被驱动的 `binding` 弹出帧误伤。
+- 黄金与包测试更新：包程序集现在同产 PDB，`tools.build` 的 `pack` 也包含 PDB。
+- 语义门禁：Release build 通过；Core 123/123。全量 Host 在修复前为 283/288，5 个失败
+  分别是 seed 滞后、两处 PDB 包目录期望、两处驱动动态绑定回归；修复后相关套件复跑通过：
+  Bootstrap + Package 9/9、Error + ValueBoundary 42/42（修复后的全量 Host 复跑仍在待办）。
+- `selfhost` / `clojure-seed` 不动点通过；seed 已重生成，`from-seed == stage3`。
+- `-g` 量化：本机 10 个代表项 × 5 轮同轮配对，debug / default 几何平均 x1.406；
+  destruc x2.053（5/5 慢）、fft x3.076（5/5 慢）、browse x1.253（5/5 慢）、
+  takl x1.326、scheme x1.204、parsing x1.102。`-g` 因此只作 opt-in，不改默认。
+- 待完成：56 项 × 5 轮完整同轮配对（外部负载导致先中止在 2 轮，另补代表项 5 轮）、
+  修复后全量 Host 复跑、默认相对改动前基线的序列点 / PDB 成本确认、最终体积记录与全套门禁复核。

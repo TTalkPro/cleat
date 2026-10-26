@@ -95,6 +95,7 @@
            (demunge (stack-element-classname el))                              ;;; (.getClassName el))
            (str (stack-element-classname el) "." (stack-element-methodname el)))   ;;; (.getClassName el)  (.getMethodName el)
          " (" (.GetFileName el) ":" (.GetFileLineNumber el) ")")))        ;;; getFileName  getLineNumber
+
 ;;;;;;;;;;;;;;;;;;; end of redundantly copied from clojure.repl to avoid dep ;;;;;;;;;;;;;;
 
 

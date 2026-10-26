@@ -11,7 +11,8 @@
             [cleat.nanopass.records :as r]
             [cleat.compiler.languages :as l :refer [L3]]
             [cleat.compiler.loops :as loops])
-  (:import [System.Collections Hashtable]))
+  (:import [System.Collections Hashtable]
+           [Cleat.Core.Compiler DriverOps]))
 
 ;; —— 小工具 ——
 
@@ -166,11 +167,44 @@
 
 ;; —— 方法上下文（原版 mctx）——
 
+(declare unit-source emit!)
+
 (defn- make-method-ctx [u class static? loop-label loop-arity self-mref]
   {:unit u :class class :static? static? :vars (ht) :locals (atom []) :buffer (atom []) :nlabels (atom 0) :try-depth (atom 0)
    :max-stack (atom nil)
+   ;; cleat-158：序列点跟踪。:source 当前源文件（节点 :pos 的文件随时更新；缺省取 RT 的 SourcePath）；
+   ;; :src 上一次发的 [文件 行]，行没变不重发
+   :source (atom (unit-source)) :src (atom nil)
    :loop-label loop-label :loop-arity loop-arity :self-mref self-mref :arg-base (if static? 0 1) :labels (ht)
    :big? (atom false) :ret-type (atom nil) :uses (ht) :pinned (ht)})
+
+(defn- unit-source
+  "本编译单元的源文件：驱动按单元放的线程局部值（DriverOps/SourceFile）优先，否则 RT 的 SourcePath（load / compile 期间绑定到文件路径）。"
+  []
+  (or (.-Value DriverOps/SourceFile)
+      (let [s (str (.deref clojure.lang.RT/SourcePathVar))]
+        (when (pos? (count s)) s))))
+
+(defn- seq-point-code
+  "cleat-158：节点带 :pos（analyzer 记的 [行 列 文件]）且行与上一次不同则发 (line …)。
+   返回要发射的 (line …)，没有新序列点时 nil。手工构造方法体必须显式把它放进 body；
+   doc 由发射器按方法的 (source 文件) 挂。"
+  [mc e]
+  (when (r/node? e)
+    (when-let [pos (:pos (r/node-meta e))]
+      (let [[l c f] pos]
+        (when f (reset! (:source mc) f))
+        ;; 没有源文件（方法里没有 (source …) 可挂）就不发：发射器对无文档的 (line …) 是硬错误
+        (when (and l (pos? l) @(:source mc))
+          (when (not= @(:src mc) [f l])
+            (reset! (:src mc) [f l])
+            ;; MarkSequencePoint 要求 end 严格在 start 之后（同列会 ArgumentOutOfRange），end 列 = 列 + 1
+            (i 'line l (max 1 (or c 1)) l (inc (max 1 (or c 1))))))))))
+
+(defn- emit-seq-point!
+  "cg* 用的普通发射路径。"
+  [mc e]
+  (when-let [line (seq-point-code mc e)] (emit! mc line)))
 
 (defn- emit! [mc & ins] (swap! (:buffer mc) into ins))
 (defn- emit-code! [mc code] (swap! (:buffer mc) into code))
@@ -2469,6 +2503,7 @@
   (throw (ex-info (str "codegen: node not supported by the Clojure compiler: " (r/brief e)) {:node e})))
 
 (defn- cg* [e mc ctx]
+  (emit-seq-point! mc e)
   (nanopass-case [L3 Expr] e
     [~x (ref-var! mc x (not= ctx :effect)) (when-not (= ctx :effect) (finish-value! mc ctx))]
     [(label ~x (~x* ...) ~body0 ~body1)
@@ -2822,11 +2857,12 @@
       s)))
 
 (defn- finish-method [mc nm attrs params & [ret]]
-  (let [max-stack (when-let [n @(:max-stack mc)] [(i 'maxstack n)])]
+  (let [max-stack (when-let [n @(:max-stack mc)] [(i 'maxstack n)])
+        source (when-let [f @(:source mc)] [(i 'source f)])]
     (apply i 'method nm (apply i 'attrs attrs) (apply i 'params params) (i 'ret (or ret obj))
-           (concat max-stack [(apply i 'locals @(:locals mc))
-                              (i 'clr-namespaces)
-                              (apply i 'body @(:buffer mc))]))))
+           (concat source max-stack [(apply i 'locals @(:locals mc))
+                                     (i 'clr-namespaces)
+                                     (apply i 'body @(:buffer mc))]))))
 
 (declare clj-fn-class!)
 
@@ -2968,10 +3004,22 @@
 (defn- clj-forward-method [u class cl]
   (nanopass-case [L3 Clause] cl
     [(clause (~x* ...) ~x ~body)
-     (i 'method "invoke" (i 'attrs 'override 'optimize) (apply i 'params (objs (count x*))) (i 'ret obj)
-        (apply i 'body (concat [(i 'ldarg 0)]
-                               (mapcat (fn [j] (if *tiered-method* [(i 'ldarga j) (i 'call "Cleat.Core.Runtime.Locals" "Take" (i (str obj "&")) obj)] [(i 'ldarg j)])) (range 1 (inc (count x*))))
-                               [(i 'call class "invokeStatic" (apply i (objs (inc (count x*)))) obj) (i 'ret)])))]))
+     (let [mc (make-method-ctx u class true nil nil nil)
+           n (count x*)
+           line (seq-point-code mc body)
+           args (mapcat (fn [j] (if *tiered-method*
+                                  [(i 'ldarga j) (i 'call "Cleat.Core.Runtime.Locals" "Take" (i (str obj "&")) obj)]
+                                  [(i 'ldarg j)]))
+                        (range 1 (inc n)))
+           body-code (concat (when line [line])
+                             [(i 'ldarg 0)]
+                             args
+                             [(i 'call class "invokeStatic" (apply i (objs (inc n))) obj) (i 'ret)])
+           method-body (apply i 'body body-code)
+           source (when-let [f @(:source mc)] [(i 'source f)])]
+       (apply i 'method "invoke" (i 'attrs 'override 'optimize)
+              (apply i 'params (objs n)) (i 'ret obj)
+              (concat source [method-body])))]))
 
 (def ^:private tier-classes (ht))   ; 分层编译的函数类（:class）：有循环或自递归的顶层 defn（cleat-114；镜像与包见 cleat-117）
 
@@ -3767,10 +3815,11 @@
               (= (tname ret) obj) (cg body mc :tail)
               :else (do (cg body mc :value) (convert-return! mc ret) (emit! mc (i 'ret)))))
           (apply i 'method mname (apply i 'attrs (if iface [] ['override])) (apply i 'params (map tname ptypes)) (i 'ret (tname ret))
-                 (apply i 'locals @(:locals mc))
-                 (i 'clr-namespaces)
-                 (concat (when iface [(i 'implements iface (spec-name spec))])
-                         [(apply i 'body @(:buffer mc))])))])]))
+                 (into (if-let [f @(:source mc)] [(i 'source f)] [])
+                       (concat [(apply i 'locals @(:locals mc))
+                                (i 'clr-namespaces)]
+                               (when iface [(i 'implements iface (spec-name spec))])
+                               [(apply i 'body @(:buffer mc))]))))])]))
 
 (defn- deftype-stub
   "接口中没有直接实现的方法：转调同名同参的方法，或抛 NotImplementedException"

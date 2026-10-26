@@ -1,5 +1,5 @@
 cleat: -e needs an expression
-usage: cleat [--boot dll] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]
+usage: cleat [--boot dll] [-I dir]... [-g] [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]
        cleat [--boot dll] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]
        cleat -I src... --compile-package out/Name.dll [--package name] [--root dir]... [--target-image boot.dll] ns...
        cleat [-Sdeps EDN] [-Spath | -P] -M[:alias...] [options and args...]   run the project (cleat.edn), as clj -M

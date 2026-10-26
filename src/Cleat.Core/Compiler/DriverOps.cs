@@ -56,6 +56,11 @@ public static class DriverOps
     /// </summary>
     public static readonly System.Threading.ThreadLocal<object> State = new();
 
+    /// <summary>
+    /// 当前编译单元的源文件名（cleat-158 的序列点 / PDB 用）：线程局部，不用 Clojure 的动态绑定——理由同 <see cref="State"/>。
+    /// </summary>
+    public static readonly System.Threading.ThreadLocal<string> SourceFile = new();
+
     /// <summary>简单形式的求值次数与编译执行的次数（度量与测试用；两个驱动共用）。</summary>
     public static long SimpleCount, CompiledCount;
 

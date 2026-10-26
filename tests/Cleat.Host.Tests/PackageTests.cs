@@ -43,7 +43,11 @@ public class PackageTests
                                         "--compile-package", Path.Combine(dir, "Cleat.Neorepl.dll"), "--package", "neorepl" }
                                 .Concat(Namespaces("neorepl")).ToArray());
             Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
-            Assert.That(Directory.GetFiles(dir).Select(Path.GetFileName).Order(), Is.EqualTo(new[] { "Cleat.Neorepl.dll", "Cleat.Nrepl.dll" }), "one assembly per package");
+            // cleat-158：包程序集现在同时产出 PDB（序列点），但每个包仍然只有一个程序集
+            Assert.That(Directory.GetFiles(dir, "*.dll").Select(Path.GetFileName).Order(),
+                        Is.EqualTo(new[] { "Cleat.Neorepl.dll", "Cleat.Nrepl.dll" }), "one assembly per package");
+            Assert.That(Directory.GetFiles(dir, "*.pdb").Select(Path.GetFileName).Order(),
+                        Is.EqualTo(new[] { "Cleat.Neorepl.pdb", "Cleat.Nrepl.pdb" }), "each package assembly has its PDB");
 
             var r = RunPackageTests("-I", dir, "-I", "packages/nrepl/test", "packages/nrepl/test/run.clj");
             Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());

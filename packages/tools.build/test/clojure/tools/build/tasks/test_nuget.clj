@@ -57,7 +57,8 @@
     (let [nupkg (pack-p1!)
           names (set (map :name (zip/list-zip nupkg)))
           spec (nupkg-text nupkg "P1.nuspec")]
-      (is (= #{"_rels/.rels" "[Content_Types].xml" "P1.nuspec" "lib/net10.0/P1.dll" "src/foo/bar.clj"} names))
+      ;; cleat-158：包程序集现在带 PDB（序列点），pack 把它一起装进 nupkg
+      (is (= #{"_rels/.rels" "[Content_Types].xml" "P1.nuspec" "lib/net10.0/P1.dll" "lib/net10.0/P1.pdb" "src/foo/bar.clj"} names))
       (is (str/includes? spec "<id>P1</id>"))
       (is (str/includes? spec "<version>1.0.0</version>"))
       (is (str/includes? spec "<authors>a, b</authors>"))

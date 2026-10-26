@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Diagnostics;
 using System.Reflection;
 using Cleat.Core.Expand;
 using clojure.lang;
@@ -77,16 +78,57 @@ public static class Diagnostics
         try
         {
             if (e is ExpanderException || e.Data.Contains(LocationKey)) return false;
-            var m = (form as IMeta)?.meta();
-            object line = m?.valAt(Keyword.intern("line"));
-            // 执行错误的位置只有 文件:行（Clojure 的 ex-str 对 :execution 不带列）
-            e.Data[LocationKey] = $"{SourceLabel()}:{line ?? t_lastLine}";
+            // cleat-158：运行期栈上第一个带行号的用户 Clojure 源帧（序列点 + PDB）优先，指向最内层抛出点；
+            // 拿不到（宿主内部抛出、无 PDB）退回顶层形式自己的 :pos
+            e.Data[LocationKey] = FirstUserLocation(e) ?? FormLocation(form);
         }
         catch (Exception)
         {
             // 位置只是诊断信息
         }
         return false;
+    }
+
+    private static string FormLocation(object form)
+    {
+        var m = (form as IMeta)?.meta();
+        object line = m?.valAt(Keyword.intern("line"));
+        // 执行错误的位置只有 文件:行（Clojure 的 ex-str 对 :execution 不带列）
+        return $"{SourceLabel()}:{line ?? t_lastLine}";
+    }
+
+    /// <summary>
+    /// 异常栈里第一个属于用户源的帧：有行号、文件名是 .clj / .cljc（Clojure 源；core.clj 也算）。
+    /// C# 运行时帧与没有 PDB 的帧（行号 0）跳过。
+    /// </summary>
+    internal static string FirstUserLocation(Exception e)
+    {
+        try
+        {
+            // 先看 root cause：外层包装可能停在调用点（如 -g 前的 g），JVM 的位置在最内层抛出点
+            if (e.InnerException != null && FirstUserLocation(e.InnerException) is string inner) return inner;
+            string first = null;
+            foreach (var f in new StackTrace(e, true).GetFrames())
+            {
+                int line = f.GetFileLineNumber();
+                string file = f.GetFileName();
+                if (line <= 0 || string.IsNullOrEmpty(file)) continue;
+                if (!file.EndsWith(".clj", StringComparison.Ordinal) && !file.EndsWith(".cljc", StringComparison.Ordinal)) continue;
+                // JVM 的栈报告源文件名（t.clj / core.clj），不是构建机上的绝对路径；序列点里也保留加载名
+                first ??= $"{Path.GetFileName(file)}:{line}";
+            }
+            if (first != null) return first;
+            // 宿主 / REPL 报告的可能是包装异常；JVM 的位置在最内层抛出点，pst 也取 root cause
+            for (var cause = e.InnerException; cause != null; cause = cause.InnerException)
+            {
+                if (FirstUserLocation(cause) is string location) return location;
+            }
+        }
+        catch (Exception)
+        {
+            // 位置只是诊断信息
+        }
+        return null;
     }
 
     /// <summary>当前源的名字：*file*（全路径，与语法错误相同）；REPL / -e 为 REPL。</summary>
@@ -240,7 +282,7 @@ public static class Diagnostics
     {
         if (t == null) return false;
         string n = t.FullName ?? t.Name;
-        if (n.StartsWith("#Module$", StringComparison.Ordinal)) return false;   // 单元的入口（顶层形式的执行）
+        if (n.StartsWith("#Module", StringComparison.Ordinal)) return false;   // 单元与单元入口（顶层形式的执行）
         // 编译器与驱动（cleat-090）不算用户的帧
         if (n.StartsWith("cleat.compiler.", StringComparison.Ordinal) || n.StartsWith("cleat.nanopass.", StringComparison.Ordinal)
             || n.StartsWith("Cleat.Core.Compiler.DriverOps", StringComparison.Ordinal))

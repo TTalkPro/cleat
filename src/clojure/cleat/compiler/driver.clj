@@ -253,7 +253,16 @@
 (defn- eval-hook
   "eval 钩子（REPL、-e、clojure.core/eval）：不记入正在编译的单元"
   [form]
-  (with-st {:unit nil} (eval-toplevel form)))
+  ;; eval 没有真实源文件；PDB / pst 用 REPL 这个名字。宿主传入的 <eval> / <stdin> 也归一成同一名。
+  (let [source (let [s (str (.deref RT/SourceVar))]
+                 (if (#{"NO_SOURCE_FILE" "<eval>" "<stdin>"} s) "REPL" s))]
+    ;; 源文件放在线程局部里，不用 Clojure 的动态绑定：被求值的代码自己 pushThreadBindings 时，
+    ;; 驱动的 binding 会在退出时把用户那一帧一起弹掉（cleat-158 的 set! 回归）
+    (let [old (.-Value DriverOps/SourceFile)]
+      (.set_Value DriverOps/SourceFile source)
+      (try
+        (with-st {:unit nil} (eval-toplevel form))
+        (finally (.set_Value DriverOps/SourceFile old))))))
 
 ;; —— load ——
 
@@ -288,9 +297,13 @@
 
 (defn- load-built
   "编进镜像或包程序集的文件：*file* 绑成加载名（clojure/core.clj，同 JVM 的 :file），产物里不带构建机器上的绝对路径（cleat-091：
-  从种子构建的镜像在任何位置都与种子相同）"
+  从种子构建的镜像在任何位置都与种子相同）；cleat-158 的 (source …) 也用加载名，而不是构建机的路径"
   [reader path name]
-  (binding [*file* name] (load-reader reader path name)))
+  (binding [*file* name]
+    (let [old (.-Value DriverOps/SourceFile)]
+      (.set_Value DriverOps/SourceFile name)
+      (try (load-reader reader path name)
+           (finally (.set_Value DriverOps/SourceFile old))))))
 
 (defn- load-hook [reader path name]
   (let [pkg (:package (st))]
@@ -677,7 +690,7 @@
 
 (defn- save-dll! [lcil dll]
   (when (System.IO.File/Exists dll) (System.IO.File/Delete dll))
-  (Cleat.Emit.LcilEmitter/SaveData lcil dll dll false))
+  (Cleat.Emit.LcilEmitter/SaveData lcil dll dll true))
 
 (defn- compile-boot-unit
   "Clojure 镜像（原版 clojure-compile-boot-unit）：一个单元编成 dll，旁边写 Lcil 文本与接口文件。"
@@ -688,7 +701,7 @@
         lcil-path (System.IO.Path/ChangeExtension ^String dll ".lcil")]
     (spit lcil-path text)
     (when (System.IO.File/Exists dll) (System.IO.File/Delete dll))
-    (Cleat.Emit.LcilEmitter/Save text lcil-path dll false)
+    (Cleat.Emit.LcilEmitter/Save text lcil-path dll true)
     (write-interface-file dll l0s lcil)
     dll))
 

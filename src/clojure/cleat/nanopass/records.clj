@@ -70,3 +70,31 @@
   "错误信息里的节点：限制打印的深度与长度（整棵树可能有几百万个节点）。"
   [x]
   (binding [*print-level* 6 *print-length* 8] (pr-str x)))
+
+;; —— 节点元数据（cleat-158：源位置等注解随节点穿过 pass）——
+;; 每个产生式节点带一个可变 meta 字段（实现 clojure.lang.IMeta / IObj）。构造时从 *src-node*
+;; （nanopass-case / define-pass 分派时绑定的被匹配节点）复制，analyzer 记下的 :pos 由此带到 L3；
+;; 字段可变是为了传播零分配（IObj.withMeta 就地改并返回自身，是编译器 IR 的实用语义）。
+
+(def ^:dynamic *src-node* nil)
+
+(defn node-meta
+  "节点的元数据；不是节点或没有时 nil。"
+  [x]
+  (when (instance? clojure.lang.IMeta x) (.meta ^clojure.lang.IMeta x)))
+
+(defn set-node-meta!
+  "就地改节点的元数据，返回节点本身。"
+  [x m]
+  (when (instance? clojure.lang.IObj x)
+    (.withMeta ^clojure.lang.IObj x m))
+  x)
+
+(defn propagate-src-meta!
+  "节点构造后调用：*src-node* 有元数据而自己没有时复制一份。返回节点。"
+  [x]
+  (when *src-node*
+    (when-let [m (node-meta *src-node*)]
+      (when (nil? (node-meta x))
+        (set-node-meta! x m))))
+  x)

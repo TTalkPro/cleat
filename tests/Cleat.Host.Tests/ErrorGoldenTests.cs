@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -76,7 +77,7 @@ public class ErrorGoldenTests
         Assert.That(plain.Err, Does.Not.Contain("   at "), plain.ToString());
 
         var filtered = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "clojure") }, "input.clj");
-        Assert.That(filtered.Err, Does.StartWith("Execution error (ArithmeticException) at (input.clj:3).\nDivide by zero\nSystem.ArithmeticException: Divide by zero\n"), filtered.ToString());
+        Assert.That(filtered.Err, Does.StartWith("Execution error (ArithmeticException) at (input.clj:1).\nDivide by zero\nSystem.ArithmeticException: Divide by zero\n"), filtered.ToString());
         Assert.That(filtered.Err, Does.Contain("   at user$f.invoke"), "the Clojure fn frame stays: " + filtered);
         Assert.That(filtered.Err, Does.Not.Contain("cleat.compiler."), filtered.ToString());
         Assert.That(filtered.Err, Does.Not.Contain("#Module$"), filtered.ToString());
@@ -84,5 +85,42 @@ public class ErrorGoldenTests
         var full = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "1") }, "input.clj");
         // 全部的帧，含驱动的（cleat.compiler.driver，cleat-090）
         Assert.That(full.Err, Does.Contain("cleat.compiler."), "CLEAT_TRACE_ERRORS=1 shows everything: " + full);
+    }
+
+    [Test]
+    public void RuntimeErrorsPointAtTheThrowingLine()
+    {
+        string dir = Path.Combine(ErrorsDir, "runtime", "divide-by-zero-in-fn");
+        var r = HostProcessTests.CleatIn(dir, null, null, "input.clj");
+        Assert.That(r.Err, Does.StartWith("Execution error (ArithmeticException) at (input.clj:1).\n"), r.ToString());
+    }
+
+    [Test]
+    public void MacroExpandedFormsKeepTheirSourceLine()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-158-macro-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "input.clj"),
+                "(defmacro boom []\n  `(throw (new System.Exception \"plain\")))\n(defn f [] (boom))\n(f)\n");
+            var r = HostProcessTests.CleatIn(dir, null, null, "input.clj");
+            Assert.That(r.Err, Does.StartWith("Execution error at (input.clj:3).\n"), r.ToString());
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Test]
+    public void EvalFormsKeepReaderLineNumbers()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-158-eval-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var r = HostProcessTests.CleatIn(dir, null, null, "-e",
+                "(do (defn f [x]\n  (/ x 0)) (f 1))");
+            Assert.That(r.Err, Does.StartWith("Execution error (ArithmeticException) at (REPL:2).\n"), r.ToString());
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
 }

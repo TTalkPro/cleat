@@ -117,15 +117,29 @@ public sealed partial class LcilEmitter
     private static Assembly EmitLoaded(LcilAssembly a, object[] liveConstants)
     {
         var ab = new PersistedAssemblyBuilder(new AssemblyName(a.Name), typeof(object).Assembly);
-        var e = new LcilEmitter(a, ab.DefineDynamicModule(a.Name), false) { _live = liveConstants, _tiered = true };
+        // cleat-158：debug 模式挂符号文档，连同内存 PDB 一起装载——栈帧拿到 文件:行
+        var e = new LcilEmitter(a, ab.DefineDynamicModule(a.Name), true) { _live = liveConstants, _tiered = true };
         e.Build();
-        MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
+        MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData, out MetadataBuilder pdbBuilder);
+        // 内存 portable PDB（与 WritePE 同款的确定性 id）
+        Func<IEnumerable<Blob>, BlobContentId> idProvider = blobs =>
+        {
+            using var h = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            foreach (var b in blobs) h.AppendData(b.GetBytes());
+            return BlobContentId.FromHash(h.GetHashAndReset());
+        };
+        var pdbBlob = new BlobBuilder();
+        var portablePdb = new PortablePdbBuilder(pdbBuilder, metadata.GetRowCounts(), default, idProvider);
+        BlobContentId pdbId = portablePdb.Serialize(pdbBlob);
+        var debug = new DebugDirectoryBuilder();
+        debug.AddCodeViewEntry(a.Name + ".pdb", pdbId, portablePdb.FormatVersion);
         var pe = new ManagedPEBuilder(new PEHeaderBuilder(imageCharacteristics: Characteristics.Dll | Characteristics.ExecutableImage),
-                                      new MetadataRootBuilder(metadata), ilStream, fieldData);
+                                      new MetadataRootBuilder(metadata), ilStream, fieldData,
+                                      debugDirectoryBuilder: debug, deterministicIdProvider: idProvider);
         var blob = new BlobBuilder();
         pe.Serialize(blob);
         if (s_loaded.ContainsKey(a.Name) && Environment.GetEnvironmentVariable("CLEAT_DEBUG_EVAL") == "1") Console.Error.WriteLine("eval: duplicate assembly name " + a.Name);
-        var loaded = s_evalContext.LoadFromStream(new MemoryStream(blob.ToArray()));
+        var loaded = s_evalContext.LoadFromStream(new MemoryStream(blob.ToArray()), new MemoryStream(pdbBlob.ToArray()));
         s_loaded[a.Name] = loaded;
         return loaded;
     }

@@ -41,6 +41,7 @@ public static class Program
         public string TargetImage;     // --target-image 镜像.dll：包的镜像核对用它的 id（缺省正在运行的镜像；自举时为下一级镜像编编译器包，cleat-091）
         public readonly List<string> PackageNamespaces = new List<string>();
         public string Report;          // --report stdio|stderr：REPL / -e 的错误报告写到哪（clojure.main 的语义）
+        public bool Debug;             // -g：调试优先（cleat-158），关跨 fn 内联，让每个 Clojure 函数保留物理栈帧
         public string DepsAliases;     // -M:alias…（clj -M）：按 cleat.edn 的别名建 basis 再运行（cleat-071），其余参数在 ScriptArgs
         public string ExecMode, ExecAlias;   // -X:alias… / -T:alias（clj -X / -T）：调函数，参数 map；函数名与键值对在 ScriptArgs（cleat-071、072）
         public string SDeps;           // -Sdeps EDN：并在 cleat.edn 之上（clj -Sdeps）
@@ -69,6 +70,7 @@ public static class Program
                 case "-i": case "--init": if (i + 1 >= args.Length) throw new ArgumentException("-i needs a file"); o.Inits.Add(("init", args[++i])); break;
                 case "-m": case "--main": if (i + 1 >= args.Length) throw new ArgumentException("-m needs a namespace"); o.MainNs = args[++i]; i++; goto done;
                 case "-r": case "--repl": o.Repl = true; i++; goto done;
+                case "-g": o.Debug = true; break;
                 case "-h": case "--help": o.Help = true; return o;
                 case "--version": o.Version = true; return o;
                 case "-": o.Script = "-"; i++; goto done;
@@ -128,6 +130,8 @@ public static class Program
         }
         if (o.Help) return Usage();
         if (o.Version) { Console.WriteLine(CoreInfo.Banner); return 0; }
+        // -g 必须在编译器命名空间初始化前生效：analyzer 的 inline-calls? 初始值读这个变量
+        if (o.Debug) Environment.SetEnvironmentVariable("CLEAT_NO_INLINE", "1");
         try
         {
             Start(o);
@@ -147,7 +151,7 @@ public static class Program
 
     private static int Usage()
     {
-        Console.Error.WriteLine("usage: cleat [--boot dll] [-I dir]... [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
+        Console.Error.WriteLine("usage: cleat [--boot dll] [-I dir]... [-g] [-e expr]... [-i file]... [-m ns args... | script args... | -r | -]");
         Console.Error.WriteLine("       cleat [--boot dll] -I src/clojure --compile-boot out/cleat.boot.dll [--boot-order boot-order.edn]");
         Console.Error.WriteLine("       cleat -I src... --compile-package out/Name.dll [--package name] [--root dir]... [--target-image boot.dll] ns...");
         Console.Error.WriteLine("       cleat [-Sdeps EDN] [-Spath | -P] -M[:alias...] [options and args...]   run the project (cleat.edn), as clj -M");

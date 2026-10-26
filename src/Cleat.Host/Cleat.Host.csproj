@@ -25,9 +25,9 @@
     <PackageLicenseExpression>EPL-1.0</PackageLicenseExpression>
   </PropertyGroup>
   <ItemGroup Condition="'$(PackAsTool)' == 'true'">
-    <None Include="$(MSBuildThisFileDirectory)..\boot\cleat.boot.dll;$(MSBuildThisFileDirectory)..\boot\cleat.boot.ifc;$(MSBuildThisFileDirectory)..\boot\cleat.boot.inl;$(MSBuildThisFileDirectory)..\boot\Cleat.Clojure.Libs.dll;$(MSBuildThisFileDirectory)..\boot\cleat.compiler.dll"
+    <None Include="$(MSBuildThisFileDirectory)..\boot\cleat.boot.dll;$(MSBuildThisFileDirectory)..\boot\cleat.boot.pdb;$(MSBuildThisFileDirectory)..\boot\cleat.boot.ifc;$(MSBuildThisFileDirectory)..\boot\cleat.boot.inl;$(MSBuildThisFileDirectory)..\boot\Cleat.Clojure.Libs.dll;$(MSBuildThisFileDirectory)..\boot\Cleat.Clojure.Libs.pdb;$(MSBuildThisFileDirectory)..\boot\cleat.compiler.dll;$(MSBuildThisFileDirectory)..\boot\cleat.compiler.pdb"
           Pack="true" PackagePath="tools/$(TargetFramework)/any/" Visible="false" />
-    <None Include="$(MSBuildThisFileDirectory)..\boot\tools\*.dll" Pack="true" PackagePath="tools/$(TargetFramework)/any/tools/" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\boot\tools\*.dll;$(MSBuildThisFileDirectory)..\boot\tools\*.pdb" Pack="true" PackagePath="tools/$(TargetFramework)/any/tools/" Visible="false" />
   </ItemGroup>
 
   <!-- 行编辑器的词法函数（IsComplete 等）由 Host.Tests 单元测试 -->

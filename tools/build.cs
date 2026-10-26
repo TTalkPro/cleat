@@ -146,9 +146,13 @@ void Publish(string[] a)
     if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
     Run("dotnet", ["publish", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-r", rid,
                    "--self-contained", "-o", outDir, "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-nodeReuse:false"]);
-    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.ifc", "cleat.boot.inl", "cleat.compiler.dll", "boot-order.edn", "Cleat.Clojure.Libs.dll" })
+    foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.pdb", "cleat.boot.ifc", "cleat.boot.inl", "cleat.compiler.dll", "cleat.compiler.pdb", "boot-order.edn", "Cleat.Clojure.Libs.dll", "Cleat.Clojure.Libs.pdb" })
         if (File.Exists(Path.Combine(bootDir, f))) File.Copy(Path.Combine(bootDir, f), Path.Combine(outDir, f));
-    foreach (var f in Directory.GetFiles(outDir, "*.pdb")) File.Delete(f);
+    // 保留随包镜像 / 编译器与库包的 PDB；宿主自己的 C# PDB 对运行用户脚本没有用处。
+    foreach (var f in Directory.GetFiles(outDir, "*.pdb")
+                   .Where(f => !Path.GetFileName(f).StartsWith("cleat.", StringComparison.OrdinalIgnoreCase)
+                            && !Path.GetFileName(f).StartsWith("Cleat.Clojure.Libs", StringComparison.Ordinal)))
+        File.Delete(f);
     Console.WriteLine("published " + Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat"));
 }
 
