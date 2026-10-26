@@ -164,6 +164,18 @@
 | [cleat-155](tasks/cleat-155-closure-lifting.md) | 无捕获 / 静态捕获闭包提升（语义红线否决：闭包每次求值必须新对象） | M18 | 无（建议排在 154 后） | 完成（回退） |
 | [cleat-156](tasks/cleat-156-sigspec-dynamic-pi-tuning.md) | sigspec 对 dynamic / pi 的候选、安装、key 与逐出规则调优 | M18 | cleat-155 | 完成（2026-10-23：修复 ALL 判断失效与纯数值 R-fail O 特化，建表前过滤器；种子不动点、Core / Host / conformance / CTS / test-clojure、本机 5 轮通过——dynamic x0.863、pi x0.964、parsing x0.799、mbrot x0.923；本机 56 项 1 轮预检 x0.984、无 >10% 回退；111 离线，经用户确认改用本机性能口径） |
 | [cleat-157](tasks/cleat-157-callsite-type-feedback-prototype.md) | 调用点类型反馈原型：先证计数后净收益，通过则默认启用，不通过则停手 | M18 | cleat-156 | 完成（2026-10-23：本机 5 轮淘汰，单态上限 1.3 ns/次而状态计数 +5.5、双态守卫 + 计数 +5.6；145 理想直读臂 5/5 为负，不落实现、不新增开关。111 复核 2026-10-26：计数 +5.7 / 守卫+计数 +4.6 / 双态+计数 +5.6 与本机一致，单态上限 2.5 仍不足计数一半；145 直读臂 5/5 快 -0.4 ns 但"安装需先计数"裁决不变，维持停手） |
+| [cleat-158](tasks/cleat-158-source-locations-and-stack-frames.md) | 源位置、序列点、PDB 与栈帧：异常行号指向抛出点，`pst` 帧名对齐 JVM | M19 | 无 | 未开始 |
+| [cleat-159](tasks/cleat-159-startup-profile.md) | 启动剖析与目标值（`-e nil` 0.9 ~ 1.3 s：镜像 671 ms / 编译器 193 ms 分解） | M19 | 无 | 未开始 |
+| [cleat-160](tasks/cleat-160-ready-to-run.md) | ReadyToRun：Core、镜像、编译器包与随附库（`src/boot/*.dll` 保持纯 IL，种子比较不变） | M19 | cleat-159 | 未开始 |
+| [cleat-161](tasks/cleat-161-lazy-compiler-load.md) | 编译器延迟加载：`-e nil` / AOT 路径不加载编译器 | M19 | cleat-159 | 未开始 |
+| [cleat-162](tasks/cleat-162-ci.md) | GitHub Actions：PR 与 nightly 两层、种子守卫 | M19 | 无 | 未开始 |
+| [cleat-163](tasks/cleat-163-sigspec-ablation.md) | sigspec 整体消融与三档裁决（保留 / 只留编译期推导 / 删除） | M19 | 无（建议在 164 之后跑分） | 未开始 |
+| [cleat-164](tasks/cleat-164-opt-switch-cleanup.md) | `CLEAT_NO_OPT` 精确匹配（修 accinline 误关 inline）、accinline 去留、开关清单 | M19 | 无 | 未开始 |
+| [cleat-165](tasks/cleat-165-codegen-split.md) | codegen 拆分：infer / rtspec / classes，种子逐字节不变 | M19 | cleat-158、163 | 未开始 |
+| [cleat-166](tasks/cleat-166-spec-alpha-package.md) | clojure.spec.alpha 包（packages/spec.alpha） | M19 | 无 | 未开始 |
+| [cleat-167](tasks/cleat-167-core-async-package.md) | clojure.core.async 包（spike 选路线后落地） | M19 | 无 | 未开始 |
+| [cleat-168](tasks/cleat-168-jvm-compat-evaluation.md) | jvm-compat 可选垫片评估（408 行 `:host` 偏离分组） | M19 | 无 | 未开始 |
+| [cleat-169](tasks/cleat-169-m19-closeout.md) | M19 收口：README / CHANGELOG / 已知限制、全量门禁与 r7rs 复核 | M19 | cleat-158 ~ 168 | 未开始 |
 
 ## 里程碑
 
@@ -192,6 +204,7 @@
 | M16 热路径优化（2026-10-20 起） | cleat-142 ~ cleat-150 | M15 归因复核后的修正优先级：char 装箱、String 直读、跨 ns deftype 决议与访问器内联、intern、nth / 闭包 / 变长、GC profile、回归排查（[28](designs/28-hot-path-optimizations.md)） |
 | M17 口径与回退收口（2026-10-21 起，2026-10-22 完成） | cleat-151 ~ cleat-153 | 本机噪声地板标定 + 56 项三臂全量、M14 / M15 回退的 commit 级定位、调用点类型反馈（承接 147 第 2 / 3 条与 149 遗留的三项待办） |
 | M18 调用与对象路径落地（2026-10-22 起） | cleat-154 ~ cleat-157 | 把 M17 量化过的变长参数数组、闭包提升落地；sigspec 单项回退调优；调用点反馈原型。本批不新增优化开关，已证明有效即默认全面启用 |
+| M19 可用性与工程收口（2026-10-26 起） | cleat-158 ~ cleat-169 | 暂停性能主线：源位置与栈帧、启动（剖析 / R2R / 编译器延迟加载）、CI、sigspec 消融与开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估（[29](designs/29-usability-and-engineering.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
@@ -201,6 +214,8 @@
 **M17（2026-10-21 起，2026-10-22 完成）**：151（先标定）已于 2026-10-22 完成 → 152（依赖 151 的门槛，判据改造已于 2026-10-22 落地，2026-10-22 按"定位到 cleat-133 sigspec + 记账保留默认开"收口）→ 153（依赖 145 的守卫形态，**145 已于 2026-10-21 落地，依赖已就位**；量化探针已于 2026-10-22 落地，2026-10-22 收口为量化 + 记账）。147 的第 2 / 3 条（闭包提升、变长参数数组，量化基建已于 2026-10-22 落地，2026-10-22 量化 + 决策收口）也在 M17 内做，任务书仍挂在 cleat-147。
 
 **M18（2026-10-22 起）**：154（变长参数数组 + docstring 欠账，先做）→ 155（闭包提升）→ 156（sigspec 调 dynamic / pi 规则）→ 157（调用点反馈原型）。154 / 155 可在本机并行做代码面调研，但落地提交按上述顺序分开；111 只跑性能 A/B，不在跑分窗口构建 / 测试。本批一律不新增优化开关；对照用改前 / 改后构建或既有诊断开关。
+
+**M19（2026-10-26 起）**：M17 / M18 七项里只有 156 落地，对 JVM 停在 x1.59，热路径微优化已到噪声地板，性能主线暂停（[29 §0](designs/29-usability-and-engineering.md)）。164 → 163 → 165；158 → 165；159 → 160 / 161 并列；162、166、167、168 随时可并行；最后 169。优先级：158（用户最直接感受到）、159 ~ 161（启动）、162（CI 保护后续任务）。本批不新增优化开关，改到 `src/clojure` 或 `Cleat.Core` 的任务都要做 r7rs 同轮配对，不允许可声明的回退（29 §9）。
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 
