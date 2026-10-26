@@ -163,7 +163,7 @@
 | [cleat-154](tasks/cleat-154-varargs-known-arity-direct-send.md) | 变长调用已知元数直发（含 `driver.clj` 的 accinline docstring 欠账） | M18 | 无 | 完成（2026-10-23：111 A/B 不达标——恰好必需元数路径收益趋零（RestFn 本就是小 switch 零分配），真实负载五项全不可判定；src / seed / tests 已回退到 153 收口验证态，探针与机制归因记账保留；docstring 欠账已另行清理（2026-10-23）） |
 | [cleat-155](tasks/cleat-155-closure-lifting.md) | 无捕获 / 静态捕获闭包提升（语义红线否决：闭包每次求值必须新对象） | M18 | 无（建议排在 154 后） | 完成（回退） |
 | [cleat-156](tasks/cleat-156-sigspec-dynamic-pi-tuning.md) | sigspec 对 dynamic / pi 的候选、安装、key 与逐出规则调优 | M18 | cleat-155 | 完成（2026-10-23：修复 ALL 判断失效与纯数值 R-fail O 特化，建表前过滤器；种子不动点、Core / Host / conformance / CTS / test-clojure、本机 5 轮通过——dynamic x0.863、pi x0.964、parsing x0.799、mbrot x0.923；本机 56 项 1 轮预检 x0.984、无 >10% 回退；111 离线，经用户确认改用本机性能口径） |
-| [cleat-157](tasks/cleat-157-callsite-type-feedback-prototype.md) | 调用点类型反馈原型：先证计数后净收益，通过则默认启用，不通过则停手 | M18 | cleat-156 | 完成（2026-10-23：本机 5 轮淘汰，单态上限 1.3 ns/次而状态计数 +5.5、双态守卫 + 计数 +5.6；145 理想直读臂 5/5 为负，不落实现、不新增开关） |
+| [cleat-157](tasks/cleat-157-callsite-type-feedback-prototype.md) | 调用点类型反馈原型：先证计数后净收益，通过则默认启用，不通过则停手 | M18 | cleat-156 | 完成（2026-10-23：本机 5 轮淘汰，单态上限 1.3 ns/次而状态计数 +5.5、双态守卫 + 计数 +5.6；145 理想直读臂 5/5 为负，不落实现、不新增开关。111 复核 2026-10-26：计数 +5.7 / 守卫+计数 +4.6 / 双态+计数 +5.6 与本机一致，单态上限 2.5 仍不足计数一半；145 直读臂 5/5 快 -0.4 ns 但"安装需先计数"裁决不变，维持停手） |
 
 ## 里程碑
 
