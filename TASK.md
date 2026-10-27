@@ -164,7 +164,7 @@
 | [cleat-155](tasks/cleat-155-closure-lifting.md) | 无捕获 / 静态捕获闭包提升（语义红线否决：闭包每次求值必须新对象） | M18 | 无（建议排在 154 后） | 完成（回退） |
 | [cleat-156](tasks/cleat-156-sigspec-dynamic-pi-tuning.md) | sigspec 对 dynamic / pi 的候选、安装、key 与逐出规则调优 | M18 | cleat-155 | 完成（2026-10-23：修复 ALL 判断失效与纯数值 R-fail O 特化，建表前过滤器；种子不动点、Core / Host / conformance / CTS / test-clojure、本机 5 轮通过——dynamic x0.863、pi x0.964、parsing x0.799、mbrot x0.923；本机 56 项 1 轮预检 x0.984、无 >10% 回退；111 离线，经用户确认改用本机性能口径） |
 | [cleat-157](tasks/cleat-157-callsite-type-feedback-prototype.md) | 调用点类型反馈原型：先证计数后净收益，通过则默认启用，不通过则停手 | M18 | cleat-156 | 完成（2026-10-23：本机 5 轮淘汰，单态上限 1.3 ns/次而状态计数 +5.5、双态守卫 + 计数 +5.6；145 理想直读臂 5/5 为负，不落实现、不新增开关。111 复核 2026-10-26：计数 +5.7 / 守卫+计数 +4.6 / 双态+计数 +5.6 与本机一致，单态上限 2.5 仍不足计数一半；145 直读臂 5/5 快 -0.4 ns 但"安装需先计数"裁决不变，维持停手） |
-| [cleat-158](tasks/cleat-158-source-locations-and-stack-frames.md) | 源位置、序列点、PDB 与栈帧：异常行号指向抛出点，`pst` 帧名对齐 JVM | M19 | 无 | 进行中 |
+| [cleat-158](tasks/cleat-158-source-locations-and-stack-frames.md) | 源位置、序列点、PDB 与栈帧：异常行号指向抛出点，`pst` 帧名对齐 JVM | M19 | 无 | 完成（2026-10-27：实现 + 黄金 + `-g` 仅 opt-in；本轮修掉镜像 / 包 7,277 个方法挂 `NO_SOURCE_PATH` 的源名归属缺陷（`:pos` 在分析时记文件、`load-built` 绑 `*source-path*` 为加载名），错误位置改为只取非库命名空间的帧（对齐 JVM）；Core 123、全量 Host 288/288、`clojure-seed` 不动点通过。56 项 × 5 轮跨构建配对不作数（基线的镜像 IL 形状差 3.4×，机制未查明），移交 cleat-169 复核） |
 | [cleat-159](tasks/cleat-159-startup-profile.md) | 启动剖析与目标值（`-e nil` 0.9 ~ 1.3 s：镜像 671 ms / 编译器 193 ms 分解） | M19 | 无 | 未开始 |
 | [cleat-160](tasks/cleat-160-ready-to-run.md) | ReadyToRun：Core、镜像、编译器包与随附库（`src/boot/*.dll` 保持纯 IL，种子比较不变） | M19 | cleat-159 | 未开始 |
 | [cleat-161](tasks/cleat-161-lazy-compiler-load.md) | 编译器延迟加载：`-e nil` / AOT 路径不加载编译器 | M19 | cleat-159 | 未开始 |

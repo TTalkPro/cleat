@@ -178,12 +178,19 @@
    :loop-label loop-label :loop-arity loop-arity :self-mref self-mref :arg-base (if static? 0 1) :labels (ht)
    :big? (atom false) :ret-type (atom nil) :uses (ht) :pinned (ht)})
 
+(defn- real-source
+  "真的源文件名：reader 在没有 *source-path* 时留下占位符（NO_SOURCE_PATH / NO_SOURCE_FILE），
+   占位符不能当源文件用——镜像 / 包的 (source …) 必须是单元的加载名（clojure/core.clj），
+   既对齐 JVM 的栈帧，也不能带构建机的绝对路径（cleat-091）。"
+  [f]
+  (when-let [s (when f (str f))]
+    (when (and (pos? (count s)) (not= s "NO_SOURCE_PATH") (not= s "NO_SOURCE_FILE")) s)))
+
 (defn- unit-source
   "本编译单元的源文件：驱动按单元放的线程局部值（DriverOps/SourceFile）优先，否则 RT 的 SourcePath（load / compile 期间绑定到文件路径）。"
   []
-  (or (.-Value DriverOps/SourceFile)
-      (let [s (str (.deref clojure.lang.RT/SourcePathVar))]
-        (when (pos? (count s)) s))))
+  (or (real-source (.-Value DriverOps/SourceFile))
+      (real-source (str (.deref clojure.lang.RT/SourcePathVar)))))
 
 (defn- seq-point-code
   "cleat-158：节点带 :pos（analyzer 记的 [行 列 文件]）且行与上一次不同则发 (line …)。
@@ -192,7 +199,8 @@
   [mc e]
   (when (r/node? e)
     (when-let [pos (:pos (r/node-meta e))]
-      (let [[l c f] pos]
+      (let [[l c f] pos
+            f (real-source f)]
         (when f (reset! (:source mc) f))
         ;; 没有源文件（方法里没有 (source …) 可挂）就不发：发射器对无文档的 (line …) 是硬错误
         (when (and l (pos? l) @(:source mc))

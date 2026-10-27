@@ -138,15 +138,26 @@
       (let [m (apply dissoc m source-keys)]
         (when (pos? (count m)) m)))))
 
+(defn- real-source
+  "源文件名，去掉 reader / RT 的占位符（NO_SOURCE_PATH / NO_SOURCE_FILE）：占位符当“没有源文件”，
+   由调用方决定缺省（cleat-158）。"
+  [f]
+  (when f
+    (let [s (str f)]
+      (when (and (pos? (count s)) (not= s "NO_SOURCE_PATH") (not= s "NO_SOURCE_FILE")) s))))
+
+(defn- source-path [] (str (.deref RT/SourcePathVar)))
+
 (defn source-of
-  "形式自己的源位置 [行 列 文件或nil]（syntax-kinds.sls clojure-source-of + syntax-position）；没有 :line 时 nil。"
+  "形式自己的源位置 [行 列 文件或nil]（syntax-kinds.sls clojure-source-of + syntax-position）；没有 :line 时 nil。
+   reader 只盖 :line / :column，不盖 :file，所以文件缺省取**分析时**的 *source-path*：
+   留到发射时再取就晚了——镜像与包是攒完整单元再编，那时加载的绑定早已还原（cleat-158）。"
   [x]
   (when (instance? IMeta x)
     (when-let [m (meta x)]
       (when-let [line (:line m)]
-        [(parse-long (str line)) (parse-long (str (or (:column m) 1))) (let [f (:file m)] (when (and f (pos? (count (str f)))) (str f)))]))))
-
-(defn- source-path [] (str (.deref RT/SourcePathVar)))
+        [(parse-long (str line)) (parse-long (str (or (:column m) 1)))
+         (or (real-source (:file m)) (real-source (source-path)))]))))
 
 ;; —— 错误（namespaces.sls expander-exception / clojure-error-hook）——
 

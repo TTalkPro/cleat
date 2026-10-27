@@ -123,4 +123,26 @@ public class ErrorGoldenTests
         }
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
+
+    /// <summary>
+    /// cleat-158：镜像与包里的每个方法带**自己单元**的源文件（codegen 的 (source …) → PDB 文档名）：
+    /// 栈帧读到 clojure/core.clj:6417，而不是 NO_SOURCE_PATH。源名必须在**分析时**记进 :pos（reader 只盖 :line / :column）
+    /// 并在 load-built 期间绑 *source-path* 为加载名——镜像与包是攒完整单元再编，发射时 *source-path* 早已还原。
+    /// 位置仍只报用户源的帧：clojure.* 的库帧留在栈里，不进 "at (文件:行)"（JVM 的 clojure.main 相同）。
+    /// </summary>
+    [Test]
+    public void MirrorFramesReportTheirUnitSourceFile()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-158-mirror-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var r = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "clojure") },
+                "-e", "(load \"no_such_lib_xyz\")");
+            Assert.That(r.Err, Does.Contain("clojure.core$load.doInvoke (core.clj:"), r.ToString());
+            Assert.That(r.Err, Does.Not.Contain("NO_SOURCE"), r.ToString());
+            Assert.That(r.Err, Does.StartWith("Execution error (FileNotFoundException) at (REPL:1).\n"), r.ToString());
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
 }

@@ -98,8 +98,9 @@ public static class Diagnostics
     }
 
     /// <summary>
-    /// 异常栈里第一个属于用户源的帧：有行号、文件名是 .clj / .cljc（Clojure 源；core.clj 也算）。
-    /// C# 运行时帧与没有 PDB 的帧（行号 0）跳过。
+    /// 异常栈里第一个属于用户源的帧：有行号、文件名是 .clj / .cljc（Clojure 源），且帧不属于库命名空间
+    /// （clojure.* / cleat.*，与 JVM 的 clojure.main 相同：位置只报用户代码，库的 core.clj:6417 只出现在栈里）。
+    /// C# 运行时帧（.cs）与没有 PDB 的帧（行号 0）跳过。
     /// </summary>
     internal static string FirstUserLocation(Exception e)
     {
@@ -114,6 +115,7 @@ public static class Diagnostics
                 string file = f.GetFileName();
                 if (line <= 0 || string.IsNullOrEmpty(file)) continue;
                 if (!file.EndsWith(".clj", StringComparison.Ordinal) && !file.EndsWith(".cljc", StringComparison.Ordinal)) continue;
+                if (IsLibraryFrame(f.GetMethod()?.DeclaringType)) continue;
                 // JVM 的栈报告源文件名（t.clj / core.clj），不是构建机上的绝对路径；序列点里也保留加载名
                 first ??= $"{Path.GetFileName(file)}:{line}";
             }
@@ -276,6 +278,21 @@ public static class Diagnostics
             }
         }
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// 库命名空间的帧（clojure.* 与 cleat.*）：JVM 报执行错误的位置时跳过它们，只报用户代码的帧。
+    /// 镜像的方法带上自己的源文件后（cleat-158），不跳就会把 clojure/core.clj 的帧漏进 "at (文件:行)"。
+    /// </summary>
+    private static bool IsLibraryFrame(Type t)
+    {
+        string n = t == null ? null : t.FullName ?? t.Name;
+        if (string.IsNullOrEmpty(n)) return false;
+        int dollar = n.IndexOf('$');
+        if (dollar >= 0) n = n.Substring(0, dollar);       // clojure.core$mapv$fn__941 → clojure.core
+        return n == "clojure" || n.StartsWith("clojure.", StringComparison.Ordinal)
+          || n == "cleat" || n.StartsWith("cleat.", StringComparison.Ordinal)
+          || n.StartsWith("Cleat.", StringComparison.Ordinal);
     }
 
     public static bool IsClojureFrame(Type t)

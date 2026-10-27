@@ -302,8 +302,12 @@
   (binding [*file* name]
     (let [old (.-Value DriverOps/SourceFile)]
       (.set_Value DriverOps/SourceFile name)
+      ;; *source-path* 也绑成加载名：reader 给形式只盖 :line / :column，文件靠分析时的 *source-path*，
+      ;; 不绑则镜像 / 包里编出来的是 Loader 的绝对路径（违反 cleat-091）或占位符（cleat-158）
+      (clojure.lang.Var/pushThreadBindings (RT/mapUniqueKeys RT/SourcePathVar name))
       (try (load-reader reader path name)
-           (finally (.set_Value DriverOps/SourceFile old))))))
+           (finally (clojure.lang.Var/popThreadBindings)
+                    (.set_Value DriverOps/SourceFile old))))))
 
 (defn- load-hook [reader path name]
   (let [pkg (:package (st))]
