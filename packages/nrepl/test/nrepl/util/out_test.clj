@@ -102,7 +102,29 @@
       (wait-for #(= 10 (count @out-calls)) 5000)
 
       (is+ (vec (repeat 10 (newline->sys "1\n")))
-           @out-calls))))
+           @out-calls)
+      ;; cleat: drain the bad callbacks' uncaught-exception logs before the
+      ;; fixture resets the callbacks. The bad callbacks throw on freshly
+      ;; spawned transport threads and the threading wrapper logs the exception
+      ;; to *err*; the NEXT test (test-root-binding-updates) installs an :err
+      ;; callback and would capture those logs. Upstream has the same race —
+      ;; the JVM's timing hides it; on this machine, loaded full-suite runs let
+      ;; the logs bleed into the next test and fail it (2026-10-27). Every
+      ;; write spawns its callback threads synchronously, so by now all the bad
+      ;; threads exist: wait until :err writes have been quiet for a while
+      ;; (cap 5 s) so their logs land while only the drain callback is set.
+      (let [err-writes (atom 0)
+            deadline (+ (Environment/TickCount64) 5000)]
+        (out/set-callback :err ::drain (fn [_] (swap! err-writes inc)))
+        (loop [last-n 0, quiet-at (Environment/TickCount64)]
+          (let [n @err-writes
+                now (Environment/TickCount64)
+                quiet-at (if (= n last-n) quiet-at now)]
+            (when (and (< now deadline)
+                       (or (zero? n) (< (- now quiet-at) 500)))
+              (Thread/Sleep 50)
+              (recur n quiet-at))))
+        (out/remove-callback :err ::drain)))))
 
 (deftest test-surrogate-pair-handling
   (doseq [buffer-len (range 10 20)
