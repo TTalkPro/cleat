@@ -336,6 +336,7 @@ namespace clojure.lang
             {
                 Symbol nsname = (Symbol)arg1;
                 Namespace ns = Namespace.findOrCreate(nsname);
+                Cleat.Core.Runtime.StartupTimings.MarkNamespace(nsname.Name);   // cleat-159：镜像条目的边界
                 CurrentNSVar.set(ns);
                 return ns;
             }
@@ -348,6 +349,7 @@ namespace clojure.lang
             {
                 Symbol nsname = (Symbol)arg1;
                 Namespace ns = Namespace.findOrCreate(nsname);
+                Cleat.Core.Runtime.StartupTimings.MarkNamespace(nsname.Name);   // cleat-159
                 CurrentNSVar.set(ns);
                 return ns;
             }

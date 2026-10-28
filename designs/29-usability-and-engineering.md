@@ -84,6 +84,11 @@ M19 的任何改动都不能让 r7rs 56 项出现可声明的回退（§9）。
 - 对照组：`DOTNET_TieredCompilation` 各档、`DOTNET_TC_QuickJitForLoops`、`DOTNET_ReadyToRun=0`，确认 JIT 占比。
 - 产出：notes 新增"启动画像"一节，给出 161 的最终目标值。暂定目标：`-e nil` ≤ 0.4 s，
   `-e '(require (quote clojure.pprint))'` ≤ 0.6 s（本机冷 / 热各 5 次取中位）。
+- **159 的结果**（[notes 启动画像](../notes/startup-profile.md)）：`-e nil` 978 ms 里镜像入口 548（纯 IL 的分层 JIT
+  份额 ≈ 283，tier0-only 反证 +480）、编译器包 212（require 驱动整格可在 161 省掉）、runtime 104（反射 / 类型系统）；
+  REPL 首提示符 1771 ms，其中 **671 ms 是 require `clojure.repl.deps` 的失败尝试**（源码存在→真走一遍编译器再抛）。
+  `quickjit` 无感，160 不依赖它。目标值据此修订（§3.2 / §3.3 的验收行）：160 之后 `-e nil` ≤ 0.65 s、
+  160 + 161 之后 ≤ 0.45 s、REPL 首提示符 ≤ 0.55 s。
 
 ### 3.2 ReadyToRun（cleat-160）
 
@@ -95,6 +100,8 @@ M19 的任何改动都不能让 r7rs 56 项出现可声明的回退（§9）。
 - eval 时生成的内存程序集仍然走 JIT，这一点不变。
 - 验收：159 的画像里 JIT 份额下降；`HostProcessTests`、`NuGetColdLoadTests` 在 R2R 包上通过；
   长跑基准（r7rs 56 项）不能因为 R2R 代码挡住 tier-1 重编而回退（R2R 代码仍会被分层重编，要实测确认）。
+  159 给的量化验收：`-e nil` ≤ 0.65 s（现 978 ms）、entry 段 ≤ 350 ms（现 548）、
+  tier0-only − default 的差从 +480 ms 缩到 < 150 ms。
 
 ### 3.3 编译器延迟加载（cleat-161）
 
@@ -102,6 +109,8 @@ M19 的任何改动都不能让 r7rs 56 项出现可声明的回退（§9）。
   `load` 源文件、`compile`）再加载；`CLEAT_NO_SIMPLE_EVAL` 路径语义不变。
 - 只跑 AOT 代码的路径（`-m` 指向包程序集里的 ns、`-X` / `-T` 调已编译函数）不加载编译器。
 - 验收：159 定下的目标值；`-r` 首个提示符出现前不得因为延迟加载而变慢（REPL 可以在后台线程预热编译器）。
+  159 给的量化验收：`-e nil` ≤ 0.45 s（160 之后）、`CLEAT_TIME` 的 compiler 段为 0；REPL 首提示符 ≤ 0.55 s，
+  其中逐库画像要求 REPL 不为 require 失败的库付编译器成本（`clojure.repl.deps` 现状 671 ms）。
 
 ## §4 CI（cleat-162）
 

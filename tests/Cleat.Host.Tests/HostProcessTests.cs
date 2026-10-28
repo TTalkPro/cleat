@@ -179,7 +179,42 @@ public class HostProcessTests
         // 第二次计时（第一次有磁盘缓存的影响）
         var r = CleatIn(_dir, ":repl/quit\n", new[] { ("CLEAT_TIME", "1") });
         Assert.That(r.Err, Does.Match(@"cleat: Clojure image \d+ ms, compiler \(package\) \d+ ms"), "the compiler's package assembly should be used: " + r);
+        // cleat-159（29 §3.1 第 2 条的第三种场景）：REPL 走到首个提示符再补一行，量启动报告之后的那截
+        // （repl-requires 与行编辑器/提示符本身）。first prompt 是从宿主计时起点算起的总时间。
+        Assert.That(r.Err, Does.Match(@"cleat: repl setup \d+ ms \(user \d+ \+ repl-requires \d+ \+ prompt \d+\) = first prompt \d+ ms after start"),
+                    "the REPL should report its own setup segment: " + r);
+        // cleat-159：repl-requires 再按库细分（画像里 clojure.repl.deps 的失败尝试是最贵的一格）
+        Assert.That(r.Err, Does.Match(@"cleat: repl-requires per lib: .*clojure\.repl.* ms.*clojure\.pprint.* ms.*clojure\.repl\.deps.* ms"),
+                    "repl-requires should report per-library shares: " + r);
         TestContext.Out.WriteLine($"startup to first prompt and exit: {r.Elapsed.TotalMilliseconds:F0} ms ({r.Err.Trim()})");
+    }
+
+    /// <summary>
+    /// cleat-159（designs/29 §3.1）：CLEAT_TIME 的分段计时。段：host（宿主入口与大栈线程）/ cli（命令行解析）/
+    /// paths（找镜像与编译器包的路径探测）/ runtime（原语注册与 RT.Init）/ image（程序集 + 登记 + .ifc + 模块入口）/
+    /// packages（镜像旁的包登记）/
+    /// compiler（require 驱动 + install-hooks!）/ other；镜像的模块初始化再按 in-ns 边界分桶（boot-order 条目的份额）。
+    /// 各段是整数毫秒的截断差，加总不超过 total（本测试核这一条）；未设置 CLEAT_TIME 时不输出（上面的用例）。
+    /// </summary>
+    [Test]
+    public void StartupTimeSegments()
+    {
+        var r = CleatIn(_dir, null, new[] { ("CLEAT_TIME", "1") }, "-e", "nil");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        var segs = System.Text.RegularExpressions.Regex.Match(r.Err,
+            @"cleat: segments host (\d+) / cli (\d+) / paths (\d+) / runtime (\d+) / image (\d+) \(assembly (\d+) \+ register (\d+) \+ ifc (\d+) \+ entry (\d+)\) / packages (\d+) / compiler (\d+) \(require (\d+) \+ hooks (\d+)\) / other (\d+) = total (\d+) ms");
+        Assert.That(segs.Success, Is.True, "分段行没出来: " + r);
+        long G(int i) => long.Parse(segs.Groups[i].Value);
+        // 顶层段与子段各自自洽：image = assembly+register+ifc+entry，compiler = require+hooks
+        // （tick 累计后每格单独截断成毫秒，子段之和可以比父段少几毫秒）
+        Assert.That(G(5), Is.EqualTo(G(6) + G(7) + G(8) + G(9)).Within(4), "image 的子段: " + segs.Value);
+        Assert.That(G(11), Is.EqualTo(G(12) + G(13)).Within(4), "compiler 的子段: " + segs.Value);
+        long top = G(1) + G(2) + G(3) + G(4) + G(5) + G(10) + G(11) + G(14), total = G(15);
+        Assert.That(top, Is.LessThanOrEqualTo(total), "各段都是截断差，加总不该超过 total: " + segs.Value);
+        Assert.That(total - top, Is.LessThan(20), "漏计的时间不该超过 20 ms（8 个顶层段的截断）: " + segs.Value);
+        // 镜像的模块初始化按 in-ns 边界分桶：core 与 pprint 都在镜像里
+        Assert.That(r.Err, Does.Match(@"image module init per in-ns boundary \(top \d+ of \d+\):[^\n]*clojure\.core \d+ ms"), r.ToString());
+        TestContext.Out.WriteLine(r.Err.Trim());
     }
 
     [Test]

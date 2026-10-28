@@ -278,9 +278,23 @@ public static class Loader
                 ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(full);
         }
 
+        // cleat-159：镜像的分段（程序集加载 / 登记 / 旁边的 .ifc / 模块入口）。只在初始化 Clojure 镜像这一段采样，
+        // 别的模块加载（eval、包）不进这几格
+        bool timingImage = StartupTimings.Enabled && BootImageInitializing;
+        if (timingImage) StartupTimings.Mark(StartupTimings.Segment.ImageAssembly);
         Register(asm);
+        if (timingImage) StartupTimings.Mark(StartupTimings.Segment.ImageRegister);
         InterfaceFile.TryRegisterBeside(full, asm);   // cleat-022：旁边的 .ifc（MVID 相符才登记）
-        return WithLoadBindings(() => Run(asm));
+        if (timingImage) StartupTimings.Mark(StartupTimings.Segment.ImageIfc);
+        if (timingImage) StartupTimings.InBootEntry = true;
+        try
+        {
+            return WithLoadBindings(() => Run(asm));
+        }
+        finally
+        {
+            if (timingImage) StartupTimings.EndBootEntry();
+        }
     }
 
     /// <summary>
