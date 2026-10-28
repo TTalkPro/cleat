@@ -251,6 +251,7 @@ public static class Program
         string orderPath = o.BootOrder ?? Path.Combine(Path.GetDirectoryName(dll) ?? ".", "boot-order.edn");
         var forms = BootForms(File.ReadAllText(orderPath));
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        Startup.EnsureCompiler();     // cleat-161：编译入口由驱动登记，先按需加载它（--compile-* 本来就要用编译器）
         // 已运行着 Clojure 镜像时（不动点的第二段）：*loaded-libs* 绑到空集，require 与从源码构建时一样真正加载每个库
         var core = Namespace.find(Symbol.intern("clojure.core"));
         var loadedLibs = core?.FindInternedVar(Symbol.intern("*loaded-libs*"));
@@ -269,7 +270,8 @@ public static class Program
         return 0;
     }
 
-    /// <summary>编译器驱动登记的编译入口（install-hooks!）；没有镜像或编译器时报错。</summary>
+    /// <summary>编译器驱动登记的编译入口（install-hooks!）；没有镜像或编译器时报错。
+    /// 调用前先 <see cref="Startup.EnsureCompiler"/>（cleat-161：编译器现在可能还没加载）。</summary>
     private static IFn CompileHook(IFn hook) =>
       hook ?? throw new InvalidOperationException("the compiler is not loaded (no Clojure boot image with cleat.compiler.dll beside it, or the driver is not on the load path)");
 
@@ -282,6 +284,7 @@ public static class Program
         string dll = Path.GetFullPath(o.CompilePackage);
         if (o.PackageNamespaces.Count == 0) throw new ArgumentException("--compile-package needs at least one namespace");
         Directory.CreateDirectory(Path.GetDirectoryName(dll)!);
+        Startup.EnsureCompiler();     // cleat-161：同上，编译入口要编译器
         var forms = o.PackageNamespaces
             .Select(ns => (object)RT.list(Symbol.intern("clojure.core", "require"), RT.list(Symbol.intern("quote"), Symbol.intern(ns))))
             .ToList();
@@ -434,7 +437,7 @@ public static class Program
     /// <summary>最简 REPL：逐个形式读—求值—打印，*1 *2 *3 *e，:repl/quit 退出。标准输入被重定向时用（终端上走 InteractiveRepl）。</summary>
     public static int Repl(TextReader input, TextWriter output, TextWriter error)
     {
-        var eval = RuntimeHooks.Require(RuntimeHooks.Eval, "eval");
+        var eval = Startup.EvalEntry();     // cleat-161：编译器没加载时逐形式走 EvalForm，首个平凡输入不为它加载编译器
         var r = new LineNumberingTextReader(input);
         var opts = RT.map(Keyword.intern("read-cond"), Keyword.intern("allow"));
         object eof = new object();
@@ -469,7 +472,7 @@ public static class Program
     /// <summary>终端 REPL（cleat-034）：行编辑器读入一个完整输入（可跨行、可含多个形式），逐个求值打印。终端不支持所需的控制时由调用方退回 Repl。</summary>
     private static int InteractiveRepl(TextWriter output, TextWriter error)
     {
-        var eval = RuntimeHooks.Require(RuntimeHooks.Eval, "eval");
+        var eval = Startup.EvalEntry();     // cleat-161：同上（终端 REPL 的提示符不因为编译器而变晚）
         var opts = RT.map(Keyword.intern("read-cond"), Keyword.intern("allow"));
         object eof = new object();
         var quit = Keyword.intern("repl", "quit");

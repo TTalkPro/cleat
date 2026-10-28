@@ -206,7 +206,7 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         _clojurePackagesBuilt = true;
     }
 
-    private static void CopyTree(string from, string to, Func<string, bool>? skip = null)
+    private static void CopyTree(string from, string to, Func<string, bool> skip = null)
     {
         foreach (var f in Directory.GetFiles(from, "*", SearchOption.AllDirectories))
         {

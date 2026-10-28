@@ -111,6 +111,16 @@ M19 的任何改动都不能让 r7rs 56 项出现可声明的回退（§9）。
 - 验收：159 定下的目标值；`-r` 首个提示符出现前不得因为延迟加载而变慢（REPL 可以在后台线程预热编译器）。
   159 给的量化验收：`-e nil` ≤ 0.45 s（160 之后）、`CLEAT_TIME` 的 compiler 段为 0；REPL 首提示符 ≤ 0.55 s，
   其中逐库画像要求 REPL 不为 require 失败的库付编译器成本（`clojure.repl.deps` 现状 671 ms）。
+- **161 的结果**（2026-10-28，[notes 启动画像 §7](../notes/startup-profile.md)）：惰性入口挂在 `RuntimeHooks`
+  四个编译类钩子的 getter 上（`Startup.EnsureCompiler`，幂等 + 同线程重入直接返回），Clojure 侧的
+  `clojure.core/eval` / `macroexpand-1` 本来就读这些属性，所以两条路共用一个入口，**`src/clojure` 与种子未动**。
+  `Startup.EvalForm` + `SimpleForms` 让平凡形式（常量 / `()` / `quote` / 递归不含符号且不带元数据的集合字面量）
+  在 C# 侧直接给值，边界是驱动侧 `simple?` 的真子集，`CLEAT_NO_SIMPLE_EVAL` 可整体关掉。
+  `-e nil` 本机 978 → 678 ms、111 797 → 586 ms（`compiler` 段为 0）；`-m` / `-X` / `-T` 的 AOT 路径全程不加载编译器；
+  REPL 首提示符没有变慢（本机 1771 → 1575、111 1348 → 1347），后台预热没做（非必需，任务书允许）。
+  **首提示符 ≤ 0.55 s 未达成**：那一格的大头仍是 repl-requires 里 `clojure.repl.deps` 的失败 require
+  （本机 752 / 111 600 ms），"REPL 不为 require 失败的库付编译器成本"这条不在 161 的改动范围，继续挂着。
+  副作用记账：纯 AOT 进程不再有运行时签名特化（`SpecCompiler` 由驱动登记），份额留给 §5.1 的 163 消融。
 
 ## §4 CI（cleat-162）
 

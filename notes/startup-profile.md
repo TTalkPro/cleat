@@ -215,5 +215,65 @@ dotnet-trace 的分桶（cpu-sampling，采样只算执行线程，是"在做什
 2. **runner 加臂序轮换**：`bench/r7rs/pairbuild.py` 每轮交替"新构建先跑 / 基线先跑"，记录 `order` 字段
    （`R7_PAIR_SAMEORDER=1` 回到旧行为）。固定臂序会把上面的抽样偏置放大成看起来的单边回退 —— 这类跨构建配对
    以后都按轮换臂序出数。
-3. 修后复核：`pair159fix`（fix vs ref，全 56 项 × 5 轮、臂序轮换）在 111 上进行，产物落
-   `bench/r7rs/results/pair159fix.jsonl`。
+3. 修后复核（2026-10-28 完成）：`pair159fix`（fix vs ref，全 56 项 × 5 轮、臂序轮换）在 111 上跑完，产物
+   `bench/r7rs/results/pair159fix.jsonl`，汇总 `bench/startup/results/pair159fix-summary.txt`。
+   **§6.2 那几格的"回退"随 fix 消失**：配对比值中位全落在 x0.955 ~ x1.058，56 项没有一项够上地板门槛（判定列全部"不可判定"），
+   56 项配对比值中位的几何平均 **x0.998**。逐项对照（fix vs ref → §6.2 的 cur vs ref）：
+   sum x1.011 → x1.254、ray x0.955 → x1.101、array1 x0.982 → x1.039、fib x1.003 → x1.040、
+   mazefun x1.011 → x0.927（那格"更快"也一并消失，同向 2/5）。
+   §6.3 的机制（启动期插桩调用次数挪动热循环 tier1 安装时机）与"臂序轮换消除抽样偏置"两头都对上了：
+   现在跨构建配对不再偏向任何一臂，短基准的双态抽样仍要在 10 轮以上才谈得上量级判定。
+
+## 7. cleat-161 编译器延迟加载（2026-10-28）
+
+**做了什么**：`Startup.Start` 不再无条件 require 编译器驱动，只登记惰性入口
+`RuntimeHooks.EnsureCompiler`；`RuntimeHooks` 的四个编译类钩子（eval / load-source / compile / macroexpand-1）
+的 getter 在槽为空时先调它一次——Clojure 侧的 `clojure.core/eval`（`core.clj:3217`）与
+`clojure.core/macroexpand-1`（`4095`）本来就直接读这些属性，所以 **C# 与 Clojure 共用同一个入口，
+不改 `src/clojure`、不动种子**。`Startup.EvalForm` 在编译器还没加载时对**平凡形式**（自求值常量、`()`、
+`(quote x)`、递归不含符号且不带元数据的 vector / map / set）直接在 C# 侧给值，不为一个常量付那一整格；
+`-m` / `-X` / `-T` 跑包程序集里的 AOT 代码时全程不加载编译器。自举的改名工具编译器
+（`CLEAT_COMPILER_NS != cleat.compiler`）保持现状仍然 eager；`--compile-boot` / `--compile-package` 自己先调
+`Startup.EnsureCompiler()`。后台线程预热**没有做**（任务书允许、非必需：111 与本机都显示首提示符没有变慢）。
+
+**平凡形式的边界**（`SimpleForms` + `SimpleFormsTests` 固定）：认 nil / true / false / 数字（含 `1N` 的 BigInt、
+BigDecimal、Ratio）/ 字符串 / 字符 / 关键字、`()`、`quote`（含 `clojure.core/quote`）、纯常量的集合字面量；
+不认符号（含 `*ns*`）、任何调用、任何特殊形式、集合里藏着符号或调用的字面量、**带元数据的字面量**
+（`^:foo [1 2]` 一律交回编译器，口径不变）。认多了会算错，认少了只是多加载一次编译器，所以边界只往严的一侧收。
+`CLEAT_NO_SIMPLE_EVAL` 设置时快速路径整体关掉（与驱动侧的简单形式解释器同一口径，语义逐字回到 161 之前）。
+
+**`CLEAT_TIME` 的口径**：第一行 `compiler (package|source) N ms` 格式不变（159 的守卫依赖它），未加载时是 0。
+编译器在启动报告**之后**才按需加载时补一行
+`cleat: compiler loaded on demand: package 187 ms (require 183 + hooks 8)`——没加载就不出现，
+`CLEAT_NO_SIMPLE_EVAL` 或任何要编译的形式就会让它出现。跑过报告才补（自举的 eager 路径不补）。
+
+**实测（wall 中位，极差括在括号里；default 臂、热窗口）**：
+
+| 场景 | 本机 159 | 本机 161 | 111 159-fix | 111 161 |
+|---|---|---|---|---|
+| `-e nil` | 978 (37) | **678 (36)** | 797 (9) | **586 (16)** |
+| `-e '(require (quote clojure.pprint))'` | 1019 (70) | 923 (46) | 818 (10) | 817 (12) |
+| `-r` 到 `:repl/quit` | 1809 (222) | 1588 (25) | 1375 (20) | 1380 (21) |
+| `-r` 到首个提示符 | 1771 (144) | 1575 (116) | 1348 (—) | 1347 (—) |
+
+`-e nil` 省下的正是 compiler 那一整格（本机 −300 ms、111 −211 ms，`CLEAT_TIME` 的 compiler 段变 0）。
+pprint 场景的 `(require …)` 是要编译的形式，编译器照样加载（本机 923 里含按需的 195 ms），只是不再出现在启动报告里。
+**REPL 首提示符不变慢**（验收要求）：本机 1771 → 1575、111 1348 → 1347——`repl-requires` 里
+`clojure.repl.deps` 的失败尝试照样把编译器拽起来（本机这一格 752 ms，111 上 600 ms），
+159 画像里"REPL 跳过不可用库"的那 −670 ms 不在 161 的范围内，仍然挂着（要动 `clojure.main/repl-requires` 或宿主的选择策略）。
+
+**副作用（要记账）**：纯 AOT 进程（只跑包程序集里的 ns）不再有**运行时签名特化**——`RuntimeSigSpec.SpecCompiler`
+由编译器驱动登记，编译器没加载时 `Install` 直接返回 null，调用照旧留在通用体。刻意没在 `Install` 里
+`EnsureCompiler`：那会在触发的调用线程上加载 200 ms 的编译器，而 §3.3 的验收正是这条路不加载编译器。
+从源码加载命名空间的路径（r7rs 基准、REPL、`-e` 的调用形式）本来就要加载编译器，不受影响。
+份额留给 [cleat-163](../tasks/cleat-163-sigspec-ablation.md) 的 sigspec 消融裁决。
+
+**门禁**：Release 0 warning；Core 128/128（新增 `SimpleFormsTests` 5 个用例）；全量 Host 291/291
+（新增守卫 `CompilerLoadsOnDemandOnly`：平凡形式连打不出现补行、`(+ 1 2)` 出现、`CLEAT_NO_SIMPLE_EVAL` 下
+`-e nil` 也出现、`-m` 跑包程序集不出现）；conformance `--gate` OK；CTS / test-clojure 与基线一致；
+`selfhost` 不动点通过（304 s）。种子未动（`cleat.boot.dll` `b7e257f7…`、`cleat.compiler.dll` `1334696f…` 与 159 相同）。
+性能纪律（29 §9）：改到 `Cleat.Core`，在 111 上跑 161 vs 159-fix 的 r7rs 56 项 × 5 轮同轮配对（臂序轮换，
+产物 `bench/r7rs/results/pair161.jsonl`）。
+
+复现：`CLEAT=~/workspace/cleat-161-new python3 bench/startup/profile.py -n 5 nil pprint repl prompt default`
+（111 上的两份 JSON / 表在 `bench/startup/results/profile161-cleat-{161-new,159-fix}.{json,table}`，不入库）。

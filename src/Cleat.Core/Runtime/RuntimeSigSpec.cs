@@ -58,6 +58,12 @@ public static class RuntimeSigSpec
     /// </summary>
     public static Func<string, object[], object, object> SpecCompiler { get; set; }
 
+    // cleat-161（designs/29 §3.3）：SpecCompiler 由编译器的驱动在 install-hooks! 里登记。编译器现在延迟加载，所以
+    // **只跑包程序集里 AOT 代码的进程不再有运行时签名特化**（编译器没加载，Install 直接返回 null，调用照旧留在通用体）。
+    // 这里刻意不调 Startup.EnsureCompiler：那条路要在触发的调用线程上加载 200 ms 的编译器，而 29 §3.3 要求的正是
+    // "-m / -X / -T 只跑 AOT 的路径不加载编译器"。从源码加载命名空间的路径（r7rs 基准、REPL）本来就要加载编译器，不受影响。
+    // 这一条的实际份额留给 cleat-163 的 sigspec 消融裁决。
+
     /// <summary>
     /// 建表前的候选过滤器（cleat-156）：编译器可在观察到实参时拒绝确定无收益的形状。
     /// false 使入口永久回通用体，避免“先生表、后台编译失败后每调用仍付 miss”的成本。

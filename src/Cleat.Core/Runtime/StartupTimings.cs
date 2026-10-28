@@ -158,6 +158,23 @@ public static class StartupTimings
             e.Remove(e.Length - 2, 2).AppendLine();
         }
         Console.Error.Write(e.ToString());
+        s_reported = true;
+    }
+
+    /// <summary>启动报告是否已经打过（cleat-161：之后的按需加载要补一行，不能让它看起来是免费的）。</summary>
+    private static bool s_reported;
+
+    /// <summary>
+    /// 编译器在启动报告**之后**才按需加载完成（cleat-161，designs/29 §3.3）：补一行说那一格花在哪、什么时候花的。
+    /// 报告之前加载的（自举的改名工具编译器，仍然 eager）不打这行——那两个标记本来就在报告的 compiler 段里。
+    /// 第一行的 <c>compiler (package|source) N ms</c> 格式不变（HostProcessTests 依赖它）。
+    /// </summary>
+    public static void CompilerLoadedOnDemand(long ms, bool fromPackage)
+    {
+        if (!Enabled || !s_reported) return;
+        Console.Error.WriteLine("cleat: compiler loaded on demand: "
+            + (fromPackage ? "package " : "source ") + ms + " ms (require " + Ms(Segment.CompilerRequire)
+            + " + hooks " + Ms(Segment.CompilerHooks) + ")");
     }
 
     private static long _bootEnds;

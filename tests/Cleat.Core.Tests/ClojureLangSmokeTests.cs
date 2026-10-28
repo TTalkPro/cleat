@@ -9,17 +9,17 @@ namespace Cleat.Core.Tests;
 
 public class ClojureLangSmokeTests
 {
-    sealed class Fn1 : AFn
+    private sealed class Fn1 : AFn
     {
-        readonly Func<object, object> _f;
+        private readonly Func<object, object> _f;
         public Fn1(Func<object, object> f) { _f = f; }
         public override object invoke(object a) => _f(a);
     }
 
-    sealed class FixedNsResolver : IReaderResolver
+    private sealed class FixedNsResolver : IReaderResolver
     {
         // "minimal resolution that qualifies to a fixed namespace"
-        readonly Symbol _ns = Symbol.intern("smoke.ns");
+        private readonly Symbol _ns = Symbol.intern("smoke.ns");
         public Symbol CurrentNS() => _ns;
         public Symbol ResolveClass(Symbol sym) => sym.Name == "String" ? Symbol.intern("System.String") : null;
         public Symbol ResolveAlias(Symbol sym) => sym.Name == "s" ? Symbol.intern("clojure.string") : null;
@@ -27,20 +27,20 @@ public class ClojureLangSmokeTests
         public bool IsSpecial(object sym) => DefaultReaderResolver.Instance.IsSpecial(sym);
     }
 
-    static int _failed;
-    static void Check(string what, bool ok, string detail = null)
+    private static int _failed;
+    private static void Check(string what, bool ok, string detail = null)
     {
         TestContext.Out.WriteLine($"[{(ok ? "ok" : "FAIL")}] {what}{(detail is null ? "" : " -- " + detail)}");
         if (!ok) _failed++;
     }
 
-    static void Known(string what, bool ok, string detail = null)
+    private static void Known(string what, bool ok, string detail = null)
     {
         // a divergence we expect and record (not counted as failure)
         TestContext.Out.WriteLine($"[{(ok ? "ok" : "known")}] {what}{(detail is null ? "" : " -- " + detail)}");
     }
 
-    static object Read(string s, IReaderResolver resolver = null, object opts = null)
+    private static object Read(string s, IReaderResolver resolver = null, object opts = null)
     {
         var r = new LineNumberingTextReader(new StringReader(s));
         opts ??= PersistentHashMap.EMPTY;
@@ -234,6 +234,6 @@ public class ClojureLangSmokeTests
         Assert.That(_failed, Is.EqualTo(0), "smoke checks failed");
     }
 
-    sealed class Fn0 : AFn { readonly Func<object> _f; public Fn0(Func<object> f) { _f = f; } public override object invoke() => _f(); }
-    sealed class Fn2 : AFn { readonly Func<object, object, object> _f; public Fn2(Func<object, object, object> f) { _f = f; } public override object invoke(object a, object b) => _f(a, b); }
+    private sealed class Fn0 : AFn { private readonly Func<object> _f; public Fn0(Func<object> f) { _f = f; } public override object invoke() => _f(); }
+    private sealed class Fn2 : AFn { private readonly Func<object, object, object> _f; public Fn2(Func<object, object, object> f) { _f = f; } public override object invoke(object a, object b) => _f(a, b); }
 }

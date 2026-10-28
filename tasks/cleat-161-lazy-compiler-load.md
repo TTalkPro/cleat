@@ -1,6 +1,6 @@
 # cleat-161 编译器延迟加载
 
-- 里程碑：M19　依赖：cleat-159　状态：未开始
+- 里程碑：M19　依赖：cleat-159　状态：进行中（实现与门禁通过，111 的 56 项同轮配对跑动中）
 - 设计依据：[29 §3.3](../designs/29-usability-and-engineering.md)
 
 ## 问题
@@ -22,3 +22,38 @@
 - 159 定的目标值；`CLEAT_TIME` 显示 `-e nil` 不加载编译器。
 - 自举不动点、`HostProcessTests`、`NuGetColdLoadTests`、nREPL / neorepl 包测试通过。
 - 29 §9 的全套门禁。
+
+## 收口（2026-10-28：实现 + 门禁；配对复核待收）
+
+- **惰性入口挂在钩子的 getter 上**（`RuntimeHooks` 的 eval / load-source / compile / macroexpand-1）：槽为空时先调
+  `Startup.EnsureCompiler()` 一次（幂等；同线程重入直接返回——加载编译器自己要用这些钩子；别的线程在锁上等它加载完）。
+  Clojure 侧的 `clojure.core/eval`（`core.clj:3217`）与 `clojure.core/macroexpand-1`（`4095`）本来就直接读这些属性，
+  所以 C# 与 Clojure 共用同一个入口，**不改 `src/clojure`、不动种子**（`cleat.boot.dll` `b7e257f7…`、
+  `cleat.compiler.dll` `1334696f…` 与 159 逐字节相同）。
+- `Startup.EvalForm` + `SimpleForms`：编译器还没加载时**平凡形式**（自求值常量、`()`、`(quote x)`、递归不含符号且
+  不带元数据的 vector / map / set）在 C# 侧直接给值，不为一个常量付那一整格。边界是驱动侧 `simple?` 的真子集
+  （认多了会算错，认少了只是多加载一次编译器，所以只往严的一侧收），由 `SimpleFormsTests` 固定；
+  `CLEAT_NO_SIMPLE_EVAL` 设置时快速路径整体关掉，语义逐字回到 161 之前（验收 1 的"`CLEAT_NO_SIMPLE_EVAL` 路径语义不变"）。
+- `CLEAT_TIME` 的口径：第一行 `compiler (package|source) N ms` 格式不变（159 的守卫依赖它），没加载时是 0；
+  报告**之后**才按需加载时补一行 `cleat: compiler loaded on demand: package 211 ms (require 206 + hooks 9)`。
+- 验收 2：`-m` / `-X` / `-T` 跑包程序集里的 AOT ns 全程不加载编译器；`--compile-boot` / `--compile-package`
+  自己先 `Startup.EnsureCompiler()`（这两条本来就要编译）。
+- 验收 4：嵌入 API 经 `Startup.EvalReader` → `EvalEntry`，与命令行宿主同一个惰性入口（`CleatRuntime` 没有另开路）。
+- 验收 5：`CLEAT_COMPILER_NS != cleat.compiler`（自举的改名工具编译器）保持现状，仍然 eager。
+- 验收 3（REPL）：首个提示符**没有变慢**（本机 1771 → 1575 ms、111 1348 → 1347 ms）。
+  **后台线程预热没有做**（任务书写的是"可以"，非必需）：两台机器的首提示符都不因延迟加载变慢，
+  而预热要处理首个输入与后台加载的竞态，收益只在首个非平凡输入的 ~200 ms；不做，记账。
+- 实测（详见 [notes/startup-profile.md §7](../notes/startup-profile.md)）：`-e nil` 本机 978 → **678 ms**、
+  111 797 → **586 ms**，省下的正是 compiler 那一整格。159 的量化验收"≤0.45 s"是 160（R2R）+ 161 的合计目标，
+  161 单臂到 0.59 ~ 0.68 s，仍要等 160。
+- **副作用（记账）**：纯 AOT 进程（只跑包程序集里的 ns）不再有**运行时签名特化**——`RuntimeSigSpec.SpecCompiler`
+  由编译器驱动登记，编译器没加载时 `Install` 直接返回 null。刻意不在 `Install` 里 `EnsureCompiler`：
+  那会在触发的调用线程上加载 200 ms 的编译器，而 §3.3 的验收正是这条路不加载编译器。
+  从源码加载 ns 的路径（r7rs 基准、REPL、`-e` 的调用形式）本来就要加载编译器，不受影响。份额留给
+  [cleat-163](cleat-163-sigspec-ablation.md) 的整体消融裁决。
+- 门禁：Release 0 warning；Core 128/128（新增 `SimpleFormsTests` 5 例）；全量 Host 291/291
+  （新增守卫 `CompilerLoadsOnDemandOnly`：平凡形式连打不出现补行、`(+ 1 2)` 出现、`CLEAT_NO_SIMPLE_EVAL` 下
+  `-e nil` 也出现、`-m` 跑包程序集不出现）；conformance `--gate` OK；CTS / test-clojure 与基线一致；
+  `selfhost` 不动点 304 s（stage2 == stage3，boot / compiler 的 dll 与 Lcil 逐字节相同）。
+- **待收**：29 §9 的性能纪律——本任务改到 `Cleat.Core`，161 vs 159-fix 的 r7rs 56 项 × 5 轮同轮配对
+  （臂序轮换）在 111 上跑动中，产物 `bench/r7rs/results/pair161.jsonl`；结果写回 notes §7 与本行后转完成。

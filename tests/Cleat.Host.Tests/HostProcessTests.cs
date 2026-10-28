@@ -217,6 +217,45 @@ public class HostProcessTests
         TestContext.Out.WriteLine(r.Err.Trim());
     }
 
+    /// <summary>
+    /// cleat-161（designs/29 §3.3）：编译器延迟加载。
+    ///   1. 平凡形式（常量 / 字面量 / quote）不为编译器付那一格：CLEAT_TIME 的 compiler 段是 0，也没有补行；
+    ///   2. 第一个要编译的形式按需加载，在启动报告之后补一行（require + hooks）；
+    ///   3. CLEAT_NO_SIMPLE_EVAL 设置时快速路径关掉（与驱动侧的简单形式解释器同一口径）；
+    ///   4. 只跑包程序集里的 AOT 代码不加载编译器。
+    /// 第一行 <c>compiler (package) N ms</c> 的格式不变（上面的 ReplQuitAndStartupTime 依赖它）。
+    /// </summary>
+    [Test]
+    public void CompilerLoadsOnDemandOnly()
+    {
+        const string onDemand = @"cleat: compiler loaded on demand: (package|source) \d+ ms \(require \d+ \+ hooks \d+\)";
+        var trivial = CleatIn(_dir, null, new[] { ("CLEAT_TIME", "1") },
+            "-e", "nil", "-e", "42", "-e", "[1 2]", "-e", "{:a 1}", "-e", ":kw", "-e", "'x", "-e", "()");
+        Assert.That(trivial.ExitCode, Is.EqualTo(0), trivial.ToString());
+        Assert.That(trivial.Err, Does.Match(@"compiler \(package\) 0 ms"), trivial.ToString());
+        Assert.That(trivial.Err, Does.Not.Contain("loaded on demand"), trivial.ToString());
+        // nil 不打印（clojure.main 的口径）；空表求值还是它自己
+        Assert.That(trivial.Out, Is.EqualTo("42\n[1 2]\n{:a 1}\n:kw\nx\n()\n"), trivial.ToString());
+
+        var need = CleatIn(_dir, null, new[] { ("CLEAT_TIME", "1") }, "-e", "(+ 1 2)");
+        Assert.That(need.Out.Trim(), Is.EqualTo("3"), need.ToString());
+        Assert.That(need.Err, Does.Match(onDemand), need.ToString());
+
+        var noSimple = CleatIn(_dir, null, new[] { ("CLEAT_TIME", "1"), ("CLEAT_NO_SIMPLE_EVAL", "1") }, "-e", "nil");
+        Assert.That(noSimple.Err, Does.Match(onDemand), noSimple.ToString());
+
+        // 包程序集里的 ns（验收 2）：-m 跑它的 -main，全程不加载编译器。
+        // （-e 的调用形式要 eval，编译器总要加载，那条路测不出这个口径。）
+        Write("lp/my/lib.clj", Lib + "(defn -main [& args] (println \"main from the package\" (count args)))\n");
+        var built = Cleat(null, "-I", "lp", "--compile-package", Path.Combine(_dir, "lp", "my.lib.dll"),
+            "--package", "my.lib", "--root", Path.Combine(_dir, "lp"), "my.lib");
+        Assert.That(built.ExitCode, Is.EqualTo(0), built.ToString());
+        var aot = CleatIn(_dir, null, new[] { ("CLEAT_TIME", "1") }, "-I", "lp", "-m", "my.lib", "a", "b");
+        Assert.That(aot.ExitCode, Is.EqualTo(0), aot.ToString());
+        Assert.That(aot.Err, Does.Not.Contain("loaded on demand"), aot.ToString());
+        Assert.That(aot.Out, Does.Contain("main from the package 2"), aot.ToString());
+    }
+
     [Test]
     public void EvalOptionPrintsEachNonNilValue()
     {
