@@ -37,3 +37,13 @@
 - quickjit 臂与 default 差在噪声内（160 不依赖 QuickJitForLoops）；冷（-g 20）不比热慢。
 - 性能纪律（29 §9）：本任务改到 `Cleat.Core`（计时代码，Enabled=false 时全部早退），在 111 上做
   HEAD `efec42f` vs 工作树的 r7rs 56 项同轮配对 5 轮（pairbuild，窗口 2026-10-28），结果与 111 侧启动画像见 notes §6。
+- **111 复核发现的真实回退源**（notes §6.3）：4 vCPU 的 111 上，短基准（sum / ray）整段落在两个量化档之一
+  （慢档 = 快档 ×1.32），`Cleat.Core` 里多几个"关掉时仍被逐个调用"的插桩方法就会把热循环的 tier-1 安装时机推后，
+  sum 的配对比值因此到 x1.25（cur 快态 1/20）。只放一个从不被调用的 `StartupTimings` 类型的对照臂与基线同档（7/10），
+  单独回退任何一个调用点都不回到快态 → 是"调用插桩"本身，不是某个点。
+  据此把插桩改为**未启用时零调用**：调用点自判 `Enabled`（RT 的 in-ns 处判 `InBootEntry`），
+  `Loader.LoadModule` 未启用时走与 159 之前逐字同形的路径，`Begin` 不再读环境变量（由 `Program.Main` 判过才调），
+  计时表在 `Begin` 里分配。20 轮三臂复核：fix 对基线 x1.003（12/20）、快态 14/20，与 ref 的 17/20 同档；
+  `CLEAT_TIME` 设置时的分段输出不变。
+- runner 加**臂序轮换**（`bench/r7rs/pairbuild.py` 每轮交替新构建先跑 / 基线先跑，记 `order`；`R7_PAIR_SAMEORDER=1` 回旧行为）：
+  固定臂序会把上面的抽样偏置放大成看起来的单边回退。以后跨构建配对按轮换臂序出数。

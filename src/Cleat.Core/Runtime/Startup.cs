@@ -56,7 +56,7 @@ public static class Startup
         // dotnet build 的 GenerateCompilerPackage 按输入增量重编它
         string compiler = boot == null ? null : Path.Combine(Path.GetDirectoryName(boot) ?? ".", "cleat.compiler.dll");
         CompilerFromPackage = compiler != null && CompilerNs == "cleat.compiler" && File.Exists(compiler) && !writing(compiler);
-        StartupTimings.Mark(StartupTimings.Segment.Paths);   // 上面的路径探测（找镜像与编译器包）也算启动（cleat-159）
+        if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Paths);   // 上面的路径探测（找镜像与编译器包）也算启动（cleat-159）
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(Num).TypeHandle);   // Num 的标签先初始化（cleat-102）
         PrimitiveRegistry.RegisterAll();
         RT.Init();
@@ -65,7 +65,7 @@ public static class Startup
         RT.ErrVar.bindRoot(Console.Error);
         foreach (var d in o.IncludeDirs) Loader.AddPath(Path.GetFullPath(d));
         Cleat.Core.Compiler.Diagnostics.InstallReportError();
-        StartupTimings.Mark(StartupTimings.Segment.Runtime);
+        if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Runtime);
         if (boot != null)
         {
             ClojureBootPath = boot;
@@ -87,19 +87,19 @@ public static class Startup
             // clojure.core.reducers 等由此可 require）
             string src = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure"));
             if (File.Exists(Path.Combine(src, "clojure", "core.clj"))) Loader.AddPath(src);
-            StartupTimings.Mark(StartupTimings.Segment.Packages);
+            if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Packages);
             // 编译器（cleat-090 / 091）：Clojure 写的驱动登记钩子。--boot 的模块不是带 clojure.core 的镜像时没有编译器（只能跑镜像自己的代码）
             if (RT.var("clojure.core", "require").isBound)
             {
                 RT.var("clojure.core", "require").invoke(Symbol.intern(CompilerNs + ".driver"));
-                StartupTimings.Mark(StartupTimings.Segment.CompilerRequire);
+                if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.CompilerRequire);
                 RT.var(CompilerNs + ".driver", "install-hooks!").invoke();
-                StartupTimings.Mark(StartupTimings.Segment.CompilerHooks);
+                if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.CompilerHooks);
             }
             CompilerMs = sw.ElapsedMilliseconds - ClojureImageMs;
         }
-        // cleat-159：分段计时（CLEAT_TIME 未设置时 Begin 之后所有采样点都是空操作，也不输出）
-        StartupTimings.Report(ClojureImageMs, CompilerMs, CompilerFromPackage);
+        // cleat-159：分段计时（调用点自己判 CLEAT_TIME；未启用时不输出，第一行还是 cleat-052 的格式由 Report 负责）
+        if (StartupTimings.Enabled) StartupTimings.Report(ClojureImageMs, CompilerMs, CompilerFromPackage);
         RuntimeBootstrap.MarkStarted();
         return boot;
     }

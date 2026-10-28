@@ -279,21 +279,28 @@ public static class Loader
         }
 
         // cleat-159：镜像的分段（程序集加载 / 登记 / 旁边的 .ifc / 模块入口）。只在初始化 Clojure 镜像这一段采样，
-        // 别的模块加载（eval、包）不进这几格
-        bool timingImage = StartupTimings.Enabled && BootImageInitializing;
-        if (timingImage) StartupTimings.Mark(StartupTimings.Segment.ImageAssembly);
+        // 别的模块加载（eval、包）不进这几格。
+        // 未启用（没设 CLEAT_TIME）时走下面这条与 159 之前逐字相同的路径：不开 try/finally、不进 StartupTimings 的任何方法
+        // —— 111 的复核表明插桩方法的 JIT 会挪动热循环 tier1 的安装时机，短基准因此在两档之间跳（notes/startup-profile.md §6）
+        if (!(StartupTimings.Enabled && BootImageInitializing))
+        {
+            Register(asm);
+            InterfaceFile.TryRegisterBeside(full, asm);   // cleat-022：旁边的 .ifc（MVID 相符才登记）
+            return WithLoadBindings(() => Run(asm));
+        }
+        StartupTimings.Mark(StartupTimings.Segment.ImageAssembly);
         Register(asm);
-        if (timingImage) StartupTimings.Mark(StartupTimings.Segment.ImageRegister);
-        InterfaceFile.TryRegisterBeside(full, asm);   // cleat-022：旁边的 .ifc（MVID 相符才登记）
-        if (timingImage) StartupTimings.Mark(StartupTimings.Segment.ImageIfc);
-        if (timingImage) StartupTimings.InBootEntry = true;
+        StartupTimings.Mark(StartupTimings.Segment.ImageRegister);
+        InterfaceFile.TryRegisterBeside(full, asm);
+        StartupTimings.Mark(StartupTimings.Segment.ImageIfc);
+        StartupTimings.InBootEntry = true;
         try
         {
             return WithLoadBindings(() => Run(asm));
         }
         finally
         {
-            if (timingImage) StartupTimings.EndBootEntry();
+            StartupTimings.EndBootEntry();
         }
     }
 

@@ -4,6 +4,11 @@
 # 判定口径与 m16full.py / m16sum.py 完全一致（同轮配对比值、quiet 窗口、load 记录、断点续跑）；
 # 产物的 label 沿用 cleat-on（新构建）/ cleat-off（基线构建），m16sum.py 直接可用。
 #
+# cleat-159 的复核加了**臂序轮换**：每轮的两臂先后顺序交替（奇数轮新构建先跑，偶数轮基线先跑），
+# 记录的 order 字段是 first=new / first=base。111（4 vCPU）上短基准（sum / ray）在分层 JIT 下落在
+# 两个量化档上（慢档 ≈ 快档 × 1.32），固定"新构建先跑"会把这种抽样偏置放大成看起来的单边回退。
+# 汇总时可以用 R7_PAIR_SAMEORDER=1 回到旧行为（固定次序）。
+#
 # 用法：
 #   R7RS_BENCH=~/workspace/r7rs-benchmarks CLEAT=~/workspace/cleat \
 #     R7_BASE=~/workspace/cleat-158-base python3 bench/r7rs/pairbuild.py -r 5 [基准名 …]
@@ -20,6 +25,7 @@ from quiet import LOAD_CAP, MAXLOAD, wait_quiet
 
 BASE = os.environ['R7_BASE']
 OUT = os.environ.get('R7_OUT', 'pairbuild')
+SAMEORDER = os.environ.get('R7_PAIR_SAMEORDER', '0') == '1'
 
 
 def completed(out_path):
@@ -39,7 +45,7 @@ def completed(out_path):
     return done
 
 
-def one(arm, rep, name):
+def one(arm, rep, name, first):
     _, loaded = wait_quiet(MAXLOAD, LOAD_CAP)
     saved = run.CLEAT
     try:
@@ -49,6 +55,7 @@ def one(arm, rep, name):
     finally:
         run.CLEAT = saved
     r.update(label=arm, rep=rep, nopt=None)
+    r['order'] = ('new' if arm == 'cleat-on' else 'base') + ('-first' if first else '-second')
     r['load'] = round(os.getloadavg()[0], 2)
     r['loaded'] = loaded
     print(json.dumps(r, ensure_ascii=False), flush=True)
@@ -70,8 +77,10 @@ if __name__ == '__main__':
     if done:
         print('# resume: skipping %d completed (label, rep, name) cells in %s' % (len(done), out_path), flush=True)
     for rep in range(1, reps + 1):
+        # 臂序轮换：偶数轮先跑基线（SAMEORDER=1 时保持旧的固定次序）
+        arms = ('cleat-on', 'cleat-off') if SAMEORDER or rep % 2 == 1 else ('cleat-off', 'cleat-on')
         for name in names:
-            for arm in ('cleat-on', 'cleat-off'):
+            for pos, arm in enumerate(arms):
                 if (arm, rep, name) in done:
                     continue
-                one(arm, rep, name)
+                one(arm, rep, name, pos == 0)

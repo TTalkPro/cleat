@@ -101,7 +101,8 @@ public static class Program
 
     public static int Main(string[] args)
     {
-        StartupTimings.Begin();       // cleat-159：CLEAT_TIME 设置时才有开销（时间线起点，含大栈线程的创建）
+        // cleat-159：CLEAT_TIME 没设置时连 Begin 都不调，StartupTimings 的方法一个都不进 JIT 队列（时间线起点含大栈线程的创建）
+        if (Environment.GetEnvironmentVariable("CLEAT_TIME") != null) StartupTimings.Begin();
         if (GcProfile.ValidateEnvironment() is string gcError)
         {
             Console.Error.WriteLine("cleat: " + gcError);
@@ -116,7 +117,7 @@ public static class Program
 
     private static int MainBody(string[] args)
     {
-        StartupTimings.Mark(StartupTimings.Segment.Host);     // 宿主入口与线程创建（cleat-159）
+        if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Host);     // 宿主入口与线程创建（cleat-159）
         // cleat --rename-compiler-sources <cleat 目录> <输出目录>（cleat-091，构建用）：自举用的改名工具编译器的源码
         if (args.Length == 3 && args[0] == "--rename-compiler-sources")
         {
@@ -130,7 +131,7 @@ public static class Program
             Console.Error.WriteLine("cleat: " + e.Message);
             return Usage();
         }
-        StartupTimings.Mark(StartupTimings.Segment.Cli);      // 命令行解析（cleat-159）
+        if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Cli);      // 命令行解析（cleat-159）
         if (o.Help) return Usage();
         if (o.Version) { Console.WriteLine(CoreInfo.Banner); return 0; }
         // -g 必须在编译器命名空间初始化前生效：analyzer 的 inline-calls? 初始值读这个变量
@@ -185,7 +186,7 @@ public static class Program
         var ns = Namespace.findOrCreate(Symbol.intern("user"));
         ReferClojureCore(ns);
         Var.pushThreadBindings(MainBindings(ns, o));
-        StartupTimings.Mark(StartupTimings.Segment.UserSetup);    // cleat-159：user 命名空间的 refer 与主绑定
+        if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.UserSetup);    // cleat-159：user 命名空间的 refer 与主绑定
         try
         {
             if (o.CompileBoot != null) return CompileBootImage(o);
@@ -211,7 +212,7 @@ public static class Program
             if (o.Repl)
             {
                 ReplRequires();
-                StartupTimings.Mark(StartupTimings.Segment.ReplRequire);     // repl-requires（doc/source/pst 那批库）
+                if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.ReplRequire);     // repl-requires（doc/source/pst 那批库）
                 return !Console.IsInputRedirected && !Console.IsOutputRedirected
                     ? InteractiveRepl(Console.Out, Console.Error)
                     : Repl(Console.In, Console.Out, Console.Error);
@@ -403,7 +404,7 @@ public static class Program
         {
             try { ((IFn)require.deref()).invoke(s.first()); }
             catch (Exception) { }
-            StartupTimings.MarkReplRequire(s.first() + "");    // cleat-159：repl-requires 的逐库份额
+            if (StartupTimings.Enabled) StartupTimings.MarkReplRequire(s.first() + "");    // cleat-159：repl-requires 的逐库份额
         }
     }
 
@@ -445,7 +446,7 @@ public static class Program
             {
                 output.Write(((Namespace)RT.CurrentNSVar.deref()).Name + "=> ");
                 output.Flush();
-                StartupTimings.ReplPromptShown();       // cleat-159：首个提示符（输入被重定向的 REPL）
+                if (StartupTimings.Enabled) StartupTimings.ReplPromptShown();       // cleat-159：首个提示符（输入被重定向的 REPL）
                 object form;
                 try
                 {
@@ -480,7 +481,7 @@ public static class Program
             output.WriteLine(CoreInfo.Banner);   // clojure.main 的 REPL 先打 "Clojure 1.x"；输入被重定向时（Repl）不打，脚本化的输出不变
             while (true)
             {
-                StartupTimings.ReplPromptShown();       // cleat-159：提示符即将由行编辑器写出（阻塞读之前）
+                if (StartupTimings.Enabled) StartupTimings.ReplPromptShown();       // cleat-159：提示符即将由行编辑器写出（阻塞读之前）
                 string text = editor.Read(((Namespace)RT.CurrentNSVar.deref()).Name + "=> ", "  ");
                 if (text == null) { output.WriteLine(); return 0; }
                 if (text.Trim().Length == 0) continue;

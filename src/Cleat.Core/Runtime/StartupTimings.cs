@@ -8,7 +8,8 @@ namespace Cleat.Core.Runtime;
 
 /// <summary>
 /// 启动分段计时（cleat-159，designs/29 §3.1）：把启动过程按段采样，供 <c>CLEAT_TIME</c> 输出。
-/// 没设置 CLEAT_TIME 时 <see cref="Begin"/> 之后所有采样点都是空操作（不计时、也不输出，与 cleat-052 的现状一致）。
+/// 没设置 CLEAT_TIME 时调用点自己判 <see cref="Enabled"/>，Begin 与全部采样方法都不执行（不计时、不输出，与 cleat-052 的现状一致；
+/// 111 的复核说明"调用了但立即早退"也会把这些方法送进 JIT 队列，短基准的热循环 tier1 时机因此被挪动）。
 ///
 /// 一条时间线按顺序标记，每段是上一个标记到此处的间隔；间隔按 tick 累计、只在输出时换算成毫秒，
 /// 所以逐格截断不会把时间漏掉（镜像入口有几十条 in-ns 边界，逐格截断会丢几十毫秒）。
@@ -34,13 +35,19 @@ public static class StartupTimings
         UserSetup, ReplRequire, ReplPrompt,
     }
 
-    /// <summary>CLEAT_TIME 是否设置（<see cref="Begin"/> 之后有效）。</summary>
+    /// <summary>
+    /// CLEAT_TIME 是否设置（<see cref="Begin"/> 置位）。调用点的约定是 **先判这个字段再调采样方法**：
+    /// 未启用时一条采样语句都不执行，StartupTimings 的方法不进 JIT 队列（111 的复核显示，哪怕只多几个启动期方法，
+    /// 热循环的 tier1 安装时机也会被挪动，短基准因此在两个量化档位之间跳）。
+    /// </summary>
     public static bool Enabled;
 
-    private static readonly long[] s_ticks = new long[Enum.GetValues(typeof(Segment)).Length];
-    private static readonly Dictionary<string, long> s_nsInit = new(StringComparer.Ordinal);
+    // cleat-159 复核（111）：这三格子在 Begin 里分配，类本身没有字段初始化器 —— 未启用时读 Enabled 只会跑一个空的类型初始化器，
+    // 不分配、也不把下面的方法拖进 JIT 队列（分层 JIT 下启动期的方法数会挪动热循环 tier1 安装的时机）
+    private static long[] s_ticks;
+    private static Dictionary<string, long> s_nsInit;
     /// <summary>repl-requires 的逐库份额（cleat-159）：按 require 顺序记，首个提示符前输出。</summary>
-    private static readonly List<(string lib, long ticks)> s_replRequires = new();
+    private static List<(string lib, long ticks)> s_replRequires;
 
     /// <summary>上一条 in-ns 进入的命名空间：到下一条边界之间的耗时算它的初始化（in-ns 是"进入"，不是"离开"）。</summary>
     private static string s_lastNs;
@@ -50,11 +57,12 @@ public static class StartupTimings
 
     private static long _freq, _last, _start;
 
-    /// <summary>时间线起点：读 CLEAT_TIME；未设置时之后的采样全部为空操作。</summary>
     public static void Begin()
     {
-        Enabled = Environment.GetEnvironmentVariable("CLEAT_TIME") != null;
-        if (!Enabled) return;
+        Enabled = true;
+        s_ticks = new long[Enum.GetValues(typeof(Segment)).Length];
+        s_nsInit = new Dictionary<string, long>(StringComparer.Ordinal);
+        s_replRequires = new List<(string, long)>();
         _freq = Stopwatch.Frequency;
         _start = _last = Stopwatch.GetTimestamp();
     }
