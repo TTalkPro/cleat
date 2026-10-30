@@ -27,6 +27,9 @@ public class ClojureBootstrapTests
             WorkingDirectory = HostProcessTests.RepoDir,
         };
         foreach (var a in new[] { "run", "tools/build.cs", "--", "selfhost", s_root }) psi.ArgumentList.Add(a);
+        // 输出重定向后等待 EOF：外层 dotnet run 起的 MSBuild / Roslyn 服务器不能继承管道残留。
+        psi.Environment["UseSharedCompilation"] = "false";
+        psi.Environment["MSBUILDDISABLENODEREUSE"] = "1";
         var sw = Stopwatch.StartNew();
         using var p = Process.Start(psi) ?? throw new InvalidOperationException("cannot start dotnet");
         string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();

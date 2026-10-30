@@ -17,7 +17,9 @@ import sys
 import time
 
 REPO = os.environ.get('CLEAT', os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..')))
-HOST = os.path.join(REPO, 'src', 'Cleat.Host', 'bin', 'Release', 'net10.0', 'cleat.dll')
+# 默认量仓库的宿主 DLL；CLEAT_HOST 可指向 apphost / 发布目录（例如 artifacts/r2r/cleat）。
+# apphost 与 dotnet <dll> 的启动路径不同：R2R 的量化必须走 apphost，不能混用两种口径。
+HOST = os.environ.get('CLEAT_HOST', os.path.join(REPO, 'src', 'Cleat.Host', 'bin', 'Release', 'net10.0', 'cleat.dll'))
 
 SCENARIOS = {
     'nil': {'args': ['-e', 'nil'], 'stdin': None},
@@ -46,12 +48,16 @@ REPL = re.compile(r'cleat: repl setup (\d+) ms \(user (\d+) \+ repl-requires (\d
                   r'= first prompt (\d+) ms after start')
 
 
+def host_command():
+    return [HOST] if not HOST.endswith('.dll') else ['dotnet', HOST]
+
+
 def run_once(sc, env):
     if SCENARIOS[sc]['stdin'] == 'until-prompt':
         return run_until_prompt(env)
     e = dict(os.environ, CLEAT_TIME='1', **env)
     t0 = time.perf_counter()
-    p = subprocess.run(['dotnet', HOST] + SCENARIOS[sc]['args'], input=SCENARIOS[sc]['stdin'],
+    p = subprocess.run(host_command() + SCENARIOS[sc]['args'], input=SCENARIOS[sc]['stdin'],
                        capture_output=True, text=True, env=e, cwd=REPO)
     wall = (time.perf_counter() - t0) * 1000
     m = SEG.search(p.stderr)
@@ -64,7 +70,7 @@ def run_until_prompt(env):
     """起 REPL，读到 user=> 为止记墙钟；然后喂 :repl/quit 收进程，再从 stderr 取分段。"""
     e = dict(os.environ, CLEAT_TIME='1', **env)
     t0 = time.perf_counter()
-    p = subprocess.Popen(['dotnet', HOST, '-r'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    p = subprocess.Popen(host_command() + ['-r'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, text=True, env=e, cwd=REPO)
     buf = ''
     while 'user=>' not in buf:

@@ -84,7 +84,7 @@ dotnet run tools/build.cs -- clojure-seed    # 自举两级到不动点（stage2
 dotnet run tools/build.cs -- selfhost        # 只验证不动点，不写种子
 ```
 
-`tools/build.cs` 的其他命令：`cts cts|test-clojure [--write]`、`conformance --run [--gate]`、`bench`、`compile-libs`、`compile-compiler`、`compile-tools`、`pack`、`publish`（自包含发布）、`ilverify`；
+`tools/build.cs` 的其他命令：`cts cts|test-clojure [--write]`、`conformance --run [--gate]`、`bench`、`compile-libs`、`compile-compiler`、`compile-tools`、`pack`、`publish`（自包含发布）、`r2r`（ReadyToRun 快照）、`ilverify`；
 每个命令的说明在 [tools/build.cs](tools/build.cs) 开头的注释里。
 
 ## 测试与基线

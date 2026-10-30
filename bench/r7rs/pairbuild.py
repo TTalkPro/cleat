@@ -26,6 +26,8 @@ from quiet import LOAD_CAP, MAXLOAD, wait_quiet
 BASE = os.environ['R7_BASE']
 OUT = os.environ.get('R7_OUT', 'pairbuild')
 SAMEORDER = os.environ.get('R7_PAIR_SAMEORDER', '0') == '1'
+# 同快照 A/B（cleat-160）：R7_OFF_ENV="DOTNET_ReadyToRun=0,..." 只作用于 cleat-off 臂。
+OFF_ENV = dict(item.split('=', 1) for item in os.environ.get('R7_OFF_ENV', '').split(',') if '=' in item)
 
 
 def completed(out_path):
@@ -48,13 +50,20 @@ def completed(out_path):
 def one(arm, rep, name, first):
     _, loaded = wait_quiet(MAXLOAD, LOAD_CAP)
     saved = run.CLEAT
+    expected_host = run.host(BASE if arm == 'cleat-off' else saved)
     try:
         if arm == 'cleat-off':
+            if OFF_ENV:
+                run.env.update(OFF_ENV)
             run.CLEAT = BASE
         r = run.run('cleat', name)
     finally:
+        for key in OFF_ENV:
+            run.env.pop(key, None)
         run.CLEAT = saved
     r.update(label=arm, rep=rep, nopt=None)
+    r['host'] = expected_host
+    r['off_env'] = OFF_ENV if arm == 'cleat-off' else {}
     r['order'] = ('new' if arm == 'cleat-on' else 'base') + ('-first' if first else '-second')
     r['load'] = round(os.getloadavg()[0], 2)
     r['loaded'] = loaded
@@ -70,8 +79,8 @@ if __name__ == '__main__':
     elif args and args[0].isdigit():
         reps, args = int(args[0]), args[1:]
     names = args or run.names()
-    print('# arms=cleat-on,cleat-off reps=%d items=%d new=%s base=%s quiet<=%.1f cap=%ds'
-          % (reps, len(names), run.CLEAT, BASE, MAXLOAD, LOAD_CAP), flush=True)
+    print('# arms=cleat-on,cleat-off reps=%d items=%d new=%s base=%s off_env=%s quiet<=%.1f cap=%ds'
+          % (reps, len(names), run.host(), run.host(BASE), OFF_ENV, MAXLOAD, LOAD_CAP), flush=True)
     out_path = os.path.join(B, 'results', OUT + '.jsonl')
     done = completed(out_path)
     if done:

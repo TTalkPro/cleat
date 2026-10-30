@@ -106,9 +106,12 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         // DOTNET_CLI_HOME：dotnet 的本地工具解析缓存（~/.dotnet/toolResolverCache）按 包 + 版本 记安装路径，不看 NUGET_PACKAGES；
         // 别处装过同版本的 Cleat.Cli（如手工验证时）且那个目录还在，dotnet tool restore 就不装本 fixture 打的包，跑的是旧构建
         // （cleat-078 遇到：镜像对不上，包程序集报 StaleModuleException）。每个 fixture 一个，首次使用的提示关掉
+        // 这些测试把 dotnet 的输出全部重定向后再读 EOF。关掉 Roslyn 共享编译服务器与 MSBuild 节点复用：
+        // 它们（包括外层 dotnet run 起的节点）会继承管道，dotnet build / run 退出后仍握着写入端，
+        // fixture 会一直等不到输出结束。
         _env = new[] { ("NUGET_PACKAGES", Path.Combine(_root, "packages")), ("DOTNET_CLI_HOME", Path.Combine(_root, "cli-home")),
-                       ("DOTNET_NOLOGO", "1") };
-        Run(HostProcessTests.RepoDir, null, "dotnet", "run", "tools/build.cs", "--", "pack", "-o", _feed, "--version", Version);
+                       ("DOTNET_NOLOGO", "1"), ("UseSharedCompilation", "false"), ("MSBUILDDISABLENODEREUSE", "1") };
+        Run(HostProcessTests.RepoDir, _env, "dotnet", "run", "tools/build.cs", "--", "pack", "-o", _feed, "--version", Version);
         Assert.That(File.Exists(Path.Combine(_feed, $"Cleat.Runtime.{Version}.nupkg")), Is.True);
     }
 

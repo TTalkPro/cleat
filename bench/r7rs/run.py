@@ -24,6 +24,7 @@ SRC = os.environ.get('CLEAT_R7RS_SRC', os.path.join(B, 'src'))
 R = os.environ['R7RS_BENCH']
 CLEAT = os.environ.get('CLEAT', os.path.dirname(os.path.dirname(B)))
 JAVA = os.environ.get('JAVA', 'java')
+env = os.environ.copy()
 
 _jvm = None
 def jvm_version():
@@ -46,10 +47,22 @@ def classpath():
         _cp = ':'.join(os.path.join(B, p) if not os.path.isabs(p) else p for p in _cp.split(':'))
     return _cp
 
+
+def host(repo=None):
+    """apphost 优先：R2R 只有直接执行 apphost 才生效，dotnet <dll> 仍走 JIT 的启动路径。
+    repo 可以是普通仓库，也可以是 publish / r2r 快照目录。"""
+    root = repo if repo is not None else CLEAT
+    for candidate in (os.path.join(root, 'cleat'),
+                      os.path.join(root, 'src/Cleat.Host/bin/Release/net10.0/cleat')):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return os.path.join(root, 'src/Cleat.Host/bin/Release/net10.0/cleat.dll')
+
+
 def command(impl, name):
     ns = 'r7rs.' + name
     if impl == 'cleat':
-        return ['dotnet', os.path.join(CLEAT, 'src/Cleat.Host/bin/Release/net10.0/cleat.dll'), '-I', SRC, '-m', ns]
+        return [host(), '-I', SRC, '-m', ns]
     return [JAVA, '-Xss8m', '-cp', classpath(), 'clojure.main', '-m', ns]   # 栈与 .NET 主线程（Linux 上 8 MB 的 ulimit）相同：equal 的 5000 层非尾递归
 
 def run(impl, name, timeout=900):
@@ -57,7 +70,7 @@ def run(impl, name, timeout=900):
     t0 = time.time()
     try:
         p = subprocess.run(cmd, stdin=open(os.path.join(R, 'inputs', name + '.input')), capture_output=True, text=True,
-                           cwd=R, timeout=timeout, errors='replace')
+                           cwd=R, timeout=timeout, errors='replace', env=env)
         out = p.stdout + p.stderr
     except subprocess.TimeoutExpired:
         return {'impl': impl, 'name': name, 'secs': None, 'wall': time.time() - t0, 'error': 'TIMEOUT'}

@@ -102,6 +102,32 @@ M19 的任何改动都不能让 r7rs 56 项出现可声明的回退（§9）。
   长跑基准（r7rs 56 项）不能因为 R2R 代码挡住 tier-1 重编而回退（R2R 代码仍会被分层重编，要实测确认）。
   159 给的量化验收：`-e nil` ≤ 0.65 s（现 978 ms）、entry 段 ≤ 350 ms（现 548）、
   tier0-only − default 的差从 +480 ms 缩到 < 150 ms。
+- **160 当前结果**（2026-10-30，实现未收口）：`tools/build.cs r2r` / `publish` / `pack` 已接 crossgen2，
+  `--no-r2r` 保留对照臂。默认产物只预编译编译器包与随附库（4 个程序集 4,066 KB → 8,288 KB；
+  compiler 3,410 KB → 7,079 KB）；`src/boot` 原件不动。注意量化口径必须执行 apphost——
+  `dotnet cleat.dll` 不吃这批 app-local R2R，画像脚本用 `CLEAT_HOST` 固定这条路径。
+  2026-10-29 的 9 程序集 / entry 330 ms 读数来自更激进的探索臂，**不是默认产物验收**；
+  composite 只能出单个 native bundle，需要 single-file 部署，且当前 `Assembly.Location` /
+  `DependencyContext.Load` 假设在镜像前失败，因此不采用，留给 single-file 兼容任务。
+- **同构建 R2R on/off 配对**（同一 compiler-only 快照，`DOTNET_ReadyToRun=0` 关 off 臂；
+  56 项 × 5 轮、臂序轮换、本机地板 5% / 同向 5）：R2R 带来 8 项可声明收益
+  （equal x0.791、fib x0.836、conform x0.926 等），但 **bv2string x1.062、read1 x1.056、sum1 x1.102
+  三项 5/5 稳定回退**；判定项几何平均 x0.935 不满足"无回退"验收。诊断矩阵显示 compiler-only 与
+  Core-only 曾各自通过短敏感矩阵，但 2026-10-30 的 fresh 归因显示 libs-only 仍有 read1 / sum1 回退，
+  compiler-only 仍有 ray / sum1 回退；`--Os` 与两臂同设 `DOTNET_TC_AggressiveTiering=1` 也不消除。
+  因此不能归因成某一个程序集组合：R2R 数据会系统性挪动 tier-1 热循环的安装时机 / 落址，
+  `--compile-no-methods`（无方法体、无启动收益）与框架训练 `StandardOptimizationData.mibc --partial`
+  （对 cleat 程序集零命中）都不能解决。可行方向是启动画像自己的 MIBC 做 partial R2R，或明确放弃该验收并拆任务。
+  跨 158 基线的旧配对另有 8 项回退，但混入 158→161 代码布局差异，只作诊断、不作 160 判定。
+  当前默认产物 apphost 5 次中位：`-e nil` 668 ms（entry 496、compiler 0）、pprint 937 ms、
+  REPL 首提示符 1588 ms——nil 距 650 目标仅差 18 ms，但 pprint / 首提示符远未达标。
+- **MIBC partial 候选（2026-10-30 傍晚，未收口）**：`dotnet-pgo` 可从官方 `dotnet-eng` feed 安装
+  11.0.0-preview 版本；在 `DOTNET_ReadyToRun=0` 的快照上采集 nil / pprint / REPL prompt trace，合并为
+  11,329 方法根 / 219 个带流量方法的 MIBC。`r2r --mibc startup.mibc --partial` 后 9 个 cleat 程序集
+  6,520 → 8,520 KB（+2.0 MB），同窗口启动 5 次中位 461 / 665 / 481 ms，比旧默认 R2R 的 762 / 1064 /
+  780 ms 明显下降，达到 160 继承的三项量化目标。敏感项 × 5 on/off（`R7_OFF_ENV=DOTNET_ReadyToRun=0`）
+  按地板表全部不可声明：bv2string x1.013、ray x0.947、read1 x1.100（4/5）、sum1 x1.099（4/5）。
+  没有 5/5 稳定回退，但 read1 / sum1 仍偏慢；56 × 5 全表未完成，因此不把 partial 设为默认。
 
 ### 3.3 编译器延迟加载（cleat-161）
 

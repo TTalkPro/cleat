@@ -38,7 +38,15 @@
 //                         自包含发布（cleat-034）：.NET 运行时随发布，目标机器不需要 SDK 或 .NET；Clojure 镜像、
 //                         编译器包与 AOT 库随发布。默认 RID 为当前平台，
 //                         默认输出 artifacts/publish/cleat-<RID>/。REPL 与脚本直接可用
+//   r2r [-o 目录] [--bin 目录] [--boot 目录] [--crossgen2 路径] [--only a.dll,b.dll]
+//                         ReadyToRun（cleat-160，designs/29 §3.2）：把 cleat 自己的 C# 运行时、编译器包与随附库
+//                         用 crossgen2 预编译成机器码，输出到一个**快照目录**（默认 artifacts/r2r/）。
+//                         src/boot/*.dll 保持纯 IL——种子的比较对象、自举不动点与长跑热点布局不受影响。每次都从当前构建
+//                         重做（整个目录 1.6 s），没有陈旧问题。
+//                         --crossgen2 指工具路径；缺省按当前运行时版本从 NuGet 恢复 Microsoft.NETCore.App.Crossgen2.<RID>
+//                         --mibc 可给 dotnet-pgo 生成的启动画像；--partial 只按该画像 rooting 方法（cleat-160）。
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text.RegularExpressions;
 
 string root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName((string)AppContext.GetData("EntryPointFilePath")!)!, ".."));
@@ -90,6 +98,9 @@ try
         case "publish":
             Publish(rest);
             break;
+        case "r2r":
+            ReadyToRun(rest);
+            break;
         case "pack":
             Pack(rest);
             break;
@@ -109,7 +120,7 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] | pack [-o dir] [--version v] | bench [-r n] [--write] [--only re]");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] [--no-r2r] [--mibc path] [--partial] | r2r [-o dir] [--bin dir] [--boot dir] [--crossgen2 path] [--only a.dll,b.dll] [--mibc path] [--partial] | pack [-o dir] [--version v] | bench [-r n] [--write] [--only re]");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }
@@ -131,15 +142,23 @@ void CompileLibs(string[] a)
 void Publish(string[] a)
 {
     string rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, outDir = null;
+    bool r2r = true, partial = false; string? mibc = null;
     for (int i = 0; i < a.Length; i++)
     {
         switch (a[i])
         {
             case "-r" when i + 1 < a.Length: rid = a[++i]; break;
             case "-o" when i + 1 < a.Length: outDir = Path.GetFullPath(a[++i]); break;
+            case "--no-r2r": r2r = false; break;      // cleat-160：对照臂（纯 IL 的发布产物）
+            case "--mibc" when i + 1 < a.Length: mibc = Path.GetFullPath(a[++i]); break;
+            case "--partial": partial = true; break;
             default: throw new CommandFailed("publish: unexpected argument " + a[i]);
         }
     }
+    if (r2r && partial && mibc == null)
+        throw new CommandFailed("publish: --partial 需要 --mibc");
+    if (!r2r && (partial || mibc != null))
+        throw new CommandFailed("publish: --no-r2r 不能与 --partial / --mibc 同用");
     outDir ??= Path.Combine(root, "artifacts", "publish", "cleat-" + rid);
     CompileLibs([]);                      // AOT 库随发布，先刷新
     Run("dotnet", ["build", solution, "-c", "Release", "-v", "quiet", "-nologo"]);
@@ -153,8 +172,192 @@ void Publish(string[] a)
                    .Where(f => !Path.GetFileName(f).StartsWith("cleat.", StringComparison.OrdinalIgnoreCase)
                             && !Path.GetFileName(f).StartsWith("Cleat.Clojure.Libs", StringComparison.Ordinal)))
         File.Delete(f);
+    // ReadyToRun（cleat-160，designs/29 §3.2）：发布目录里的 cleat 程序集预编译成机器码。
+    // 自包含发布的引用闭包就在发布目录里（含 System.Private.CoreLib），版本泡因此与发布出的运行时一致。
+    // 镜像与编译器包的原件（src/boot/*.dll）保持纯 IL——种子的比较对象不动。
+    if (r2r) ReadyToRunInDir(outDir, Crossgen2(), [], mibc, partial);
     Console.WriteLine("published " + Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat"));
 }
+
+// dotnet run tools/build.cs -- r2r [-o 目录] [--bin 宿主 bin 目录] [--boot src/boot] [--crossgen2 路径] [--only 名字表] [--in-place]
+// 从当前 Release 构建做一个 ReadyToRun 快照：宿主输出 + src/boot 的 Clojure 程序集（复制过来再预编译）。
+// 为什么是快照目录而不是就地改 bin：bin 里的 C# 程序集归 MSBuild 管，下一次构建会把它换回 IL，
+// 而 R2R 的镜像记着它编译时看到的 Cleat.Core（版本泡）——两者混在一个目录里迟早会出现
+// "新 Core + 旧 R2R 镜像" 的组合。快照目录每次从零重做（1.6 s），要么全 IL 要么全 R2R，没有陈旧问题。
+// --in-place 是对照 / 临时验证用的：直接在给出的目录里预编译，不复制（发布目录走的是同一条路，见 Publish）。
+void ReadyToRun(string[] a)
+{
+    string outDir = Path.Combine(root, "artifacts", "r2r"), bin = Path.GetDirectoryName(Bin("Cleat.Host", "cleat.dll"))!;
+    string boot = bootDir, cg = null; string? mibc = null; bool inPlace = false, partial = false;
+    string[] only = [];
+    for (int i = 0; i < a.Length; i++)
+        switch (a[i])
+        {
+            case "-o" when i + 1 < a.Length: outDir = Path.GetFullPath(a[++i]); break;
+            case "--bin" when i + 1 < a.Length: bin = Path.GetFullPath(a[++i]); break;
+            case "--boot" when i + 1 < a.Length: boot = Path.GetFullPath(a[++i]); break;
+            case "--crossgen2" when i + 1 < a.Length: cg = a[++i]; break;
+            case "--only" when i + 1 < a.Length: only = a[++i].Split(',', StringSplitOptions.RemoveEmptyEntries); break;
+            case "--mibc" when i + 1 < a.Length: mibc = Path.GetFullPath(a[++i]); break;
+            case "--partial": partial = true; break;
+            case "--in-place": inPlace = true; break;
+            default: throw new CommandFailed("r2r: unexpected argument " + a[i]);
+        }
+    if (Path.GetFullPath(outDir) == Path.GetFullPath(boot))
+        throw new CommandFailed("r2r: " + boot + " 是种子的比较对象（纯 IL），不在这里做 R2R");
+    if (!Directory.Exists(inPlace ? outDir : bin))
+        throw new CommandFailed("r2r: 没有目录 " + (inPlace ? outDir : bin) + "（先 dotnet build -c Release）");
+    if (partial && mibc == null)
+        throw new CommandFailed("r2r: --partial 需要 --mibc");
+    cg ??= Crossgen2();
+    if (!inPlace)
+    {
+        if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
+        // 宿主与其依赖（C# 程序集、deps / runtimeconfig）；bin 的子目录（linux-x64、publish 这些别的目标的产物）不跟过来
+        CopyInto(bin, outDir);
+        CopyInto(Path.GetDirectoryName(Bin("Cleat.Hosting", "Cleat.Hosting.dll"))!, outDir);
+        // Clojure 镜像、编译器包、随附库（含旁挂的 .ifc / .inl / boot-order.edn）与 tools 的包程序集：
+        // src/boot 的原件一律不动，快照目录里的是复制过来再预编译的那份
+        CopyInto(boot, outDir);
+        if (Directory.Exists(Path.Combine(boot, "tools"))) CopyInto(Path.Combine(boot, "tools"), outDir);
+    }
+
+    ReadyToRunInDir(outDir, cg, only, mibc, partial);
+    Console.WriteLine("r2r: " + outDir);
+}
+
+// 目录里现成的 cleat 程序集逐个预编译（快照目录与发布目录共用这条路）。only 非空时只处理点名的程序集。
+void ReadyToRunInDir(string dir, string cg, string[] only, string? mibc = null, bool partial = false)
+{
+    // 只碰 cleat 自己的产物（Cleat.* / cleat* / clojure 的包程序集）：第三方程序集留在 JIT 上，
+    // 自包含发布目录里的运行时程序集也不属于这里（它们本来就带框架的 R2R 代码）。
+    // only 显式点名时放宽到宿主 / 发射器，供对照实验；publish / pack 走默认 ShouldR2R。
+    // partial R2R 连镜像也允许：方法 rooting 由 MIBC 决定，不是整程序集全量预编译。
+    var targets = Directory.GetFiles(dir, "*.dll")
+        .Where(f => ((only.Length > 0 ? IsR2RCandidate(Path.GetFileName(f))
+                                    : partial ? IsCleatAssembly(Path.GetFileName(f)) : ShouldR2R(Path.GetFileName(f))))
+                 && !Path.GetFileName(f).EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase))
+        .Where(f => only.Length == 0 || only.Contains(Path.GetFileName(f)))
+        .OrderBy(f => Path.GetFileName(f), StringComparer.Ordinal)
+        .ToList();
+    foreach (var missing in only.Where(n => !targets.Any(t => Path.GetFileName(t) == n)))
+        throw new CommandFailed("r2r: 目录 " + dir + " 里没有 " + missing);
+    if (targets.Count == 0) { Console.WriteLine("r2r: " + dir + " 里没有可预编译的程序集"); return; }
+
+    // 引用：自包含发布目录里已经带着整个运行时（System.Private.CoreLib 在那儿），共享框架目录只在框架相关产物时用
+    var refs = new List<string> { Path.Combine(dir, "*.dll") };
+    if (!File.Exists(Path.Combine(dir, "System.Private.CoreLib.dll")))
+        refs.Add(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "*.dll"));
+    if (partial && mibc == null) throw new CommandFailed("r2r: partial R2R 需要 MIBC");
+    if (mibc != null && !File.Exists(mibc)) throw new CommandFailed("r2r: 没有 MIBC " + mibc);
+
+    long before = 0, after = 0;
+    foreach (var dll in targets)
+    {
+        long size0 = new FileInfo(dll).Length;
+        before += size0;
+        var sw = Stopwatch.StartNew();
+        var tmp = dll + ".r2r.tmp";
+        // partial 的宿主 / Core / Emit 只有画像 roots 会被编译；仍要 -O，否则实验读数对应不上。
+        var optimization = partial ? new[] { "-O" } : R2ROptimizationFlags(Path.GetFileName(dll));
+        var cgArgs = new List<string>(optimization) { "-o", tmp, "--targetos", TargetOs(), "--targetarch", TargetArch() };
+        if (mibc != null) cgArgs.AddRange(["-m", mibc]);
+        if (partial) cgArgs.Add("--partial");
+        foreach (var r in refs) { cgArgs.Add("-r"); cgArgs.Add(r); }
+        cgArgs.Add(dll);
+        Run(cg, cgArgs.ToArray());
+        File.Move(tmp, dll, true);
+        after += new FileInfo(dll).Length;
+        Console.WriteLine($"  {Path.GetFileName(dll),26} {size0 / 1024,7} KB → {new FileInfo(dll).Length / 1024,7} KB  ({sw.ElapsedMilliseconds} ms)");
+    }
+    Console.WriteLine($"r2r: {targets.Count} 个程序集，{before / 1024} KB → {after / 1024} KB（IL 仍在文件里，R2R 只是附带机器码）");
+}
+
+// cleat 自己的程序集（cleat-160）：C# 侧的 Cleat.Core / cleat-emit / Cleat.Hosting / 宿主 cleat，
+// Clojure 侧的 cleat.boot / cleat.compiler / Cleat.Clojure.Libs / Cleat.Tools*，以及 AOT 出来的 clojure 包程序集。
+bool IsCleatAssembly(string name) =>
+    name.StartsWith("Cleat.", StringComparison.Ordinal) || name.StartsWith("cleat", StringComparison.Ordinal)
+ || name.StartsWith("clojure", StringComparison.OrdinalIgnoreCase);
+
+// cleat-160 的 R2R 候选。cleat.boot 不在其中：56 项同轮配对显示，镜像只要带 R2R 数据（即使
+// --compile-no-methods）就会移动后续 JIT 代码布局，fib/deriv 等长跑热点稳定回退。
+bool IsR2RCandidate(string name) =>
+    IsCleatAssembly(name) && !name.Equals("cleat.boot.dll", StringComparison.OrdinalIgnoreCase);
+
+// 默认产物链（r2r 快照 / publish / pack）只预编译编译器包、随附库与 tools 包程序集。
+// cleat.boot.dll 保持 IL：56 项同轮配对显示，镜像只要带 R2R 数据（即使 --compile-no-methods）
+// 就会移动后续 JIT 代码布局，fib/deriv 等长跑热点稳定回退。
+// 宿主 cleat.dll 与 cleat-emit.dll 保持 IL：它们的 R2R 数据会把 fib 的 tier-1 热循环稳定挪到慢档
+// （本机 5/5 约 x1.43）。
+// Cleat.Core 也保持 IL（--only 可 opt-in）：Core-only 与 compiler-only 各自通过回退敏感项的
+// 同快照 on/off 短矩阵（5 轮），但二者组合时 ray 稳定 x1.100（5/5）——R2R 元数据共同挪动 tier-1
+// 热循环落址的组合效应尚无机制口径；默认产物宁可少拿启动收益，也不让长跑热循环出现可声明回退。
+bool ShouldR2R(string name) =>
+    IsR2RCandidate(name)
+ && !name.StartsWith("Cleat.Core", StringComparison.Ordinal)
+ && !name.StartsWith("Cleat.Hosting", StringComparison.Ordinal)
+ && !name.Equals("cleat.dll", StringComparison.OrdinalIgnoreCase)
+ && !name.Equals("cleat-emit.dll", StringComparison.OrdinalIgnoreCase);
+
+string[] R2ROptimizationFlags(string name) =>
+    name.StartsWith("Cleat.Core", StringComparison.Ordinal) || name.StartsWith("Cleat.Hosting", StringComparison.Ordinal)
+ || name.StartsWith("cleat-emit", StringComparison.Ordinal) || name.Equals("cleat.dll", StringComparison.OrdinalIgnoreCase)
+    ? ["--Od"] : ["-O"];
+
+// 扁平复制目录里的文件（同名覆盖；子目录不跟）
+void CopyInto(string from, string to)
+{
+    Directory.CreateDirectory(to);
+    foreach (var f in Directory.GetFiles(from)) File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true);
+}
+
+// crossgen2 的 RID 后缀与 --targetos/--targetarch（cleat-160）：本机就是目标平台，交叉发布暂不支持（29 §3.2 只量本机）。
+string TargetOs() => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "osx" : "linux";
+string TargetArch() => System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
+{
+    System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+    System.Runtime.InteropServices.Architecture.X64 => "x64",
+    var a => throw new CommandFailed("r2r: 不支持的架构 " + a),
+};
+
+// 取 crossgen2：CLEAT_CROSSGEN2 覆盖 → 全局包目录 → 按当前运行时版本恢复
+// Microsoft.NETCore.App.Crossgen2.<RID>（designs/29 §3.2 说本机 NuGet 缓存里暂时没有，走的就是这条恢复路）。
+// 版本泡与运行时补丁版本：10.0.12 的 crossgen2 产物在 10.0.7 上实测仍走 R2R（启动时间一样），所以框架相关的产物
+// 不必逐补丁重做；自包含发布（Publish 调这里）用的是发布时的运行时。
+string Crossgen2()
+{
+    if (Environment.GetEnvironmentVariable("CLEAT_CROSSGEN2") is string env && env != "") return env;
+    string rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier.Replace("musl-", "");
+    string ver = Environment.Version.Major + "." + Environment.Version.Minor + "." + Environment.Version.Build;
+    string tool = Crossgen2Tool(NuGetPackageRoot(), rid, ver);
+    if (!File.Exists(tool)) tool = null;
+    // 测试 / 用户项目会用隔离的 NUGET_PACKAGES。如果本机默认缓存已经有同版本工具，就不让 pack 在隔离目录里联网重取。
+    if (tool == null)
+    {
+        string fallback = Crossgen2Tool(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages"), rid, ver);
+        if (File.Exists(fallback)) tool = fallback;
+    }
+    if (tool != null) return tool;
+    string projDir = Path.Combine(root, "artifacts", "crossgen2");
+    Directory.CreateDirectory(projDir);
+    File.WriteAllText(Path.Combine(projDir, "crossgen2.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>"
+      + "<ItemGroup><PackageDownload Include=\"Microsoft.NETCore.App.Crossgen2." + rid + "\" Version=\"[" + ver + "]\" /></ItemGroup></Project>");
+    Run("dotnet", ["restore", Path.Combine(projDir, "crossgen2.csproj"), "-v", "quiet", "-nologo"]);
+    tool = Crossgen2Tool(NuGetPackageRoot(), rid, ver);
+    if (!File.Exists(tool)) throw new CommandFailed("r2r: 恢复了 Microsoft.NETCore.App.Crossgen2." + rid + " " + ver
+        + " 却没找到 " + tool + "（可用 --crossgen2 / CLEAT_CROSSGEN2 指定路径）");
+    return tool;
+}
+
+string Crossgen2Tool(string packageRoot, string rid, string ver) =>
+    Path.Combine(packageRoot, "microsoft.netcore.app.crossgen2." + rid, ver, "tools",
+                 OperatingSystem.IsWindows() ? "crossgen2.exe" : "crossgen2");
+
+// NuGet 全局包目录（NUGET_PACKAGES 优先，与 dotnet 一致）
+string NuGetPackageRoot() =>
+    Environment.GetEnvironmentVariable("NUGET_PACKAGES") is string p && p != "" ? p
+  : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".nuget", "packages");
 
 // 运行时的 NuGet 包（cleat-067）：Release 构建（镜像随之生成到 src/boot/）、随附库的包程序集，再打包 src/Cleat.Runtime.Package（包 id Cleat.Runtime）。
 void Pack(string[] a)
@@ -172,19 +375,54 @@ void Pack(string[] a)
     BuildCSharp();
     CompileLibs([]);
     CompileToolLibs();
+    // cleat-160：包里的 cleat 程序集也带 R2R。用快照目录做 crossgen2，src/boot 原件保持纯 IL；
+    // 打包完成后按文件名把 nupkg 里的同名 DLL 换成 R2R 版本（IL 仍在，第三方依赖不动）。
+    string r2rDir = Path.Combine(root, "artifacts", "pack-r2r");
+    if (Directory.Exists(r2rDir)) Directory.Delete(r2rDir, true);
+    CopyInto(Path.GetDirectoryName(Bin("Cleat.Host", "cleat.dll"))!, r2rDir);
+    CopyInto(Path.GetDirectoryName(Bin("Cleat.Hosting", "Cleat.Hosting.dll"))!, r2rDir);
+    CopyInto(bootDir, r2rDir);
+    if (Directory.Exists(Path.Combine(bootDir, "tools"))) CopyInto(Path.Combine(bootDir, "tools"), r2rDir);
+    ReadyToRunInDir(r2rDir, Crossgen2(), []);
+    string pkgVersion = version ?? CoreVersion();
     var args = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Runtime.Package", "Cleat.Runtime.Package.csproj"), "-c", "Release", "-o", outDir,
                                   "-v", "quiet", "-nologo", "-p:BuildBootImage=false" };
     // PackageVersion, not Version: a global -p:Version reaches every referenced project and changes the assembly versions
     // (Cleat.Core 1.0.1.0 …), and package assemblies compiled against those then require them (cleat-071)
     // (cleat-073) the same default as Cleat.Cli: CoreInfo.Version, not the csproj's <Version>
-    args.Add("-p:PackageVersion=" + (version ?? CoreVersion()));
+    args.Add("-p:PackageVersion=" + pkgVersion);
     Run("dotnet", args.ToArray());
     // dotnet tool 包 Cleat.Cli（cleat-071）：宿主，带镜像、驱动库、随附库与 tools.build
     var tool = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-o", outDir,
                                   "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-p:PackAsTool=true",
                                   "-p:PackageVersion=" + (version ?? CoreVersion()) };
     Run("dotnet", tool.ToArray());
-    Console.WriteLine("packed " + string.Join(" ", Directory.GetFiles(outDir, "Cleat.*.nupkg").Select(Path.GetFileName)));
+    // 只换这两次 pack 刚产出的包：outDir 里允许留旧版本的 nupkg，不能拿当前快照去改它们
+    string[] packages =
+    [
+        Path.Combine(outDir, "Cleat.Runtime." + pkgVersion + ".nupkg"),
+        Path.Combine(outDir, "Cleat.Cli." + pkgVersion + ".nupkg"),
+    ];
+    foreach (var pkg in packages)
+    {
+        if (!File.Exists(pkg)) throw new CommandFailed("pack: 没找到 " + pkg);
+        R2RPackage(pkg, r2rDir);
+    }
+    Console.WriteLine("packed " + string.Join(" ", packages.Select(Path.GetFileName)));
+}
+
+// nupkg 是 zip；把名字匹配的 cleat DLL 的内容替换成同一个 R2R 快照里的文件。目录布局保持原样。
+void R2RPackage(string pkg, string r2rDir)
+{
+    using var zip = ZipFile.Open(pkg, ZipArchiveMode.Update);
+    foreach (var entry in zip.Entries.Where(e => ShouldR2R(Path.GetFileName(e.FullName))
+                                              && !e.FullName.EndsWith("/" , StringComparison.Ordinal)
+                                              && File.Exists(Path.Combine(r2rDir, Path.GetFileName(e.FullName)))).ToList())
+    {
+        string name = entry.FullName, source = Path.Combine(r2rDir, Path.GetFileName(name));
+        entry.Delete();
+        zip.CreateEntryFromFile(source, name, CompressionLevel.Optimal);
+    }
 }
 
 // CoreInfo.Version（Cleat.Cli 的缺省版本，与 Cleat.Runtime 的相同）
@@ -507,9 +745,10 @@ void ILVerify(string dll)
 
 void Run(string file, string[] arguments, string? workingDirectory = null, (string, string)[]? env = null)
 {
-    // 输出被重定向时（如在测试中运行）不保留 MSBuild 节点进程：它们继承输出管道，调用方会一直等不到输出结束
+    // 输出被重定向时（如在测试中运行）不保留 MSBuild 节点 / Roslyn 编译服务器进程：它们继承输出管道，
+    // 子进程退出后管道仍有写入端，调用方会一直等不到 EOF
     if (file == "dotnet" && arguments.Length > 0 && arguments[0] is "build" or "publish" && Console.IsOutputRedirected)
-        arguments = [.. arguments, "-nodeReuse:false"];
+        arguments = [.. arguments, "-nodeReuse:false", "-p:UseSharedCompilation=false"];
     var psi = new ProcessStartInfo(file) { WorkingDirectory = workingDirectory ?? root, UseShellExecute = false, RedirectStandardInput = true };
     foreach (var a in arguments) psi.ArgumentList.Add(a);
     foreach (var (k, v) in env ?? []) psi.Environment[k] = v;
