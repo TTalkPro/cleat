@@ -121,13 +121,21 @@ M19 的任何改动都不能让 r7rs 56 项出现可声明的回退（§9）。
   跨 158 基线的旧配对另有 8 项回退，但混入 158→161 代码布局差异，只作诊断、不作 160 判定。
   当前默认产物 apphost 5 次中位：`-e nil` 668 ms（entry 496、compiler 0）、pprint 937 ms、
   REPL 首提示符 1588 ms——nil 距 650 目标仅差 18 ms，但 pprint / 首提示符远未达标。
-- **MIBC partial 候选（2026-10-30 傍晚，未收口）**：`dotnet-pgo` 可从官方 `dotnet-eng` feed 安装
+- **MIBC partial 候选（2026-10-30 傍晚启动，2026-11-02 收口）**：`dotnet-pgo` 可从官方 `dotnet-eng` feed 安装
   11.0.0-preview 版本；在 `DOTNET_ReadyToRun=0` 的快照上采集 nil / pprint / REPL prompt trace，合并为
   11,329 方法根 / 219 个带流量方法的 MIBC。`r2r --mibc startup.mibc --partial` 后 9 个 cleat 程序集
   6,520 → 8,520 KB（+2.0 MB），同窗口启动 5 次中位 461 / 665 / 481 ms，比旧默认 R2R 的 762 / 1064 /
   780 ms 明显下降，达到 160 继承的三项量化目标。敏感项 × 5 on/off（`R7_OFF_ENV=DOTNET_ReadyToRun=0`）
   按地板表全部不可声明：bv2string x1.013、ray x0.947、read1 x1.100（4/5）、sum1 x1.099（4/5）。
-  没有 5/5 稳定回退，但 read1 / sum1 仍偏慢；56 × 5 全表未完成，因此不把 partial 设为默认。
+- **收口裁决（2026-11-02）**：partial 的 56 × 5 全表完成后判定 9 项——收益 6（chudnovsky x0.937、
+  ctak x0.918、fibfp x0.946、graphs x0.886、maze x0.878、ray x0.892），**回退 3（fib x1.213、
+  nucleic x1.067、read1 x1.081，均 5/5 超地板）**，判定项几何均值 x0.974、56 项全表几何均值 x0.989。
+  全量 R2R（3 项回退）与 MIBC partial（3 项回退）都不满足"无回退"验收 → 按 §3.2 预设的决策点
+  **放弃默认产物切 R2R**：`publish` / `pack` 的 R2R 改为 opt-in（`--r2r`，partial 另需 `--mibc`），
+  默认产物回到纯 IL；`r2r` 命令与 `--mibc / --partial / --only` 保留为工具。159 的三项启动目标
+  （nil ≤ 0.65 s 等）只在 opt-in partial 上达成并记账，默认路径未达标的缺口移交 cleat-169 复核。
+  机制归因不变：R2R 数据系统性挪动 tier-1 热循环的安装时机 / 落址，crossgen 档位与分层开关都绕不过；
+  重开这条线前必须先找到无回退的方案（如更窄的 rooting 或等待运行时行为变化）。
 
 ### 3.3 编译器延迟加载（cleat-161）
 

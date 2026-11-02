@@ -1,6 +1,6 @@
 # cleat-160 ReadyToRun：Core、镜像、编译器包与随附库
 
-- 里程碑：M19　依赖：cleat-159　状态：进行中
+- 里程碑：M19　依赖：cleat-159　状态：完成
 - 设计依据：[29 §3.2](../designs/29-usability-and-engineering.md)
 
 ## 问题
@@ -91,3 +91,19 @@
   等 56 × 5 全表通过后才改默认。
 - 56 × 5 全表已开跑并可续跑（`pair160-pgo-startup-56`），本窗口手动停在第 25 格；敏感矩阵通过不满足
   验收，任务仍进行中。
+
+## 收口（2026-11-02）
+
+- **partial 56 × 5 全表完成**（`pair160-pgo-startup-56`，560/560 格、臂序轮换、quiet 窗口，本机
+  地板表判定）：判定 9 项——收益 6（chudnovsky x0.937、ctak x0.918、fibfp x0.946、graphs x0.886、
+  maze x0.878、ray x0.892），**回退 3（fib x1.213、nucleic x1.067、read1 x1.081，均 5/5 超地板）**；
+  判定项几何均值 x0.974，56 项全表几何均值 x0.989。加上全量 R2R 的 3 项回退（bv2string / read1 /
+  sum1），**两条路线都不满足"无可声明回退"验收**。
+- **裁决（照 29 §3.2 预设的决策点）**：放弃默认产物切 R2R。`tools/build.cs` 的 `publish` / `pack`
+  R2R 改为 opt-in（`--r2r`；publish 的 `--no-r2r` 保留兼容写法，partial 另需 `--mibc`），默认产物
+  回到纯 IL；`r2r` 命令与 `--mibc / --partial / --only` 保留为 opt-in 工具。159 的三项启动目标
+  只在 opt-in partial 上达成（461 / 665 / 481 ms）并记账，默认路径未达标的缺口移交 cleat-169 复核；
+  不改 159 的目标判定本身。
+- 验证：默认 `publish` 产物 compiler 回到 IL 3.4 MB 且 `-e '(+ 1 2)'` 正常；`pack` 默认产出
+  Cleat.Runtime 1.9 MB / Cleat.Cli 2.3 MB（纯 IL），`pack --r2r` opt-in 产出 3.7 / 4.3 MB
+  （4 个程序集 4,066 → 8,288 KB，与之前一致）；build.cs 编译仅余 3 条既有 CS8600 警告。

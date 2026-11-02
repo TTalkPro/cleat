@@ -120,7 +120,7 @@ catch (CommandFailed e)
 
 int Usage()
 {
-    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] [--no-r2r] [--mibc path] [--partial] | r2r [-o dir] [--bin dir] [--boot dir] [--crossgen2 path] [--only a.dll,b.dll] [--mibc path] [--partial] | pack [-o dir] [--version v] | bench [-r n] [--write] [--only re]");
+    Console.Error.WriteLine("usage: dotnet run tools/build.cs -- stage1 [outdir] | ilverify <dll>... | conformance [--run] | cts cts|test-clojure | compile-libs [ns...] | publish [-r RID] [-o dir] [--r2r [--mibc path] [--partial]] | r2r [-o dir] [--bin dir] [--boot dir] [--crossgen2 path] [--only a.dll,b.dll] [--mibc path] [--partial] | pack [-o dir] [--version v] [--r2r] | bench [-r n] [--write] [--only re]");
     Console.Error.WriteLine("(to build and test: dotnet build / dotnet test in the repository root)");
     return 2;
 }
@@ -142,14 +142,17 @@ void CompileLibs(string[] a)
 void Publish(string[] a)
 {
     string rid = System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, outDir = null;
-    bool r2r = true, partial = false; string? mibc = null;
+    // cleat-160 收口：全量 R2R 与 MIBC partial 的 56 × 5 全表都有可声明回退（29 §3.2），
+    // 默认产物保持纯 IL，R2R 只作 opt-in（--r2r，partial 另需 --mibc）。
+    bool r2r = false, partial = false; string? mibc = null;
     for (int i = 0; i < a.Length; i++)
     {
         switch (a[i])
         {
             case "-r" when i + 1 < a.Length: rid = a[++i]; break;
             case "-o" when i + 1 < a.Length: outDir = Path.GetFullPath(a[++i]); break;
-            case "--no-r2r": r2r = false; break;      // cleat-160：对照臂（纯 IL 的发布产物）
+            case "--r2r": r2r = true; break;
+            case "--no-r2r": r2r = false; break;      // 兼容旧写法；缺省已是纯 IL
             case "--mibc" when i + 1 < a.Length: mibc = Path.GetFullPath(a[++i]); break;
             case "--partial": partial = true; break;
             default: throw new CommandFailed("publish: unexpected argument " + a[i]);
@@ -172,7 +175,7 @@ void Publish(string[] a)
                    .Where(f => !Path.GetFileName(f).StartsWith("cleat.", StringComparison.OrdinalIgnoreCase)
                             && !Path.GetFileName(f).StartsWith("Cleat.Clojure.Libs", StringComparison.Ordinal)))
         File.Delete(f);
-    // ReadyToRun（cleat-160，designs/29 §3.2）：发布目录里的 cleat 程序集预编译成机器码。
+    // ReadyToRun（cleat-160，designs/29 §3.2，opt-in）：发布目录里的 cleat 程序集预编译成机器码。
     // 自包含发布的引用闭包就在发布目录里（含 System.Private.CoreLib），版本泡因此与发布出的运行时一致。
     // 镜像与编译器包的原件（src/boot/*.dll）保持纯 IL——种子的比较对象不动。
     if (r2r) ReadyToRunInDir(outDir, Crossgen2(), [], mibc, partial);
@@ -363,27 +366,32 @@ string NuGetPackageRoot() =>
 void Pack(string[] a)
 {
     string outDir = Path.Combine(root, "artifacts", "nuget"), version = null;
+    bool r2r = false;
     for (int i = 0; i < a.Length; i++)
     {
         switch (a[i])
         {
             case "-o" when i + 1 < a.Length: outDir = Path.GetFullPath(a[++i]); break;
             case "--version" when i + 1 < a.Length: version = a[++i]; break;
+            case "--r2r": r2r = true; break;
             default: throw new CommandFailed("pack: unexpected argument " + a[i]);
         }
     }
     BuildCSharp();
     CompileLibs([]);
     CompileToolLibs();
-    // cleat-160：包里的 cleat 程序集也带 R2R。用快照目录做 crossgen2，src/boot 原件保持纯 IL；
-    // 打包完成后按文件名把 nupkg 里的同名 DLL 换成 R2R 版本（IL 仍在，第三方依赖不动）。
+    // cleat-160（opt-in）：--r2r 时包里的 cleat 程序集也预编译。用快照目录做 crossgen2，src/boot 原件
+    // 保持纯 IL；打包完成后按文件名把 nupkg 里的同名 DLL 换成 R2R 版本（IL 仍在，第三方依赖不动）。
     string r2rDir = Path.Combine(root, "artifacts", "pack-r2r");
-    if (Directory.Exists(r2rDir)) Directory.Delete(r2rDir, true);
-    CopyInto(Path.GetDirectoryName(Bin("Cleat.Host", "cleat.dll"))!, r2rDir);
-    CopyInto(Path.GetDirectoryName(Bin("Cleat.Hosting", "Cleat.Hosting.dll"))!, r2rDir);
-    CopyInto(bootDir, r2rDir);
-    if (Directory.Exists(Path.Combine(bootDir, "tools"))) CopyInto(Path.Combine(bootDir, "tools"), r2rDir);
-    ReadyToRunInDir(r2rDir, Crossgen2(), []);
+    if (r2r)
+    {
+        if (Directory.Exists(r2rDir)) Directory.Delete(r2rDir, true);
+        CopyInto(Path.GetDirectoryName(Bin("Cleat.Host", "cleat.dll"))!, r2rDir);
+        CopyInto(Path.GetDirectoryName(Bin("Cleat.Hosting", "Cleat.Hosting.dll"))!, r2rDir);
+        CopyInto(bootDir, r2rDir);
+        if (Directory.Exists(Path.Combine(bootDir, "tools"))) CopyInto(Path.Combine(bootDir, "tools"), r2rDir);
+        ReadyToRunInDir(r2rDir, Crossgen2(), []);
+    }
     string pkgVersion = version ?? CoreVersion();
     var args = new List<string> { "pack", Path.Combine(srcDir, "Cleat.Runtime.Package", "Cleat.Runtime.Package.csproj"), "-c", "Release", "-o", outDir,
                                   "-v", "quiet", "-nologo", "-p:BuildBootImage=false" };
@@ -406,7 +414,7 @@ void Pack(string[] a)
     foreach (var pkg in packages)
     {
         if (!File.Exists(pkg)) throw new CommandFailed("pack: 没找到 " + pkg);
-        R2RPackage(pkg, r2rDir);
+        if (r2r) R2RPackage(pkg, r2rDir);
     }
     Console.WriteLine("packed " + string.Join(" ", packages.Select(Path.GetFileName)));
 }
