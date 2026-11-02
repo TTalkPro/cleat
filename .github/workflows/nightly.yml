@@ -1,0 +1,58 @@
+# nightly 层 CI（cleat-162，designs/29 §4）：Bootstrap（自举不动点 / 种子逐字节）、Conformance、
+# CTS 与 test_clojure 基线、ilverify。时长不限；性能不进 CI（29 §9）。
+name: nightly
+
+on:
+  schedule:
+    - cron: '20 20 * * *'        # UTC 20:20 = 北京时间 04:20
+  workflow_dispatch:
+
+jobs:
+  bootstrap-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Build.props', 'Directory.Solution.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Build (Release)
+        run: dotnet build Cleat.slnx -c Release -v quiet -nologo
+
+      - name: Test Host (Category=Bootstrap|Conformance)
+        run: dotnet test tests/Cleat.Host.Tests -c Release -v quiet -nologo --filter "Category=Bootstrap|Category=Conformance" --logger trx
+
+      - name: Conformance gate
+        run: dotnet run tools/build.cs -- conformance --run --gate --report tests/conformance/cleat-report.edn
+
+      - name: CTS baseline
+        run: dotnet run tools/build.cs -- cts cts
+
+      - name: test_clojure baseline
+        run: dotnet run tools/build.cs -- cts test-clojure
+
+      - name: Install ilverify
+        run: dotnet tool install -g dotnet-ilverify
+
+      - name: ilverify boot / compiler
+        run: dotnet run tools/build.cs -- ilverify src/boot/cleat.boot.dll src/boot/cleat.compiler.dll
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-artifacts
+          path: |
+            tests/Cleat.Host.Tests/TestResults/
+            tests/conformance/cleat-report.edn
+          if-no-files-found: ignore

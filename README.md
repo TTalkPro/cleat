@@ -1,5 +1,8 @@
 # cleat
 
+[![pr](https://github.com/TTalkPro/cleat/actions/workflows/pr.yml/badge.svg)](https://github.com/TTalkPro/cleat/actions/workflows/pr.yml)
+[![nightly](https://github.com/TTalkPro/cleat/actions/workflows/nightly.yml/badge.svg)](https://github.com/TTalkPro/cleat/actions/workflows/nightly.yml)
+
 Cleat — Clojure made fast to the CLR.
 
 cleat 是 .NET 上的 Clojure 实现：运行时用 C# 写，编译器用 Clojure 自己写（nanopass 风格的多遍编译器），编出的代码是普通的 .NET 程序集。
@@ -97,6 +100,30 @@ dotnet run tools/build.cs -- selfhost        # 只验证不动点，不写种子
 | test_clojure（ClojureCLR） | 357 个测试，断言 3688 通过 / 18 失败 | `cleat tools/cts.clj test-clojure` |
 
 后两套逐命名空间与基线比较，差异即失败；有意改变时用 `--write` 重写基线，失败的分类写在对应任务文件里（[cleat-097](tasks/cleat-097-refresh-baselines.md)）。
+
+### CI 与本地复现
+
+CI 分两层（[cleat-162](tasks/cleat-162-ci.md)、[designs/29 §4](designs/29-usability-and-engineering.md)）：
+
+| 层 | 触发 | 内容 |
+|---|---|---|
+| [pr](.github/workflows/pr.yml) | push / PR | Release 构建、Core 全量、Host 的 `Category("Host")` + `Category("Packages")`、种子守卫（`src/clojure` 变了而 `src/boot/seed/*.gz` 没变即失败） |
+| [nightly](.github/workflows/nightly.yml) | 每日定时 / 手动 | `Category("Bootstrap")`（自举不动点、种子逐字节）+ `Category("Conformance")`、`conformance --run --gate`、CTS 与 test_clojure 基线、ilverify |
+
+本地复现 CI：
+
+```sh
+dotnet build Cleat.slnx -c Release -v quiet -nologo
+dotnet test tests/Cleat.Core.Tests -c Release
+dotnet test tests/Cleat.Host.Tests -c Release --filter "Category=Host|Category=Packages"      # PR 层
+dotnet test tests/Cleat.Host.Tests -c Release --filter "Category=Bootstrap|Category=Conformance"  # nightly 层
+dotnet run tools/build.cs -- conformance --run --gate
+dotnet run tools/build.cs -- cts cts && dotnet run tools/build.cs -- cts test-clojure
+dotnet tool install -g dotnet-ilverify
+dotnet run tools/build.cs -- ilverify src/boot/cleat.boot.dll src/boot/cleat.compiler.dll
+```
+
+性能基准不进 CI：共享 runner 的噪声远超 [cleat-151](tasks/cleat-151-noise-floor-and-full-rerun.md) 标定的地板，判定只在本机 / 111 上做（[designs/29 §9](designs/29-usability-and-engineering.md)）。
 
 ## 与 Clojure 的偏离
 

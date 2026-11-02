@@ -1,0 +1,62 @@
+# PR 层 CI（cleat-162，designs/29 §4）：build + Core 全量 + Host 的 Host / Packages 分类，
+# 目标 ≤ 15 min。种子守卫挡住"改了 src/clojure 忘了重生成种子"。性能不进 CI（29 §9）。
+name: pr
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: pr-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0            # 种子守卫要 diff 基分支
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Build.props', 'Directory.Solution.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Seed guard
+        if: github.event_name == 'pull_request'
+        run: |
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)
+          if echo "$changed" | grep -q '^src/clojure/' \
+             && ! echo "$changed" | grep -q '^src/boot/seed/.*\.gz$'; then
+            echo "::error::src/clojure 变了但 src/boot/seed/*.gz 没变——请运行 dotnet run tools/build.cs -- clojure-seed 后重新提交"
+            exit 1
+          fi
+
+      - name: Build (Release)
+        run: dotnet build Cleat.slnx -c Release -v quiet -nologo
+
+      - name: Test Core (full)
+        run: dotnet test tests/Cleat.Core.Tests -c Release -v quiet -nologo --logger trx
+
+      - name: Test Host (Category=Host|Packages)
+        run: dotnet test tests/Cleat.Host.Tests -c Release -v quiet -nologo --filter "Category=Host|Category=Packages" --logger trx
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            tests/Cleat.Core.Tests/TestResults/
+            tests/Cleat.Host.Tests/TestResults/
+          if-no-files-found: ignore
