@@ -36,3 +36,69 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（`
 | [29-usability-and-engineering.md](29-usability-and-engineering.md) | **提案**（2026-10-26，M19）：热路径微优化到噪声地板后转向用户可感知的缺口——源位置与栈帧、启动（剖析 / ReadyToRun / 编译器延迟加载）、CI、sigspec 整体消融与开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估；任务 cleat-158 ~ 169 |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。
+
+## 附表：开关与环境变量清单（cleat-164）
+
+`CLEAT_NO_OPT` 与下表全部变量都在进程启动时读一次（编译器侧在各 ns 顶层、C# 侧在类型初始化时）。
+读取点：编译器 `src/clojure/cleat/compiler/optflags.clj`（唯一 `opt-off?`），运行时
+`src/Cleat.Core/Runtime/OptFlags.cs`（`OptFlags.Off` 启动读一次；`OffNow` 供 GcProfile 的
+进程内诊断测试现读）。匹配自 cleat-164 起为**逗号 / 空白分词后的精确匹配**（旧子串匹配会让
+`CLEAT_NO_OPT=accinline` 顺带关掉 `inline`）；`=1` 的"全关"语义不变。唯一例外是 `Cleat.Emit`
+的 `tiered`：该程序集不引用 Core，且改动 eval 发射路径后 golden 行号回归，cleat-164 暂保留原读取；
+后续单独排查后再统一。改名不做，历史 notes 的命令仍可复现。
+
+### 环境变量（22 个）
+
+| 变量 | 默认 | 用途 | 类别 | 引入 / 归属 |
+|---|---|---|---|---|
+| `CLEAT_NO_OPT` | 未设 | `=1` 关全部优化；否则精确匹配记号（见下表） | 测量 | cleat-042 起 |
+| `CLEAT_OPT_ACCINLINE` | 未设（关） | 打开小访问器跨编译单元内联；与 `CLEAT_NO_OPT=accinline` 同设时关优先 | 实验（默认关） | cleat-145 |
+| `CLEAT_NO_INLINE` | 未设 | 影子模式 G1 的接口文件比较（不开内联） | 诊断 | cleat-090 |
+| `CLEAT_NO_SIMPLE_EVAL` | 未设 | 关掉 161 的平凡形式快速求值（语义逐字回到 161 前） | 语义 | cleat-161 |
+| `CLEAT_TIME` | 未设 | 分段计时（host / runtime / image / packages / compiler 等），不设不计时不输出 | 诊断 | cleat-159 |
+| `CLEAT_TRACE_ERRORS` | 未设 | 错误时打印内部栈跟踪 | 诊断 | cleat-055 |
+| `CLEAT_TRACE_LOAD` | 未设 | 打印加载过程 | 诊断 | cleat-053 |
+| `CLEAT_DEBUG_EVAL` | 未设 | eval 走调试发射（`-g`，关跨 fn 内联、保留序列点） | 诊断 | cleat-158 |
+| `CLEAT_DUMP_LCIL` / `CLEAT_DUMP_EVAL_LCIL` / `CLEAT_DUMP_RT_LCIL` | 未设 | dump 编译产物 LCIL（包 / eval / 运行时特化） | 诊断 | cleat-052 / 139 |
+| `CLEAT_GC_PROFILE` | 未设 | 启用 GC profile 计数器（`gcprofile` 记号仍可单独关） | 诊断 | cleat-148 |
+| `CLEAT_RTSPEC_STATS` | 未设 | 进程退出时在 stderr 打印运行时编译次数 | 诊断 | cleat-133 |
+| `CLEAT_RTSPEC_DEBUG` | 未设 | 运行时特化的详细日志 | 诊断 | cleat-133 |
+| `CLEAT_RTSPEC_SYNC` | 未设 | 后台特化改回在触发线程同步编译 | 测量 | cleat-137 |
+| `CLEAT_RTSPEC_ALL` / `CLEAT_RTSPEC_THRESHOLD` | 未设 | 特化候选范围与触发阈值 | 测量 | cleat-133 / 139 |
+| `CLEAT_LOAD_PATH` / `-I` | 未设 | 源码加载路径 | 语义 | cleat-012 |
+| `CLEAT_BOOT` | 未设 | 覆盖镜像目录的加载位置 | 语义 | cleat-067 |
+| `CLEAT_COMPILER_NS` | `cleat.compiler` | 自举改名工具用：指向 `cleat.compiler0` | 工具 | cleat-085 |
+| `CLEAT_RUNTIME_ASYNC` | 未设（开） | `=0` 强制异步支持退化为同步实现 | 语义 | cleat-043 |
+| `CLEAT_CROSSGEN2` | 未设 | 构建脚本指定 crossgen2 路径 | 工具 | cleat-160 |
+
+### `CLEAT_NO_OPT` 记号（26 个）
+
+| 记号 | 关掉什么 | 读取处 | 引入 |
+|---|---|---|---|
+| `known` | 宿主调用的编译期静态决议 | analyzer | cleat-042 / 110 |
+| `inline` | 小函数内联 | codegen | cleat-042 |
+| `infer` | 类型推导（infer-walk） | codegen | cleat-100 |
+| `host` | 宿主调用决议 / 反射警告 | codegen（narrow 语义对照） | cleat-101 |
+| `num` | Num：未定类型数的局部 / 循环 / 形参 | codegen | cleat-102 |
+| `loopspec` | 循环 long / double 快慢两份推测 | codegen | cleat-103 |
+| `typed` | 无提示函数的类型化入口 | codegen | cleat-104 |
+| `joinraw` | 原始用途穿过 if / begin 尾位置 | codegen | cleat-108 |
+| `boxcache` | long 装箱走 LongBox | codegen | cleat-109 |
+| `boxdouble` | double 经 LongBox.Double 装箱 | codegen | cleat-110 |
+| `scalar` | 循环变量 deftype 标量替换 | codegen | cleat-123 |
+| `collapse` | 折叠内联子句的 arity 标签 | codegen | cleat-123 |
+| `arrayspec` | 无提示数组形参按元素类型推测 | codegen | cleat-127 |
+| `typefeedback` | eval 候选的剖面记录（129 后关闭） | codegen | cleat-128 |
+| `sigspec` | 运行时签名特化整体 | codegen | cleat-133 |
+| `loopweight` | 循环内层重复装箱的权重 | codegen | cleat-110 |
+| `imagetier` | 镜像 / 包里函数类的分层编译规则 | codegen | cleat-117 |
+| `charbox` | char 装箱与常量走 CharBox | codegen | cleat-142 |
+| `accinline` | 小访问器跨编译单元内联（默认关，见 `CLEAT_OPT_ACCINLINE`） | analyzer | cleat-145 |
+| `loopinl` | 循环体内小函数内联 | analyzer | cleat-120 |
+| `crossnstype` | 生成类跨 ns 决议（退回旧决议路径） | analyzer + RT | cleat-144 |
+| `letrec` | front 的 const-in-run（letrec 前向变量常量绑定） | front | cleat-084 |
+| `intern` | keyword / str 的 intern 快路径（退回先建 Symbol） | Cleat.Core | cleat-146 |
+| `strseq` | String 的 first / seq / next / more 直读 | Cleat.Core | cleat-143 |
+| `nthfast` | nth 的 ASeq / LazySeq / StringSeq 快路径 | Cleat.Core | cleat-147 |
+| `gcprofile` | GC profile 计数器（宿主侧） | Cleat.Host | cleat-148 |
+| `tiered` | eval 代码退回 RunAndCollect | Cleat.Emit（164 未改的子串例外） | cleat-114 |

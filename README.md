@@ -130,6 +130,7 @@ dotnet run tools/build.cs -- ilverify src/boot/cleat.boot.dll src/boot/cleat.com
 cleat 不模拟 Java 类库：`java.*` 类、`.getMessage` / `.length` 一类的 Java 成员名没有对应物，用 CLR 的写法（`.Message`、`.Length`、`Int64/MaxValue`、`clojure.clr.io`）。
 JVM 异常类名有一张别名表（`ClassCastException` → `InvalidCastException` 等）。数值按 CLR 类型：`(int x)` 是 `Int32`、`(float x)` 是 `Single`、`(str true)` 是 `"True"`。
 `*warn-on-reflection*` 为真时，分析期决议不了的宿主调用按 ClojureCLR 的措辞打印反射警告。细节见 [designs/03 §4](designs/03-language-core.md) 与偏离表。
+实验开关：`CLEAT_OPT_ACCINLINE=1` 打开小访问器的跨编译单元内联（cleat-145），默认关、实测中性（[notes M16 §8](notes/r7rs-performance.md)），仅作测量用，不承诺行为稳定。全部开关见 [designs/README 的开关附表](designs/README.md#附表开关与环境变量清单-cleat-164)。
 
 ## 许可
 

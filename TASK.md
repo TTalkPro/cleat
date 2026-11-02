@@ -170,7 +170,7 @@
 | [cleat-161](tasks/cleat-161-lazy-compiler-load.md) | 编译器延迟加载：`-e nil` / AOT 路径不加载编译器 | M19 | cleat-159 | 进行中（实现 + 门禁通过：`-e nil` 本机 978 → 678 ms / 111 797 → 586 ms，REPL 首提示符不变慢，种子未动，Core 128 / Host 291 / conformance / CTS / test-clojure / selfhost 不动点全过；111 上 161 vs 159-fix 的 56 项 × 5 轮同轮配对跑动中） |
 | [cleat-162](tasks/cleat-162-ci.md) | GitHub Actions：PR 与 nightly 两层、种子守卫 | M19 | 无 | 进行中（2026-11-02：两层 workflow 与 README 复现命令落地，种子守卫本地模拟 FAIL / PASS 双路径通过；PR 层本机实测 ≈ 24.7 min 超 15 min 目标——慢项是 BothFromPackageAssemblies / Nrepl / ExampleProject / Neorepl / PublishedDirectory 五个工程级集成测试，拆分方案待裁决；待 push 后 GH 实测写回） |
 | [cleat-163](tasks/cleat-163-sigspec-ablation.md) | sigspec 整体消融与三档裁决（保留 / 只留编译期推导 / 删除） | M19 | 无（建议在 164 之后跑分） | 未开始 |
-| [cleat-164](tasks/cleat-164-opt-switch-cleanup.md) | `CLEAT_NO_OPT` 精确匹配（修 accinline 误关 inline）、accinline 去留、开关清单 | M19 | 无 | 未开始 |
+| [cleat-164](tasks/cleat-164-opt-switch-cleanup.md) | `CLEAT_NO_OPT` 精确匹配（修 accinline 误关 inline）、accinline 去留、开关清单 | M19 | 无 | 完成（2026-11-02：编译器 / 运行时精确分词，种子不动点；Core / Host / conformance / CTS / test-clojure 通过；Emit `tiered` 因 eval golden 行号回归暂留原子串读取，例外已记账；accinline 按保留裁决写入 README） |
 | [cleat-165](tasks/cleat-165-codegen-split.md) | codegen 拆分：infer / rtspec / classes，种子逐字节不变 | M19 | cleat-158、163 | 未开始 |
 | [cleat-166](tasks/cleat-166-spec-alpha-package.md) | clojure.spec.alpha 包（packages/spec.alpha） | M19 | 无 | 未开始 |
 | [cleat-167](tasks/cleat-167-core-async-package.md) | clojure.core.async 包（spike 选路线后落地） | M19 | 无 | 未开始 |

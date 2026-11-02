@@ -94,7 +94,7 @@ namespace clojure.lang
 
         // cleat-143：String 的 first / seq / next / more 直读快路径。默认开；CLEAT_NO_OPT=strseq 时保留原来的
         // RT.seq → StringSeq 路径（包括装箱方式），使开 / 关成为完整的分配与时间对照。
-        private static readonly bool s_strseq = !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("strseq");
+        private static readonly bool s_strseq = !Cleat.Core.Runtime.OptFlags.Off("strseq");
 
         static readonly RTProperties _versionProperties = [];
 
@@ -110,12 +110,12 @@ namespace clojure.lang
         // cleat-146：str 整数快路径与 Keyword intern 快路径共用 CLEAT_NO_OPT=intern 开关；
         // static readonly 保证热路径只读字段，不重复读环境变量。
         internal static readonly bool s_internEnabled =
-            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("intern");
+            !Cleat.Core.Runtime.OptFlags.Off("intern");
 
         // cleat-147：nth 的 ASeq / LazySeq / StringSeq 快路径。默认开；CLEAT_NO_OPT=nthfast 时
         // NthFromRef 完整回到 NthFrom 的旧判断链，开 / 关是同一份运行时的完整对照。
         private static readonly bool s_nthfast =
-            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("nthfast");
+            !Cleat.Core.Runtime.OptFlags.Off("nthfast");
 
         #endregion
 
@@ -2937,7 +2937,7 @@ namespace clojure.lang
         // cleat-144：deftype / definterface 生成类可以按命名空间前缀在包程序集里决议。默认开；关侧保留旧的
         // “类型必须已在已载入程序集里”的决议路径，用于编译产物对照。
         internal static readonly bool s_crossNsTypes =
-            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("crossnstype");
+            !Cleat.Core.Runtime.OptFlags.Off("crossnstype");
 
         public static Type classForName(string p)
         {

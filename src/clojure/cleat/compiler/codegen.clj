@@ -7,6 +7,7 @@
 ;; Lcil 是 Clojure 的列表数据（符号、字符串、整数、浮点、布尔），直接交给 Cleat.Emit（ClojureData）；lcil->string 写成文本（转储与差分用）。
 (ns cleat.compiler.codegen
   (:require [clojure.string :as str]
+            [cleat.compiler.optflags :as optflags]
             [cleat.nanopass :refer [nanopass-case define-pass with-output-language out]]
             [cleat.nanopass.records :as r]
             [cleat.compiler.languages :as l :refer [L3]]
@@ -63,12 +64,11 @@
 
 (defn objs [n] (repeat n obj))
 
-;; —— 测量开关：CLEAT_NO_OPT=1 关掉全部，或含 known / inline / infer 关掉对应的一项 ——
+;; —— 测量开关：CLEAT_NO_OPT=1 关掉全部，否则按逗号 / 空白分词精确关掉一项 ——
 
 (defn- env [n] (or (System.Environment/GetEnvironmentVariable n) ""))
 (defn- env-set? [n] (pos? (count (env n))))
-(def ^:private no-opt (env "CLEAT_NO_OPT"))
-(defn- opt-off? [nm] (or (= no-opt "1") (str/includes? no-opt nm)))
+(defn- opt-off? [nm] (optflags/opt-off? nm))
 (def opt-034? (not (opt-off? "known")))
 (def opt-inline? (not (opt-off? "inline")))
 (def opt-infer? (not (opt-off? "infer")))

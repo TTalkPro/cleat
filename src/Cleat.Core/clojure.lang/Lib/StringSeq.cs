@@ -20,7 +20,7 @@ namespace clojure.lang
     public class StringSeq : ASeq, IndexedSeq, IDrop, IReduceInit
     {
         // cleat-143：RT 的 String 快路径与这里的 CharBox 返回路径共用一个对照开关；关闭时回到原来的隐式装箱。
-        private static readonly bool s_strseq = !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("strseq");
+        private static readonly bool s_strseq = !Cleat.Core.Runtime.OptFlags.Off("strseq");
 
         #region Data
 

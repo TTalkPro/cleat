@@ -2,6 +2,7 @@
 ;; convert-assignments；simplify-letrec、cp0-lite、simplify-if 在 cleat-087 移植）。注释见 原版。
 (ns cleat.compiler.front
   (:require [cleat.nanopass :refer [define-pass nanopass-case out]]
+            [cleat.compiler.optflags :as optflags]
             [cleat.compiler.languages :refer [L0 L1 L2]]))
 
 ;; —— 小集合（无重复的列表，顺序同 原版：set-add 加在前面）——
@@ -120,8 +121,7 @@
   (nanopass-case [L0 Expr] e [(lambda ~nm ~cl* ...) true] [else false]))
 
 (def ^:private const-in-run?
-  (let [v (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT")]
-    (not (and (string? v) (or (= v "1") (.Contains ^String v "letrec"))))))
+  (not (optflags/opt-off? "letrec")))
 
 (define-pass simplify-letrec L0 [ir an] -> L1 []
   (definitions

@@ -21,7 +21,7 @@ internal static class GcProfile
     {
         var selectionError = ValidateSelection();
         if (selectionError != null) return selectionError;
-        if ((Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("gcprofile")) return null;
+        if (Cleat.Core.Runtime.OptFlags.OffNow("gcprofile")) return null;
         var profile = Environment.GetEnvironmentVariable(EnvironmentVariable);
         if (string.IsNullOrEmpty(profile) || profile.Equals("default", StringComparison.OrdinalIgnoreCase))
             return null;
@@ -35,7 +35,7 @@ internal static class GcProfile
     /// <summary>只校验声明与必须由父进程设置的 DOTNET_* 变量；可在 CLR 已启动后做单元测试。</summary>
     internal static string ValidateSelection()
     {
-        if ((Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("gcprofile")) return null;
+        if (Cleat.Core.Runtime.OptFlags.OffNow("gcprofile")) return null;
         var profile = Environment.GetEnvironmentVariable(EnvironmentVariable);
         if (string.IsNullOrEmpty(profile) || profile.Equals("default", StringComparison.OrdinalIgnoreCase)) return null;
         if (!profile.Equals("batch", StringComparison.OrdinalIgnoreCase))

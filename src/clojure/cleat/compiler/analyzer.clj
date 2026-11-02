@@ -17,6 +17,7 @@
 (ns cleat.compiler.analyzer
   (:refer-clojure :exclude [macroexpand-1])
   (:require [clojure.string :as str]
+            [cleat.compiler.optflags :as optflags]
             [cleat.nanopass :as np :refer [with-output-language out in-context]]
             [cleat.nanopass.records :as r]
             [cleat.compiler.languages :as l :refer [L0]])
@@ -66,7 +67,7 @@
 (defn- tag-of [x] (HostSyntax/TagOf x))
 ;; cleat-144：生成类的跨 ns 决议与缺失依赖的编译期加载共用这个开关。
 (def ^:private opt-crossns-type?
- (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "crossnstype")))
+ (not (optflags/opt-off? "crossnstype")))
 
 ;; cleat-145：小访问器跨编译单元内联。镜像构建只消费上一级固化 .inl；包构建按 ns 消费依赖包嵌入 .inl
 ;; （不运行依赖入口）；纯 deftype 字段访问器在具体类型守卫后直读 / 直存。
@@ -77,7 +78,7 @@
 ;; 要开：CLEAT_OPT_ACCINLINE=1；CLEAT_NO_OPT=accinline 仍能单独关掉（两个都设时关优先）。
 (def opt-accinline?
  (and (= "1" (System.Environment/GetEnvironmentVariable "CLEAT_OPT_ACCINLINE"))
-      (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "accinline"))))
+      (not (optflags/opt-off? "accinline"))))
 
 (declare require-type-ns!)
 
@@ -531,7 +532,7 @@
                 (prim-sig v (seq v) (var-rettag vm))))
             al))))
 
-(def ^:private opt-known-calls? (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "known")))   ; cleat-110
+(def ^:private opt-known-calls? (not (optflags/opt-off? "known")))   ; cleat-110
 
 (defn- known-call-class
   "用户函数的已知调用（cleat-110）：非动态的 Var、当前值是 AFunction 子类、该类有参数个数为 n 的公开静态 invokeStatic（self 加 n 个 object，
@@ -562,7 +563,7 @@
 ;; 可内联助手视为已知小操作；用户函数的耗时和分配无法静态判断，只要子句还有真实调用就保守地留在循环外。运行时静态调用
 ;; （CallStatic 的 Numbers / RT 快路径）与局部 lambda 调用（let / recur 的编译形态）不算——fft 的收益正来自把纯算术子句内联进循环。
 ;; 镜像 / 包构建照旧不启用（driver 关掉 restrict-loop-inlines?）：与 eval 不同的内联决定会让自举的接口文件跨级反馈。
-(def opt-loopinl? (not (.Contains (or (System.Environment/GetEnvironmentVariable "CLEAT_NO_OPT") "") "loopinl")))
+(def opt-loopinl? (not (optflags/opt-off? "loopinl")))
 
 (def restrict-loop-inlines? (atom true))
 

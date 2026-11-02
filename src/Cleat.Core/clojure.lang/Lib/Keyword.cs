@@ -68,7 +68,7 @@ namespace clojure.lang
 
         // cleat-146：CLEAT_NO_OPT=intern 完整退回“先建 Symbol 再查表”的旧路径。
         private static readonly bool s_internEnabled =
-            !(Environment.GetEnvironmentVariable("CLEAT_NO_OPT") ?? "").Contains("intern");
+            !Cleat.Core.Runtime.OptFlags.Off("intern");
 
         public Symbol Symbol
         {
