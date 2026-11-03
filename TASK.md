@@ -169,13 +169,14 @@
 | [cleat-160](tasks/cleat-160-ready-to-run.md) | ReadyToRun：Core、镜像、编译器包与随附库（`src/boot/*.dll` 保持纯 IL，种子比较不变） | M19 | cleat-159 | 完成（2026-11-02：partial 56 × 5 全表判定 9 项，回退 3 项（fib x1.213、nucleic x1.067、read1 x1.081，5/5 超地板），与全量 R2R 合并两条路线都不满足"无回退"验收——按 29 §3.2 决策点放弃默认切换：publish / pack 的 R2R 改 opt-in（`--r2r`，partial 另需 `--mibc`），默认产物回纯 IL；159 启动目标仅 opt-in 达成记账，默认缺口移交 169） |
 | [cleat-161](tasks/cleat-161-lazy-compiler-load.md) | 编译器延迟加载：`-e nil` / AOT 路径不加载编译器 | M19 | cleat-159 | 进行中（实现 + 门禁通过：`-e nil` 本机 978 → 678 ms / 111 797 → 586 ms，REPL 首提示符不变慢，种子未动，Core 128 / Host 291 / conformance / CTS / test-clojure / selfhost 不动点全过；111 上 161 vs 159-fix 的 56 项 × 5 轮同轮配对跑动中） |
 | [cleat-162](tasks/cleat-162-ci.md) | GitHub Actions：PR 与 nightly 两层、种子守卫 | M19 | 无 | 进行中（2026-11-02：两层 workflow 与 README 复现命令落地，种子守卫本地模拟 FAIL / PASS 双路径通过；PR 层本机实测 ≈ 24.7 min 超 15 min 目标——慢项是 BothFromPackageAssemblies / Nrepl / ExampleProject / Neorepl / PublishedDirectory 五个工程级集成测试，拆分方案待裁决；待 push 后 GH 实测写回） |
-| [cleat-163](tasks/cleat-163-sigspec-ablation.md) | sigspec 整体消融与三档裁决（保留 / 只留编译期推导 / 删除） | M19 | 无（建议在 164 之后跑分） | 未开始 |
+| [cleat-163](tasks/cleat-163-sigspec-ablation.md) | sigspec 整体消融与三档裁决（保留 / 只留编译期推导 / 删除） | M19 | 无（建议在 164 之后跑分） | 完成（2026-11-03：三组 56 × 5 本机同轮配对，1680 格干净；可声明项只有 earley x1.054、ntakl x1.057 两个默认成本，三组几何平均 x1.003 / x0.999 / x0.997，无 ≥5% 收益——裁决 (c) 整体删除，执行移交 cleat-170） |
 | [cleat-164](tasks/cleat-164-opt-switch-cleanup.md) | `CLEAT_NO_OPT` 精确匹配（修 accinline 误关 inline）、accinline 去留、开关清单 | M19 | 无 | 完成（2026-11-02：编译器 / 运行时精确分词，种子不动点；Core / Host / conformance / CTS / test-clojure 通过；Emit `tiered` 因 eval golden 行号回归暂留原子串读取，例外已记账；accinline 按保留裁决写入 README） |
-| [cleat-165](tasks/cleat-165-codegen-split.md) | codegen 拆分：infer / rtspec / classes，种子逐字节不变 | M19 | cleat-158、163 | 未开始 |
+| [cleat-170](tasks/cleat-170-sigspec-removal.md) | 删除运行时 sigspec 体系（163 裁决 c） | M19 | cleat-163 | 未开始 |
+| [cleat-165](tasks/cleat-165-codegen-split.md) | codegen 拆分：infer / classes（rtspec 由 170 删除），种子逐字节不变 | M19 | cleat-158、cleat-170 | 未开始 |
 | [cleat-166](tasks/cleat-166-spec-alpha-package.md) | clojure.spec.alpha 包（packages/spec.alpha） | M19 | 无 | 未开始 |
 | [cleat-167](tasks/cleat-167-core-async-package.md) | clojure.core.async 包（spike 选路线后落地） | M19 | 无 | 未开始 |
 | [cleat-168](tasks/cleat-168-jvm-compat-evaluation.md) | jvm-compat 可选垫片评估（408 行 `:host` 偏离分组） | M19 | 无 | 未开始 |
-| [cleat-169](tasks/cleat-169-m19-closeout.md) | M19 收口：README / CHANGELOG / 已知限制、全量门禁与 r7rs 复核 | M19 | cleat-158 ~ 168 | 未开始 |
+| [cleat-169](tasks/cleat-169-m19-closeout.md) | M19 收口：README / CHANGELOG / 已知限制、全量门禁与 r7rs 复核 | M19 | cleat-158 ~ 168、cleat-170 | 未开始 |
 
 ## 里程碑
 
@@ -204,7 +205,7 @@
 | M16 热路径优化（2026-10-20 起） | cleat-142 ~ cleat-150 | M15 归因复核后的修正优先级：char 装箱、String 直读、跨 ns deftype 决议与访问器内联、intern、nth / 闭包 / 变长、GC profile、回归排查（[28](designs/28-hot-path-optimizations.md)） |
 | M17 口径与回退收口（2026-10-21 起，2026-10-22 完成） | cleat-151 ~ cleat-153 | 本机噪声地板标定 + 56 项三臂全量、M14 / M15 回退的 commit 级定位、调用点类型反馈（承接 147 第 2 / 3 条与 149 遗留的三项待办） |
 | M18 调用与对象路径落地（2026-10-22 起） | cleat-154 ~ cleat-157 | 把 M17 量化过的变长参数数组、闭包提升落地；sigspec 单项回退调优；调用点反馈原型。本批不新增优化开关，已证明有效即默认全面启用 |
-| M19 可用性与工程收口（2026-10-26 起） | cleat-158 ~ cleat-169 | 暂停性能主线：源位置与栈帧、启动（剖析 / R2R / 编译器延迟加载）、CI、sigspec 消融与开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估（[29](designs/29-usability-and-engineering.md)） |
+| M19 可用性与工程收口（2026-10-26 起） | cleat-158 ~ cleat-170 | 暂停性能主线：源位置与栈帧、启动（剖析 / R2R / 编译器延迟加载）、CI、sigspec 消融与删除、开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估（[29](designs/29-usability-and-engineering.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
@@ -215,7 +216,7 @@
 
 **M18（2026-10-22 起）**：154（变长参数数组 + docstring 欠账，先做）→ 155（闭包提升）→ 156（sigspec 调 dynamic / pi 规则）→ 157（调用点反馈原型）。154 / 155 可在本机并行做代码面调研，但落地提交按上述顺序分开；111 只跑性能 A/B，不在跑分窗口构建 / 测试。本批一律不新增优化开关；对照用改前 / 改后构建或既有诊断开关。
 
-**M19（2026-10-26 起）**：M17 / M18 七项里只有 156 落地，对 JVM 停在 x1.59，热路径微优化已到噪声地板，性能主线暂停（[29 §0](designs/29-usability-and-engineering.md)）。164 → 163 → 165；158 → 165；159 → 160 / 161 并列；162、166、167、168 随时可并行；最后 169。优先级：158（用户最直接感受到）、159 ~ 161（启动）、162（CI 保护后续任务）。本批不新增优化开关，改到 `src/clojure` 或 `Cleat.Core` 的任务都要做 r7rs 同轮配对，不允许可声明的回退（29 §9）。
+**M19（2026-10-26 起）**：M17 / M18 七项里只有 156 落地，对 JVM 停在 x1.59，热路径微优化已到噪声地板，性能主线暂停（[29 §0](designs/29-usability-and-engineering.md)）。164 → 163 → 170 → 165；158 → 165；159 → 160 / 161 并列；162、166、167、168 随时可并行；最后 169。优先级：158（用户最直接感受到）、159 ~ 161（启动）、162（CI 保护后续任务）。本批不新增优化开关，改到 `src/clojure` 或 `Cleat.Core` 的任务都要做 r7rs 同轮配对，不允许可声明的回退（29 §9）。
 
 **M13（2026-10-16 起）**：127（依赖 118）与 128（依赖 119）可并列，129 在 128 之后，最后 130；与 M12 互不依赖（[23 §3](designs/23-type-specialization.md)）。
 

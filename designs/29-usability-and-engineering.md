@@ -2,7 +2,7 @@
 
 > 状态：**提案**（2026-10-26，M19）。来源：M17 / M18 的收口结论（[28 §7](28-hot-path-optimizations.md)、
 > [notes M18](../notes/r7rs-performance.md)）与 2026-10-26 在本机（192.168.3.13）上对 Release 构建的实测。
-> 任务 cleat-158 ~ 169。
+> 任务 cleat-158 ~ 170。
 
 ## §0 判断：热路径微优化已到噪声地板
 
@@ -185,6 +185,11 @@ GitHub Actions（`origin` 是 `github.com:TTalkPro/cleat`）分两层：
   (c) 不可声明 → 整体删除，另开任务执行，种子重走。
   5% 这个门槛是本文提议的，163 开工前可以调整，但必须在跑分前定下来。
 
+**结果（2026-11-03）**：三组 56 × 5 本机同轮配对均为中性或成本，几何平均 x1.003 / x0.999 /
+x0.997；可声明项只有 earley x1.054、ntakl x1.057（都 5/5 默认慢），没有任何 ≥5% 收益。
+**裁决 (c)**，整体删除，全表与代码面见 [cleat-163](../tasks/cleat-163-sigspec-ablation.md)，
+执行任务见 [cleat-170](../tasks/cleat-170-sigspec-removal.md)。
+
 ### 5.2 开关与环境变量（cleat-164）
 
 - **修子串匹配缺陷**：`opt-off?`（codegen.clj）与 analyzer.clj 里的 `.Contains` 改成按逗号 / 空白分词后精确匹配，
@@ -195,7 +200,7 @@ GitHub Actions（`origin` 是 `github.com:TTalkPro/cleat`）分两层：
 - 生成一张开关清单（`designs/README` 附表或 `docs`）：每个 `CLEAT_*` 环境变量 / `CLEAT_NO_OPT` 记号的用途、
   默认值、是否影响语义、引入任务。只整理文档，不改名，避免破坏历史 notes 的可复现命令。
 
-## §6 编译器结构（cleat-165）
+## §6 编译器结构（cleat-165；rtspec 由 cleat-170 删除）
 
 纯重构，**种子逐字节不变**是硬验收（stage2 == stage3 且与改前 stage3 相同）。如果做不到逐字节不变
 （例如函数定义顺序影响常量池编号），退一步要求镜像 / 编译器包的 Lcil 文本只在可解释的符号名上有差异，并在任务书里列出每一处。
@@ -203,11 +208,10 @@ GitHub Actions（`origin` 是 `github.com:TTalkPro/cleat`）分两层：
 - 从 codegen.clj 拆出：
   - `cleat.compiler.infer`：类型推导（`infer-walk`、`infer-var-types-into!` 等），作为 codegen 之前的独立 pass
     （输出带类型注解的 L3，而不是在 codegen 中途回填）；
-  - `cleat.compiler.rtspec`：运行时签名入口（`cg-runtime-sig-entry!`、`cg-rtspec-entry!` 等）；如果 163 裁决为 (b) / (c)，
-    这一步合并进那边执行；
+  - ~~`cleat.compiler.rtspec`：运行时签名入口~~：163 已裁决 (c)，这一步由 cleat-170 直接删除；
   - `cleat.compiler.classes`：`genclass-class!`、`clj-fn-class!`、deftype / reify / proxy 类生成；
   - `cg*` 按节点种类拆成多方法或分派表，单个函数不超过约 80 行（指导值，不是硬门槛）。
-- 排在 158（会改 codegen 发序列点）和 163 之后，避免三方冲突。
+- 排在 158（会改 codegen 发序列点）和 170（删除 rtspec）之后，避免三方冲突。
 - `boot-order.edn` 与 `all.clj` 同步更新。
 
 ## §7 生态（cleat-166 ~ 168）
@@ -257,12 +261,13 @@ GitHub Actions（`origin` 是 `github.com:TTalkPro/cleat`）分两层：
 | cleat-161 | 编译器延迟加载（§3.3） | cleat-159 |
 | cleat-162 | GitHub Actions：PR 与 nightly 两层、种子守卫（§4） | 无 |
 | cleat-163 | sigspec 整体消融与三档裁决（§5.1） | 无（建议排在 164 修完子串缺陷之后跑分） |
+| cleat-170 | 删除运行时 sigspec 体系（§5.1 裁决 c） | cleat-163 |
 | cleat-164 | `CLEAT_NO_OPT` 精确匹配、accinline 去留、开关清单（§5.2） | 无 |
-| cleat-165 | codegen 拆分：infer / rtspec / classes（§6） | cleat-158、cleat-163 |
+| cleat-165 | codegen 拆分：infer / classes（§6；rtspec 由 170 删除） | cleat-158、cleat-170 |
 | cleat-166 | clojure.spec.alpha 包（§7） | 无 |
 | cleat-167 | clojure.core.async 包（spike 后落地，§7） | 无 |
 | cleat-168 | jvm-compat 评估（§7） | 无 |
-| cleat-169 | M19 收口：文档、CHANGELOG、全量门禁与 r7rs 复核（§8） | cleat-158 ~ 168 |
+| cleat-169 | M19 收口：文档、CHANGELOG、全量门禁与 r7rs 复核（§8） | cleat-158 ~ 168、cleat-170 |
 
-关键路径：164 → 163 → 165；158 → 165；159 → 160 / 161 并列；162、166、167、168 可以随时并行；最后 169。
+关键路径：164 → 163 → 170 → 165；158 → 165；159 → 160 / 161 并列；162、166、167、168 可以随时并行；最后 169。
 优先级：158（用户最直接感受到）、159 ~ 161（启动）、162（CI 能保护后面所有任务）排在前面。

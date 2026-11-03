@@ -1061,3 +1061,21 @@ ns/iter 中位：接口直调 **12.9**、具体类型提示 **10.4**（理论上
 **复核裁决**：维持微探针层停手。与本机的唯一差异（145 直读臂由负转小幅正）记为 145 语义下
 守卫直读并非普适为负的旁证，不足以重开调用点反馈；不落实现、不新增开关。
 
+## M19 §1：cleat-163 sigspec 整体消融（2026-11-03，本机 5 轮）
+
+同一构建（`e09e2ea`）上跑 r7rs 56 项 × 5 轮同轮配对，三组关闭臂分别是
+`CLEAT_NO_OPT=sigspec`、`sigspec,typefeedback`、`sigspec,typefeedback,typed`。判定用
+`m16sum.py` 加 `results/floor-Debian-VM01.json`：全局缺省 5%、同向 5 轮，条目地板优先；
+比值 >1 表示默认更慢。1680 格 0 错误、0 loaded、0 对被负载筛掉。
+
+| 关闭臂 | 可声明项 | 方向 | 56 项配对中位几何平均 |
+|---|---|---|---:|
+| `sigspec` | earley x1.054（5/5） | 默认慢 | x1.003 |
+| `sigspec,typefeedback` | ntakl x1.057（5/5） | 默认慢 | x0.999 |
+| `sigspec,typefeedback,typed` | 无 | — | x0.997 |
+
+没有一组能声明整体收益 ≥5%；只有上述两个约 5% 的成本格，168 格判定里其余全部不可判定。
+**裁决：29 §5.1 的 (c)，整体删除运行时 sigspec 体系。** 代码面、`CLEAT_RTSPEC_STATS`、
+内存 / 启动取证和 56 行全表见[任务书](../tasks/cleat-163-sigspec-ablation.md)；
+执行删除另开 [cleat-170](../tasks/cleat-170-sigspec-removal.md)。
+
