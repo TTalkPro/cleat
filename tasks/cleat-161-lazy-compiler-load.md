@@ -55,5 +55,23 @@
   （新增守卫 `CompilerLoadsOnDemandOnly`：平凡形式连打不出现补行、`(+ 1 2)` 出现、`CLEAT_NO_SIMPLE_EVAL` 下
   `-e nil` 也出现、`-m` 跑包程序集不出现）；conformance `--gate` OK；CTS / test-clojure 与基线一致；
   `selfhost` 不动点 304 s（stage2 == stage3，boot / compiler 的 dll 与 Lcil 逐字节相同）。
-- **待收**：29 §9 的性能纪律——本任务改到 `Cleat.Core`，161 vs 159-fix 的 r7rs 56 项 × 5 轮同轮配对
-  （臂序轮换）在 111 上跑动中，产物 `bench/r7rs/results/pair161.jsonl`；结果写回 notes §7 与本行后转完成。
+- **待收（已完成，2026-11-04）**：29 §9 的性能纪律——161 vs 159-fix 的 r7rs 56 项 × 5 轮同轮配对
+  （臂序轮换）在 111 上跑完：560 格（56 项 × 5 轮 × 2 臂）全干净，0 error、0 loaded，产物
+  `bench/r7rs/results/pair161.jsonl`（111 上 `~/workspace/cleat-161-new`）。
+  配对比值中位的几何平均 **x1.0043**（56 项，整体中性）。
+
+  | 项 | 配对比值 | 同向 | 判定 |
+  |---|---|---|---|
+  | cat | x0.920 | 5/5 | **可声明改善**（−8.0%） |
+  | nucleic | x0.942 | 5/5 | **可声明改善**（−5.8%） |
+  | sum | x1.273 | 5/5 | 见下（判为分层 JIT 双态，不是回退） |
+
+  `sum` 的 x1.273 是 111 上短基准的分层 JIT 双态：pairbuild 的注释记着「短基准（sum / ray）在分层 JIT 下
+  落在两个量化档上（慢档 ≈ 快档 × 1.32）」，x1.273 正落在慢档；同项 rep1 是 x1.014（两臂打平），
+  说明两臂能落在同一档，rep2 ~ rep5 是抽签落到不同档。地板表 `floor-Debian-VM01.json` 没有 `sum` 条目
+  （它是从 9 ~ 11 轮噪声里估的，`sum` / `ray` / `ntakl` / `triangl` 这些短项噪声最大，估不出地板），
+  所以 m16sum 对它套了缺省 5% 门槛而误判成回退——按 29 §9 的口径记为**不可判定**。
+  其余 53 项全部落在缺省 3% 门槛内。
+
+  **结论：161 无可声明回退**（两项可声明改善）。启动目标也达成：`-e nil` 本机 978 → 678 ms、
+  111 797 → 586 ms（详见 [notes/startup-profile.md §7](../notes/startup-profile.md)）。

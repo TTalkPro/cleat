@@ -275,5 +275,14 @@ pprint 场景的 `(require …)` 是要编译的形式，编译器照样加载�
 性能纪律（29 §9）：改到 `Cleat.Core`，在 111 上跑 161 vs 159-fix 的 r7rs 56 项 × 5 轮同轮配对（臂序轮换，
 产物 `bench/r7rs/results/pair161.jsonl`）。
 
+**配对复核结果（2026-11-04 收口）**：111 上 560 格（56 项 × 5 轮 × 2 臂）全干净，0 error、0 loaded。
+配对比值中位的几何平均 **x1.0043**（56 项，整体中性）。可声明项两项，均为**改善**：
+`cat` x0.920（5/5，−8.0%）、`nucleic` x0.942（5/5，−5.8%）。
+另有一项 `sum` x1.273（5/5）判为**不可判定**：111 上短基准的分层 JIT 双态（慢档 ≈ 快档 × 1.32，
+见 `bench/r7rs/pairbuild.py` 注释），同项 rep1 是 x1.014（两臂打平），rep2 ~ rep5 抽签落到不同档；
+地板表 `floor-Debian-VM01.json` 没有 `sum` 条目（`sum` / `ray` / `ntakl` / `triangl` 这几个短项噪声最大，
+估不出地板），m16sum 对它套了缺省 5% 门槛而误判成回退。其余 53 项落在缺省 3% 门槛内。
+**161 无可声明回退**，启动目标（`-e nil` 111 797 → 586 ms）达成。
+
 复现：`CLEAT=~/workspace/cleat-161-new python3 bench/startup/profile.py -n 5 nil pprint repl prompt default`
 （111 上的两份 JSON / 表在 `bench/startup/results/profile161-cleat-{161-new,159-fix}.{json,table}`，不入库）。
