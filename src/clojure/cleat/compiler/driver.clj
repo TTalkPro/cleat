@@ -808,8 +808,7 @@
 (defn compile-boot
   "依次求值形式（boot-order 的 load / require），全部加载到的文件的顶层形式按求值顺序（后序）收集成一个单元，编译为 Clojure 镜像 dll。"
   [forms dll]
-  (let [unit (atom [])
-        runtime-spec? Cleat.Core.Runtime.RuntimeSigSpec/Enabled]
+  (let [unit (atom [])]
     (reset! form-ordinal 0)
     (let [inl @an/inline-calls? rw @an/reflection-warnings?]
       ;; 构建镜像时不做“新”内联决定（cleat-144）：种子与两级镜像的 .inl 必须逐字一致，内联决定留到包与 eval 单元。
@@ -817,12 +816,10 @@
       ;; 也不报反射警告（cleat-099）：core_print / gvec / instant 等开着 *warn-on-reflection*，镜像构建的输出不变
       (reset! an/inline-calls? false)
       (reset! an/reflection-warnings? false)
-      (set! Cleat.Core.Runtime.RuntimeSigSpec/Enabled false)
       (try
         (with-st {:unit unit :boot true}
           (doseq [f forms] (reset-ids!) (eval-toplevel f)))
         (finally
-          (set! Cleat.Core.Runtime.RuntimeSigSpec/Enabled runtime-spec?)
           (reset! an/inline-calls? inl) (reset! an/reflection-warnings? rw))))
     (compile-boot-unit @unit dll)))
 
@@ -835,7 +832,5 @@
   (Cleat.Core.Runtime.RuntimeHooks/Set "load-source" load-hook)
   (Cleat.Core.Runtime.RuntimeHooks/Set "compile" compile-reader)
   (Cleat.Core.Runtime.RuntimeHooks/Set "macroexpand-1" (fn [form _] (an/macroexpand-1 form)))
-  (set! Cleat.Core.Runtime.RuntimeSigSpec/SpecCompiler cg/compile-runtime-specialization)
-  (set! Cleat.Core.Runtime.RuntimeSigSpec/SpecFilter cg/acceptable-runtime-specialization?)
   (DriverOps/InstallCompileHooks compile-boot compile-package)
   nil)

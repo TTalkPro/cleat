@@ -1,6 +1,6 @@
 # 25 运行时引用类型签名特化：精确观察 + Tagged 静态决议
 
-> 状态：**已采纳，保守首版**（2026-10-18）。本文是 [24](24-runtime-signature-specialization.md) 的后续。
+> 状态：**历史；运行时路径已由 cleat-170 删除**（2026-10-18 采纳首版）。本文是 [24](24-runtime-signature-specialization.md) 的后续。
 > cleat-133 已经建立“编译期保留 L3 IR、`invoke` 入口观察、运行时按需生成、精确类型分发”的框架，
 > 但生成器只接受 `Int64` / `Double`。cleat-134 把同一框架扩展到引用类型形参，不预生成组合。
 

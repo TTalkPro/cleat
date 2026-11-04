@@ -47,7 +47,7 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（`
 的 `tiered`：该程序集不引用 Core，且改动 eval 发射路径后 golden 行号回归，cleat-164 暂保留原读取；
 后续单独排查后再统一。改名不做，历史 notes 的命令仍可复现。
 
-### 环境变量（22 个）
+### 环境变量（18 个）
 
 | 变量 | 默认 | 用途 | 类别 | 引入 / 归属 |
 |---|---|---|---|---|
@@ -59,19 +59,15 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（`
 | `CLEAT_TRACE_ERRORS` | 未设 | 错误时打印内部栈跟踪 | 诊断 | cleat-055 |
 | `CLEAT_TRACE_LOAD` | 未设 | 打印加载过程 | 诊断 | cleat-053 |
 | `CLEAT_DEBUG_EVAL` | 未设 | eval 走调试发射（`-g`，关跨 fn 内联、保留序列点） | 诊断 | cleat-158 |
-| `CLEAT_DUMP_LCIL` / `CLEAT_DUMP_EVAL_LCIL` / `CLEAT_DUMP_RT_LCIL` | 未设 | dump 编译产物 LCIL（包 / eval / 运行时特化） | 诊断 | cleat-052 / 139 |
+| `CLEAT_DUMP_LCIL` / `CLEAT_DUMP_EVAL_LCIL` | 未设 | dump 编译产物 LCIL（包 / eval） | 诊断 | cleat-052 |
 | `CLEAT_GC_PROFILE` | 未设 | 启用 GC profile 计数器（`gcprofile` 记号仍可单独关） | 诊断 | cleat-148 |
-| `CLEAT_RTSPEC_STATS` | 未设 | 进程退出时在 stderr 打印运行时编译次数 | 诊断 | cleat-133 |
-| `CLEAT_RTSPEC_DEBUG` | 未设 | 运行时特化的详细日志 | 诊断 | cleat-133 |
-| `CLEAT_RTSPEC_SYNC` | 未设 | 后台特化改回在触发线程同步编译 | 测量 | cleat-137 |
-| `CLEAT_RTSPEC_ALL` / `CLEAT_RTSPEC_THRESHOLD` | 未设 | 特化候选范围与触发阈值 | 测量 | cleat-133 / 139 |
 | `CLEAT_LOAD_PATH` / `-I` | 未设 | 源码加载路径 | 语义 | cleat-012 |
 | `CLEAT_BOOT` | 未设 | 覆盖镜像目录的加载位置 | 语义 | cleat-067 |
 | `CLEAT_COMPILER_NS` | `cleat.compiler` | 自举改名工具用：指向 `cleat.compiler0` | 工具 | cleat-085 |
 | `CLEAT_RUNTIME_ASYNC` | 未设（开） | `=0` 强制异步支持退化为同步实现 | 语义 | cleat-043 |
 | `CLEAT_CROSSGEN2` | 未设 | 构建脚本指定 crossgen2 路径 | 工具 | cleat-160 |
 
-### `CLEAT_NO_OPT` 记号（26 个）
+### `CLEAT_NO_OPT` 记号（24 个）
 
 | 记号 | 关掉什么 | 读取处 | 引入 |
 |---|---|---|---|
@@ -88,8 +84,6 @@ Cleat：.NET 上的 Clojure 实现。运行时 C#，编译器用 Clojure 写（`
 | `scalar` | 循环变量 deftype 标量替换 | codegen | cleat-123 |
 | `collapse` | 折叠内联子句的 arity 标签 | codegen | cleat-123 |
 | `arrayspec` | 无提示数组形参按元素类型推测 | codegen | cleat-127 |
-| `typefeedback` | eval 候选的剖面记录（129 后关闭） | codegen | cleat-128 |
-| `sigspec` | 运行时签名特化整体 | codegen | cleat-133 |
 | `loopweight` | 循环内层重复装箱的权重 | codegen | cleat-110 |
 | `imagetier` | 镜像 / 包里函数类的分层编译规则 | codegen | cleat-117 |
 | `charbox` | char 装箱与常量走 CharBox | codegen | cleat-142 |

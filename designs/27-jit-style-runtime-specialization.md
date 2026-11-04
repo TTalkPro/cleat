@@ -1,6 +1,6 @@
 # 27 JIT 式运行时重新编译：单一签名 key + 任意函数体
 
-> 状态：**已采纳**（2026-10-19，M15）。取代 [24](24-runtime-signature-specialization.md) ～ [26](26-runtime-signature-tables.md)
+> 状态：**历史；运行时路径已由 cleat-170 删除**（2026-10-19 采纳，M15）。取代 [24](24-runtime-signature-specialization.md) ～ [26](26-runtime-signature-tables.md)
 > 中"编译期预生成 LL / DD"与"只特化纯函数体"两条限制。用户决定：删除 cleat-132 的 LL / DD 路线；
 > 运行时仿照 JIT，一旦观察到参数是 `long` / `double` / `int` / `long[]` / `int[]` / `double[]` 等确定类型，
 > 就按这些类型重新生成 CIL，并用每个参数类型组合成的**单一签名 key** 查表分发。

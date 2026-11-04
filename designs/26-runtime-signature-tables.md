@@ -1,6 +1,6 @@
 # 26 运行时签名表与高元数特化
 
-> 状态：**已采纳，保守首版**（2026-10-18）。本文是 [24](24-runtime-signature-specialization.md)
+> 状态：**历史；运行时路径已由 cleat-170 删除**（2026-10-18 采纳首版）。本文是 [24](24-runtime-signature-specialization.md)
 > 和 [25](25-runtime-reference-signature-specialization.md) 的后续。
 > cleat-134 已支持精确引用类型；cleat-135 把运行时签名候选扩展到 20 参，并把每函数单签名
 > `RuntimeSigFn` 升级为可增长的精确签名表。

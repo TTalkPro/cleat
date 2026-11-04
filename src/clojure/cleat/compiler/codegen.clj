@@ -83,8 +83,6 @@
 (def opt-arrayspec? (not (opt-off? "arrayspec")))
 (def opt-scalar? (not (opt-off? "scalar")))         ; 循环变量的 deftype 标量替换（cleat-123）
 (def opt-collapse? (not (opt-off? "collapse")))     ; 折叠内联子句的 arity 标签（cleat-123）   ; 循环里无提示的数组变量按元素类型推测（cleat-127）
-(def opt-typefeedback? (not (opt-off? "typefeedback")))   ; eval 候选的剖面记录（cleat-128；量化后 129 关闭）
-(def opt-sigspec? (not (opt-off? "sigspec")))     ; 运行时签名特化（cleat-133 ~ 140；cleat-137 删除了 cleat-132 的 LL / DD 预生成）
 (defn- box-long [] (if opt-boxcache? (i 'call long-box-type "Get" (i int64-type) obj) (i 'box int64-type)))
 (defn- box-char [] (if opt-charbox? (i 'call char-box-type "Get" (i char-type) obj) (i 'box char-type)))
 ;; double 经不内联的 LongBox.Double 装箱：内联的 box 在值存活期间调用分配，SysV 的 xmm 寄存器都由调用方保存，
@@ -528,10 +526,6 @@
        (= d0 "Speculated") (quoted-datum (first e*))   ; 推测循环的快份入口：isinst 检查过的实参（cleat-103）
        (= d0 "TypedSelf") (sig-char-raw (sig-ret (first (quoted-datum (first e*)))))   ; 类型化体里的自调用（cleat-104）
        (= d0 "TypedEntry") (expr-type (second e*) env)
-       (= d0 "RuntimeSigEntry") (expr-type (last e*) env)   ; 运行时签名分发对外仍是通用体返回的对象（cleat-133）
-       (= d0 "RtSpecCall") (when (= 4 (count e*))
-                             (let [[_ _ sig _] (quoted-datum (first e*))]
-                               (sig-char-raw (sig-ret (str sig)))))
        (= d0 "PrimInvoke")
        (sig-char-raw (sig-ret (quoted-datum (first e*))))
        :else
@@ -1437,17 +1431,8 @@
 
 (def ^:private spec-entry-max-nodes 200)
 (def ^:private spec-entries (ht))   ; fn 的类名（名字记录的 :class）→ {:sig 签名 :clause 类型化子句}；每个编译单元清空
-(def ^:private spec-profiles (ht))   ; 推测失败 / 缺席的候选：类名 → 固定形参个数（cleat-128）；每个编译单元清空
-(def ^:private runtime-sig-ir (ht))   ; cleat-133 运行时签名特化候选：类名 → {:params x* :body L3}；每个编译单元清空
-(def ^:private runtime-sig-specs (ht))   ; cleat-133 运行时可查的候选登记表：编译单元结束后仍保留，供慢路径钩子查找
-(def ^:private runtime-generated-entries (ht))   ; cleat-133 正在单独生成的类型化条目：生成类名 → cleat-104 条目
-(def ^:private runtime-compiled-calls (ht))   ; cleat-140 已准备的编译期特化：[Var key] → 调用点 info，防止重复生成
-(def ^:private runtime-install-forms (volatile! ()))   ; cleat-140 本单元里要排在所有 def 之后执行的填表形式
-(def ^:private runtime-installed-specs (volatile! ()))   ; cleat-140 本单元的特化形参类型，供链接后的整体推断使用
 
-(declare collect-runtime-defs! link-runtime-calls)
-(declare rt-code-ref-type)
-(declare tier-classes rt-spec-counter)
+(declare tier-classes)
 
 (defn- spec-self-ref? [e v]
   (nanopass-case [L3 Expr] e [(clj-var-ref ~d ~st) (identical? d v)] [else false]))
@@ -1590,258 +1575,15 @@
              (some (fn [[t r]] (spec-entry-try x* body v (mapv #(when % t) num) r))
                    [[:l64 :l64] [:l64 :fl] [:fl :fl]]))))])))
 
-(defn- spec-feedback-candidate
-  "cleat-104 的通用体条件成立但类型化入口不成立（推测失败，或没有数值证据）时返回形参个数（cleat-128）。"
-  [v nm fv* cl*]
-  (when (and (instance? clojure.lang.Var v) (l/clj-fn-name? nm) (empty? fv*) (= 1 (count cl*)) (false? (:variadic nm))
-             (not (:async? nm)) (empty? (:prims nm)))
-    (nanopass-case [L3 Clause] (first cl*)
-      [(clause (~x* ...) ~x ~body)
-       ;; cleat-135：运行时签名候选不再停在 4 参；invokeStatic 常驻到 20 参。
-       (when (and (not x) (<= 1 (count x*) 20) (spec-pure? body v)) (count x*))])))
 
-(def ^:private spec-typed-rt-methods #{"aget" "aset" "alength" "agetOnArray" "count" "nth" "intCast" "longCast" "doubleCast"})
-
-(defn- spec-typed-use-call?
-  "cleat-139：这个调用的操作数知道精确类型后能走类型化路径——Numbers 算术 / 比较、Util.equiv、RT 的数组 / 字符串读写与
-  计数、互操作实例调用。nil? / identical? / instance? 之类的类型测试不算：形参类型再确定也省不下什么。"
-  [d0 d1 e*]
-  (or (some? (numbers-arith-op d0 d1 e*))
-      (and (= d0 "CallStatic") (= d1 3) (>= (count e*) 3)
-           (let [t (quoted-datum (first e*)) nm (quoted-datum (second e*))
-                 tn (cond (instance? Type t) (.FullName ^Type t) (string? t) t (symbol? t) (str t) :else nil)]
-             (or (= tn "clojure.lang.Numbers")
-                 (and (= tn "clojure.lang.Util") (= nm "equiv"))
-                 (and (= tn "clojure.lang.RT") (contains? spec-typed-rt-methods nm)))))
-      (and (= d0 "CallInstance") (= d1 4))))
-
-(defn- spec-param-mask
-  "cleat-138 / 139 进签名 key 的形参（designs/27 §2.2）：第 i 位对应第 i 个形参。形参或它经 let / jump 复制出的副本
-  作为类型化用途（spec-typed-use-call?：数值运算、数组 / 字符串读写、互操作）的操作数出现时进 key；只做类型测试、
-  被转交给别的函数、存进集合或原样返回的形参恒为 0——这类函数不成为候选，入口不付观察成本。
-  v 非 nil 时只算热区里的用途（cleat-139 的收益门槛）：真正循环的循环体里，或经 v 自递归的函数的整个体。
-  只在循环外用一两次的形参省下的不抵入口检查与多一次虚调用（conform 一类小函数多时整体变慢）。"
-  ([x* body] (spec-param-mask x* body nil))
-  ([x* body v]
-  (let [used (volatile! #{}) edges (volatile! []) labels (volatile! {})
-        hot (volatile! (or (nil? v)
-                           (l3-some? (fn [e] (nanopass-case [L3 Expr] e [(clj-invoke ~f ~e* ...) (spec-self-ref? f v)] [else false]))
-                                     body)))]
-    (letfn [(var-of [e] (nanopass-case [L3 Expr] (untag e) [~x x] [else nil]))
-            (mark! [es] (when @hot (doseq [a es] (when-let [x (var-of a)] (vswap! used conj x)))))
-            (walk [e]
-              (nanopass-case [L3 Expr] e
-                [(if ~e0 ~e1 ~e2) (run! walk [e0 e1 e2])]
-                [(begin ~e* ... ~e) (run! walk e*) (walk e)]
-                [(let ([~x* ~e*] ...) ~body)
-                 (doseq [[y a] (map vector x* e*)] (when-let [z (var-of a)] (vswap! edges conj [y z])))
-                 (run! walk e*) (walk body)]
-                [(label ~x (~x* ...) ~body0 ~body1)
-                 (vswap! labels assoc x x*) (walk body0)
-                 (if (and (not @hot) (real-loop? e))
-                   (do (vreset! hot true) (walk body1) (vreset! hot false))
-                   (walk body1))]
-                [(jump ~x ~e* ...)
-                 (doseq [[y a] (map vector (get @labels x) e*)] (when-let [z (var-of a)] (vswap! edges conj [y z])))
-                 (run! walk e*)]
-                [(call ~e ~e* ...) (walk e) (run! walk e*)]
-                [(throw ~e) (walk e)]
-                [(check-initialized ~e) (walk e)]
-                [(clj-invoke ~e ~e* ...) (walk e) (run! walk e*)]
-                [(clj-keyword-invoke ~d ~e ~e* ...) (walk e) (run! walk e*)]
-                [(clj-call ~d0 ~d1 ~e* ...) (when (spec-typed-use-call? d0 d1 e*) (mark! e*)) (run! walk e*)]
-                [(clj-static-call ~d0 ~d1 ~e* ...) (run! walk e*)]
-                [(clj-case ~d ~e0 ~e1 ~e* ...) (walk e0) (walk e1) (run! walk e*)]
-                [else nil]))]
-      (walk body)
-      ;; 副本被用到 → 来源也算用到；传递到不动点
-      (loop []
-        (let [before (count @used)]
-          (doseq [[y z] @edges] (when (contains? @used y) (vswap! used conj z)))
-          (when (> (count @used) before) (recur))))
-      (reduce (fn [m [k p]] (if (and (< k 16) (contains? @used p)) (bit-or m (bit-shift-left 1 k)) m))
-              0 (map-indexed vector x*))))))
-
-(def ^:private spec-runtime-max-nodes 4000)
-
-(defn- runtime-numeric-r-provable?
-  "数值-only key 的 R 模式预检（cleat-156）：进 key 的槽位统一按 long / double 试证明；
-  两种原始返回都不成立时，运行时只会得到 O 模式（形参仍 object），不再为它建签名表。
-  预检只改 fixed-types 推断草稿，返回前后恢复原表，不影响正在进行的编译单元推断。"
-  [x* body v mask]
-  (let [guess (mapv (fn [p k] (when (pos? (bit-and (long mask) (bit-shift-left 1 k))) :l64))
-                    x* (range))
-        saved (into {} (map (fn [k] [k (hget fixed-types k)]) (keys-of fixed-types)))
-        prove (fn [r]
-                (try
-                  (run! hclear! [fixed-types])
-                  (spec-entry-try x* body v guess r)
-                  (catch Exception _ nil)))
-        ok? (some prove [:l64 :fl])]
-    (run! hclear! [fixed-types])
-    (doseq [[k t] saved] (when t (hput! fixed-types k t)))
-    (some? ok?)))
-
-(defn acceptable-runtime-specialization?
-  "RuntimeSigSpec.Install 的建表前过滤（cleat-156）：纯体、有效实参只含数值码且 R 模式证明不了时，
-  O 模式没有原始自调用收益，先生表只会留下 negative-key miss 路径；非纯体的 O 模式整体特化保持不变。"
-  [cname mask args _generic]
-  (if-let [{:keys [params body v]} (hget runtime-sig-specs cname)]
-    (when (= (count params) (count args))
-      (let [codes (mapv (fn [k x] (if (and (< k 16) (pos? (bit-and (long mask) (bit-shift-left 1 k))))
-                                    (long (Cleat.Core.Runtime.RuntimeSigKey/Code x))
-                                    0))
-                        (range) args)
-            numeric-only? (every? #(let [c (long %)] (or (zero? c) (= 1 c) (= 2 c))) codes)]
-        (or (not numeric-only?) (not (:pure? (hget runtime-sig-specs cname)))
-            (runtime-numeric-r-provable? params body v (long mask)))))
-    true))
-
-(defn- rt-tagged-code
-  "Tagged 精确引用类型（cleat-101）→ RuntimeSigKey 码；不是精确登记类型时 0。"
-  [e]
-  (when-let [[t _] (tagged-parts e)]
-    (when (instance? Type t) (Cleat.Core.Runtime.RuntimeSigKey/CodeOf ^Type t))))
-
-(defn- rt-static-code
-  "编译期能证明的实参类型码（cleat-140）。只用精确事实：字面量、Tagged、Numbers 的 long / double 运算结果。
-  宿主调用返回的 :l64 可能是编译期加宽的 Int32，对象里的精确类型仍然不符，不能直接固定。"
-  [e]
-  (or (rt-tagged-code e)
-      (nanopass-case [L3 Expr] e
-        [(quote ~d)
-         (cond (instance? Int64 d) 1
-               (instance? Double d) 2
-               (instance? String d) 7
-               :else 0)]
-        [(clj-call ~d0 ~d1 ~e* ...)
-         (if-let [op (numbers-arith-op d0 d1 e*)]
-           (let [t (expr-type e sound-types)]
-             (cond (and (= :l64 t) (contains? (conj numbers-long-ops "minus") op)) 1
-                   (= :fl t) 2
-                   :else 0))
-           (when (= d0 "PrimInvoke") (case (sig-ret (quoted-datum (first e*))) \L 1 \D 2 0)))]
-        [else 0])))
-
-(def ^:private rt-call-tables [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
-
-(defn- save-infer-tables []
-  (let [snap (ht)]
-    (doseq [t rt-call-tables]
-      (let [copy (ht)]
-        (doseq [k (keys-of t)] (hput! copy k (hget t k)))
-        (hput! snap t copy)))
-    snap))
-
-(defn- restore-infer-tables! [snap]
-  (doseq [t rt-call-tables]
-    (hclear! t)
-    (let [copy (hget snap t)]
-      (doseq [k (keys-of copy)] (hput! t k (hget copy k))))))
-
-(defn- rt-effective-codes
-  "掩码外与不能安全传入签名 key 的类型码清零（cleat-140）：只有这些槽位才允许固定类型。"
-  [target codes]
-  (mapv (fn [k c]
-          (let [c (long c)]
-            (if (and (< k 16) (pos? (bit-and (long (:mask target)) (bit-shift-left 1 k)))
-                     (or (<= 1 c 2) (rt-code-ref-type c)))
-              c 0)))
-        (range) codes))
-
-(defn- prepare-runtime-entry
-  "按一个已证明的调用点生成 O 模式特化类（cleat-140）：O 没有放弃点，调用点才能在 Var 恒等时直调，
-  Var 变化时退回通用函数。特化类与调用方在同一个 eval 单元里；安装形式排在所有 def 初始化之后，
-  只把普通条目填进目标表，供未经直链的调用走通用签名表。"
-  [target codes0]
-  (let [codes (rt-effective-codes target codes0)
-        cached (when-let [k (reduce (fn [a [k c]] (bit-or a (bit-shift-left (long c) (* 4 k))))
-                                    0 (map-indexed vector codes))]
-                 (when-let [saved (hget runtime-compiled-calls [(:v target) (long k)])]
-                   {:key (long k) :saved saved}))
-        {params :params body :body v :v} target]
-    (or (when cached
-          (vswap! runtime-install-forms conj (:form (:saved cached)))
-          [(:info (:saved cached)) nil])
-        (let [key (when-not cached (reduce bit-or 0
-                                           (map-indexed (fn [k c] (bit-shift-left (long c) (* 4 k))) codes)))]
-          (when (and key (pos? (long key)))
-            (let [k (long key)
-                  cached-key [v k]
-                  nm (l/->CljFnName (str "rtSpec$" (swap! rt-spec-counter inc)) false [] false)
-                  _ (hput! tier-classes (:class nm) true)   ; 运行时特化类按 cleat-139 规则分层，保留 PGO
-                  guard [v (:class nm) codes]
-                  guess (mapv #(case (int %) 1 :l64 2 :fl nil) codes)
-                  exact (into {} (keep (fn [[p c]] (when-let [t (rt-code-ref-type c)] [p t]))
-                                       (map vector params codes)))
-                  snap (save-infer-tables)
-                  note (fn [what e]
-                         (when (env-set? "CLEAT_RTSPEC_DEBUG")
-                           (binding [*out* *err*] (println "rtspec-compile:" (:class nm) what (when e (.Message ^Exception e))))))
-                  entry (try (spec-entry-try params body v guess :o exact guard
-                                             ;; O 模式数值也按 object 传入：特化类是普通 fn 类，避免装箱来回
-                                             (mapv (constantly nil) guess))
-                             (catch Exception e (note "prove :o" e) nil))]
-              (restore-infer-tables! snap)
-              (when entry
-                (let [info [v (:class nm) (:sig entry) k codes]
-                      form (with-output-language [L3 Expr]
-                             (out (clj-call "InstallRtSpec" false
-                                            (quote ~[v k (:mask target) false])
-                                            ~(with-output-language [L3 Expr]
-                                               (out (lambda ~nm ()
-                                                      ~(with-output-language [L3 Clause]
-                                                         (out (clause (~params ...) nil ~(:body entry))))))))))]
-                  (hput! runtime-compiled-calls cached-key {:info info :form form})
-                  (vswap! runtime-install-forms conj form)
-                  (vswap! runtime-installed-specs conj {:params (:params entry) :guess guess})
-                  [info nil]))))))))
-
-(defn- link-confirmed-runtime-calls
-  "cleat-140：调用图上 Var 恒等可确定、实参类型在编译期证明、目标有运行时候选 IR 时，
-  生成该签名的特化类并在所有 def 初始化后填表；调用点直接 call 特化类，Var 值变化退回 IFn。"
-  [forms]
-  (let [_ (hclear! runtime-compiled-calls)
-        _ (vreset! runtime-install-forms ())
-        _ (vreset! runtime-installed-specs ())]
-    (if (and opt-sigspec? @live-unit? (Cleat.Core.Runtime.RuntimeSigSpec/Enabled))
-      (let [links (ht)]
-        (doseq [f forms] (collect-runtime-defs! f links))
-        (let [forms' (mapv #(link-runtime-calls % links) forms)
-              forms'' (if (seq @runtime-install-forms) (into forms' @runtime-install-forms) forms')]
-          forms''))
-      forms)))
-
-(defn- spec-runtime-mask
-  "cleat-133 / 137 / 138 / 139：cleat-104 推不出类型化入口、形状合适的函数交给运行时签名特化，返回形参掩码。
-  cleat-139 起不要求纯（O 模式整体特化任意体，designs/27 §3.3）：单 Var 的固定单子句、1～16 参（key 的容量）、
-  无闭包字段、非 async、无原始签名提示、体不超过 spec-runtime-max-nodes 个节点、至少一个形参进 key。"
-  [v nm fv* cl*]
-  ;; 只在 eval 的编译单元里：L3 登记表只活在本进程，包 / 镜像里的候选运行时找不到 IR，只会白白建表
-  (when (and opt-sigspec? @live-unit? (not (hhas? spec-entries (:class nm)))
-             (instance? clojure.lang.Var v) (l/clj-fn-name? nm) (empty? fv*) (= 1 (count cl*)) (false? (:variadic nm))
-             (not (:async? nm)) (empty? (:prims nm)))
-    (nanopass-case [L3 Clause] (first cl*)
-      [(clause (~x* ...) ~x ~body)
-       (when (and (not x) (<= 1 (count x*) 16) (not (bigger-than? body spec-runtime-max-nodes)))
-         ;; 收益门槛：只看热区（循环体 / 自递归函数）里的类型化用途；CLEAT_RTSPEC_ALL=1（验证用）不看门槛
-         (let [m (spec-param-mask x* body (when-not (env-set? "CLEAT_RTSPEC_ALL") v))]
-           (when (pos? m) m)))])))
 
 (define-pass speculate-entries L3 [ir] -> L3 []
   (Expr [ir] -> Expr []
     [(clj-def ~d ~st0 ~st1 ~[e0] ~[e1])
      (let [e0' (nanopass-case [L3 Expr] e0
                  [(lambda ~nm (~x* ...) ~cl* ...)
-                 (let [;; cleat-135：5+ 参交给运行时签名特化；活动剖面运行时重载仍只到 4 参。
-                       pf-count (spec-feedback-candidate d nm x* cl*)
-                       pf (when (and opt-typefeedback? @live-unit? pf-count (<= pf-count 4)) pf-count)
-                       ;; 类型化入口不能依赖剖面开关 / eval 模式（cleat-104 的原有语义）
-                       se (and opt-typed? (instance? clojure.lang.Var d) (not (hhas? spec-entries (:class nm)))
-                               (spec-entry d nm x* cl*))
-                       ;; 编译期推不出类型但形状合适时，把 LL / DD 交给运行时签名缓存（cleat-132）
-                       ss (and (not se) (instance? clojure.lang.Var d)
-                               (spec-runtime-mask d nm x* cl*))]
+                 (let [se (and opt-typed? (instance? clojure.lang.Var d) (not (hhas? spec-entries (:class nm)))
+                               (spec-entry d nm x* cl*))]
                    (cond
                      se (do (vreset! *spec-changed* true)
                             (hput! spec-entries (:class nm) se)
@@ -1852,114 +1594,10 @@
                                                  ~(with-output-language [L3 Expr]
                                                     (out (clj-call "TypedEntry" false (quote ~[(:sig se) y*]) ~body))))))])]
                               (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))
-                     ss (do (vreset! *spec-changed* true)
-                            ;; cleat-128 的剖面只依赖 eval 通用调用，与 cleat-133 的运行时观察正交；两者并存可保留既有诊断。
-                            (when pf (hput! spec-profiles (:class nm) pf))
-                              ;; 运行时特化候选（cleat-133）：保存 IR，包装为 RuntimeSigEntry
-                              (let [rp (nanopass-case [L3 Clause] (first cl*)
-                                         [(clause (~y* ...) ~y ~body) (vec y*)])
-                                    rb (nanopass-case [L3 Clause] (first cl*)
-                                         [(clause (~y* ...) ~y ~body) body])]
-                                (do (hput! runtime-sig-ir (:class nm)
-                                           {:params rp :body rb})
-                                    (hput! runtime-sig-specs (:class nm)
-                                           {:params rp :body rb :v d :mask ss :pure? (spec-pure? rb d)})
-                                  (let [cl (nanopass-case [L3 Clause] (first cl*)
-                                             [(clause (~y* ...) ~y ~body)
-                                              (with-output-language [L3 Clause]
-                                                (out (clause (~y* ...) ~y
-                                                       ~(with-output-language [L3 Expr]
-                                                          (out (clj-call "RuntimeSigEntry" false
-                                                                         (quote ~[(count rp) ss])
-                                                                         ~body))))))])]
-                                    (with-output-language [L3 Expr] (out (lambda ~nm (~x* ...) ~cl)))))))
-                     ;; 推测失败 / 缺席：类名和形参个数交给函数类生成静态剖面字段（cleat-128）
-                     pf (do (hput! spec-profiles (:class nm) pf) e0)
                      :else e0))]
                  [else nil])]
        (out (clj-def ~d ~st0 ~st1 ~(or e0' e0) ~e1)))]))
 
-(define-pass collect-runtime-defs! L3 [ir links] -> * []
-  (Expr [ir] -> * []
-    [(lambda ~nm (~x* ...) ~cl* ...) (run! Body cl*)]
-    [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
-     (nanopass-case [L3 Expr] e0
-       [(lambda ~nm0 (~x0* ...) ~cl0* ...)
-        (when-let [rt (hget runtime-sig-specs (:class nm0))]
-          (let [cl (first cl0*)]
-            (nanopass-case [L3 Clause] cl
-              [(clause (~p* ...) ~r ~body)
-               (when (and (instance? clojure.lang.Var (:v rt)) (nil? (hget links (:v rt))))
-                 (hput! links (:v rt) (assoc rt :params (vec p*))))])))]
-       [else nil])
-       (Expr e0) (Expr e1)]
-    [else nil])
-  (Body Clause [ir] -> * []
-    [(clause (~x* ...) ~x ~body) (Expr body)]))
-
-(define-pass link-runtime-calls L3 [ir links] -> L3 []
-  (Expr [ir] -> Expr []
-    [(lambda ~nm (~x* ...) ~cl* ...)
-     (out (lambda ~nm (~x* ...) ~(mapv #(Body %) cl*) ...))]
-    [(clj-def ~d ~st0 ~st1 ~e0 ~e1)
-     (out (clj-def ~d ~st0 ~st1 ~(Expr e0) ~(Expr e1)))]
-    [(clj-invoke ~f ~e* ...)
-     (let [f' (Expr f) args (mapv #(Expr %) e*)
-           target (nanopass-case [L3 Expr] f [~x (hget links x)] [else nil])
-           prepared (when (and target (= (count args) (count (:params target))))
-                      (prepare-runtime-entry target (mapv rt-static-code args)))]
-       (if prepared
-         (out (clj-call "RtSpecCall" false (quote ~(first prepared)) ~f' ~args ...))
-         (out (clj-invoke ~f' ~args ...))))]
-    [(clj-call ~d0 ~d1 ~e* ...)
-     (cond
-       (and (= d0 "KnownCall") (>= (count e*) 2))
-       (let [target (nanopass-case [L3 Expr] (second e*)
-                       [(clj-var-ref ~x ~st) (hget links x)]
-                       [else nil])
-              prepared (when (and target (= (count (drop 2 e*)) (count (:params target))))
-                         (prepare-runtime-entry target (mapv rt-static-code (drop 2 e*))))]
-         (if prepared
-           (out (clj-call "RtSpecCall" false
-                           (quote ~(first prepared))
-                           ~(Expr (second e*))
-                           ~(mapv #(Expr %) (drop 2 e*)) ...))
-           (out (clj-call ~d0 ~d1 ~(Expr (first e*)) ~(Expr (second e*))
-                         ~(mapv #(Expr %) (drop 2 e*)) ...))))
-       :else (out (clj-call ~d0 ~d1 ~(mapv #(Expr %) e*) ...)))]
-    ;; 其余节点逐一重建；只有函数调用节点可能被 cleat-140 改写
-    [~x ir]
-    [(clj-var-ref ~x ~st) ir]
-    [(quote ~d) ir]
-    [(if ~e0 ~e1 ~e2) (out (if ~(Expr e0) ~(Expr e1) ~(Expr e2)))]
-    [(begin ~e* ... ~e) (out (begin ~(mapv #(Expr %) e*) ... ~(Expr e)))]
-    [(set! ~x ~e) (out (set! ~x ~(Expr e)))]
-    [(letrec ([~x* ~le*] ...) ~body)
-     (out (letrec ([~x* ~(mapv #(Expr %) le*)] ...) ~(Expr body)))]
-    [(let ([~x* ~e*] ...) ~body)
-     (out (let ([~x* ~(mapv #(Expr %) e*)] ...) ~(Expr body)))]
-    [(call ~e ~e* ...) (out (call ~(Expr e) ~(mapv #(Expr %) e*) ...))]
-    [(throw ~e) (out (throw ~(Expr e)))]
-    [(try-finally ~e0 ~e1) (out (try-finally ~(Expr e0) ~(Expr e1)))]
-    [(try-catch ~e (~d* ~e*) ...) ir]
-    [(label ~x (~x* ...) ~body0 ~body1)
-     (out (label ~x (~x* ...) ~(Expr body0) ~(Expr body1)))]
-    [(jump ~x ~e* ...) (out (jump ~x ~(mapv #(Expr %) e*) ...))]
-    [(box ~e) (out (box ~(Expr e)))]
-    [(unbox ~x) ir]
-    [(set-box! ~x ~e) (out (set-box! ~x ~(Expr e)))]
-    [(clj-var-set! ~d ~e) (out (clj-var-set! ~d ~(Expr e)))]
-    [(clj-keyword-invoke ~d ~e ~e* ...)
-     (out (clj-keyword-invoke ~d ~(Expr e) ~(mapv #(Expr %) e*) ...))]
-    [(clj-static-call ~d0 ~d1 ~e* ...) (out (clj-static-call ~d0 ~d1 ~(mapv #(Expr %) e*) ...))]
-    [(check-initialized ~e) (out (check-initialized ~(Expr e)))]
-    [(clj-case ~d ~e0 ~e1 ~e* ...)
-     (out (clj-case ~d ~(Expr e0) ~(Expr e1) ~(mapv #(Expr %) e*) ...))]
-    [(clj-deftype ~d (~x* ...) ~le* ...) ir]
-    [(uninitialized) ir]
-    [else (throw (ex-info "codegen: unhandled node in link-runtime-calls" {}))])
-  (Body Clause [ir] -> Clause []
-    [(clause (~x* ...) ~x ~body) (out (clause (~x* ...) ~x ~(Expr body)))]))
 
 ;; —— deftype* 描述的访问（向量，见原版 deftype-info-*）——
 (defn- dinfo [d k] (nth d k))
@@ -1977,7 +1615,7 @@
 
 ;; —— 原始值（iron-034c / cleat-042，原版 cg-raw 等）——
 
-(declare cg cg* load-var! cg-raw l3-some? binding-code bind-value! bind-local! num-alias-loc cg-profile-args!)
+(declare cg cg* load-var! cg-raw l3-some? binding-code bind-value! bind-local! num-alias-loc cg-typed-self! cg-typed-entry! cg-known-call! cg-escape-propagate!)
 
 (defn- type-clr [t] (case t :fl double-type :l64 int64-type :num num-type int32-type))
 
@@ -2027,7 +1665,7 @@
       [else nil])))
 
 (declare cg-prim-invoke! cg-static-host-call! ref-var! cg-typed-self! cg-typed-entry!
-         cg-runtime-sig-entry! cg-rtspec-entry! cg-known-call! cg-escape-propagate!)
+         cg-typed-self! cg-typed-entry! cg-known-call! cg-escape-propagate!)
 
 (defn- typed-self-ret
   "(clj-call \"TypedSelf\" …) 的返回类型（:l64 / :fl），别的节点 nil。"
@@ -2723,8 +2361,6 @@
        (= d0 "Speculated") (cg (second e*) mc ctx)   ; 推测的实参：值就是检查过的对象；原始用途由 cg-raw-default 的 unbox.any 取（cleat-103）
        (= d0 "TypedSelf") (do (cg-typed-self! e mc) (when-let [t (typed-self-ret e)] (box-raw! mc t)) (finish-value! mc ctx))   ; cleat-104
        (= d0 "TypedEntry") (cg-typed-entry! e* mc ctx)
-       (= d0 "RuntimeSigEntry") (cg-runtime-sig-entry! e* mc ctx)   ; cleat-133 / 138
-       (= d0 "RtSpecEntry") (cg-rtspec-entry! e* mc ctx)   ; cleat-138
        (= d0 "KnownCall") (cg-known-call! e* mc ctx)   ; cleat-110
        (and (= d0 "GetInstanceFieldDirect") (false? d1) (= 3 (count e*)))
        (cg-get-instance-field-direct! e* mc ctx)   ; cleat-145 读侧直读（守卫之后）
@@ -2973,9 +2609,6 @@
   (nanopass-case [L3 Clause] cl
     [(clause (~x* ...) ~x ~body)
      (let [mc (make-method-ctx u class true nil nil nil)]
-       (when (and opt-typefeedback? @live-unit? (hget spec-profiles class))
-         (do (reset! (:max-stack mc) 8)
-             (cg-profile-args! mc class (count x*))))
        (when self (hput! (:vars mc) self [:arg 0]))
        (bind-clause-params! mc x* 1 sig)
        (reset! (:big? mc) (bigger-than? body big-body-nodes))
@@ -3093,7 +2726,7 @@
                                [(clj-invoke ~f ~e* ...) (when (own? f) (count e*))]
                                [(clj-static-call ~d0 ~d1 ~e* ...) (when (own? (first e*)) (count (rest e*)))]
                                [(clj-call ~d0 ~d1 ~e* ...) (cond (= "TypedSelf" d0) :any
-                                                                 (and (#{"KnownCall" "RtSpecCall" "PrimInvoke"} d0) (own? (second e*))) (count (drop 2 e*)))]
+                                                                 (and (#{"KnownCall" "PrimInvoke"} d0) (own? (second e*))) (count (drop 2 e*)))]
                                [else nil]))]
              (nanopass-case [L3 Expr] e0
                [(lambda ~nm (~x* ...) ~cl* ...)
@@ -3131,103 +2764,37 @@
     m))
 
 (def ^:private typed-bailout-type "Cleat.Core.Runtime.TypedBailout")
-(def ^:private type-feedback-type "Cleat.Core.Runtime.TypeFeedback")
-(def ^:private obj-array-type "System.Object[]")
-(def ^:private long-array-type "System.Int64[]")
-(def ^:private string-array-type "System.String[]")
-
-(defn- cg-profile-args!
-  "通用入口的活动剖面记录（cleat-128）：跨一个独立小方法调用运行时，避免入口主体里调用与后续分支组合成 RyuJIT 拒绝的形状。"
-  [mc class n]
-  (let [done (new-label! mc)]
-    (emit! mc (i 'ldsfld class "tfOn") (i 'brfalse done))
-    (doseq [j (range 1 (inc n))] (emit! mc (i 'ldarg j)))
-    (emit! mc (i 'call class "ProfileArgs" (apply i (objs n)) void-type)
-              (i 'label done))))
-
-(defn- profile-fields
-  "候选函数类的静态剖面状态（cleat-128）：每形参一个计数 / 类型槽；达到阈值时 Profile 返回 false 并写入 tfOn。"
-  [class n]
-  [(i 'field "tfName" string-type 'static 'readonly)
-   (i 'field "tfOn" bool-type 'static)
-   (i 'field "tfC" long-array-type 'static)
-   (i 'field "tfT" obj-array-type 'static)
-   (i 'field "tfN" string-array-type 'static)
-   (i 'method "ProfileArgs" (i 'attrs 'static) (apply i 'params (objs n)) (i 'ret void-type) (i 'locals)
-      (apply i 'body
-             (concat
-               [(i 'ldsfld class "tfOn") (i 'brfalse 'LprofileDone)
-                (i 'ldsfld class "tfName") (i 'ldsfld class "tfC") (i 'ldsfld class "tfT") (i 'ldsfld class "tfN")]
-               (mapcat (fn [j] [(i 'ldarg j)]) (range n))
-               [(i 'call type-feedback-type "Profile"
-                    (apply i string-type long-array-type obj-array-type string-array-type (objs n))
-                    bool-type)
-                (i 'stsfld class "tfOn") (i 'label 'LprofileDone) (i 'ret)])))
-   (i 'method ".cctor" (i 'attrs 'cctor) (i 'params)
-      (i 'body (i 'ldstr class) (i 'stsfld class "tfName")
-               (i 'ldsfld class "tfName") (i 'ldc.i4 n)
-               (i 'call type-feedback-type "Register" (i string-type int32-type) void-type)
-               (i 'ldc.i4 n) (i 'newarr int64-type) (i 'stsfld class "tfC")
-               (i 'ldc.i4 n) (i 'newarr obj) (i 'stsfld class "tfT")
-               (i 'ldc.i4 n) (i 'newarr string-type) (i 'stsfld class "tfN")
-               (i 'ldc.i4 1) (i 'stsfld class "tfOn") (i 'ret)))])
 
 (defn- cg-typed-self!
-  "类型化体里的自调用（cleat-104 / 138 / 139）：Var 的值还是本函数时直接 call invokeStaticTyped，否则经 IFn.invoke 调用、
-  结果按签名取回（R 返回不是推测的类型时 TypedBailout；O 返回直接是对象）。原始值留在栈上。
-  info 是 [签名] 或运行时特化的 [签名 通用函数对象 目标类 类型码…]：守卫比较 Var 的值与通用函数对象，调用目标类
-  （闭包里的自调用也直调特化类）；静态类型证明不了的实参先按对象求值，用 RuntimeSigKey.Code 核对类型码，不符走慢路径。"
+  "类型化体里的自调用（cleat-104）：Var 的值还是本函数时直接 call invokeStaticTyped，否则经 IFn.invoke 调用、
+  结果按签名取回（不是推测的类型时 TypedBailout）。原始值留在栈上。info 是 [签名]。"
   [e mc]
   (nanopass-case [L3 Expr] e
     [(clj-call ~d0 ~d1 ~e* ...)
-     (let [[sig guard target codes] (quoted-datum (first e*)) f (second e*) args (drop 2 e*)
-           cs (sig-params sig) rc (sig-ret sig) cname (or target (:class mc))
+     (let [[sig] (quoted-datum (first e*)) f (second e*) args (drop 2 e*)
+           cs (sig-params sig) rc (sig-ret sig) cname (:class mc)
            root (new-local! mc obj)
            _ (do (cg f mc :value) (emit! mc (i 'stloc root)))
-           tagged-as (fn [a] (nanopass-case [L3 Expr] a
-                               [(clj-call ~d2 ~d3 ~a* ...) (when (and (= d2 "Tagged") (= 2 (count a*))) (quoted-datum (first a*)))]
-                               [else nil]))
-           ;; [局部 原始? 需核对的类型码]
-           temps (mapv (fn [a c k]
-                         (let [r (sig-char-raw c)
-                               code (long (or (get codes k) 0))
-                               proven? (cond
-                                         r (= r (expr-type a sound-types))
-                                         (zero? code) true
-                                         ;; 数值类型码的 object 槽（cleat-139）：静态类型已是 long / double 就不必再核对
-                                         (= code 1) (= :l64 (expr-type a sound-types))
-                                         (= code 2) (= :fl (expr-type a sound-types))
-                                         :else (= (tagged-as a) (Cleat.Core.Runtime.RuntimeSigKey/TypeOf (int code))))]
-                           (if (and r proven?)
+           temps (mapv (fn [a c]
+                         (let [r (sig-char-raw c)]
+                           (if (and r (= r (expr-type a sound-types)))
                              (do (cg-raw a mc r)
-                                 (let [t (new-local! mc (type-clr r))] (emit! mc (i 'stloc t)) [t true nil]))
+                                 (let [t (new-local! mc (type-clr r))] (emit! mc (i 'stloc t)) [t true]))
                              (do (cg a mc :value)
-                                 (let [t (new-local! mc obj)] (emit! mc (i 'stloc t))
-                                   [t false (when-not proven? (if r (case c \L 1 \D 2) code))])))))
-                       args cs (range))
+                                 (let [t (new-local! mc obj)] (emit! mc (i 'stloc t)) [t false])))))
+                       args cs)
            slow (new-label! mc) end (new-label! mc)]
-       (if (some? guard)
-         (do (emit! mc (i 'ldloc root))
-             (cg (with-output-language [L3 Expr] (out (quote ~guard))) mc :value)
-             (emit! mc (i 'bne.un slow)))
-         (emit! mc (i 'ldloc root) (i 'isinst cname) (i 'brfalse slow)))
-       (doseq [[t _ code] temps]
-         (when code
-           (emit! mc (i 'ldloc t) (i 'call "Cleat.Core.Runtime.RuntimeSigKey" "Code" (i obj) int32-type)
-                  (i 'ldc.i4 (int code)) (i 'bne.un slow))))
+       (emit! mc (i 'ldloc root) (i 'isinst cname) (i 'brfalse slow))
        (emit! mc (i 'ldloc root))
-       (doseq [[[t raw? _] c] (map vector temps cs)]
+       (doseq [[[t raw?] c] (map vector temps cs)]
          (emit! mc (i 'ldloc t))
          (when (and (not raw?) (sig-char-raw c)) (emit! mc (i 'unbox.any (sig-char-type c)))))
-       ;; 签名全是 O（O 模式，cleat-139）：特化类本身就是普通 fn 类，直调它的 invokeStatic
-       (emit! mc (i 'call cname (if (every? #(= \O %) sig) "invokeStatic" "invokeStaticTyped")
-                    (apply i (cons obj (sig-param-types sig))) (sig-char-type rc)) (i 'br end))
+       (emit! mc (i 'call cname "invokeStaticTyped" (apply i (cons obj (sig-param-types sig))) (sig-char-type rc)) (i 'br end))
        (emit! mc (i 'label slow) (i 'ldloc root) (i 'castclass ifn-type))
-       (doseq [[[t raw? _] c] (map vector temps cs)]
+       (doseq [[[t raw?] c] (map vector temps cs)]
          (emit! mc (i 'ldloc t))
          (when raw? (box-from-sig! mc c)))
        (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs (count args))) obj))
-       ;; O 返回（cleat-139）：经 Var 的结果本来就是对象，不需要放弃
        (when (sig-char-raw rc)
          (emit! mc (i 'call typed-bailout-type (if (= rc \L) "Long" "Double") (i obj) (sig-char-type rc))))
        (emit! mc (i 'label end)))]))
@@ -3257,95 +2824,6 @@
     (cg body mc ctx)
     (when-not (= ctx :tail) (emit! mc (i 'label end)))))
 
-(def ^:private rt-sig-table-type "Cleat.Core.Runtime.RuntimeSigTable")
-(def ^:private rt-sig-fast-type "Cleat.Core.Runtime.RuntimeSigFast")
-
-(defn- cg-runtime-sig-entry!
-  "(clj-call \"RuntimeSigEntry\" #f '[n 掩码] 通用体)（cleat-133 / 138，designs/27 §3.1）：__rtSpec 是签名表时按实参的单一 key
-  查表，命中返回特化结果，返回 RuntimeSigTable.Miss 时执行通用体；表未建时累计通用调用数，达到阈值请 Install 建表，
-  返回 null（key 为 0 / 机制关闭）则把计数置为 int.MinValue，以后只走通用体。没有 try / catch：R 模式的 TypedBailout
-  由签名表自己转成 Miss。"
-  [e* mc ctx]
-  (let [[n mask] (quoted-datum (first e*))
-        n (int n)
-        body (second e*)
-        cname (:class mc)
-        generic (new-label! mc)
-        hot (new-label! mc)
-        disabled (new-label! mc)
-        end (new-label! mc)
-        spec (new-local! mc obj)
-        result (new-local! mc obj)]
-    (emit! mc (i 'ldsfld cname "__rtSpec") (i 'stloc spec) (i 'ldloc spec) (i 'brtrue hot))
-    ;; 观察只服务生成时机；竞态最多多请求一次，不会改变实参求值或函数语义。
-    (emit! mc (i 'ldsfld cname "__rtCount") (i 'ldc.i4 1) (i 'add) (i 'stsfld cname "__rtCount"))
-    (emit! mc (i 'ldsfld cname "__rtCount") (i 'ldsfld "Cleat.Core.Runtime.RuntimeSigSpec" "Threshold") (i 'blt generic))
-    (emit! mc (i 'ldstr cname) (i 'ldc.i4 (int mask)) (i 'ldc.i4 n) (i 'newarr obj))
-    (doseq [j (range n)]
-      (emit! mc (i 'dup) (i 'ldc.i4 j) (i 'ldarg (inc j)) (i 'stelem.ref)))
-    (emit! mc (i 'ldarg 0))
-    (emit! mc (i 'call "Cleat.Core.Runtime.RuntimeSigSpec" "Install"
-                  (i string-type int32-type obj-array-type obj) obj)
-           (i 'stloc spec) (i 'ldloc spec) (i 'brfalse disabled))
-    (emit! mc (i 'ldloc spec) (i 'stsfld cname "__rtSpec"))
-    (emit! mc (i 'label hot))
-    ;; 单态快路径（cleat-139）：表的 Fast 是不放弃的特化 IFn 与各槽位的精确类型；进 key 的实参逐个比 GetType()，
-    ;; 都相符就直接 IFn.invoke——没有 key 计算、表查找与拆箱。不符或没有 Fast 时走表。
-    (let [tab (new-local! mc rt-sig-table-type)
-          fast (new-local! mc rt-sig-fast-type)
-          ty (new-local! mc type-type)
-          via-table (new-label! mc)]
-      (emit! mc (i 'ldloc spec) (i 'castclass rt-sig-table-type) (i 'stloc tab)
-             (i 'ldloc tab) (i 'ldfld rt-sig-table-type "Fast") (i 'stloc fast)
-             (i 'ldloc fast) (i 'brfalse via-table))
-      (doseq [k (range (min n 16))]
-        (when-not (zero? (bit-and (long mask) (bit-shift-left 1 k)))
-          (let [ok (new-label! mc)]
-            (emit! mc (i 'ldloc fast) (i 'ldfld rt-sig-fast-type (str "T" k)) (i 'stloc ty)
-                   (i 'ldloc ty) (i 'brfalse ok)
-                   (i 'ldarg (inc k)) (i 'brfalse via-table)
-                   (i 'ldarg (inc k)) (i 'callvirt obj "GetType" () type-type)
-                   (i 'ldloc ty) (i 'bne.un via-table)
-                   (i 'label ok)))))
-      (emit! mc (i 'ldloc fast) (i 'ldfld rt-sig-fast-type "Fn"))
-      (if (<= n 20)
-        (do (doseq [j (range 1 (inc n))] (emit! mc (i 'ldarg j)))
-            (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj)))
-        (throw (ex-info "runtime signature entry over 20 params" {:n n})))
-      (finish-value! mc ctx)
-      (when-not (= ctx :tail) (emit! mc (i 'br end)))
-      (emit! mc (i 'label via-table) (i 'ldloc tab)))
-    (if (<= n 8)
-      (do (doseq [j (range 1 (inc n))] (emit! mc (i 'ldarg j)))
-          (emit! mc (i 'callvirt rt-sig-table-type "Invoke" (apply i (objs n)) obj)))
-      (do (emit! mc (i 'ldc.i4 n) (i 'newarr obj))
-          (doseq [j (range n)] (emit! mc (i 'dup) (i 'ldc.i4 j) (i 'ldarg (inc j)) (i 'stelem.ref)))
-          (emit! mc (i 'callvirt rt-sig-table-type "InvokeArray" (i obj-array-type) obj))))
-    (emit! mc (i 'stloc result) (i 'ldloc result)
-           (i 'ldsfld rt-sig-table-type "Miss") (i 'beq generic)
-           (i 'ldloc result))
-    (finish-value! mc ctx)
-    (when-not (= ctx :tail) (emit! mc (i 'br end)))
-    ;; key 为 0 / 未登记编译器：不再反复付出 Install 成本。
-    (emit! mc (i 'label disabled) (i 'ldc.i4 -2147483648) (i 'stsfld cname "__rtCount"))
-    (emit! mc (i 'label generic))
-    (cg body mc ctx)
-    (when-not (= ctx :tail) (emit! mc (i 'label end)))))
-
-(defn- cg-rtspec-entry!
-  "(clj-call \"RtSpecEntry\" #f '[签名 形参…])（cleat-138）：运行时特化类的通用 invoke 入口。签名表已按 key 保证了
-  精确类型，这里直接 unbox.any 后调用 invokeStaticTyped，R 模式把原始结果装箱。"
-  [e* mc ctx]
-  (let [[sig ps] (quoted-datum (first e*))
-        cs (sig-params sig) rc (sig-ret sig) cname (:class mc)
-        args (mapv (fn [p] (second (hget (:vars mc) p))) ps)]
-    (emit! mc (i 'ldarg 0))
-    (doseq [[j c] (map vector args cs)]
-      (emit! mc (i 'ldarg j))
-      (when (sig-char-raw c) (emit! mc (i 'unbox.any (sig-char-type c)))))
-    (emit! mc (i 'call cname "invokeStaticTyped" (apply i (cons obj (sig-param-types sig))) (sig-char-type rc)))
-    (box-from-sig! mc rc)
-    (finish-value! mc ctx)))
 
 (defn- known-call-target-ok?
   "KnownCall 的目标类能被这个单元引用：内存模式，或类在从文件加载的程序集里（编成包时，求值期间生成的类在运行时不存在）。"
@@ -3353,52 +2831,6 @@
   (or @live-unit?
       (let [a (.Assembly t)] (and (not (.IsDynamic a)) (not (str/blank? (.Location a)))))))
 
-(defn- cg-rt-spec-call!
-  "(clj-call \"RtSpecCall\" #f '[Var 类 签名 key 类型码] Var读 实参 …)（cleat-140）：Var 值仍是编译时通用函数时
-  直调同一单元里的特化类；Var 重定义后走 IFn.invoke。实参已由编译期证明，但仍然只求值一次。"
-  [e* mc ctx]
-  (let [[v cname sig _ codes] (quoted-datum (first e*))
-        f (second e*) args (drop 2 e*) n (count args)]
-    (if-not (and @live-unit? (instance? clojure.lang.Var v) (string? cname) (string? sig) (<= n 20))
-      (cg* (with-output-language [L3 Expr] (out (clj-invoke ~f ~args ...))) mc ctx)
-      (let [root (new-local! mc obj)
-            _ (do (cg f mc :value) (emit! mc (i 'stloc root)))
-            temps (mapv (fn [a] (cg a mc :value) (let [l (new-local! mc obj)] (emit! mc (i 'stloc l)) l)) args)
-            slow (new-label! mc) end (new-label! mc)]
-        (emit! mc (i 'ldloc root))
-        (load-constant! mc v)
-        (emit! mc (i 'bne.un slow))
-        (ldloc-clear! mc root)
-        (doseq [l temps] (ldloc-clear! mc l))
-        (let [merge (when *tiered-method* (new-local! mc obj))]   ; 结果不留在栈上跨过汇合点（同 KnownCall，cleat-114）
-          (emit! mc (i 'call cname "invokeStatic" (apply i (objs (inc n))) obj))
-          (when merge (emit! mc (i 'stloc merge)))
-          (emit! mc (i 'br end) (i 'label slow))
-          (ldloc-clear! mc root)
-          (emit! mc (i 'castclass ifn-type))
-          (doseq [l temps] (ldloc-clear! mc l))
-          (emit! mc (i 'callvirt ifn-type "invoke" (apply i (objs n)) obj))
-          (when merge (emit! mc (i 'stloc merge)))
-          (emit! mc (i 'label end))
-          (when merge (emit! mc (i 'ldloca merge)) (take-slot! mc)))
-        (finish-value! mc ctx)))))
-
-(defn- cg-install-rt-spec!
-  "(clj-call \"InstallRtSpec\" #f '[Var key 掩码 guarded?] 特化 fn)（cleat-140）：所有 def 初始化后执行，
-  把同一单元生成的特化函数装进目标函数的运行时签名表。"
-  [e* mc ctx]
-  (let [[v key mask guarded?] (quoted-datum (first e*))]
-    (load-constant! mc v)
-    (emit! mc
-           (i 'ldc.i8 (long key))
-           (i 'ldc.i4 (int mask))
-           (i 'ldc.i4 (if guarded? 1 0))
-           (i 'ldnull))
-    (cg (second e*) mc :value)
-    (emit! mc (i 'call "Cleat.Core.Runtime.RuntimeSigSpec" "SeedCompiled"
-                      (i obj int64-type int32-type ifn-type bool-type) void-type)
-           (i 'ldnull))
-    (finish-value! mc ctx)))
 
 (defn- cg-known-call!
   "(clj-call \"KnownCall\" #f '类 Var读 实参 …)（cleat-110）：先求函数值再求实参（同 IFn 调用的顺序），isinst 类时 call 类.invokeStatic(f, 实参 …)，
@@ -3477,7 +2909,6 @@
         async? (:async? nm)
         methods (atom [])
         add! #(swap! methods conj %)
-        profile-n (when (and opt-typefeedback? @live-unit?) (hget spec-profiles (:class nm)))
         ;; 转发 / 桥方法不分层：tier-0 把转发实参的 JIT 临时变量报告为整个方法内活着，被调用的实现运行期间抓着实参（惰性序列的头，cleat-117）
         fwd-methods (atom #{})
         add-fixed! #(do (swap! fwd-methods conj %) (add! %))]
@@ -3488,8 +2919,7 @@
           (when sig
             (add-fixed! (clj-prim-bridge u cname cl sig :static))
             (add-fixed! (clj-prim-bridge u cname cl sig :prim)))))
-      (when-let [se (or (hget spec-entries (:class nm))
-                        (let [re (hget runtime-generated-entries (:class nm))] (when-not (:o? re) re)))]
+      (when-let [se (hget spec-entries (:class nm))]
         (add! (clj-typed-entry-method u cname se))))
     (doseq [[cl j] (map vector cl* (range))]
       (let [last-variadic? (and variadic (= j (dec n)))]
@@ -3516,10 +2946,6 @@
       (add-class! u (apply i 'type cname (i 'base base) (i 'attrs 'sealed)
                            (concat (if (seq sigs) [(apply i 'interfaces (map #(str primifs-prefix %) sigs))] [])
                                    (map #(i 'field % obj) field-names)
-                                   (when profile-n (profile-fields cname profile-n))
-                                   (when (hget runtime-sig-ir (:class nm))
-                                     [(i 'field "__rtSpec" obj 'static)
-                                      (i 'field "__rtCount" int32-type 'static)])
                                    (if *tiered-method* (map #(if (contains? @fwd-methods %) % (add-tiered-attr %)) @methods) @methods)))))
     [static? cname "Instance"])))
 
@@ -4020,30 +3446,11 @@
   "L3 顶层表达式 → [Lcil 常量列表]（原版 generate-unit）。loop-flags：与 forms 对齐的\"含循环\"标志（只对它们做类型推断）。
   live?：内存模式（eval）——常量不编码，Lcil 里写 (live-constants n)，常量对象交给发射器。"
   [forms assembly-name module-name loop-flags live?]
-  ;; 代码生成表是进程级的：与运行时补生成（cleat-138）互斥
-  (Cleat.Core.Runtime.RuntimeSigSpec/EnterUnit)
-  (try
   (let [u (make-unit assembly-name module-name)]
     (reset! live-unit? (boolean live?))
-    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases
-                   spec-entries spec-profiles runtime-sig-ir tier-classes])
+    (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases spec-entries tier-classes])
     (when (or live? opt-imagetier?) (run! mark-tier-classes! forms))
-    ;; 运行时特化类（cleat-139）按定义就是热的：分层编译，动态 PGO 才能把接口调用去虚化（不分层的 AggressiveOptimization
-    ;; 没有 PGO，destruc 的 IMPair.getCar 等调用留成接口调用，比分层的通用体慢一倍多）
-    (doseq [k (keys-of runtime-generated-entries)] (hput! tier-classes k true))
-    (let [;; 运行时特化（cleat-138 / 139）的类型化体不在形式里：临时接到形式后面，和形式一起走推断、折叠、循环推测
-          ;; 等全部改写（只当体用，不生成顶层方法），最后拆回登记表。形参类型每次推断前按签名固定。
-          rt-keys (vec (remove #(:o? (hget runtime-generated-entries %)) (keys-of runtime-generated-entries)))
-          n0 (count forms)
-          seed-rt! (fn []
-                     (doseq [k (keys-of runtime-generated-entries)]
-                       (let [{:keys [params guess]} (hget runtime-generated-entries k)]
-                         (doseq [[p t] (map vector params guess)]
-                           (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t))))))
-          forms (into (vec forms) (map #(:body (hget runtime-generated-entries %)) rt-keys))
-          loop-flags (if (and loop-flags (seq rt-keys)) (into (vec loop-flags) (repeat (count rt-keys) true)) loop-flags)
-          infer! (fn [forms]
-                   (seed-rt!)
+    (let [infer! (fn [forms]
                    (run! collect-assigned! forms)
                    (when opt-infer?
                      (if (and loop-flags (= (count loop-flags) (count forms)))
@@ -4056,11 +3463,11 @@
                     (if (= fs' forms) forms (do (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases]) (infer! fs') fs')))
                   forms)
           ;; 循环推测（cleat-103）按第一遍推断的结果挑候选；改写了循环就清表重推（快份的形参由推断定成原始类型）
-          forms (if (and opt-infer? (or opt-loopspec? opt-typed? opt-sigspec?))
+          forms (if (and opt-infer? (or opt-loopspec? opt-typed?))
                   (let [changed (volatile! false)
                         forms' (binding [*spec-changed* changed]
                                  (cond->> forms
-                                   (or opt-typed? opt-sigspec?) (mapv speculate-entries)
+                                   opt-typed? (mapv speculate-entries)
                                    opt-loopspec? ((fn [fs] (if (and loop-flags (= (count loop-flags) (count fs)))
                                                              (mapv (fn [f lp?] (if lp? (speculate-loops f) f)) fs loop-flags)
                                                              (mapv speculate-loops fs))))))]
@@ -4074,21 +3481,7 @@
                               (infer-var-types-into! body var-types)))
                           forms')
                       forms))
-                  forms)
-          _ (doseq [[k b] (map vector rt-keys (subvec forms n0))]
-              (hput! runtime-generated-entries k (assoc (hget runtime-generated-entries k) :body b)))
-          forms (subvec forms 0 n0)]
-      (let [forms (let [fs (link-confirmed-runtime-calls forms)]
-                    (if (seq @runtime-installed-specs)
-                      (do (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
-                          (doseq [{:keys [params guess]} @runtime-installed-specs]
-                            (doseq [[p t] (map vector params guess)]
-                              (when t (hput! fixed-types p t) (hput! var-types p t) (hput! sound-types p t))))
-                          (run! collect-assigned! fs)
-                          (when opt-infer?
-                            (doseq [f fs] (infer-var-types-into! f var-types)))
-                          fs)
-                      fs))]
+                  forms)]
       (let [inits (mapv (fn [f k] (top-level-method u f k)) forms (range))
             n (count inits)
             entry (i 'method "Initialize" (i 'attrs 'static) (i 'params) (i 'ret obj)
@@ -4107,91 +3500,6 @@
                           (cond
                             (empty? cs) []
                             live? [(i 'live-constants (count cs))]
-                            ;; 原版在 canonical-gensyms 时（boot 镜像）把编码里的 gensym 改成规范名；Clojure 编译器的临时名本来就确定，不需要
                             :else [(apply i 'constants (map-indexed (fn [k e] (i k e)) (encode-constants cs)))])
                           (cons module (if vars (conj @(:classes u) vars) @(:classes u)))))]
         [lcil cs]))))
-  (finally (Cleat.Core.Runtime.RuntimeSigSpec/ExitUnit))))
-
-(def ^:private rt-spec-counter (atom 0))
-
-(defn- rt-code-ref-type
-  "引用类型码（4～13）对应的 CLR 类型；值类型码与 0 为 nil。"
-  [c]
-  (when (<= 4 c 13) (Cleat.Core.Runtime.RuntimeSigKey/TypeOf (int c))))
-
-(defn- emit-runtime-entry
-  "cleat-138 / 139：把类型化条目 entry 编进独立的内存程序集（类名 nm）。R 模式：invokeStaticTyped 是类型化体，通用 invoke 经
-  RtSpecEntry 拆箱直调它；O 模式：类型化体直接是子句体（object 形参，类型按签名固定）。
-  返回 RuntimeSigCompiled（有效 key、是否 R 模式），失败返回 nil。"
-  [nm entry key guarded?]
-  (hput! runtime-generated-entries (:class nm) (assoc entry :o? (not guarded?)))
-  (try
-    (let [clause (with-output-language [L3 Clause]
-                   (out (clause (~(:params entry) ...) nil
-                          ~(if guarded?
-                             (with-output-language [L3 Expr]
-                               (out (clj-call "RtSpecEntry" false (quote ~[(:sig entry) (:params entry)]))))
-                             ;; O 模式（cleat-139）：类型化体就是子句体，形参是 object、类型按签名固定；特化类是普通 fn 类，
-                             ;; 入口快路径直接 IFn.invoke 它
-                             (:body entry)))))
-          lambda (with-output-language [L3 Expr] (out (lambda ~nm () ~clause)))
-          wrapped (with-output-language [L3 Expr] (out (clj-call "HoldResult" false ~lambda)))
-          ;; eval$ 前缀（cleat-139）：发射器只对 eval$ 程序集走 PE 字节 + 默认装载上下文，代码才分层编译、有动态 PGO；
-          ;; RunAndCollect 的动态程序集两者都没有，特化体比通用体还慢。代价是特化程序集不可回收（进程上限 4096 兜底）。
-          asm-name (str "eval$rtspec" (swap! rt-spec-counter inc))
-          ;; 含循环标志为真：O 模式的类型化体就在这个形式里，要做类型推断（为假时整份形式跳过推断，形参的固定类型白给）
-          [lcil cs] (generate-unit [wrapped] asm-name "#Module" [true] true)
-          _ (let [dump (env "CLEAT_DUMP_RT_LCIL")]
-              (when (and (some? dump) (not= dump ""))
-                (System.IO.File/AppendAllText dump (str (pr-str lcil) "\n"))))
-          asm (Cleat.Emit.LcilEmitter/EmitInMemoryData lcil asm-name (object-array cs))
-          _ (.invoke ^clojure.lang.IFn Cleat.Core.Compiler.DriverOps/RunModule asm)
-          spec (Cleat.Core.Runtime.ClojureOps/TakeHeldResult)]
-      (when (instance? clojure.lang.IFn spec)
-        (Cleat.Core.Runtime.RuntimeSigSpec/MarkGenerated)
-        (Cleat.Core.Runtime.RuntimeSigCompiled. ^clojure.lang.IFn spec (long key) (boolean guarded?) asm)))
-    (finally (hdel! runtime-generated-entries (:class nm)))))
-
-(defn compile-runtime-specialization
-  "cleat-133 ~ 139 的运行时编译回调（designs/27 §2 ~ §3）：按掩码内形参的类型码固定形参——Int64 / Double 是原始局部，
-  数组 / String 在特化体里 Tagged 精确类型，其余（含 Int32、码 0）保持 object。纯体先试 R 模式（原始返回），
-  否则 O 模式整体特化（返回 object，没有放弃点）。自调用按\"Var 的值仍是 generic\"守卫直调特化类。
-  返回 RuntimeSigCompiled，其 key 只含真正固定了的槽位；失败 / 编译异常返回 nil，调用方保留通用体。"
-  [cname args generic]
-  (when-let [{:keys [params body v mask pure?]} (hget runtime-sig-specs cname)]
-    (when (= (count params) (count args))
-      (let [mask (long (or mask 0))
-            codes (mapv (fn [k x] (if (and (< k 16) (not (zero? (bit-and mask (bit-shift-left 1 k)))))
-                                    (long (Cleat.Core.Runtime.RuntimeSigKey/Code x))
-                                    0))
-                        (range) args)
-            guess (mapv (fn [c] (case (int c) 1 :l64 2 :fl nil)) codes)
-            exact (into {} (keep (fn [[p c]] (when-let [t (rt-code-ref-type c)] [p t])) (map vector params codes)))
-            eff (mapv (fn [c] (if (or (<= 1 c 2) (rt-code-ref-type c)) c 0)) codes)
-            key (reduce bit-or 0 (map-indexed (fn [k c] (bit-shift-left (long c) (* 4 k))) eff))
-            nm (l/->CljFnName (str "rtSpec$" (swap! rt-spec-counter inc)) false [] false)
-            guard [generic (:class nm) eff]
-            ;; 上一个编译单元的推断表按符号索引：清掉，免得同名局部带进旧类型
-            _ (run! hclear! [var-types sound-types fixed-types var-facts assigned-vars num-aliases])
-            _ (collect-assigned! body)
-            debug? (env-set? "CLEAT_RTSPEC_DEBUG")
-            note (fn [what e] (when debug? (binding [*out* *err*] (println "rtspec:" cname what (when e (.Message ^Exception e))))) nil)
-            try-mode (fn [r] (try (spec-entry-try params body v guess r exact guard
-                                                  ;; O 模式形参一律 object 存储：特化类是普通 fn 类，入口快路径直接 IFn.invoke
-                                                  (if (= r :o) (mapv (constantly nil) guess) guess))
-                                  (catch Exception e (note (str "prove " r) e))))
-            r-entry (when (and (pos? key) pure?) (some try-mode [:l64 :fl]))
-            ;; 纯数值 key 只在 R 模式有存储 / 原始调用收益；落回 O 模式时形参仍是 object，
-            ;; 常见的可溢出算术也无法换成原始静态路径，只留下入口观察 / 包装成本（cleat-156 事件归因）。
-            numeric-only? (every? #(let [c (long %)] (or (zero? c) (= 1 c) (= 2 c))) eff)
-            entry (or r-entry
-                      (when (and (pos? key) (or (seq exact) (not numeric-only?) (not pure?)))
-                        (try-mode :o)))]
-        (if entry
-          (try (set! Cleat.Emit.LcilEmitter/PreferredAssemblies
-                     (into-array System.Reflection.Assembly [(.Assembly (.GetType ^Object generic))]))
-               (emit-runtime-entry nm entry key (some? r-entry))
-               (catch Exception e (note "emit" e))
-               (finally (set! Cleat.Emit.LcilEmitter/PreferredAssemblies nil)))
-          (note (str "no entry, codes " codes) nil))))))
