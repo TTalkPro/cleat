@@ -3,7 +3,7 @@
 ;; :loaded-by 的条目不由镜像构建器单独加载——它们由所在文件里的 (load "…") 按这个顺序拉入，列出来是为了
 ;;   让 CoreSourcesTests 覆盖到每个文件，并记录实际顺序。
 ;; :boot false 的条目不进镜像，按需 require（03 §5"其余按需从源码或 .clj.dll 加载"）。
-;; cleat.nanopass / cleat.compiler（03 §5 排在 uuid 之后）由 cleat-020 / cleat-02x 加进来。
+;; 编译器不在镜像里（cleat-182 起是 C#，designs/30；cleat.nanopass 在 packages/nanopass）。
 {:version 1
  :entries
  [{:ns cleat.kernel            :path "cleat/kernel.clj"              :boot true}

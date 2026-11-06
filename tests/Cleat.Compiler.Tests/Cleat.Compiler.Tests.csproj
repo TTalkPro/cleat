@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- C# 编译器的单元测试（cleat-171 起，designs/30）：IR、pass、发射；不需要 boot 镜像（读 src/boot 的 .inl 的用例在镜像缺失时跳过） -->
+  <PropertyGroup>
+    <RootNamespace>Cleat.Compiler.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="4.2.2" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cleat.Compiler\Cleat.Compiler.csproj" />
+  </ItemGroup>
+</Project>

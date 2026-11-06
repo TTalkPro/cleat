@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Reflection;
 using Cleat.Core.Runtime;
-using Cleat.Emit;
 using clojure.lang;
 using NUnit.Framework;
 
@@ -11,13 +10,6 @@ namespace Cleat.Core.Tests;
 // cleat-022：接口文件、已知函数登记、镜像 id 核对
 public class InterfaceFileTests
 {
-    private const string Module = @"
-(lcil 1
-  (assembly ""ifcmod"" (entry ""Entry"" ""Initialize""))
-  (type ""Entry"" (attrs abstract sealed)
-    (method ""Initialize"" (attrs static) (params) (ret ""System.Object"")
-      (body (ldstr ""ok"") (ret)))))";
-
     [Test]
     public void RoundTripsThroughEdn()
     {
@@ -40,7 +32,8 @@ public class InterfaceFileTests
         string dir = Path.Combine(Path.GetTempPath(), "cleat-ifc-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
         string dll = Path.Combine(dir, "ifcmod.dll");
-        LcilEmitter.Save(Module, "m.lcil", dll);
+        TestAssemblies.Save(dll, "ifcmod", "Entry", [new("Initialize", TestAssemblies.HitThenReturn(null, "ok"))],
+                            TestAssemblies.Attribute<CleatModuleAttribute>("Entry", "Initialize"));
         var mvid = AssemblyName.GetAssemblyName(dll);
         using var pe = new System.Reflection.PortableExecutable.PEReader(File.OpenRead(dll));
         var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);

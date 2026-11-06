@@ -44,7 +44,7 @@ public static class AsyncSupport
         }
     }
 
-    /// <summary>Lcil 里 Task&lt;object&gt; 的类型名（async 方法的返回类型）。</summary>
+    /// <summary>Task&lt;object&gt; 的类型名（async 方法的返回类型）。</summary>
     public static string TaskOfObjectName => typeof(Task<object>).FullName;
 
     /// <summary>await 的对象 → Task：Task / Task&lt;T&gt; 原样，ValueTask / ValueTask&lt;T&gt; 经 AsTask。</summary>

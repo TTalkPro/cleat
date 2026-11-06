@@ -67,7 +67,7 @@ public class ErrorGoldenTests
 
     /// <summary>
     /// 栈：缺省不打印（与 Clojure 的 REPL / clojure.main 相同）；CLEAT_TRACE_ERRORS=clojure 打印过滤过的栈——没有编译器与驱动
-    /// （cleat.compiler.*、DriverOps）、单元入口（#Module$）与反射调用的帧，留下 Clojure 函数类的帧；CLEAT_TRACE_ERRORS=1 打印完整的 CLR 异常。
+    /// （Cleat.Compiler.*、DriverOps）、单元入口（#Module$）与反射调用的帧，留下 Clojure 函数类的帧；CLEAT_TRACE_ERRORS=1 打印完整的 CLR 异常。
     /// </summary>
     [Test]
     public void StackTracesHideCompilerFramesUnlessAskedFor()
@@ -79,12 +79,12 @@ public class ErrorGoldenTests
         var filtered = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "clojure") }, "input.clj");
         Assert.That(filtered.Err, Does.StartWith("Execution error (ArithmeticException) at (input.clj:1).\nDivide by zero\nSystem.ArithmeticException: Divide by zero\n"), filtered.ToString());
         Assert.That(filtered.Err, Does.Contain("   at user$f.invoke"), "the Clojure fn frame stays: " + filtered);
-        Assert.That(filtered.Err, Does.Not.Contain("cleat.compiler."), filtered.ToString());
+        Assert.That(filtered.Err, Does.Not.Contain("Cleat.Compiler."), filtered.ToString());
         Assert.That(filtered.Err, Does.Not.Contain("#Module$"), filtered.ToString());
 
         var full = HostProcessTests.CleatIn(dir, null, new[] { ("CLEAT_TRACE_ERRORS", "1") }, "input.clj");
-        // 全部的帧，含驱动的（cleat.compiler.driver，cleat-090）
-        Assert.That(full.Err, Does.Contain("cleat.compiler."), "CLEAT_TRACE_ERRORS=1 shows everything: " + full);
+        // 全部的帧，含驱动的（Cleat.Compiler.Driver，designs/30）
+        Assert.That(full.Err, Does.Contain("Cleat.Compiler."), "CLEAT_TRACE_ERRORS=1 shows everything: " + full);
     }
 
     [Test]

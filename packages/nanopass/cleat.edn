@@ -1,0 +1,5 @@
+;; cleat.nanopass (the Clojure port of nanopass-framework-scheme) as a cleat project (designs/18): packed as Cleat.Nanopass,
+;;   cleat -T:build install
+;; Until cleat-182 it lived in src/clojure/cleat/ and was part of the Clojure compiler's package (cleat.compiler.dll);
+;; the compiler is now C# (designs/30) and nanopass is an ordinary user library.
+{:paths ["src"]}

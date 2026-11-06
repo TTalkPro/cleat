@@ -73,6 +73,34 @@ public class PackageTests
         Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
     }
 
+    /// <summary>
+    /// cleat.nanopass（cleat-083 / 084 / 095，designs/19 D2）：cleat-182 起是 packages/nanopass 下的普通用户库（原在 Clojure 编译器的包里）。
+    /// 从源码跑一遍，再编成包程序集 Cleat.Nanopass.dll、加载路径上只有它（没有源码）再跑一遍。
+    /// </summary>
+    [Test]
+    public void Nanopass()
+    {
+        var r = RunPackageTests("-I", "packages/nanopass/src", "-I", "packages/nanopass/test", "packages/nanopass/test/run.clj");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-nanopass-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var c = RunPackageTests(new[] { "-I", "packages/nanopass/src", "--compile-package", Path.Combine(dir, "Cleat.Nanopass.dll"), "--package", "nanopass" }
+                                    .Concat(Namespaces("nanopass")).ToArray());
+            Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+            r = RunPackageTests("-I", dir, "-I", "packages/nanopass/test", "packages/nanopass/test/run.clj");
+            Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+            Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (Exception) { }
+        }
+    }
+
     [Test]
     public void ToolsBuild()
     {

@@ -1,5 +1,8 @@
 # 04 nanopass 编译器 `cleat.compiler`
 
+> **历史（2026-11-05，cleat-182）**：本文是 Clojure 写的 nanopass 编译器 `cleat.compiler` 的设计，该编译器已删除；
+> 现行编译器是 C#（`src/Cleat.Compiler`），设计见 [30](30-csharp-compiler.md)（L0 ~ L3 的语言与 pass 划分沿用本文，新增 L4 表示层与 L5 线性 CIL）。
+
 ## 1. 位置与原则
 
 | 项 | 决定 |

@@ -58,7 +58,6 @@ nunit-*.xml
 
 # Cleat
 src/boot/*.dll
-src/boot/*.lcil
 src/boot/*.pdb
 **/*.ifc
 **/*.inl
@@ -75,6 +74,9 @@ packages/*/target/
 !packages/*/bin/
 # cleat-071: tools.build / tools.namespace package assemblies bundled with Cleat.Cli (tools/build.cs pack)
 src/boot/tools/
+# cleat-177 / 182: tools/build.cs image-set（旧名 cs-image）编的一整套与 --twice 的第二套
+src/boot-cs/
+src/boot-cs.2/
 # IDE settings (JetBrains Rider)
 .idea/
 

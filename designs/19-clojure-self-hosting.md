@@ -1,5 +1,8 @@
 # 19 Clojure 自寄宿：Clojure 版 nanopass 与编译器、去掉 Scheme
 
+> **历史（2026-11-05，cleat-182）**：本文的方向（Clojure 写的 nanopass 与编译器、自举、文本种子）在 2026-11-03 被 [30](30-csharp-compiler.md) 取代，
+> Clojure 编译器与种子已删除；`cleat.nanopass`（D2）保留为 `packages/nanopass` 下的用户库。下面的"现行方向"是写作时的状态。
+
 > 状态：**现行方向**（2026-10-14 起，取代 [15](15-scheme-core-vendoring.md) 的"编译器用 Scheme 写、nanopass 不改"）。
 > 用户决定（2026-10-14）：现行两段自举已经成立（Scheme 镜像 → Clojure 镜像），下一步**用 Clojure 实现 nanopass 与编译器，由它自举，然后把 Scheme 全部移除**。
 > 三个前提问题的答复：移除范围 = 全部（src/scheme、Cleat.Scheme、Cleat.Stage0、Scheme 镜像，生成代码不再引用任何 Scheme 类型）；

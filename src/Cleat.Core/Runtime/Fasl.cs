@@ -9,9 +9,9 @@ using clojure.lang;
 namespace Cleat.Core.Runtime;
 
 /// <summary>
-/// Clojure 数据的 fasl（cleat-092；designs/05 §3）：编译器写进程序集的常量表（Cleat.Emit.FaslEncoder 编码、Deflate 压缩，
+/// Clojure 数据的 fasl（cleat-092；designs/05 §3）：编译器写进程序集的常量表（Cleat.Compiler 的 ConstantEncoder 编码、Deflate 压缩，
 /// 类型初始化器经 <see cref="ReadPackedTable"/> 读回）与接口文件旁的内联体 .inl（<see cref="Write"/> / <see cref="Read"/>）。
-/// 标签与 Cleat.Emit.FaslEncoder 一致（标签值沿用 IronScheme 的联合编码，Scheme 专有的标签随元层在 cleat-093 删除）；fix 读成 Int32，
+/// 标签与 ConstantEncoder 一致（标签值沿用 IronScheme 的联合编码，Scheme 专有的标签随元层在 cleat-093 删除）；fix 读成 Int32，
 /// 表的外层是 Table 标签（object[]）。
 /// def / ref 表示共享与环（不可变集合先读元素再建，环不支持）。
 /// </summary>
@@ -20,7 +20,7 @@ public static class Fasl
     public const byte Version = 2;
     private static readonly byte[] s_magic = Encoding.ASCII.GetBytes("CLFASL");
 
-    // 标签（与 Cleat.Emit.FaslEncoder 一致）：0x0_ 单例；0x1_ 数；0x2_ 字符、字符串、符号；0x3_ 序列；0x5_ 其他；0x6_ 共享
+    // 标签（与 Cleat.Compiler 的 ConstantEncoder 一致）：0x0_ 单例；0x1_ 数；0x2_ 字符、字符串、符号；0x3_ 序列；0x5_ 其他；0x6_ 共享
     private const byte Nil = 0x00, True = 0x01, False = 0x02,
       Fix = 0x10,
       Long = 0x18, Double = 0x19, BigIntTag = 0x1A, BigDec = 0x1B, RatioTag = 0x1C,

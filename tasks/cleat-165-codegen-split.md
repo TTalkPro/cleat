@@ -1,6 +1,6 @@
 # cleat-165 codegen 拆分：infer / classes
 
-- 里程碑：M19　依赖：cleat-158、cleat-170　状态：未开始
+- 里程碑：M19　依赖：cleat-158、cleat-170　状态：取消（2026-11-03：由 M20 C# 编译器取代，见 [30 §5](../designs/30-csharp-compiler.md)）
 - 设计依据：[29 §1 第 7 条 / §6](../designs/29-usability-and-engineering.md)、[19](../designs/19-clojure-self-hosting.md)
 
 ## 问题

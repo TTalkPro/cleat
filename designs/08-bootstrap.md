@@ -1,5 +1,8 @@
 # 08 自举
 
+> **历史（2026-11-05，cleat-182）**：文本种子 `src/boot/seed/` 与 Clojure 编译器的自举（§0）、`selfhost` / `clojure-seed` 已删除。
+> 现在 `dotnet build` 由 C# 编译器从源码两步编出镜像（`--no-boot` 编 stage1，再在其上编），构建两次逐字节相同；见 [30](30-csharp-compiler.md) D8 与 [docs/boot.md](../docs/boot.md)。
+
 > **2026-10-15 改版（cleat-091，[19 D7](19-clojure-self-hosting.md)）**：Clojure 镜像与 Clojure 写的编译器自举，信任根是 Lcil 文本种子。
 > §0 是现行设计；§1 ~ §8 是 Scheme 元层时期（cleat-046 ~ 092）的设计，Scheme 元层已在 cleat-093 删除，只作历史保留。
 

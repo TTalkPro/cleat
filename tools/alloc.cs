@@ -51,9 +51,9 @@ int[] gc0 = [GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2)
 AppDomain.CurrentDomain.ProcessExit += (_, _) => Report();
 
 // 在缺省加载上下文里加载（Assembly.LoadFrom 会另开一个上下文，Cleat.Core 被加载两份，生成代码的常量表初始化失败）；
-// 宿主目录里的其余程序集（Cleat.Core、cleat-emit、Cleat.Hosting）也先加载进来：编译器包的常量表按名字找 Cleat.Emit 的类型，
+// 宿主目录里的其余程序集（Cleat.Core、Cleat.Compiler、Cleat.Hosting）也先加载进来：编译器按程序集名加载，
 // 本进程的 AppContext.BaseDirectory 不是宿主目录，按目录探测找不到
-foreach (var dll in new[] { "Cleat.Core.dll", "cleat-emit.dll", "Cleat.Hosting.dll" })
+foreach (var dll in new[] { "Cleat.Core.dll", "Cleat.Compiler.dll", "Cleat.Hosting.dll" })
     if (File.Exists(Path.Combine(hostDir, dll))) AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(hostDir, dll));
 var host = AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(hostDir, "cleat.dll"));
 var main = host.GetType("Cleat.Host.Program")?.GetMethod("Main") ?? host.EntryPoint!;

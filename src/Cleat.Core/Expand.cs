@@ -4,7 +4,7 @@ using clojure.lang;
 
 namespace Cleat.Core.Expand;
 
-// 分析器（cleat.compiler.analyzer）与 clojure.core 用的几个类型（cleat-093 起 C# 展开器与 Lcore 已删，命名空间名保留）。
+// 分析器与 clojure.core 用的几个类型（cleat-093 起 C# 展开器与 Lcore 已删，命名空间名保留）。
 
 /// <summary>特殊形式的符号（Clojure 的 Compiler.specials）：clojure.core/special-symbol? 查它。</summary>
 public static class SpecialForms

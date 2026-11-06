@@ -10,13 +10,12 @@ This repository also contains code derived from other projects, kept in separate
 - tests/conformance/            — conformance corpus adapted from jolt (https://github.com/jolt-lang/jolt), Eclipse Public License 2.0 (LICENSE-EPL-2.0.txt in that directory).
 - tests/clojure-test-suite/     — git submodule of jank's clojure-test-suite (its own license).
 - tests/test_clojure/           — tests adapted from ClojureCLR (Eclipse Public License 1.0).
-- src/Cleat.Emit/              — the Lcil emitter (Lcil model, parser, Reflection.Emit back end, constant fasl encoding) is original work of this
-                                  project's author, first written as IronScheme.Emit in the author's IronScheme fork (https://github.com/TTalkPro/IronScheme,
-                                  2026-10-08) and ported here; it contains no code from the original IronScheme, so it is Apache-2.0 like the rest of the
-                                  repository. The Scheme meta-layer that WAS vendored from IronScheme (src/Cleat.Scheme/, src/Cleat.Stage0/, src/Cleat.PrimGen/,
+- (history) The Scheme meta-layer that was vendored from IronScheme (src/Cleat.Scheme/, src/Cleat.Stage0/, src/Cleat.PrimGen/,
                                   src/scheme/, tests/Cleat.Scheme.Tests/, tests/scheme/; BSD 3-Clause, Copyright (c) 2007-2024 Llewellyn Pritchard) was removed
-                                  in cleat-093 once the compiler was rewritten in Clojure and self-hosted; see the git history before that commit.
-- src/clojure/cleat/nanopass/   — a Clojure port of the nanopass framework for Scheme (https://github.com/nanopass/nanopass-framework-scheme,
+                                  in cleat-093 once the compiler was rewritten in Clojure; see the git history before that commit. The emitter src/Cleat.Emit/
+                                  (original work of this project's author, first written as IronScheme.Emit in the author's IronScheme fork, Apache-2.0) was
+                                  removed in cleat-182 together with the Clojure compiler; the compiler is now C# (src/Cleat.Compiler/, Apache-2.0).
+- packages/nanopass/            — a Clojure port of the nanopass framework for Scheme (https://github.com/nanopass/nanopass-framework-scheme,
                                   commit c14d392487886df9275c1d4a3f0f61e1b6c4f2ef), Copyright (c) 2000-2015 Dipanwita Sarkar, Andrew W. Keep,
                                   R. Kent Dybvig, Oscar Waddell. MIT License (LICENSE-MIT.txt in that directory). Written against the original
                                   as reference; no Scheme source is retained.

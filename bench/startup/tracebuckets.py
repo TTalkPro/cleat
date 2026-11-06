@@ -13,7 +13,7 @@
 # "进程 / 线程"根帧上，那是原生代码与等待（后台 JIT 线程自身编译、kernel），记作 clr/native。
 #
 # 桶的划分先看程序集（帧名的 `模块!方法` 前缀），再看命名空间：
-#   host / Cleat.Core / cleat.boot 镜像 / cleat.compiler 包 —— 与 CLEAT_TIME 的分段一一对应；
+#   host / Cleat.Core / cleat.boot 镜像 / 编译器（Cleat.Compiler；cleat-182 之前是 cleat.compiler 包）—— 与 CLEAT_TIME 的分段一一对应；
 #   框架侧再细分反射与类型系统、表达式编译、IO/解压、GC、线程。
 # 采样按执行线程计时，后台 JIT 线程不被采样，所以这些桶是"启动在做什么"的下界；
 # JIT 的总份额看对照组（DOTNET_TieredCompilation=0、DOTNET_ReadyToRun=0，见 profile.py）。
@@ -46,7 +46,7 @@ RULES = [
     ('host',              mk(r'^cleat$|^Cleat\.Host$')),
     ('Cleat.Core',        mk(r'^Cleat\.Core$')),
     ('镜像 cleat.boot',   mk(r'^cleat\.boot$')),
-    ('编译器包',          mk(r'^cleat\.compiler$')),
+    ('编译器',            mk(r'^(Cleat\.Compiler|cleat\.compiler)$')),
     ('其他程序集',        mk(r'^(?!System\.|Microsoft\.|clrjit)[^!]+$')),
     ('gc',                mk(r'^System\.Private\.CoreLib$', r'PollGC|\bGC\b|GarbageCollect|Finalizer|GCHandle')),
     ('expression-compile', mk(r'^System\.', r'Linq\.Expressions|System\.Dynamic|Emit\.|DynamicMethod|lambda_method|dynamicClass')),

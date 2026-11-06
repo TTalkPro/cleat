@@ -125,7 +125,8 @@ public static class StartupTimings
     private static long MsTicks(long ticks) => ticks * 1000 / _freq;
 
     /// <summary>启用的话输出分段：第一行沿用 cleat-052 的格式，随后是各段与镜像条目的份额。</summary>
-    public static void Report(long imageMs, long compilerMs, bool compilerFromPackage)
+    /// <param name="compilerKind">编译器的来源（cleat-177 起；cleat-182 起只有 cs）。</param>
+    public static void Report(long imageMs, long compilerMs, string compilerKind)
     {
         if (!Enabled) return;
         Mark(Segment.Other);
@@ -133,7 +134,7 @@ public static class StartupTimings
         long total = MsTicks(Stopwatch.GetTimestamp() - _start);      // 先定 total，之后的格式化不算进去
         var e = new StringBuilder();
         e.Append("cleat: Clojure image ").Append(imageMs).Append(" ms, compiler (")
-         .Append(compilerFromPackage ? "package" : "source").Append(") ").Append(compilerMs).AppendLine(" ms");
+         .Append(compilerKind).Append(") ").Append(compilerMs).AppendLine(" ms");
         e.Append("cleat: segments host ").Append(Ms(Segment.Host))
          .Append(" / cli ").Append(Ms(Segment.Cli))
          .Append(" / paths ").Append(Ms(Segment.Paths))
@@ -167,13 +168,13 @@ public static class StartupTimings
     /// <summary>
     /// 编译器在启动报告**之后**才按需加载完成（cleat-161，designs/29 §3.3）：补一行说那一格花在哪、什么时候花的。
     /// 报告之前加载的（自举的改名工具编译器，仍然 eager）不打这行——那两个标记本来就在报告的 compiler 段里。
-    /// 第一行的 <c>compiler (package|source) N ms</c> 格式不变（HostProcessTests 依赖它）。
+    /// 第一行的 <c>compiler (package|source|cs) N ms</c> 格式不变（HostProcessTests 依赖它）。
     /// </summary>
-    public static void CompilerLoadedOnDemand(long ms, bool fromPackage)
+    public static void CompilerLoadedOnDemand(long ms, string compilerKind)
     {
         if (!Enabled || !s_reported) return;
         Console.Error.WriteLine("cleat: compiler loaded on demand: "
-            + (fromPackage ? "package " : "source ") + ms + " ms (require " + Ms(Segment.CompilerRequire)
+            + compilerKind + " " + ms + " ms (require " + Ms(Segment.CompilerRequire)
             + " + hooks " + Ms(Segment.CompilerHooks) + ")");
     }
 

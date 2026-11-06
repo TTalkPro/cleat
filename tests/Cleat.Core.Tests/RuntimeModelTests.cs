@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Threading;
 using clojure.lang;
 using Cleat.Core.Runtime;
-using Cleat.Emit;
 using NUnit.Framework;
 
 namespace Cleat.Core.Tests;

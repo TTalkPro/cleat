@@ -8,7 +8,7 @@
 
 ;; cleat port (designs/18 §4): the output is one package assembly
 ;; (designs/17), compiled by a cleat process running a generated script that
-;; calls the compile driver (cleat.compiler.driver/compile-package) inside
+;; calls the compile driver (DriverOps/CompilePackageHook, installed by either compiler) inside
 ;; the requested bindings.
 
 (ns clojure.tools.build.tasks.compile-clj
@@ -44,7 +44,9 @@
         requires (map (fn [n] `(require '~n)) binding-nses)
         forms (mapv (fn [n] `(require '~n)) nses)
         do-compile `(with-bindings ~(or bindings {})
-                      ((requiring-resolve 'cleat.compiler.driver/compile-package) ~package '~forms ~(vec roots) ~dll)
+                      ;; through the host's compile hook (the compiler loads on demand, designs/30)
+                      (Cleat.Core.Runtime.Startup/EnsureCompiler)
+                      (.invoke Cleat.Core.Compiler.DriverOps/CompilePackageHook ~package '~forms ~(vec roots) ~dll)
                       (System.Environment/Exit 0))
         script (->> (conj (vec requires) do-compile)
                  (map #(with-out-str (pprint/pprint %)))

@@ -197,8 +197,8 @@
     {} (merge default-handlers handlers)))
 
 (defn- runtime-files
-  "[[source target-relative-path]...]: the cleat host (its directory) and the
-  runtime it runs (the image, the compiler package, the bundled libs)."
+  "[[source target-relative-path]...]: the cleat host (its directory, with the
+  compiler Cleat.Compiler) and the runtime it runs (the image, the bundled libs)."
   []
   (let [host-dir (Path/GetFullPath System.AppContext/BaseDirectory)
         clojure-boot Cleat.Host.Program/ClojureBootPath
@@ -211,7 +211,7 @@
         [f (Path/GetFileName f)])
       (beside clojure-boot [".dll" ".ifc" ".inl"])
       (keep (fn [n] (let [f (Path/Combine (Path/GetDirectoryName clojure-boot) n)] (when (File/Exists f) [f n])))
-            ["Cleat.Clojure.Libs.dll" "cleat.compiler.dll"]))))
+            ["Cleat.Clojure.Libs.dll"]))))
 
 (defn- launcher-name
   "The launchers' name: :launcher, or the uber dir's own name (target/app -> app).

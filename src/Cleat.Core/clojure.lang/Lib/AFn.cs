@@ -163,6 +163,7 @@ namespace clojure.lang
 
 #pragma warning disable IDE0059 // Unnecessary assignment of a value
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-177：tier-0 把形参与溢出的临时变量报告为整个方法内活着，(apply f lazy-seq) 时抓住惰性序列的头；手工置 null 不够（同 cleat-042 / 117）
         public virtual object applyTo(ISeq arglist)
         {
             return ApplyToHelper(this, Util.Ret1(arglist, arglist = null));
@@ -170,6 +171,7 @@ namespace clojure.lang
 
 
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]   // cleat-177：tier-0 把形参与溢出的临时变量报告为整个方法内活着，(apply f lazy-seq) 时抓住惰性序列的头；手工置 null 不够（同 cleat-042 / 117）
         public static object ApplyToHelper(IFn fn, ISeq argList)
         {
             switch (RT.BoundedLength(argList, 20))

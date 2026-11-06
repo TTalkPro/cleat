@@ -1,5 +1,9 @@
 # 00 总体设计
 
+> **2026-11-05 现状（cleat-182，[30](30-csharp-compiler.md)）**：编译器改为 C#（`src/Cleat.Compiler`），Clojure 写的编译器、编译器包、文本种子与自举、
+> 发射器 Cleat.Emit 都已删除；`cleat.nanopass` 是 `packages/nanopass` 下的用户库。仓库里是 C# 运行时（Cleat.Core）、C# 编译器、宿主与 Clojure 源码。
+> 下文"编译器用 Clojure 自己写""自举只依靠 .NET SDK 与本仓库（种子）"等是 M8 ~ M19 的记录；D 系列决策里与编译器实现语言、自举相关的以 30 为准。
+
 > **2026-10-15（cleat-093）**：Scheme 元层已全部删除——编译器与 nanopass 用 Clojure 实现并自举（[19](19-clojure-self-hosting.md)、[08 §0](08-bootstrap.md)），
 > 仓库里只有 C# 运行时（Cleat.Core）、Lcil 发射器（Cleat.Emit）、宿主与 Clojure 源码。下面"2026-10-10 方向变更"及 §5 的目录布局是 M2′ ~ M7 时期的记录。
 >

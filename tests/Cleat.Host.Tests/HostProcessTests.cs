@@ -178,7 +178,8 @@ public class HostProcessTests
         Assert.That(first.Out, Is.EqualTo("user=> "));
         // 第二次计时（第一次有磁盘缓存的影响）
         var r = CleatIn(_dir, ":repl/quit\n", new[] { ("CLEAT_TIME", "1") });
-        Assert.That(r.Err, Does.Match(@"cleat: Clojure image \d+ ms, compiler \(package\) \d+ ms"), "the compiler's package assembly should be used: " + r);
+        // 编译器是 C# 程序集（cleat-182 之前也可以是 Clojure 编译器的包 package / 源码 source）
+        Assert.That(r.Err, Does.Match(@"cleat: Clojure image \d+ ms, compiler \(cs\) \d+ ms"), "the compiler (Cleat.Compiler) should be used: " + r);
         // cleat-159（29 §3.1 第 2 条的第三种场景）：REPL 走到首个提示符再补一行，量启动报告之后的那截
         // （repl-requires 与行编辑器/提示符本身）。first prompt 是从宿主计时起点算起的总时间。
         Assert.That(r.Err, Does.Match(@"cleat: repl setup \d+ ms \(user \d+ \+ repl-requires \d+ \+ prompt \d+\) = first prompt \d+ ms after start"),
@@ -223,16 +224,16 @@ public class HostProcessTests
     ///   2. 第一个要编译的形式按需加载，在启动报告之后补一行（require + hooks）；
     ///   3. CLEAT_NO_SIMPLE_EVAL 设置时快速路径关掉（与驱动侧的简单形式解释器同一口径）；
     ///   4. 只跑包程序集里的 AOT 代码不加载编译器。
-    /// 第一行 <c>compiler (package) N ms</c> 的格式不变（上面的 ReplQuitAndStartupTime 依赖它）。
+    /// 第一行 <c>compiler (cs) N ms</c> 的格式不变（上面的 ReplQuitAndStartupTime 依赖它）。
     /// </summary>
     [Test]
     public void CompilerLoadsOnDemandOnly()
     {
-        const string onDemand = @"cleat: compiler loaded on demand: (package|source) \d+ ms \(require \d+ \+ hooks \d+\)";
+        const string onDemand = @"cleat: compiler loaded on demand: cs \d+ ms \(require \d+ \+ hooks \d+\)";
         var trivial = CleatIn(_dir, null, new[] { ("CLEAT_TIME", "1") },
             "-e", "nil", "-e", "42", "-e", "[1 2]", "-e", "{:a 1}", "-e", ":kw", "-e", "'x", "-e", "()");
         Assert.That(trivial.ExitCode, Is.EqualTo(0), trivial.ToString());
-        Assert.That(trivial.Err, Does.Match(@"compiler \(package\) 0 ms"), trivial.ToString());
+        Assert.That(trivial.Err, Does.Match(@"compiler \(cs\) 0 ms"), trivial.ToString());
         Assert.That(trivial.Err, Does.Not.Contain("loaded on demand"), trivial.ToString());
         // nil 不打印（clojure.main 的口径）；空表求值还是它自己
         Assert.That(trivial.Out, Is.EqualTo("42\n[1 2]\n{:a 1}\n:kw\nx\n()\n"), trivial.ToString());
@@ -438,7 +439,9 @@ public class HostProcessTests
         Assert.That(p.ExitCode, Is.EqualTo(0), output);
         Assert.That(File.Exists(Path.Combine(outDir, "cleat")) || File.Exists(Path.Combine(outDir, "cleat.exe")), Is.True, output);
         Assert.That(File.Exists(Path.Combine(outDir, "cleat.boot.dll")), Is.True, "Clojure 镜像随发布");
-        Assert.That(File.Exists(Path.Combine(outDir, "cleat.compiler.dll")), Is.True, "编译器包随发布");
+        // 编译器随发布（宿主的输出里）；Clojure 编译器的包 cleat.compiler.dll 在 cleat-182 删除
+        Assert.That(File.Exists(Path.Combine(outDir, "Cleat.Compiler.dll")), Is.True, "编译器随发布");
+        Assert.That(File.Exists(Path.Combine(outDir, "cleat.compiler.dll")), Is.False, "no Clojure compiler package");
         Assert.That(File.Exists(Path.Combine(outDir, "Cleat.Clojure.Libs.dll")), Is.True, "随附库的包程序集随发布");
         string cleat = Path.Combine(outDir, OperatingSystem.IsWindows() ? "cleat.exe" : "cleat");
         var r = CleatIn(outDir, null, null, "-e", "(+ 1 2)", "-e", "(require 'clojure.test.tap)", "-e", ":published-ok");

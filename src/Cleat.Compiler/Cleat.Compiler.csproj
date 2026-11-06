@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 编译器（C#，cleat-171 起，designs/30；cleat-182 起是唯一的编译器）：小 pass、L0 ~ L5 逐层下降、ILGenerator 直接发射。
+       Cleat.Core 不引用本项目：Startup.EnsureCompiler 按程序集名 Cleat.Compiler 加载（designs/30 §2 D1）。
+       cleat-171 ~ 181 期间程序集叫 Cleat.Compiler.CSharp（避开 Clojure 编译器的包程序集 cleat.compiler.dll，按名字解析不区分大小写），
+       cleat-182 删除那个包之后改回 -->
+  <PropertyGroup>
+    <RootNamespace>Cleat.Compiler</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
+    <ProjectReference Include="..\Cleat.Compiler.Generators\Cleat.Compiler.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Cleat.Compiler.Tests" />
+  </ItemGroup>
+</Project>

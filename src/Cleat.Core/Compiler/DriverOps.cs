@@ -8,7 +8,7 @@ using clojure.lang;
 namespace Cleat.Core.Compiler;
 
 /// <summary>
-/// Clojure 写的编译驱动（cleat-090，cleat.compiler.driver）用的宿主操作。以 IFn 给出的几个，结果经 IFn 调用交回、不经 RetObject
+/// 编译驱动用的宿主操作（cleat-090 起；原为 Clojure 写的驱动而设，cleat-182 起只有 C# 编译器的驱动用）。以 IFn 给出的几个，结果经 IFn 调用交回、不经 RetObject
 /// （宿主调用的 Object 返回值会把 Int32 换成 long；形式的值要原样交出）。
 /// </summary>
 public static class DriverOps
@@ -61,7 +61,7 @@ public static class DriverOps
     /// </summary>
     public static readonly System.Threading.ThreadLocal<string> SourceFile = new();
 
-    /// <summary>简单形式的求值次数与编译执行的次数（度量与测试用；两个驱动共用）。</summary>
+    /// <summary>简单形式的求值次数与编译执行的次数（度量与测试用）。</summary>
     public static long SimpleCount, CompiledCount;
 
     /// <summary>环境变量 CLEAT_NO_SIMPLE_EVAL 设置时关闭简单形式的解释（度量与对照测试用）。</summary>
@@ -70,7 +70,7 @@ public static class DriverOps
     public static void CountSimple() => SimpleCount++;
     public static void CountCompiled() => CompiledCount++;
 
-    /// <summary>(compile-boot 形式列表 dll路径) 与 (compile-package 包名 形式列表 根目录列表或true dll路径)：Clojure 驱动登记（install-hooks!）。</summary>
+    /// <summary>(compile-boot 形式列表 dll路径) 与 (compile-package 包名 形式列表 根目录列表或true dll路径)：编译器登记（CompilerHooks.Install）。</summary>
     public static IFn CompileBootHook, CompilePackageHook;
 
     public static void InstallCompileHooks(IFn compileBoot, IFn compilePackage)
@@ -79,31 +79,8 @@ public static class DriverOps
         CompilePackageHook = compilePackage;
     }
 
-    /// <summary>接口文件条目的可内联子句（Clojure 驱动写 .inl，cleat-090）。</summary>
+    /// <summary>接口文件条目的可内联子句（写 .inl，cleat-090）。</summary>
     public static void AddInline(InterfaceFile.Entry e, int arity, byte[] data) => (e.Inline ??= new System.Collections.Generic.Dictionary<int, byte[]>())[arity] = data;
-
-    /// <summary>
-    /// 自举用的改名工具编译器的源码（cleat-091，designs/19 D7）：正在运行的编译器（cleat.compiler.*）不能在同一进程里重新加载自己的源码
-    /// 编自己，所以把 from（src/clojure/cleat）下的 nanopass.clj、nanopass/、compiler/ 复制到 to 下的 nanopass0.clj、nanopass0/、compiler0/，
-    /// 文本里的命名空间 cleat.nanopass / cleat.compiler 改成 cleat.nanopass0 / cleat.compiler0。
-    /// </summary>
-    public static void RenameCompilerSources(string from, string to)
-    {
-        static string Rename(string text) => text.Replace("cleat.nanopass", "cleat.nanopass0").Replace("cleat.compiler", "cleat.compiler0");
-        Directory.CreateDirectory(to);
-        File.WriteAllText(Path.Combine(to, "nanopass0.clj"), Rename(File.ReadAllText(Path.Combine(from, "nanopass.clj"))));
-        foreach (var (src, dst) in new[] { ("nanopass", "nanopass0"), ("compiler", "compiler0") })
-        {
-            string dir = Path.Combine(to, dst);
-            if (Directory.Exists(dir)) Directory.Delete(dir, true);
-            foreach (var f in Directory.GetFiles(Path.Combine(from, src), "*.clj", SearchOption.AllDirectories))
-            {
-                string target = Path.Combine(dir, Path.GetRelativePath(Path.Combine(from, src), f));
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-                File.WriteAllText(target, Rename(File.ReadAllText(f)));
-            }
-        }
-    }
 
     /// <summary>dll 的模块 MVID（发射器按内容哈希）：Clojure 镜像的 id，写进接口文件。</summary>
     public static Guid Mvid(string dllPath)

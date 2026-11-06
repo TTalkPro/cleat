@@ -84,7 +84,6 @@
     (dotimes [_ (dec outer)] (count-object-unhinted oa n))))
 
 (defn typefeedback [_]
-  (require 'cleat.compiler.pipeline)
   (eval '(do
     (defn m13-tf-two [x y] (+ x y))
     (defn m13-tf-poly [x] (if (= x 0) x 1))

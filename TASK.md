@@ -172,11 +172,23 @@
 | [cleat-163](tasks/cleat-163-sigspec-ablation.md) | sigspec 整体消融与三档裁决（保留 / 只留编译期推导 / 删除） | M19 | 无（建议在 164 之后跑分） | 完成（2026-11-03：三组 56 × 5 本机同轮配对，1680 格干净；可声明项只有 earley x1.054、ntakl x1.057 两个默认成本，三组几何平均 x1.003 / x0.999 / x0.997，无 ≥5% 收益——裁决 (c) 整体删除，执行移交 cleat-170） |
 | [cleat-164](tasks/cleat-164-opt-switch-cleanup.md) | `CLEAT_NO_OPT` 精确匹配（修 accinline 误关 inline）、accinline 去留、开关清单 | M19 | 无 | 完成（2026-11-02：编译器 / 运行时精确分词，种子不动点；Core / Host / conformance / CTS / test-clojure 通过；Emit `tiered` 因 eval golden 行号回归暂留原子串读取，例外已记账；accinline 按保留裁决写入 README） |
 | [cleat-170](tasks/cleat-170-sigspec-removal.md) | 删除运行时 sigspec 体系（163 裁决 c） | M19 | cleat-163 | 进行中（2026-11-04：实现与门禁全过——删 944 行 C# + codegen 746 行 + driver 7 行与 4 个测试 / 语义文件，产品代码与种子零残留；环境变量 22→18、`CLEAT_NO_OPT` 26→24；cleat-104 的编译期 `typed` 入口保留、24~27 的运行时路径删除；Release 0 warning、Core 125/125、Host 291/291、conformance `--gate` OK、CTS / test-clojure baseline OK、selfhost 不动点 stage2==stage3、ilverify 通过；只重生成编译器种子、boot 种子逐字节未变；`slatex` 峰值 RSS −5.9% 且后台特化线程消失；本机 56×5 共 560 格全干净、几何平均 x0.9832、8 项可声明改善，本机口径的 3 项"回退"经 2×2 隔离实验定位为本机分层 JIT 抽签并在 111 上 9 轮复核推翻（`sum` x0.786 9/9 更快、`ntakl` x0.979、`triangl` x1.046 低于地板）；111 全表 56×5 跑动中，跑完转完成） |
-| [cleat-165](tasks/cleat-165-codegen-split.md) | codegen 拆分：infer / classes（rtspec 由 170 删除），种子逐字节不变 | M19 | cleat-158、cleat-170 | 未开始 |
+| [cleat-165](tasks/cleat-165-codegen-split.md) | codegen 拆分：infer / classes（rtspec 由 170 删除），种子逐字节不变 | M19 | cleat-158、cleat-170 | 取消（2026-11-03：由 M20 C# 编译器取代，L4 / L5 即拆分的目标形状，[30 §5](designs/30-csharp-compiler.md)） |
 | [cleat-166](tasks/cleat-166-spec-alpha-package.md) | clojure.spec.alpha 包（packages/spec.alpha） | M19 | 无 | 未开始 |
 | [cleat-167](tasks/cleat-167-core-async-package.md) | clojure.core.async 包（spike 选路线后落地） | M19 | 无 | 未开始 |
 | [cleat-168](tasks/cleat-168-jvm-compat-evaluation.md) | jvm-compat 可选垫片评估（408 行 `:host` 偏离分组） | M19 | 无 | 未开始 |
 | [cleat-169](tasks/cleat-169-m19-closeout.md) | M19 收口：README / CHANGELOG / 已知限制、全量门禁与 r7rs 复核 | M19 | cleat-158 ~ 168、cleat-170 | 未开始 |
+| [cleat-171](tasks/cleat-171-csharp-compiler-skeleton.md) | `Cleat.Compiler` 骨架、IR 节点与 Source Generator、校验器、打印 / 读入、`CLEAT_COMPILER` 开关 | M20 | 无 | 完成（2026-11-04：IR 29 种节点 + 生成器 + 校验器 + 打印 / 读入 + 管线；cleat.boot.inl 859 个子句逐字往返；`CLEAT_COMPILER=cs` 开关；程序集名 `Cleat.Compiler.CSharp` 避开编译器包同名；Core 125 / Host 291 通过） |
+| [cleat-172](tasks/cleat-172-csharp-analyzer.md) | C# 分析器：形式 → L0（宏展开、决议、特殊形式、分析期副作用、宿主重载选择）+ G1 L0 差分 | M20 | cleat-171 | 完成（2026-11-04：C# 分析器 src/Cleat.Compiler/Analyzer，CLEAT_COMPILER=cs 缺省使用、CLEAT_CS_ANALYZER=clj 借用旧路径；G1 差分在镜像 / 编译器 / 4 个包 / 21 个语义文件约 5000 个形式上 L0 0 差异；21 个语义文件输出相同；不含 Clojure 编译器包的 C# 镜像上可跑 REPL） |
+| [cleat-173](tasks/cleat-173-csharp-front-passes.md) | 前中端 pass：L0 → L3（LowerLoops、SimplifyLetrec、Cp0Lite、SimplifyLets、ConvertAssignments、UncoverFree） | M20 | cleat-172 | 完成（2026-11-04：8 个 pass 与 FrontEnd；tools/cs-diff.clj 在镜像 / 编译器 / 4 个包约 4500 个形式上七阶段 0 差异；26 个单元测试） |
+| [cleat-174](tasks/cleat-174-csharp-lowering-and-emit.md) | 基础下降与 ILGenerator 两阶段发射（L4 全 Obj、L5 类描述）：eval 路径跑通 | M20 | cleat-173 | 完成（2026-11-04：L5 模型、cg* 基础节点与局部变量清除、fn 类、ILGenerator 两阶段发射与 eval 装载；分析暂借 Clojure 分析器） |
+| [cleat-175](tasks/cleat-175-csharp-types-and-interop.md) | deftype / reify / definterface / proxy / gen-class、case、try、async、宿主互操作静态决议 | M20 | cleat-174 | 完成（2026-11-04：静态决议、deftype / reify / interface / proxy / gen-class、async；21 个语义文件逐字相同；Class/ValueBoundary 148/149，余 1 条属 176） |
+| [cleat-176](tasks/cleat-176-csharp-persisted-output.md) | 持久化：镜像 / 包 / `*compile-files*`、`.ifc` / `.inl`（格式兼容）、PDB、确定性 | M20 | cleat-175 | 完成（2026-11-04：镜像 / 包 / *compile-files* / 接口文件 / PDB；C# 编出的镜像 ilverify 通过、两次构建逐字节相同；172 完成后在其上跑 REPL / -e 已验） |
+| [cleat-177](tasks/cleat-177-csharp-functional-switchpoint.md) | 功能切换点：C# 编译器编镜像与全部包，G2 / G3 / G5 全过 | M20 | cleat-176 | 完成（2026-11-05：tools/build.cs cs-image 约 19 s 编出镜像、随附库与 4 个包到 src/boot-cs；G2 Core 125 / 125、Host 291 / 291，G3 6 个程序集 ilverify 过，G5 两次 14 个文件逐字节相同；编镜像 30 s → 6 s；r7rs 56 项 1 轮 cs/clj 几何平均 x0.954） |
+| [cleat-178](tasks/cleat-178-csharp-opt-calls.md) | 优化·调用：known、inline、loopinl、accinline、crossnstype | M20 | cleat-177 | 实现完成，性能门控待 181（2026-11-04：随 172 移植到 Analyzer/CallSites.cs，G1 逐字相同；G4 未跑） |
+| [cleat-179](tasks/cleat-179-csharp-opt-representation.md) | 优化·表示：InferTypes / ChooseRepresentation（infer、num、joinraw、loopweight、host、boxcache、boxdouble、charbox） | M20 | cleat-177 | 实现完成，G4 待 181（2026-11-04：Lower/InferTypes.cs、RawEmit.cs；21 个语义文件在默认与各 CLEAT_NO_OPT 单项下输出一致，函数类 IL 形状与 Clojure 编译器逐方法相同；聚焦配对与全表 1 轮冒烟已跑） |
+| [cleat-180](tasks/cleat-180-csharp-opt-speculation.md) | 优化·推测与分层：typed、loopspec、arrayspec、scalar、collapse、imagetier / tiered | M20 | cleat-179 | 实现完成，G4 待 181（2026-11-04：Lower/SpeculateLoops.cs、SpeculateEntries.cs、Tiering.cs，发射器补 TakeLoadsFor；包模式 3200 个方法 IL 逐字节相同；聚焦配对与全表 1 轮冒烟已跑） |
+| [cleat-181](tasks/cleat-181-csharp-compiler-default.md) | 默认切换到 C# 编译器：整体 56×5 性能门控、构建改用 C# 编译器 | M20 | cleat-178 ~ 180 | 完成（2026-11-05：缺省 CLEAT_COMPILER=cs；dotnet build 由 C# 编译器 no-boot 两步从源码编镜像，不再用种子；G4 111 x0.988 / 本机 x0.963，唯一可声明回退 mbrot x1.055 为环境效应（IL 相同）经用户裁决接受；Host 291 / 291；REPL 首提示符 1575 → 829 ms） |
+| [cleat-182](tasks/cleat-182-remove-clojure-compiler.md) | 删除 Clojure 编译器、种子与自举、Lcil；nanopass 移到 packages/；文档归档 | M20 | cleat-181 | 完成（2026-11-05：删除 src/clojure/cleat/compiler、src/Cleat.Emit、src/boot/seed 与 selfhost / clojure-seed / stage1 / compile-compiler；程序集改回 Cleat.Compiler；nanopass → packages/nanopass；自举测试换成 DeterminismTests，CI 种子守卫换成确定性守卫；全新克隆一步构建 15 秒、镜像逐字节相同；Core 114 / Compiler 49 / Host 286 全过，image-set --twice --ilverify 通过） |
 
 ## 里程碑
 
@@ -206,6 +218,7 @@
 | M17 口径与回退收口（2026-10-21 起，2026-10-22 完成） | cleat-151 ~ cleat-153 | 本机噪声地板标定 + 56 项三臂全量、M14 / M15 回退的 commit 级定位、调用点类型反馈（承接 147 第 2 / 3 条与 149 遗留的三项待办） |
 | M18 调用与对象路径落地（2026-10-22 起） | cleat-154 ~ cleat-157 | 把 M17 量化过的变长参数数组、闭包提升落地；sigspec 单项回退调优；调用点反馈原型。本批不新增优化开关，已证明有效即默认全面启用 |
 | M19 可用性与工程收口（2026-10-26 起） | cleat-158 ~ cleat-170 | 暂停性能主线：源位置与栈帧、启动（剖析 / R2R / 编译器延迟加载）、CI、sigspec 消融与删除、开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估（[29](designs/29-usability-and-engineering.md)） |
+| M20 C# 编译器（2026-11-03 起） | cleat-171 ~ cleat-182 | 编译器改用 C# 实现：小 pass、L0 ~ L5 逐层下降、ILGenerator 直接发射；并行建设 + 门控切换，先跑通再逐项补优化；删除自举、种子与 Lcil，nanopass 保留为用户库（[30](designs/30-csharp-compiler.md)） |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径

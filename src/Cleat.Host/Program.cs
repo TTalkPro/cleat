@@ -15,9 +15,9 @@ namespace Cleat.Host;
 /// 启动顺序：
 ///   1. 登记 cleat.kernel 的原语 → RT.Init；
 ///   2. 加载 Clojure 镜像 cleat.boot.dll（--boot，或 CLEAT_BOOT，或自动找 src/boot/）并设置 BootInterface.CurrentImageId，登记镜像旁的
-///      包程序集（编译器 cleat.compiler.dll、随附库、tools）；
-///   3. require 编译器的驱动 cleat.compiler.driver（镜像旁的包；自举时 CLEAT_COMPILER_NS 指定改名的工具编译器，从 -I 的源码加载），
-///      由它登记运行时钩子 eval / load-source / compile / macroexpand-1 与镜像、包的编译入口（cleat-090）；
+///      包程序集（随附库、tools）；
+///   3. 登记编译器（C#，程序集 Cleat.Compiler，designs/30）的惰性入口：第一次用到编译时加载，由它登记运行时钩子
+///      eval / load-source / compile / macroexpand-1 与镜像、包的编译入口（cleat-090 / 161）；
 ///   4. 按 clojure.main 的语义执行 -e / -i / -m / 脚本，否则 REPL。
 /// 主体在 512 MB 栈的线程上运行（分析器与编译器递归深）。
 /// </summary>
@@ -34,11 +34,12 @@ public static class Program
         public string[] ScriptArgs = Array.Empty<string>();
         public bool Help, Version;
         public string CompileBoot;     // --compile-boot out.dll：编译 Clojure 镜像（cleat-053）
+        public bool NoBoot;            // --no-boot：不加载镜像（cleat-181）
         public string BootOrder;       // --boot-order edn（缺省 out.dll 旁的 boot-order.edn）
         public string CompilePackage;  // --compile-package out.dll：编包程序集（cleat-067），其余参数是命名空间
         public string PackageName;     // --package 名字（缺省 dll 的文件名）
         public readonly List<string> PackageRoots = new List<string>();      // --root 源码根目录（缺省全部 -I）
-        public string TargetImage;     // --target-image 镜像.dll：包的镜像核对用它的 id（缺省正在运行的镜像；自举时为下一级镜像编编译器包，cleat-091）
+        public string TargetImage;     // --target-image 镜像.dll：包的镜像核对用它的 id（缺省正在运行的镜像；cleat-091 起，为另一个镜像编包）
         public readonly List<string> PackageNamespaces = new List<string>();
         public string Report;          // --report stdio|stderr：REPL / -e 的错误报告写到哪（clojure.main 的语义）
         public bool Debug;             // -g：调试优先（cleat-158），关跨 fn 内联，让每个 Clojure 函数保留物理栈帧
@@ -58,6 +59,7 @@ public static class Program
             switch (a)
             {
                 case "--boot" when i + 1 < args.Length: o.Boot = args[++i]; break;
+                case "--no-boot": o.NoBoot = true; break;   // 不加载镜像（cleat-181：C# 编译器从源码编镜像）
                 case "-I" when i + 1 < args.Length: o.IncludeDirs.Add(args[++i]); break;
                 case "--compile-boot" when i + 1 < args.Length: o.CompileBoot = args[++i]; break;
                 case "--boot-order" when i + 1 < args.Length: o.BootOrder = args[++i]; break;
@@ -118,12 +120,6 @@ public static class Program
     private static int MainBody(string[] args)
     {
         if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Host);     // 宿主入口与线程创建（cleat-159）
-        // cleat --rename-compiler-sources <cleat 目录> <输出目录>（cleat-091，构建用）：自举用的改名工具编译器的源码
-        if (args.Length == 3 && args[0] == "--rename-compiler-sources")
-        {
-            Cleat.Core.Compiler.DriverOps.RenameCompilerSources(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]));
-            return 0;
-        }
         Options o;
         try { o = Parse(args); }
         catch (ArgumentException e)
@@ -134,7 +130,7 @@ public static class Program
         if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Cli);      // 命令行解析（cleat-159）
         if (o.Help) return Usage();
         if (o.Version) { Console.WriteLine(CoreInfo.Banner); return 0; }
-        // -g 必须在编译器命名空间初始化前生效：analyzer 的 inline-calls? 初始值读这个变量
+        // -g 必须在编译器加载前生效：FormAnalyzer.InlineCalls 的初始值读这个变量
         if (o.Debug) Environment.SetEnvironmentVariable("CLEAT_NO_INLINE", "1");
         try
         {
@@ -167,13 +163,10 @@ public static class Program
     /// <summary>运行着的镜像（Start 之后；没有 Clojure 镜像时为 null）。tools.build 的 uber 据此复制运行时（cleat-066）。启动逻辑在 <see cref="Startup"/>。</summary>
     public static string ClojureBootPath => Startup.ClojureBootPath;
 
-    /// <summary>编译器从镜像旁的包程序集加载（否则从 -I 的源码加载：自举时的改名工具编译器）。</summary>
-    public static bool CompilerFromPackage => Startup.CompilerFromPackage;
-
     /// <summary>初始化运行时、加载镜像、加载编译器并登记钩子（<see cref="Startup.Start"/>）；返回 Clojure 镜像路径（没有时 null）。</summary>
     public static string Start(Options o)
     {
-        var so = new StartupOptions { Boot = o.Boot, CompilePackage = o.CompilePackage };
+        var so = new StartupOptions { Boot = o.Boot, CompilePackage = o.CompilePackage, NoBoot = o.NoBoot };
         so.IncludeDirs.AddRange(o.IncludeDirs);
         return Startup.Start(so);
     }
@@ -270,10 +263,10 @@ public static class Program
         return 0;
     }
 
-    /// <summary>编译器驱动登记的编译入口（install-hooks!）；没有镜像或编译器时报错。
+    /// <summary>编译器登记的编译入口（CompilerHooks.Install）；没有编译器时报错。
     /// 调用前先 <see cref="Startup.EnsureCompiler"/>（cleat-161：编译器现在可能还没加载）。</summary>
     private static IFn CompileHook(IFn hook) =>
-      hook ?? throw new InvalidOperationException("the compiler is not loaded (no Clojure boot image with cleat.compiler.dll beside it, or the driver is not on the load path)");
+      hook ?? throw new InvalidOperationException("the compiler is not loaded (assembly Cleat.Compiler is not available to this host)");
 
     /// <summary>
     /// 编包程序集（cleat-067，designs/17 §2.2）：依次 require 命令行上的命名空间，--root（缺省全部 -I）下被加载到的源码文件编成一个

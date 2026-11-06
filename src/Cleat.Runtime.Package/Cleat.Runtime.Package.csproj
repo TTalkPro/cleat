@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- cleat 运行时的 NuGet 包 Cleat.Runtime（cleat-067，designs/17 §3）：没有自己的代码，只打包（项目因此叫 Cleat.Runtime.Package；运行时代码在 Cleat.Core）。
-       lib/net10.0/：Cleat.Core、Cleat.Hosting 与发射器 cleat-emit 程序集（不含命令行宿主 cleat）；
-       runtime/：Clojure 镜像（与接口文件、内联体）、编译器包 cleat.compiler.dll、随附库的包程序集，经
+       lib/net10.0/：Cleat.Core、Cleat.Hosting 与编译器 Cleat.Compiler 程序集（不含命令行宿主 cleat）；
+       runtime/：Clojure 镜像（与接口文件、内联体）、随附库的包程序集，经
        buildTransitive/Cleat.Runtime.targets 复制到引用方的输出目录（运行时按 AppContext.BaseDirectory 找到它们）。
        先 dotnet build（生成镜像）与 tools/build.cs compile-libs；tools/build.cs pack 按这个顺序做。 -->
   <PropertyGroup>
@@ -16,10 +16,14 @@
     <!-- 程序集放在 lib/ 而不是作为依赖包；runtime/ 不是约定目录 -->
     <NoWarn>$(NoWarn);NU5100;NU5128;NU5118</NoWarn>
     <BootDir>$(MSBuildThisFileDirectory)..\boot\</BootDir>
+    <!-- 打进包的镜像目录（cleat-177）：缺省 src/boot/；tools/build.cs pack 按 CLEAT_BOOT 传（如 image-set 编的 src/boot-cs/） -->
+    <CleatPackBootDir Condition="'$(CleatPackBootDir)' == ''">$(BootDir)</CleatPackBootDir>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Cleat.Hosting\Cleat.Hosting.csproj" PrivateAssets="all" />
+    <!-- 编译器（designs/30）：Startup 按程序集名 Cleat.Compiler 装载，嵌入的应用也要有（Cleat.Hosting 已引用，这里写明） -->
+    <ProjectReference Include="..\Cleat.Compiler\Cleat.Compiler.csproj" PrivateAssets="all" />
     <!-- Cleat.Core 的 NuGet 依赖要写进包的依赖 -->
     <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="10.0.0" />
   </ItemGroup>
@@ -33,7 +37,7 @@
 
   <ItemGroup>
     <None Include="buildTransitive\Cleat.Runtime.targets" Pack="true" PackagePath="buildTransitive\" />
-    <None Include="$(BootDir)cleat.boot.dll;$(BootDir)cleat.boot.pdb;$(BootDir)cleat.boot.ifc;$(BootDir)cleat.boot.inl;$(BootDir)cleat.compiler.dll;$(BootDir)cleat.compiler.pdb;$(BootDir)Cleat.Clojure.Libs.dll;$(BootDir)Cleat.Clojure.Libs.pdb"
+    <None Include="$(CleatPackBootDir)cleat.boot.dll;$(CleatPackBootDir)cleat.boot.pdb;$(CleatPackBootDir)cleat.boot.ifc;$(CleatPackBootDir)cleat.boot.inl;$(CleatPackBootDir)Cleat.Clojure.Libs.dll;$(CleatPackBootDir)Cleat.Clojure.Libs.pdb"
           Pack="true" PackagePath="runtime\" Visible="false" />
   </ItemGroup>
 </Project>

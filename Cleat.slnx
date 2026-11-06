@@ -1,11 +1,13 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Cleat.Compiler.Generators/Cleat.Compiler.Generators.csproj" />
+    <Project Path="src/Cleat.Compiler/Cleat.Compiler.csproj" />
     <Project Path="src/Cleat.Core/Cleat.Core.csproj" />
-    <Project Path="src/Cleat.Emit/Cleat.Emit.csproj" />
     <Project Path="src/Cleat.Host/Cleat.Host.csproj" />
     <Project Path="src/Cleat.Hosting/Cleat.Hosting.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Cleat.Compiler.Tests/Cleat.Compiler.Tests.csproj" />
     <Project Path="tests/Cleat.Core.Tests/Cleat.Core.Tests.csproj" />
     <Project Path="tests/Cleat.Host.Tests/Cleat.Host.Tests.csproj" />
   </Folder>

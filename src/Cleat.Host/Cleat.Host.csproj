@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- 命令行宿主与 REPL；种子 → stage1 → Clojure 镜像 → 编译器包的生成目标（designs/08 §0） -->
+  <!-- 命令行宿主与 REPL；Clojure 镜像的生成目标（cleat-181 / 182：编译器从源码两步编出，没有种子） -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Cleat.Host</RootNamespace>
@@ -9,11 +9,12 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Cleat.Core\Cleat.Core.csproj" />
-    <ProjectReference Include="..\Cleat.Emit\Cleat.Emit.csproj" />
+    <!-- 编译器（C#，designs/30）：Startup.EnsureCompiler 按程序集名 Cleat.Compiler 加载 -->
+    <ProjectReference Include="..\Cleat.Compiler\Cleat.Compiler.csproj" />
   </ItemGroup>
 
   <!--
-    dotnet tool 包 Cleat.Cli（cleat-071；tools/build.cs pack 用 -p:PackAsTool=true 打）：命令 cleat。镜像、编译器包、随附库与
+    dotnet tool 包 Cleat.Cli（cleat-071；tools/build.cs pack 用 -p:PackAsTool=true 打）：命令 cleat。镜像、随附库与
     tools.build / tools.namespace 的包程序集（src/boot/tools/，tools/build.cs pack 先编好）和宿主在同一目录，宿主按
     AppContext.BaseDirectory 找到它们。
   -->
@@ -23,11 +24,13 @@
     <Authors>cleat</Authors>
     <Description>cleat, Clojure on .NET: the command line (REPL, scripts, -m), with -M:alias and -T:build for projects (cleat.edn: NuGet deps via nuget.config, BaGetter included; tools.build bundled).</Description>
     <PackageLicenseExpression>EPL-1.0</PackageLicenseExpression>
+    <!-- 打进包的镜像目录（cleat-177）：缺省 src/boot/；tools/build.cs pack 按 CLEAT_BOOT 传（如 image-set 编的 src/boot-cs/） -->
+    <CleatPackBootDir Condition="'$(CleatPackBootDir)' == ''">$(MSBuildThisFileDirectory)..\boot\</CleatPackBootDir>
   </PropertyGroup>
   <ItemGroup Condition="'$(PackAsTool)' == 'true'">
-    <None Include="$(MSBuildThisFileDirectory)..\boot\cleat.boot.dll;$(MSBuildThisFileDirectory)..\boot\cleat.boot.pdb;$(MSBuildThisFileDirectory)..\boot\cleat.boot.ifc;$(MSBuildThisFileDirectory)..\boot\cleat.boot.inl;$(MSBuildThisFileDirectory)..\boot\Cleat.Clojure.Libs.dll;$(MSBuildThisFileDirectory)..\boot\Cleat.Clojure.Libs.pdb;$(MSBuildThisFileDirectory)..\boot\cleat.compiler.dll;$(MSBuildThisFileDirectory)..\boot\cleat.compiler.pdb"
+    <None Include="$(CleatPackBootDir)cleat.boot.dll;$(CleatPackBootDir)cleat.boot.pdb;$(CleatPackBootDir)cleat.boot.ifc;$(CleatPackBootDir)cleat.boot.inl;$(CleatPackBootDir)Cleat.Clojure.Libs.dll;$(CleatPackBootDir)Cleat.Clojure.Libs.pdb"
           Pack="true" PackagePath="tools/$(TargetFramework)/any/" Visible="false" />
-    <None Include="$(MSBuildThisFileDirectory)..\boot\tools\*.dll;$(MSBuildThisFileDirectory)..\boot\tools\*.pdb" Pack="true" PackagePath="tools/$(TargetFramework)/any/tools/" Visible="false" />
+    <None Include="$(CleatPackBootDir)tools\*.dll;$(CleatPackBootDir)tools\*.pdb" Pack="true" PackagePath="tools/$(TargetFramework)/any/tools/" Visible="false" />
   </ItemGroup>
 
   <!-- 行编辑器的词法函数（IsComplete 等）由 Host.Tests 单元测试 -->
@@ -35,7 +38,7 @@
     <InternalsVisibleTo Include="Cleat.Host.Tests" />
   </ItemGroup>
 
-  <!-- 镜像与编译器包的生成（designs/08 §0）：dotnet build -p:BuildBootImage=false 只编译 C# -->
+  <!-- 镜像的生成：dotnet build -p:BuildBootImage=false 只编译 C# -->
   <PropertyGroup>
     <BuildBootImage Condition="'$(BuildBootImage)' == ''">true</BuildBootImage>
     <BootDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\boot'))</BootDir>
@@ -44,63 +47,30 @@
   </PropertyGroup>
 
   <!--
-    Clojure 编译器的种子（cleat-091，designs/19 D7）：src/boot/seed/ 是自举到不动点的镜像与编译器包的 Lcil 文本（gzip，信任根）。
-    cleat-emit 把它发射成 stage1（obj/seed-stage1/cleat.boot.dll 与 cleat.compiler.dll）。
-    种子用 tools/build.cs clojure-seed 重新生成（自举两级、验证不动点）。
-  -->
-  <PropertyGroup>
-    <ClojureSeedDir>$(BootDir)\seed</ClojureSeedDir>
-    <SeedStage1Dir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(BaseIntermediateOutputPath)seed-stage1'))</SeedStage1Dir>
-  </PropertyGroup>
-  <Target Name="EmitSeedStage1" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(BuildBootImage)' == 'true'"
-          Inputs="$(ClojureSeedDir)\cleat.boot.lcil.gz;$(ClojureSeedDir)\cleat.compiler.lcil.gz;$(OutDir)Cleat.Core.dll;$(OutDir)cleat-emit.dll"
-          Outputs="$(SeedStage1Dir)\cleat.compiler.dll">
-    <Message Importance="high" Text="Cleat: emitting stage1 from the seed -> $(SeedStage1Dir)" />
-    <RemoveDir Directories="$(SeedStage1Dir)" />
-    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(OutDir)cleat-emit.dll&quot; --seed &quot;$(ClojureSeedDir)&quot; -o &quot;$(SeedStage1Dir)&quot; -r &quot;$(OutDir.TrimEnd('\').TrimEnd('/'))&quot;" />
-  </Target>
-
-  <!--
-    Clojure 镜像（cleat-053；designs/08 §3 第二段；cleat-091 起由 Clojure 编译器编）：宿主加载 stage1 的镜像与编译器，按 src/boot/boot-order.edn
-    从 src/clojure 源码加载 cleat.kernel、clojure.core 及其余 boot 命名空间（每个形式展开、编译、求值），把全部顶层形式编成一个
-    程序集 src/boot/cleat.boot.{dll,lcil,ifc,inl}。宿主启动时自动加载它（Loader.LoadBootImage）。
-    按输入增量：Clojure 源码、boot-order.edn、stage1、宿主及其依赖程序集（约 30 秒）。-p:BuildBootImage=false 跳过。
+    Clojure 镜像（cleat-053；cleat-181 起由 C# 编译器编，designs/30 D8）：两步——
+      1. 宿主不加载任何镜像（命令行选项 no-boot），编译器按 src/boot/boot-order.edn 从 src/clojure 源码逐个加载 cleat.kernel、clojure.core
+         及其余 boot 命名空间，编成 obj/cs-stage1/cleat.boot.dll（这一遍 core.clj 早期的几处 :inline 用不了：inliner 要的 concat 还没定义）；
+      2. 在 stage1 上再编一遍成 src/boot/cleat.boot.{dll,pdb,ifc,inl}。编译器的输出与起步镜像无关（只要起步镜像是完整的），
+         所以第二遍就是最终结果：从任何完整镜像起步都逐字节相同，两台机器、两个 .NET 补丁版本也相同。
+    没有种子与自举（cleat-091 ~ 181 的 stage1 来自 Clojure 编译器的文本种子 src/boot/seed，cleat-182 删除）。按输入增量（约 12 秒）。
+    -p:BuildBootImage=false 跳过。
   -->
   <PropertyGroup>
     <ClojureBootImage>$(BootDir)\cleat.boot.dll</ClojureBootImage>
     <ClojureSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\clojure'))</ClojureSourceDir>
+    <CsStage1Dir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(BaseIntermediateOutputPath)cs-stage1'))</CsStage1Dir>
   </PropertyGroup>
   <ItemGroup>
-    <ClojureBootImageInput Include="$(ClojureSourceDir)\**\*.clj;$(ClojureSourceDir)\**\*.cljc;$(BootDir)\boot-order.edn"
-                           Exclude="$(ClojureSourceDir)\cleat\nanopass.clj;$(ClojureSourceDir)\cleat\nanopass\**;$(ClojureSourceDir)\cleat\compiler\**" />
+    <ClojureBootImageInput Include="$(ClojureSourceDir)\**\*.clj;$(ClojureSourceDir)\**\*.cljc;$(BootDir)\boot-order.edn" />
   </ItemGroup>
-  <Target Name="GenerateBootImage" AfterTargets="EmitSeedStage1" Condition="'$(BuildBootImage)' == 'true'"
-          Inputs="@(ClojureBootImageInput);$(SeedStage1Dir)\cleat.compiler.dll;$(TargetPath);$(OutDir)Cleat.Core.dll;$(OutDir)cleat-emit.dll"
+  <Target Name="GenerateBootImage" AfterTargets="CopyFilesToOutputDirectory" Condition="'$(BuildBootImage)' == 'true'"
+          Inputs="@(ClojureBootImageInput);$(TargetPath);$(OutDir)Cleat.Core.dll;$(OutDir)Cleat.Compiler.dll"
           Outputs="$(ClojureBootImage)">
-    <Message Importance="high" Text="Cleat: compiling the Clojure boot image from src/clojure (about 30 seconds) -> $(ClojureBootImage)" />
-    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --boot &quot;$(SeedStage1Dir)\cleat.boot.dll&quot; -I &quot;$(ClojureSourceDir)&quot; --compile-boot &quot;$(ClojureBootImage)&quot; --boot-order &quot;$(BootDir)\boot-order.edn&quot;" />
+    <Message Importance="high" Text="Cleat: compiling the Clojure boot image from src/clojure with the C# compiler (about 12 seconds) -> $(ClojureBootImage)" />
+    <RemoveDir Directories="$(CsStage1Dir)" />
+    <MakeDir Directories="$(CsStage1Dir)" />
+    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --no-boot -I &quot;$(ClojureSourceDir)&quot; --compile-boot &quot;$(CsStage1Dir)/cleat.boot.dll&quot; --boot-order &quot;$(BootDir)/boot-order.edn&quot;" />
+    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --boot &quot;$(CsStage1Dir)/cleat.boot.dll&quot; -I &quot;$(ClojureSourceDir)&quot; --compile-boot &quot;$(ClojureBootImage)&quot; --boot-order &quot;$(BootDir)/boot-order.edn&quot;" />
   </Target>
 
-  <!--
-    Clojure 编译器的包程序集（cleat-085；designs/19 D6；cleat-091 起由 Clojure 编译器编）：正在运行的编译器不能在同一进程里重新加载
-    自己的源码编自己，所以先把源码改名成 cleat.compiler0.* 的工具编译器（stage1 编，以新镜像为目标），再由它在新镜像上编
-    src/clojure/cleat/nanopass*.clj 与 src/clojure/cleat/compiler/ 成 src/boot/cleat.compiler.dll（入口 cleat.compiler.all）。
-    宿主登记进包索引，第一次 require 时才加载。按输入增量（约 60 秒）。
-  -->
-  <PropertyGroup>
-    <CompilerPackage>$(BootDir)\cleat.compiler.dll</CompilerPackage>
-    <CompilerToolDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)$(BaseIntermediateOutputPath)compiler-tool'))</CompilerToolDir>
-  </PropertyGroup>
-  <ItemGroup>
-    <CompilerPackageInput Include="$(ClojureSourceDir)\cleat\nanopass.clj;$(ClojureSourceDir)\cleat\nanopass\**\*.clj;$(ClojureSourceDir)\cleat\compiler\**\*.clj" />
-  </ItemGroup>
-  <Target Name="GenerateCompilerPackage" AfterTargets="GenerateBootImage" Condition="'$(BuildBootImage)' == 'true'"
-          Inputs="@(CompilerPackageInput);$(ClojureBootImage);$(SeedStage1Dir)\cleat.compiler.dll;$(TargetPath);$(OutDir)Cleat.Core.dll;$(OutDir)cleat-emit.dll"
-          Outputs="$(CompilerPackage)">
-    <Message Importance="high" Text="Cleat: compiling the Clojure compiler package (about 60 seconds) -> $(CompilerPackage)" />
-    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --rename-compiler-sources &quot;$(ClojureSourceDir)/cleat&quot; &quot;$(CompilerToolDir)/src/cleat&quot;" />
-    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --boot &quot;$(SeedStage1Dir)/cleat.boot.dll&quot; -I &quot;$(CompilerToolDir)/src&quot; -I &quot;$(ClojureSourceDir)&quot; --compile-package &quot;$(CompilerToolDir)/cleat.compiler0.dll&quot; --package cleat.compiler0 --root &quot;$(CompilerToolDir)/src/cleat/nanopass0.clj&quot; --root &quot;$(CompilerToolDir)/src/cleat/nanopass0&quot; --root &quot;$(CompilerToolDir)/src/cleat/compiler0&quot; --target-image &quot;$(ClojureBootImage)&quot; cleat.compiler0.all" />
-    <Exec Command="&quot;$(DotnetHost)&quot; &quot;$(TargetPath)&quot; --boot &quot;$(ClojureBootImage)&quot; -I &quot;$(CompilerToolDir)&quot; -I &quot;$(ClojureSourceDir)&quot; --compile-package &quot;$(CompilerPackage)&quot; --package cleat.compiler --root &quot;$(ClojureSourceDir)/cleat/nanopass.clj&quot; --root &quot;$(ClojureSourceDir)/cleat/nanopass&quot; --root &quot;$(ClojureSourceDir)/cleat/compiler&quot; cleat.compiler.all"
-          EnvironmentVariables="CLEAT_COMPILER_NS=cleat.compiler0" />
-  </Target>
 </Project>

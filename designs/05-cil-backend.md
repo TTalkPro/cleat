@@ -1,5 +1,8 @@
 # 05 CIL 后端：Lcil 与发射器 Cleat.Emit
 
+> **历史（2026-11-05，cleat-182）**：本文的文本 CIL 格式与发射器 `Cleat.Emit` 已删除；C# 编译器用 ILGenerator 直接发射、PersistedAssemblyBuilder 持久化，
+> 见 [30](30-csharp-compiler.md) §2。常量 fasl 的格式（§3）、加载约定（§6：CleatModule / CleatPackage / CleatNamespace 特性）与确定性 MVID 仍然有效。
+
 > 继承 IronScheme `designs/04-lcil-and-emitter.md` 的全部设计（文本格式、校验、常量 fasl、持久化 / 内存两种模式、确定性回填、加载约定），只记录差异与扩展。IronScheme 在 .NET 10 上验证过的结论（`PersistedAssemblyBuilder`、内存程序集分块、MVID 回填）直接采用。
 
 ## 1. 继承项

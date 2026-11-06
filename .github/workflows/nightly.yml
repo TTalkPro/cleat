@@ -29,8 +29,8 @@ jobs:
       - name: Build (Release)
         run: dotnet build Cleat.slnx -c Release -v quiet -nologo
 
-      - name: Test Host (Category=Bootstrap|Conformance)
-        run: dotnet test tests/Cleat.Host.Tests -c Release -v quiet -nologo --filter "Category=Bootstrap|Category=Conformance" --logger trx
+      - name: Test Host (Category=Determinism|Conformance)
+        run: dotnet test tests/Cleat.Host.Tests -c Release -v quiet -nologo --filter "Category=Determinism|Category=Conformance" --logger trx
 
       - name: Conformance gate
         run: dotnet run tools/build.cs -- conformance --run --gate --report tests/conformance/cleat-report.edn
@@ -44,8 +44,8 @@ jobs:
       - name: Install ilverify
         run: dotnet tool install -g dotnet-ilverify
 
-      - name: ilverify boot / compiler
-        run: dotnet run tools/build.cs -- ilverify src/boot/cleat.boot.dll src/boot/cleat.compiler.dll
+      - name: ilverify (G3) and determinism of the whole set (G5)
+        run: dotnet run tools/build.cs -- image-set --twice --ilverify
 
       - name: Upload failure artifacts
         if: failure()

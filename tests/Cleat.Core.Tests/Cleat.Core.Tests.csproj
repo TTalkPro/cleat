@@ -10,7 +10,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Cleat.Core\Cleat.Core.csproj" />
-    <ProjectReference Include="..\..\src\Cleat.Emit\Cleat.Emit.csproj" />
     <ProjectReference Include="..\..\src\Cleat.Host\Cleat.Host.csproj" />
   </ItemGroup>
 </Project>

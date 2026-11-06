@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using Cleat.Core.Runtime;
-using Cleat.Emit;
 using clojure.lang;
 using NUnit.Framework;
 
@@ -126,26 +125,17 @@ public class LoaderTests
         Assert.That((loads, compiles), Is.EqualTo((1, 1)));
     }
 
-    private static string ModuleLcil(string asmName, string entryType) => $@"
-(lcil 1
-  (assembly ""{asmName}"" (entry ""{entryType}"" ""Initialize""))
-  (type ""{entryType}"" (attrs abstract sealed)
-    (method ""Initialize"" (attrs static) (params) (ret ""System.Object"")
-      (body (ldstr ""from-dll"") (call ""Cleat.Core.Tests.LoaderProbe"" ""Hit"" (""System.String"") ""System.Void"")
-            (ldstr ""module-value"") (ret)))))";
+    private static void SaveModule(string path, string asmName, string entryType) =>
+        TestAssemblies.Save(path, asmName, entryType, [new("Initialize", TestAssemblies.HitThenReturn("from-dll", "module-value"))],
+                            TestAssemblies.Attribute<CleatModuleAttribute>(entryType, "Initialize"));
 
     // cleat-067：包程序集——Initialize 只跑一次，每个文件一个入口，CleatNamespace 特性作索引
-    private static string PackageLcil(string asmName, string key) => $@"
-(lcil 1
-  (assembly ""{asmName}"" (entry ""#Module"" ""Initialize"")
-    (attribute ""Cleat.Core.CleatPackageAttribute"" ""{asmName}"")
-    (attribute ""Cleat.Core.CleatNamespaceAttribute"" ""{key}"" ""#Module"" ""Load0""))
-  (type ""#Module"" (attrs abstract sealed)
-    (method ""Initialize"" (attrs static) (params) (ret ""System.Object"")
-      (body (ldstr ""init"") (call ""Cleat.Core.Tests.LoaderProbe"" ""Hit"" (""System.String"") ""System.Void"") (ldnull) (ret)))
-    (method ""Load0"" (attrs static) (params) (ret ""System.Object"")
-      (body (ldstr ""from-package"") (call ""Cleat.Core.Tests.LoaderProbe"" ""Hit"" (""System.String"") ""System.Void"")
-            (ldstr ""module-value"") (ret)))))";
+    private static void SavePackage(string path, string asmName, string key) =>
+        TestAssemblies.Save(path, asmName, "#Module",
+                            [new("Initialize", TestAssemblies.HitThenReturn("init", null)), new("Load0", TestAssemblies.HitThenReturn("from-package", "module-value"))],
+                            TestAssemblies.Attribute<CleatModuleAttribute>("#Module", "Initialize"),
+                            TestAssemblies.Attribute<CleatPackageAttribute>(asmName),
+                            TestAssemblies.Attribute<CleatNamespaceAttribute>(key, "#Module", "Load0"));
 
     [Test]
     public void PackageAssemblyIndexWinsOverSourceAndRunsTheEntry()
@@ -153,7 +143,7 @@ public class LoaderTests
         Directory.CreateDirectory(Path.Combine(_dir, "pkgtest"));
         File.WriteAllText(Path.Combine(_dir, "pkgtest", "a.clj"), "(ns pkgtest.a)");
         string dll = Path.Combine(_dir, "PkgTest.dll");
-        LcilEmitter.Save(PackageLcil("PkgTest", "pkgtest/a"), "pkgtest.lcil", dll);
+        SavePackage(dll, "PkgTest", "pkgtest/a");
         int hookCalls = 0;
         RuntimeHooks.LoadSource = (r, p, n) => { hookCalls++; return null; };
 
@@ -183,14 +173,13 @@ public class LoaderTests
     {
         string dll = Path.Combine(_dir, "x.y.clj.dll");
         // a different assembly name: the default AssemblyLoadContext refuses a second "x.y.clj"
-        LcilEmitter.Save(ModuleLcil("x.y.mem.clj", "MemEntry"), "x.y.lcil", dll);
+        SaveModule(dll, "x.y.mem.clj", "MemEntry");
         Assert.That(Loader.LoadModule(dll, true), Is.EqualTo("module-value"));
         Assert.That(Loader.FindType("MemEntry").Assembly.GetName().Name, Is.EqualTo("x.y.mem.clj"));
 
-        var noEntry = LcilEmitter.EmitInMemory(@"(lcil 1 (assembly ""no-entry"") (type ""T""))", "no-entry.lcil");
+        var noEntry = TestAssemblies.InMemory("no-entry", "T", []);
         var e = Assert.Throws<InvalidOperationException>(() => Loader.Run(noEntry));
         Assert.That(e.Message, Does.Contain("[Cleat.Core.CleatModule]"));
-        // (a dangling entry type cannot be produced: the emitter checks the (entry …) clause itself)
         e = Assert.Throws<InvalidOperationException>(() => Loader.Run(typeof(LoaderTests).Assembly));
         Assert.That(e.Message, Does.Contain("Cleat.Core.Tests"));
         Assert.Throws<FileNotFoundException>(() => Loader.LoadModule(Path.Combine(_dir, "missing.dll"), false));

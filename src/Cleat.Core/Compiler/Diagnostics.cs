@@ -10,7 +10,7 @@ namespace Cleat.Core.Compiler;
 
 /// <summary>
 /// Clojure 风格的诊断（cleat-055 的诊断边界）：读 / 执行错误的源位置记录、错误文本（clojure.main/ex-str）、过滤过的栈。
-/// cleat-082 从元层的 Driver 搬来，编译驱动（cleat.compiler.driver）用。
+/// cleat-082 从元层的 Driver 搬来，编译驱动用。
 /// </summary>
 public static class Diagnostics
 {
@@ -257,7 +257,7 @@ public static class Diagnostics
     };
 
     /// <summary>
-    /// 过滤过的栈（CLEAT_TRACE_ERRORS=clojure）：去掉编译器与驱动（cleat.compiler.*、DriverOps）、单元入口（#Module$）与反射调用的帧，
+    /// 过滤过的栈（CLEAT_TRACE_ERRORS=clojure）：去掉编译器与驱动（Cleat.Compiler.*、DriverOps）、单元入口（#Module$）与反射调用的帧，
     /// 留下用户代码的帧。
     /// </summary>
     public static string ClojureStackTrace(Exception e)
@@ -300,8 +300,8 @@ public static class Diagnostics
         if (t == null) return false;
         string n = t.FullName ?? t.Name;
         if (n.StartsWith("#Module", StringComparison.Ordinal)) return false;   // 单元与单元入口（顶层形式的执行）
-        // 编译器与驱动（cleat-090）不算用户的帧
-        if (n.StartsWith("cleat.compiler.", StringComparison.Ordinal) || n.StartsWith("cleat.nanopass.", StringComparison.Ordinal)
+        // 编译器与驱动（Cleat.Compiler.*，designs/30）不算用户的帧
+        if (n.StartsWith("Cleat.Compiler.", StringComparison.Ordinal)
             || n.StartsWith("Cleat.Core.Compiler.DriverOps", StringComparison.Ordinal))
             return false;
         if (n.StartsWith("System.Reflection.", StringComparison.Ordinal)

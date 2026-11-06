@@ -34,7 +34,7 @@ public static class PackageIndex
 
     private static readonly HashSet<string> RuntimeAssemblies = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Cleat.Core.dll", "Cleat.Hosting.dll", "cleat.dll", "cleat-emit.dll", "cleat.boot.dll",
+        "Cleat.Core.dll", "Cleat.Hosting.dll", "Cleat.Compiler.dll", "cleat.dll", "cleat.boot.dll",
     };
 
     private static readonly ConcurrentDictionary<string, Entry> s_index = new(StringComparer.Ordinal);

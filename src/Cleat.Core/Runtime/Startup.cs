@@ -17,18 +17,22 @@ public sealed class StartupOptions
 
     /// <summary>正在编的包程序集（--compile-package）：它不登记，否则 require 从旧包加载。</summary>
     public string CompilePackage { get; set; }
+
+    /// <summary>
+    /// 不加载任何镜像（--no-boot，cleat-181）：编译器（C#，不需要镜像，designs/30）从源码编镜像用——干净的检出里没有镜像，
+    /// 也没有种子（cleat-182 删除）。
+    /// </summary>
+    public bool NoBoot { get; set; }
 }
 
 /// <summary>
 /// 运行时的启动（原 Cleat.Host.Program.Start，下沉到这里让命令行宿主 cleat 与嵌入 API Cleat.Hosting 走同一条路而互不引用）：
 ///   1. 登记 cleat.kernel 的原语 → RT.Init；
 ///   2. 加载 Clojure 镜像 cleat.boot.dll（--boot，或 CLEAT_BOOT，或自动找 src/boot/）并设置 BootInterface.CurrentImageId，登记镜像旁的
-///      包程序集（编译器 cleat.compiler.dll、随附库、tools）；
-///   3. 编译器（cleat-090 / 091，延迟加载 cleat-161）：驱动 cleat.compiler.driver（镜像旁的包；自举时 CLEAT_COMPILER_NS
-///      指定改名的工具编译器，从 -I 的源码加载）登记运行时钩子 eval / load-source / compile / macroexpand-1 与镜像、包的
-///      编译入口。Start **不再无条件加载它**——只登记 <see cref="EnsureCompiler"/> 作为惰性入口，第一次真正用到编译时
-///      （读上面四个钩子、<see cref="EvalForm"/> 的非平凡形式）才加载。
-///      例外：自举的改名工具编译器（CLEAT_COMPILER_NS != cleat.compiler）保持现状，仍然 eager。
+///      包程序集（随附库、tools）；
+///   3. 编译器（C#，程序集 Cleat.Compiler，designs/30；延迟加载 cleat-161）：登记运行时钩子 eval / load-source / compile /
+///      macroexpand-1 与镜像、包的编译入口。Start **不无条件加载它**——只登记 <see cref="EnsureCompiler"/> 作为惰性入口，
+///      第一次真正用到编译时（读上面四个钩子、<see cref="EvalForm"/> 的非平凡形式）才加载。没有镜像（--no-boot）时也可用。
 /// 另有 <see cref="ReferClojureCore"/>（user 对 clojure.core 的 refer）与 <see cref="EvalReader"/>（经 <see cref="EvalForm"/> 逐形式求值）。
 /// </summary>
 public static class Startup
@@ -40,18 +44,29 @@ public static class Startup
     /// 没加载时是 0）；CLEAT_TIME 设置时写到标准错误。</summary>
     public static long ClojureImageMs, CompilerMs;
 
-    /// <summary>编译器从镜像旁的包程序集加载（否则从 -I 的源码加载：自举时的改名工具编译器）。</summary>
-    public static bool CompilerFromPackage;
+    /// <summary>启动报告里编译器的来源（cleat-177 起区分 Clojure / C# 编译器；cleat-182 起只有 C# 的）。</summary>
+    public const string CompilerKind = "cs";
 
-    /// <summary>Clojure 编译器的命名空间前缀（CLEAT_COMPILER_NS，缺省 cleat.compiler；驱动是 前缀.driver）。</summary>
-    private static string CompilerNs => Environment.GetEnvironmentVariable("CLEAT_COMPILER_NS") is string ns && ns != "" ? ns : "cleat.compiler";
+    /// <summary>加载编译器（项目与程序集 Cleat.Compiler；宿主引用它，Cleat.Core 不引用，按名字找）并登记钩子。</summary>
+    private static void InstallCompiler()
+    {
+        var t = Type.GetType("Cleat.Compiler.CompilerHooks, Cleat.Compiler", throwOnError: false)
+            ?? throw new InvalidOperationException("assembly Cleat.Compiler is not available to this host (designs/30)");
+        var install = t.GetMethod("Install", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("Cleat.Compiler.CompilerHooks.Install not found");
+        try { install.Invoke(null, null); }
+        catch (System.Reflection.TargetInvocationException e) when (e.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+        }
+    }
 
     // ---- 编译器的延迟加载（cleat-161，designs/29 §3.3）----
 
     /// <summary>编译器已加载（钩子已登记）。volatile：惰性入口外部也读它。</summary>
     private static volatile bool s_compilerLoaded;
 
-    /// <summary>这次启动没有可用的编译器（没有镜像，或 clojure.core/require 未绑定）：EnsureCompiler 之后零成本返回。</summary>
+    /// <summary>这次启动没有可用的编译器（没跑过 Start）：EnsureCompiler 之后零成本返回。</summary>
     private static bool s_compilerUnavailable;
 
     /// <summary>惰性入口已登记（Start 走到"有编译器但还没加载"）：平凡形式的快速求值只在这条路径上生效（cleat-161）。</summary>
@@ -62,9 +77,6 @@ public static class Startup
     /// <summary>正在加载编译器的那条线程：驱动自己也要读这些钩子（load-source / eval），重入时直接返回，不能自己等自己。</summary>
     [ThreadStatic] private static bool t_loadingCompiler;
 
-    /// <summary>要 require 的驱动命名空间（Start 定下，之后不再读环境变量）。</summary>
-    private static string s_driverNs;
-
     /// <summary>编译器是否已经加载（cleat-161：诊断与测试用）。</summary>
     public static bool CompilerLoaded => s_compilerLoaded;
 
@@ -73,16 +85,11 @@ public static class Startup
     {
         RuntimeBootstrap.MarkStarting();      // 启动期间这条线程上的惰性启动检查直接返回（cleat-067）
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        string boot = o.Boot ?? Environment.GetEnvironmentVariable("CLEAT_BOOT") ?? FindBoot("cleat.boot.dll");
+        string boot = o.NoBoot ? null : o.Boot ?? Environment.GetEnvironmentVariable("CLEAT_BOOT") ?? FindBoot("cleat.boot.dll");
         if (boot != null) boot = Path.GetFullPath(boot);
         // 正在编的那个包不登记（cleat-089）：否则 require 从旧包加载，编出的新包没有形式
         bool writing(string f) => o.CompilePackage != null && string.Equals(Path.GetFullPath(o.CompilePackage), Path.GetFullPath(f), StringComparison.Ordinal);
-        // 编译器的包程序集（cleat-085，designs/19 D6）在镜像旁。CLEAT_COMPILER_NS 指定别的编译器（自举时改名的工具编译器 cleat.compiler0，
-        // 在 -I 的目录里，cleat-091）时不登记——要编的正是 cleat.compiler 的源码。包与镜像不配（镜像重建后没有重编包）时加载包报镜像核对错误：
-        // dotnet build 的 GenerateCompilerPackage 按输入增量重编它
-        string compiler = boot == null ? null : Path.Combine(Path.GetDirectoryName(boot) ?? ".", "cleat.compiler.dll");
-        CompilerFromPackage = compiler != null && CompilerNs == "cleat.compiler" && File.Exists(compiler) && !writing(compiler);
-        if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Paths);   // 上面的路径探测（找镜像与编译器包）也算启动（cleat-159）
+        if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Paths);   // 上面的路径探测（找镜像）也算启动（cleat-159）
         System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(Num).TypeHandle);   // Num 的标签先初始化（cleat-102）
         PrimitiveRegistry.RegisterAll();
         RT.Init();
@@ -101,7 +108,6 @@ public static class Startup
             // 这些命名空间从源码加载
             string libs = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "Cleat.Clojure.Libs.dll");
             if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot) && !writing(libs)) PackageIndex.RegisterFile(libs);
-            if (CompilerFromPackage) PackageIndex.RegisterFile(compiler);
             // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用；
             // 开发布局（镜像在仓库的 src/boot，旁边有 packages/tools.build/src）下不用：那是 pack 留下的构建产物，会落后于源码
             string tools = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "tools");
@@ -114,47 +120,37 @@ public static class Startup
             string src = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure"));
             if (File.Exists(Path.Combine(src, "clojure", "core.clj"))) Loader.AddPath(src);
             if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Packages);
-            // 编译器（cleat-090 / 091，延迟加载 cleat-161）：Clojure 写的驱动登记钩子。--boot 的模块不是带 clojure.core 的
-            // 镜像时没有编译器（只能跑镜像自己的代码）。这里只定下"能不能加载、加载哪个驱动"，不在这里加载：
-            // -e nil 与只调 AOT 函数的 -m / -X / -T 整格（159 量到 206 ~ 212 ms）都不该付。
-            s_driverNs = CompilerNs + ".driver";
-            if (!RT.var("clojure.core", "require").isBound) s_compilerUnavailable = true;
-            else if (CompilerNs != "cleat.compiler") EnsureCompiler();     // 自举的改名工具编译器：保持现状，仍然 eager
-            else
-            {
-                s_compilerLazy = true;
-                RuntimeHooks.EnsureCompiler = EnsureCompiler;
-            }
         }
+        // 编译器（延迟加载 cleat-161）：这里只登记惰性入口，不加载——-e nil 与只调 AOT 函数的 -m / -X / -T 整格
+        // （159 量到 206 ~ 212 ms）都不该付。编译器是 C# 程序集、不在镜像上，没有镜像（--no-boot 或找不到）时照样可用
+        // （cleat-181）：编镜像时由它从源码逐个加载 cleat.kernel、clojure.core …
+        s_compilerLazy = true;
+        RuntimeHooks.EnsureCompiler = EnsureCompiler;
         // cleat-159：分段计时（调用点自己判 CLEAT_TIME；未启用时不输出，第一行还是 cleat-052 的格式由 Report 负责）
-        if (StartupTimings.Enabled) StartupTimings.Report(ClojureImageMs, CompilerMs, CompilerFromPackage);
+        if (StartupTimings.Enabled) StartupTimings.Report(ClojureImageMs, CompilerMs, CompilerKind);
         RuntimeBootstrap.MarkStarted();
         return boot;
     }
 
     /// <summary>
-    /// 加载编译器驱动并登记钩子（cleat-161，designs/29 §3.3）：幂等，第一次真正需要编译 / 求值时才执行。
+    /// 加载编译器并登记钩子（cleat-161，designs/29 §3.3）：幂等，第一次真正需要编译 / 求值时才执行。
     /// 同一条线程重入直接返回（加载编译器这条路自己要用这些钩子，不能自己等自己）；别的线程在锁上等它加载完。
-    /// 没有编译器可用（没跑过 Start、没有镜像、require 未绑定）时零成本返回，调用方照旧拿到"未登记"的明确错误。
+    /// 没跑过 Start 时零成本返回，调用方照旧拿到"未登记"的明确错误。
     /// </summary>
     public static void EnsureCompiler()
     {
         if (s_compilerLoaded || s_compilerUnavailable) return;
-        // 没跑过 Start（或没有镜像、require 未绑定）：没有可加载的编译器，记成不可用后零成本返回
-        if (s_driverNs is null || !RT.var("clojure.core", "require").isBound) { s_compilerUnavailable = true; return; }
+        if (!s_compilerLazy) { s_compilerUnavailable = true; return; }   // 没跑过 Start
         if (t_loadingCompiler) return;
         lock (s_compilerLock)
         {
             if (s_compilerLoaded || s_compilerUnavailable) return;
-            if (s_driverNs is null) { s_compilerUnavailable = true; return; }
             if (t_loadingCompiler) return;
             t_loadingCompiler = true;
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                RT.var("clojure.core", "require").invoke(Symbol.intern(s_driverNs));
-                if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.CompilerRequire);
-                RT.var(s_driverNs, "install-hooks!").invoke();
+                InstallCompiler();
                 if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.CompilerHooks);
                 CompilerMs = sw.ElapsedMilliseconds;
                 s_compilerLoaded = true;
@@ -162,7 +158,7 @@ public static class Startup
             finally { t_loadingCompiler = false; }
         }
         // 启动报告之后才加载（延迟加载的正路）：补一行，别让 CLEAT_TIME 的 compiler 段看起来是免费的
-        if (StartupTimings.Enabled) StartupTimings.CompilerLoadedOnDemand(CompilerMs, CompilerFromPackage);
+        if (StartupTimings.Enabled) StartupTimings.CompilerLoadedOnDemand(CompilerMs, CompilerKind);
     }
 
     /// <summary>

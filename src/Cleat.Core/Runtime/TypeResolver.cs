@@ -11,7 +11,7 @@ namespace Cleat.Core.Runtime;
 /// <summary>
 /// 类型名决议（designs/02 §8、05 §5）：ClojureCLR 的类型名语法（ClrTypeSpec2：泛型 <c>List`1[T]</c>、数组 <c>T[]</c>、
 /// 嵌套 <c>A+B</c>、程序集限定名），另加 C# 风格的尖括号泛型 <c>List&lt;T&gt;</c> 与 Clojure 的特殊名
-/// （<c>long</c> → Int64、<c>longs</c> → Int64[] …）。简单名按给定的命名空间前缀顺序尝试（发射器传 Lcil 方法的 clr-namespaces）。
+/// （<c>long</c> → Int64、<c>longs</c> → Int64[] …）。简单名按给定的命名空间前缀顺序尝试（编译器传方法所在命名空间的 clr-namespaces）。
 /// 最终查找交给 RT.classForName（已加载程序集 + DependencyContext）。成功的结果按（名字，命名空间列表）缓存；
 /// 当前 Clojure 命名空间的 import 别名不在这里查（展开器负责，04 §7），以免缓存跨命名空间串扰。
 /// </summary>

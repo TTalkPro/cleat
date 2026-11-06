@@ -6,7 +6,7 @@ using NUnit.Framework;
 namespace Cleat.Host.Tests;
 
 /// <summary>
-/// Clojure 编译器（cleat-088 ~ 090）的运行测试：编出的程序集能加载运行，驱动的 eval / load / compile 走它。
+/// 编译器（cleat-088 ~ 090 起；cleat-182 起只有 C# 编译器，designs/30）的运行测试：编出的程序集能加载运行，驱动的 eval / load / compile 走它。
 /// （cleat-085 的逐形式转储、影子模式与两个编译器的差分门控随 Scheme 编译器在 cleat-092 / 093 删除。）
 /// </summary>
 [Category("Host")]
@@ -27,14 +27,43 @@ public class ClojureCompilerTests
         try { Directory.Delete(_dir, true); } catch (IOException) { }
     }
 
-    /// <summary>cleat-088 / 089：Clojure 编译器编出的程序集（内存模式）能加载运行（cleat.compiler.pipeline/eval-form），含 deftype / reify / proxy 生成的类。</summary>
+    // —— 生成代码的取证（cleat-177）：读已装载程序集的 IL（Cleat.Core.Compiler.IlText），不依赖编译器自己的转储格式 ——
+
+    private static string CljString(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+
+    /// <summary>包程序集的 IL 文本：在新宿主里 require 命名空间（包从 dir 加载），写出 IlText.Of(程序集名)。</summary>
+    private string PackageIl(string dir, string assembly, string ns, (string, string)[] env = null)
+    {
+        string file = Path.Combine(_dir, assembly + ".il.txt");
+        var r = HostProcessTests.CleatIn(_dir, null, env, "-I", dir, "-e", $"(require '{ns})",
+            "-e", $"(spit {CljString(file)} (Cleat.Core.Compiler.IlText/Of {CljString(assembly)}))");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        return File.ReadAllText(file);
+    }
+
+    /// <summary>以 -i 运行脚本、最后把这个进程里全部 eval 单元的 IL 写到 file 的命令行实参。</summary>
+    private static string[] EvalIlArgs(string script, string file) =>
+        new[] { "-i", script, "-e", $"(spit {CljString(file)} (Cleat.Core.Compiler.IlText/EvalUnits))" };
+
+    /// <summary>IL 文本里一个类的段落（.class 名 到下一个 .class）。</summary>
+    private static string IlClass(string il, string name)
+    {
+        int start = il.IndexOf("\n.class " + name + "\n", StringComparison.Ordinal);
+        Assert.That(start, Is.GreaterThanOrEqualTo(0), "no class " + name + " in\n" + il);
+        int end = il.IndexOf("\n.class ", start + 1, StringComparison.Ordinal);
+        return il.Substring(start, (end < 0 ? il.Length : end) - start);
+    }
+
+    private static int IlCount(string il, string instruction) =>
+        System.Text.RegularExpressions.Regex.Matches(il, "(?m)^\\s+" + System.Text.RegularExpressions.Regex.Escape(instruction) + "$").Count;
+
+    /// <summary>cleat-088 / 089：编译器编出的程序集（内存模式）能加载运行（经 eval），含 deftype / reify / proxy 生成的类。</summary>
     [Test]
-    public void ClojureCompiledFormsRun()
+    public void CompiledFormsRun()
     {
         string[] forms =
         {
-            "(require 'cleat.compiler.pipeline)",
-            "(def ev cleat.compiler.pipeline/eval-form)",
+            "(def ev eval)",
             "(ev '(defn fib ^long [^long n] (if (< n 2) n (+ (fib (dec n)) (fib (- n 2))))))",
             "(ev '(defn f ([] 0) ([x] (f x 1)) ([x y & more] (reduce + x (cons y more)))))",
             "(ev '(defmacro twice [e] `(do ~e ~e)))",
@@ -51,8 +80,7 @@ public class ClojureCompilerTests
                 + " (map (fn [x] (* x 2.5)) [1 2 3]) (case 2 0 :zero 1 :one (2 3) :many :default)"
                 + " (let [s (StringBuilder.)] (.Append s \"x\") (.Append s 42) (str s)) (let [a (atom 0)] (twice (swap! a inc)) @a)]))",
         };
-        var r = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null,
-            new[] { "-I", Path.Combine(HostProcessTests.RepoDir, "src", "clojure") }.Concat(forms.SelectMany(f => new[] { "-e", f })).ToArray());
+        var r = HostProcessTests.CleatIn(HostProcessTests.RepoDir, null, null, forms.SelectMany(f => new[] { "-e", f }).ToArray());
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
         Assert.That(r.Out, Does.Contain("fin\n[6765 0 6 10 [6 7 8] :div true (2.5 5.0 7.5) :many \"x42\" 2]"), r.ToString());
         Assert.That(r.Out, Does.Contain("[\"1,2\" 5 2 42 42 \"p\"]"), r.ToString());
@@ -148,16 +176,14 @@ public class ClojureCompilerTests
         // 生成的代码：嵌套算术的循环按 Num 算
         string src = Path.Combine(_dir, "numbench.clj");
         File.WriteAllText(src, "(ns numbench)\n(defn poly [n a b] (loop [i 0 s 0.0] (if (< i n) (recur (inc i) (+ s (* (- a b) (+ a b)))) s)))\n");
-        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
-            "-I", _dir, "--compile-package", Path.Combine(_dir, "numbench.dll"), "--package", "numbench", "--root", _dir, "numbench");
+        string outDir = Path.Combine(_dir, "out");
+        var r = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", _dir, "--compile-package", Path.Combine(outDir, "numbench.dll"), "--package", "numbench", "--root", _dir, "numbench");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        string lcil = File.ReadAllText(Path.Combine(_dir, "numbench.dll.lcil"));
-        int polyStart = lcil.IndexOf("(type \"numbench$poly\"", StringComparison.Ordinal);
-        int polyEnd = lcil.IndexOf("\n  (type ", polyStart + 1, StringComparison.Ordinal);
-        string poly = lcil.Substring(polyStart, (polyEnd < 0 ? lcil.Length : polyEnd) - polyStart);
-        Assert.That(poly, Does.Contain("\"Cleat.Core.Runtime.Num\" \"Multiply\""), poly);
-        Assert.That(poly, Does.Contain("\"Cleat.Core.Runtime.Num\" \"FromObject\""), poly);
-        Assert.That(System.Text.RegularExpressions.Regex.Matches(poly, "\\(box \"System.Double\"\\)").Count, Is.LessThanOrEqualTo(1), poly);
+        string poly = IlClass(PackageIl(outDir, "numbench", "numbench"), "numbench$poly");
+        Assert.That(poly, Does.Contain("call Cleat.Core.Runtime.Num::Multiply("), poly);
+        Assert.That(poly, Does.Contain("call Cleat.Core.Runtime.Num::FromObject("), poly);
+        Assert.That(IlCount(poly, "box System.Double"), Is.LessThanOrEqualTo(1), poly);
     }
 
     /// <summary>
@@ -394,42 +420,41 @@ public class ClojureCompilerTests
         Assert.That(off.Out, Is.EqualTo(expected), off.ToString());
 
         // eval 单元：守卫后的直读 / 直存只在开侧出现（deftype 自身方法的字段访问两侧都有，故比带程序集名的跨单元引用）
-        string onLcil = Path.Combine(_dir, "eval-on.lcil"), offLcil = Path.Combine(_dir, "eval-off.lcil");
-        var onDump = HostProcessTests.CleatIn(_dir, null,
-            new[] { ("CLEAT_OPT_ACCINLINE", "1"), ("CLEAT_DUMP_EVAL_LCIL", onLcil) }, script);
-        var offDump = HostProcessTests.CleatIn(_dir, null,
-            new[] { ("CLEAT_NO_OPT", "accinline"), ("CLEAT_DUMP_EVAL_LCIL", offLcil) }, script);
+        string onIl = Path.Combine(_dir, "eval-on.il.txt"), offIl = Path.Combine(_dir, "eval-off.il.txt");
+        var onDump = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_OPT_ACCINLINE", "1") }, EvalIlArgs(script, onIl));
+        var offDump = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") }, EvalIlArgs(script, offIl));
         Assert.That(onDump.Out, Is.EqualTo(expected), onDump.ToString());
         Assert.That(offDump.Out, Is.EqualTo(expected), offDump.ToString());
-        string onText = File.ReadAllText(onLcil), offText = File.ReadAllText(offLcil);
-        Assert.That(onText, Does.Contain("(isinst \"accinline.gen.Foo"), "开侧应有具体类型守卫");
-        Assert.That(onText, Does.Contain("(ldfld \"accinline.gen.Foo, "), "开侧应有跨单元的字段直读");
-        Assert.That(onText, Does.Contain("(stfld \"accinline.gen.Foo, "), "开侧应有跨单元的字段直存");
-        Assert.That(offText, Does.Not.Contain("(isinst \"accinline.gen.Foo"), offText);
-        Assert.That(offText, Does.Not.Contain("(stfld \"accinline.gen.Foo, "), offText);
+        string onText = File.ReadAllText(onIl), offText = File.ReadAllText(offIl);
+        // 跨单元的引用在 IL 文本里所属类型后带 ", eval$…"（IlText）
+        Assert.That(onText, Does.Contain("isinst accinline.gen.Foo"), "开侧应有具体类型守卫");
+        Assert.That(onText, Does.Contain("ldfld accinline.gen.Foo, "), "开侧应有跨单元的字段直读");
+        Assert.That(onText, Does.Contain("stfld accinline.gen.Foo, "), "开侧应有跨单元的字段直存");
+        Assert.That(offText, Does.Not.Contain("isinst accinline.gen.Foo"), offText);
+        Assert.That(offText, Does.Not.Contain("stfld accinline.gen.Foo, "), offText);
 
         // 读侧取证（实测的 browse x1.54 / destruc x1.22 回退根因就在这里）：守卫之后到字段指令之间
         // 不得再插入通用发射器给实例位置补的 ldstr + Instance(=NotNil)，object 字段也不得再过 RetObject。
         // 标记用"守卫 → 字段指令"这一整段，不能只用 ldfld / stfld：直接 `(.-a ^Foo o)` 走通用字段读路径时
         // 本来就发跨单元的 `(ldfld "accinline.gen.Foo, eval$c4" "a")`（实测默认臂就有），只有配上前面的
-        // isinst 守卫才是特化产生的
-        string guardedPat = @"\(isinst ""accinline\.gen\.(?:Foo|Vol|J)[^""]*""\)(?:.{0,300}?)\((?:ldfld|stfld) ";
-        var guardedReads = System.Text.RegularExpressions.Regex.Matches(onText, guardedPat);
+        // isinst 守卫才是特化产生的（IL 文本每条指令一行，窗口按行数宽一些）
+        string guardedPat = @"isinst accinline\.gen\.(?:Foo|Vol|J)[^\n]*\n(?:.{0,400}?)(?:ldfld|stfld) ";
+        var guardedReads = System.Text.RegularExpressions.Regex.Matches(onText, guardedPat, System.Text.RegularExpressions.RegexOptions.Singleline);
         Assert.That(guardedReads.Count, Is.GreaterThanOrEqualTo(20), "开侧应有足够多的守卫后直读 / 直存");
         foreach (System.Text.RegularExpressions.Match m in guardedReads)
         {
             Assert.That(m.Value, Does.Not.Contain("Instance"), "守卫后的直读不该再补 NotNil 检查：" + m.Value);
             Assert.That(m.Value, Does.Not.Contain("RetObject"), "守卫后的直读不该再过 RetObject：" + m.Value);
         }
-        Assert.That(onText, Does.Contain("(volatile.) (ldfld \"accinline.gen.Vol"), "volatile 字段的守卫直读要带 volatile. 前缀");
+        Assert.That(onText, Does.Contain("volatile.\n  ldfld accinline.gen.Vol"), "volatile 字段的守卫直读要带 volatile. 前缀");
 
         // 默认设置 = 关：输出与关臂逐字相同，且 IL 里一段"守卫 → 字段直读 / 直存"都没有（默认关这个口径要有可执行的取证）
-        string defaultLcil = Path.Combine(_dir, "eval-default.lcil");
-        var defaultDump = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_EVAL_LCIL", defaultLcil) }, script);
+        string defaultIl = Path.Combine(_dir, "eval-default.il.txt");
+        var defaultDump = HostProcessTests.CleatIn(_dir, null, null, EvalIlArgs(script, defaultIl));
         Assert.That(defaultDump.Out, Is.EqualTo(expected), defaultDump.ToString());
-        string defaultText = File.ReadAllText(defaultLcil);
-        Assert.That(defaultText, Does.Not.Contain("(isinst \"accinline.gen.Foo"), "默认不该开访问器内联");
-        Assert.That(System.Text.RegularExpressions.Regex.Matches(defaultText, guardedPat).Count, Is.EqualTo(0),
+        string defaultText = File.ReadAllText(defaultIl);
+        Assert.That(defaultText, Does.Not.Contain("isinst accinline.gen.Foo"), "默认不该开访问器内联");
+        Assert.That(System.Text.RegularExpressions.Regex.Matches(defaultText, guardedPat, System.Text.RegularExpressions.RegexOptions.Singleline).Count, Is.EqualTo(0),
             "默认不该有守卫后的字段直读 / 直存");
 
         // 包路径：gen 与 use 各编一个程序集，use 单独编译时只消费 gen 固化的 .inl（不跑 gen 的入口）
@@ -459,15 +484,15 @@ public class ClojureCompilerTests
                 "--package", "accinlinep.use", "--root", src, "accinlinep.use");
             Assert.That(use.ExitCode, Is.EqualTo(0), use.ToString());
         }
-        BuildPair(outOn, new[] { ("CLEAT_OPT_ACCINLINE", "1"), ("CLEAT_DUMP_LCIL", "1") });
-        BuildPair(outOff, new[] { ("CLEAT_NO_OPT", "accinline"), ("CLEAT_DUMP_LCIL", "1") });
-        string useOn = File.ReadAllText(Path.Combine(outOn, "accinlinep.use.dll.lcil"));
-        string useOff = File.ReadAllText(Path.Combine(outOff, "accinlinep.use.dll.lcil"));
-        Assert.That(useOn, Does.Contain("(isinst \"accinlinep.gen.Foo\""), "消费者的 IL 应有守卫");
-        Assert.That(useOn, Does.Contain("(ldfld \"accinlinep.gen.Foo\" \"a\")"), useOff);
-        Assert.That(useOn, Does.Contain("(stfld \"accinlinep.gen.Foo\" \"a\")"), useOff);
-        Assert.That(useOff, Does.Not.Contain("(isinst \"accinlinep.gen.Foo\""), useOff);
-        Assert.That(useOff, Does.Not.Contain("(stfld \"accinlinep.gen.Foo\""), useOff);
+        BuildPair(outOn, new[] { ("CLEAT_OPT_ACCINLINE", "1") });
+        BuildPair(outOff, new[] { ("CLEAT_NO_OPT", "accinline") });
+        string useOn = IlClass(PackageIl(outOn, "accinlinep.use", "accinlinep.use"), "accinlinep.use$spin");
+        string useOff = IlClass(PackageIl(outOff, "accinlinep.use", "accinlinep.use"), "accinlinep.use$spin");
+        Assert.That(useOn, Does.Contain("isinst accinlinep.gen.Foo"), "消费者的 IL 应有守卫");
+        Assert.That(useOn, Does.Match(@"ldfld accinlinep\.gen\.Foo(?:, [^:\n]+)?::a\n"), useOn);
+        Assert.That(useOn, Does.Match(@"stfld accinlinep\.gen\.Foo(?:, [^:\n]+)?::a\n"), useOn);
+        Assert.That(useOff, Does.Not.Contain("isinst accinlinep.gen.Foo"), useOff);
+        Assert.That(useOff, Does.Not.Contain("stfld accinlinep.gen.Foo"), useOff);
         var runOn = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_OPT_ACCINLINE", "1") },
             "-I", outOn, "-e", "(require 'accinlinep.use)", "-e", "(accinlinep.use/-main)");
         var runOff = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "accinline") },
@@ -528,14 +553,14 @@ public class ClojureCompilerTests
         Assert.That(on.Out.Split('\n').Length, Is.GreaterThan(10), on.ToString());
 
         File.WriteAllText(Path.Combine(_dir, "jr.clj"), "(ns jr)\n(defn e5 [x] (loop [i 0 n 0] (if (< i 10000) (recur (inc i) (if (< i 5000) (inc n) n)) n)))\n");
-        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
-            "-I", _dir, "--compile-package", Path.Combine(_dir, "jr.dll"), "--package", "jr", "--root", _dir, "jr");
+        string outDir = Path.Combine(_dir, "out");
+        var r = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", _dir, "--compile-package", Path.Combine(outDir, "jr.dll"), "--package", "jr", "--root", _dir, "jr");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        string lcil = File.ReadAllText(Path.Combine(_dir, "jr.dll.lcil"));
-        int start = lcil.IndexOf("(type \"jr$e5\"", StringComparison.Ordinal);
-        int end = lcil.IndexOf("(method \"invoke\"", start, StringComparison.Ordinal);
-        string e5 = lcil.Substring(start, end - start);
-        Assert.That(System.Text.RegularExpressions.Regex.Matches(e5, "\\(box \"System.Int64\"\\)").Count, Is.LessThanOrEqualTo(1), e5);
+        string cls = IlClass(PackageIl(outDir, "jr", "jr"), "jr$e5");
+        int end = cls.IndexOf("\n .method invoke(", StringComparison.Ordinal);
+        string e5 = end < 0 ? cls : cls.Substring(0, end);   // invoke 之前的方法（invokeStatic 等）
+        Assert.That(IlCount(e5, "box System.Int64"), Is.LessThanOrEqualTo(1), e5);
         Assert.That(e5, Does.Not.Contain("ArgInt64"), e5);
     }
 
@@ -562,19 +587,15 @@ public class ClojureCompilerTests
         File.WriteAllText(src, "(ns typed)\n(defn fib [n] (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\n"
             + "(defn pfib ^long [^long n] (if (< n 2) n (+ (pfib (- n 1)) (pfib (- n 2)))))\n"
             + "(defn noisy [n] (println n) (if (< n 1) 0 (noisy (dec n))))\n");
-        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
-            "-I", _dir, "--compile-package", Path.Combine(_dir, "typed.dll"), "--package", "typed", "--root", _dir, "typed");
+        string outDir = Path.Combine(_dir, "out");
+        var r = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", _dir, "--compile-package", Path.Combine(outDir, "typed.dll"), "--package", "typed", "--root", _dir, "typed");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        string lcil = File.ReadAllText(Path.Combine(_dir, "typed.dll.lcil"));
-        string Type(string name)
-        {
-            int start = lcil.IndexOf("(type \"typed$" + name + "\"", StringComparison.Ordinal);
-            int end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
-            return lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
-        }
+        string il = PackageIl(outDir, "typed", "typed");
+        string Type(string name) => IlClass(il, "typed$" + name);
         string fib = Type("fib");
-        Assert.That(fib, Does.Contain("(call \"typed$fib\" \"invokeStaticTyped\" (\"System.Object\" \"System.Int64\") \"System.Int64\")"), fib);
-        Assert.That(fib, Does.Contain("(call \"clojure.lang.Numbers\" \"add\" (\"System.Int64\" \"System.Int64\") \"System.Int64\")"), fib);
+        Assert.That(fib, Does.Contain("call typed$fib::invokeStaticTyped(System.Object, System.Int64) : System.Int64"), fib);
+        Assert.That(fib, Does.Contain("call clojure.lang.Numbers::add(System.Int64, System.Int64) : System.Int64"), fib);
         Assert.That(Type("pfib"), Does.Not.Contain("invokeStaticTyped"));
         Assert.That(Type("noisy"), Does.Not.Contain("invokeStaticTyped"));   // 有副作用的体不特化
     }
@@ -600,20 +621,15 @@ public class ClojureCompilerTests
         string src = Path.Combine(_dir, "spec.clj");
         File.WriteAllText(src, "(ns spec)\n(defn sum-long [n x] (loop [i 0 s x] (if (< i n) (recur (inc i) (+ s i)) s)))\n"
             + "(defn tsum [^long n ^long x] (loop [i 0 s x] (if (< i n) (recur (inc i) (+ s i)) s)))\n");
-        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
-            "-I", _dir, "--compile-package", Path.Combine(_dir, "spec.dll"), "--package", "spec", "--root", _dir, "spec");
+        string outDir = Path.Combine(_dir, "out");
+        var r = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", _dir, "--compile-package", Path.Combine(outDir, "spec.dll"), "--package", "spec", "--root", _dir, "spec");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        string lcil = File.ReadAllText(Path.Combine(_dir, "spec.dll.lcil"));
-        string Type(string name)
-        {
-            int start = lcil.IndexOf("(type \"spec$" + name + "\"", StringComparison.Ordinal);
-            int end = lcil.IndexOf("\n  (type ", start + 1, StringComparison.Ordinal);
-            return lcil.Substring(start, (end < 0 ? lcil.Length : end) - start);
-        }
-        string sum = Type("sum_long"), tsum = Type("tsum");
-        Assert.That(sum, Does.Contain("(isinst \"System.Int64\")"), sum);
-        Assert.That(sum, Does.Contain("(call \"clojure.lang.Numbers\" \"add\" (\"System.Int64\" \"System.Int64\") \"System.Int64\")"), sum);
-        Assert.That(sum, Does.Contain("(call \"clojure.lang.Numbers\" \"add\" (\"System.Object\" \"System.Int64\") \"System.Object\")"), sum);   // 慢份
+        string il = PackageIl(outDir, "spec", "spec");
+        string sum = IlClass(il, "spec$sum_long"), tsum = IlClass(il, "spec$tsum");
+        Assert.That(sum, Does.Contain("isinst System.Int64"), sum);
+        Assert.That(sum, Does.Contain("call clojure.lang.Numbers::add(System.Int64, System.Int64) : System.Int64"), sum);
+        Assert.That(sum, Does.Contain("call clojure.lang.Numbers::add(System.Object, System.Int64) : System.Object"), sum);   // 慢份
         Assert.That(tsum, Does.Not.Contain("isinst"), tsum);
     }
 
@@ -689,13 +705,14 @@ public class ClojureCompilerTests
 
         string src = Path.Combine(_dir, "arr.clj");
         File.WriteAllText(src, "(ns arr)\n(defn cy [^longs x] (let [n (alength x) ^longs r (long-array n)] (loop [i (dec n)] (if (neg? i) r (do (aset r i (aget x i)) (recur (dec i)))))))\n");
-        var r = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_DUMP_LCIL", "1") },
-            "-I", _dir, "--compile-package", Path.Combine(_dir, "arr.dll"), "--package", "arr", "--root", _dir, "arr");
+        string outDir = Path.Combine(_dir, "out");
+        var r = HostProcessTests.CleatIn(_dir, null, null,
+            "-I", _dir, "--compile-package", Path.Combine(outDir, "arr.dll"), "--package", "arr", "--root", _dir, "arr");
         Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
-        string lcil = File.ReadAllText(Path.Combine(_dir, "arr.dll.lcil"));
-        Assert.That(lcil, Does.Contain("(call \"clojure.lang.RT\" \"aget\" (\"System.Int64[]\" \"System.Int32\") \"System.Int64\")"), lcil);
-        Assert.That(lcil, Does.Contain("(call \"clojure.lang.RT\" \"aset\" (\"System.Int64[]\" \"System.Int32\" \"System.Int64\") \"System.Int64\")"), lcil);
-        Assert.That(lcil, Does.Not.Contain("\"CallStatic\""), lcil);
+        string il = IlClass(PackageIl(outDir, "arr", "arr"), "arr$cy");
+        Assert.That(il, Does.Contain("call clojure.lang.RT::aget(System.Int64[], System.Int32) : System.Int64"), il);
+        Assert.That(il, Does.Contain("call clojure.lang.RT::aset(System.Int64[], System.Int32, System.Int64) : System.Int64"), il);
+        Assert.That(il, Does.Not.Contain("CallStatic"), il);   // 没有运行时决议
     }
 
     /// <summary>
@@ -714,11 +731,11 @@ public class ClojureCompilerTests
     }
 
     /// <summary>
-    /// cleat-090：eval / load / compile 走 Clojure 写的驱动（cleat.compiler.driver）：简单形式解释、其余编译执行（DriverOps 的计数），
+    /// cleat-090：eval / load / compile 走编译驱动：简单形式解释、其余编译执行（DriverOps 的计数），
     /// 用户代码里不成对的 pushThreadBindings 不被驱动弹掉，*compile-files* 编出的包程序集在新进程里加载运行。
     /// </summary>
     [Test]
-    public void ClojureDriverEvalsLoadsAndCompiles()
+    public void DriverEvalsLoadsAndCompiles()
     {
         (string, string)[] env = null;
         var r = HostProcessTests.CleatIn(_dir, null, env,

@@ -5,8 +5,7 @@ using System.Threading;
 namespace Cleat.Core.Runtime;
 
 /// <summary>
-/// 惰性启动（cleat-067，designs/17 §4）：包程序集的每个类型初始化器开头调用 <see cref="EnsureStarted"/>（发射器按 Lcil 的
-/// <c>(lazy-start)</c> 插入），所以 C# / F# 代码不调用任何初始化 API 就能用 gen-class、defrecord 等生成的类型——相当于 JVM 上
+/// 惰性启动（cleat-067，designs/17 §4）：包程序集的每个类型初始化器开头调用 <see cref="EnsureStarted"/>（编译器插入），所以 C# / F# 代码不调用任何初始化 API 就能用 gen-class、defrecord 等生成的类型——相当于 JVM 上
 /// gen-class 类的静态初始化经 clojure.lang.RT 拉起运行时。
 ///
 /// 宿主（Program.Start）启动时自己登记 <see cref="MarkStarting"/> / <see cref="MarkStarted"/>；否则第一次调用时按名字载入

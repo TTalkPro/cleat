@@ -7,7 +7,7 @@ using clojure.lang;
 namespace Cleat.Core.Compiler;
 
 /// <summary>
-/// proxy 与 gen-class 的类型布局（cleat-043）：在展开期用反射算出要生成的 CLR 类型的成员，编译器（codegen）据此生成 Lcil，
+/// proxy 与 gen-class 的类型布局（cleat-043）：在展开期用反射算出要生成的 CLR 类型的成员，编译器据此发射类型，
 /// 编译器本身不反射。生成的是真正的子类：基类的 public / protected 虚方法与抽象方法按原签名覆写（属性、事件的访问器也是方法），
 /// 新接口的方法按原签名实现（名字冲突时显式实现），基类的 public / protected 构造函数按原签名转发。
 /// </summary>

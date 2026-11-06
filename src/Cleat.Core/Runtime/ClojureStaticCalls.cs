@@ -27,14 +27,14 @@ public static class ClojureStaticCalls
         // cleat-111：较窄的数值类型（(byte x) 的 RT.byteCast、byte[] 的 aset 等）；值类型形参只匹配静态类型完全相同的实参，转换同 Reflector
         || p == typeof(byte) || p == typeof(sbyte) || p == typeof(short) || p == typeof(ushort) || p == typeof(float);
 
-    /// <summary>能按名字（HostSyntax.TypeName）在 Lcil 中引用的类型：非泛型、非嵌套的公共类型，不是 deftype 的桩</summary>
+    /// <summary>能按名字（HostSyntax.TypeName）引用的类型：非泛型、非嵌套的公共类型，不是 deftype 的桩</summary>
     private static bool Nameable(Type t) =>
         t.IsArray
             ? t.IsSZArray && ArrayElementNameable(t.GetElementType())   // 一维数组（cleat-101 的延续：RT.aset / aget 的 long[] … 重载）
             : t.IsPublic && !t.IsNested && !t.IsGenericType && !t.IsByRef && !t.IsPointer && !HostSyntax.IsStub(t)
               && !(t is System.Reflection.Emit.TypeBuilder);
 
-    /// <summary>数组的元素类型：原始类型、object、string，或 BCL / Core 里能按名字引用的类型（Lcil 写作 "元素全名[]"）</summary>
+    /// <summary>数组的元素类型：原始类型、object、string，或 BCL / Core 里能按名字引用的类型（名字写作 "元素全名[]"）</summary>
     private static bool ArrayElementNameable(Type e) =>
         e.IsPrimitive || e == typeof(object) || e == typeof(string)
         || (!e.IsArray && Nameable(e) && (e.Assembly == s_core || e.Assembly == typeof(object).Assembly));
@@ -265,7 +265,7 @@ public static class ClojureStaticCalls
           }
         : Array.Empty<object>();
 
-    /// <summary>(instance? T x) 的 T 能直接 isinst 时它在 Lcil 里的名字，否则 ""（桩、泛型、嵌套等交给运行时的 Reflector.Is）</summary>
+    /// <summary>(instance? T x) 的 T 能直接 isinst 时它的名字，否则 ""（桩、泛型、嵌套等交给运行时的 Reflector.Is）</summary>
     public static string IsinstName(object t) => t is Type ty && Nameable(ty) ? HostSyntax.TypeName(ty) : "";
 
     /// <summary>形参类型 p 能否接受静态类型为 a（null 为未知：core 时只匹配引用类型形参，否则什么都可能）的实参</summary>

@@ -13,7 +13,7 @@ namespace Cleat.Core.Runtime;
 /// 运行时宿主互操作（designs/02 §8、05 §5），不用 DLR：按实参的运行时类型做重载决议，结果按
 /// （类型、成员名、静态/实例、实例运行时类型、实参类型序列、显式参数类型、泛型实参）缓存为
 /// System.Linq.Expressions 编译出的委托；缓存命中后不再反射（无 MethodInfo.Invoke）。
-/// 公开 API 的签名与 Cleat.Emit 的 EmitInterop.CoreApi 一一对应。
+/// 编译器生成的代码按名字调用这里的公开 API（签名改动要同步 Cleat.Compiler 的调用点）。
 /// <para>规则（从 ClojureCLR Reflector 的 IsCongruent / Subsumes / BoxArg 移植，去掉 DLR 绑定器）：</para>
 /// <list type="bullet">
 /// <item>匹配等级：0 精确类型；1 可赋值（含装箱到 object / 接口、null → 引用类型）；2 同类数值拓宽（int → long、float → double、char → int）、IFn → 委托；
