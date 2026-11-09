@@ -1,0 +1,6 @@
+;; clojure.core.async as a cleat project (designs/18), cleat-167: packed as Cleat.CoreAsync. The go macro analyzes its body
+;; with tools.analyzer.clr: install packages/tools.reader and packages/tools.analyzer first, then
+;;   cleat -T:build install
+{:paths ["src"]
+ :deps {Cleat.ToolsAnalyzer {:nuget/version "1.4.0"}
+        Cleat.ToolsReader {:nuget/version "1.5.2"}}}

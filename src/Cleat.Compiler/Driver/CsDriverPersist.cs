@@ -203,6 +203,7 @@ public static partial class CsDriver
         decl.Entry.Body.Add(new Il(OpCodes.Ret));
         decl.LazyStart = true;
         decl.Attributes.Add(("Cleat.Core.CleatPackageAttribute", new[] { package }));
+        if (imageId is string bootId) decl.Attributes.Add(("Cleat.Core.CleatBootImageAttribute", new[] { bootId }));   // cleat-186
         int start = nfixed;
         for (int i = 0; i < segments.Count; i++)
         {

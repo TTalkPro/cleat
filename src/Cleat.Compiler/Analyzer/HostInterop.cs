@@ -250,12 +250,53 @@ public static partial class FormAnalyzer
         var r = new List<Expr>();
         foreach (var a in args)
         {
-            if (IsList(a) && SymIs(RT.first(a), "by-ref")) throw Err(form, ctx, "by-ref arguments are not supported yet");
+            if (IsByRefArg(a)) throw Err(form, ctx, "by-ref is only allowed as an argument of a host method or constructor call");
             var node = Analyze(a, ctx.Clear().NonTail());
             Type t = a is string || Util.IsNumeric(a) || a is Keyword || a == null || a is bool || a is char ? null : HostArgType(ctx, a);
             r.Add(t != null && !t.IsValueType && t != typeof(object) && !HostSyntax.IsStub(t) ? CljCallOf("Tagged", s_false, Q(t), node) : node);
         }
         return r;
+    }
+
+    private static bool IsByRefArg(object a) => IsList(a) && SymIs(RT.first(a), "by-ref");
+
+    /// <summary>
+    /// by-ref 实参的宿主调用（cleat-183，ClojureCLR 的 <c>(by-ref x)</c>）：x 必须是局部（let / loop / fn 形参、catch 绑定、deftype 的可变字段）。
+    /// 改写成 <c>(let [r (ByRefHost kind T member mask [inst] 实参 …)] (set! x (ByRefNth r 1)) … (ByRefNth r 0))</c>：调用返回
+    /// [结果, 各 by-ref 位置的新值]，再按普通的局部赋值写回（被写的局部由前端按可变处理，被闭包捕获时装箱）。
+    /// mask 的第 i 位是第 i 个实参（不算接收者）。决议：编译期唯一时 codegen 发射 ldloca，否则 ClojureOps.ByRefHost 走反射。
+    /// </summary>
+    private static Expr ByRefHostCall(object form, Ctx ctx, string kind, Type t, string member, Expr inst, List<object> args)
+    {
+        if (args.Count > 63) throw Err(form, ctx, "too many arguments for a by-ref host call");
+        var nt = ctx.Clear().NonTail();
+        long mask = 0;
+        var nodes = new List<Expr>();
+        var targets = new List<Symbol>();
+        for (int i = 0; i < args.Count; i++)
+        {
+            var a = args[i];
+            if (!IsByRefArg(a))
+            {
+                nodes.Add(Analyze(a, nt));
+                continue;
+            }
+            if (RT.count(a) != 2) throw Err(form, ctx, "by-ref takes exactly one argument: " + Str(a));
+            var x = RT.second(a);
+            var l = x is Symbol xs && xs.Namespace == null ? ctx.FindLocal(xs) : null;
+            bool assignable = l != null && (l.Kind is LocalKind.Local or LocalKind.Arg or LocalKind.Catch || l.Kind == LocalKind.Field && l.Mutable);
+            if (!assignable)
+                throw Err(form, ctx, "by-ref argument must be a local binding (let / loop / fn parameter, or a mutable deftype field), got: " + Str(x));
+            mask |= 1L << i;
+            targets.Add(l.Name);
+            nodes.Add(Analyze(x, nt));
+        }
+        var operands = inst != null ? new[] { inst }.Concat(nodes) : nodes;
+        var call = CljCallOf("ByRefHost", s_fixed4, new Expr[] { Q(kind), Q(t), Q(member), Q(mask) }.Concat(operands));
+        var tmp = FreshName("byref");
+        var body = targets.Select((n, j) => (Expr)new Set(n, CljCallOf("ByRefNth", s_false, R(tmp), Q((long)(j + 1))))).ToList();
+        body.Add(CljCallOf("ByRefNth", s_false, R(tmp), Q(0L)));
+        return MkLet1(new[] { tmp }, new[] { call }, MkSeq(body));
     }
 
     /// <summary>expr-type：提示或局部的 :tag → 类型。</summary>
@@ -298,6 +339,12 @@ public static partial class FormAnalyzer
         var nt = ctx.Clear().NonTail();
         var t = d.Type;
         object gen = d.TypeArgs?.Cast<object>().ToArray();
+        if (d.Args.Any(IsByRefArg))
+        {
+            if (d.TypeArgs != null) throw Err(form, ctx, "by-ref arguments are not supported in generic method calls (type-args)");
+            if (d.Static != null) return ByRefHostCall(form, ctx, "static", t, d.Member, null, d.Args);
+            return ByRefHostCall(form, ctx, "instance", t, d.Member, Analyze(d.Target, nt), d.Args);
+        }
         if (d.TypeArgs == null) CheckHostCall(form, ctx, d);
         if (d.Static != null && d.Args.Count == 0 && !d.Method)
             return d.Prop ? CljCallOf("GetStaticField", s_false, Q(t), Q(d.Member)) : CljCallOf("CallStatic", s_fixed3, Q(t), Q(d.Member), Q(gen));
@@ -315,6 +362,7 @@ public static partial class FormAnalyzer
         var td = RT.second(form);
         var t = MaybeType(ctx, td) ?? throw Err(form, ctx, "Unable to resolve classname: " + Str(td));
         var args = Items(RT.next(RT.next(form)));
+        if (args.Any(IsByRefArg)) return ByRefHostCall(form, ctx, "new", t, "", null, args);
         CheckHostCtor(form, ctx, t, args);
         return CljCallOf("NewOf", s_fixed1, new Expr[] { Q(t) }.Concat(HostArgs(form, ctx, args)));
     }

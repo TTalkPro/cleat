@@ -13,8 +13,9 @@ namespace Cleat.Host.Tests;
 /// 用 tools.build（cleat-066）编成包程序集再打成 nupkg，两者放进本地目录源（与 BaGetter 同一机制）；一个 C# 与一个 F# 控制台项目只引用那个 Clojure 包，
 /// **不调用任何初始化 API**：gen-class 的构造函数、实例方法、静态方法、Main，defrecord 的实例，CleatRuntime.Var 都能用，
 /// 并发的首次使用只启动一次运行时（命名空间只加载一次）。
+/// 分类 Engineering（cleat-162 / 182，原名 Bootstrap——种子与自举删除后这个名字已名不副实）：nightly 层跑；fixture 会改写 obj/project.assets.json。
 /// </summary>
-[Category("Bootstrap"), NonParallelizable]
+[Category("Engineering"), NonParallelizable]
 public class NuGetColdLoadTests
 {
     // at least the running version (CoreInfo.Version, 1.1.0): packages built with the default :runtime-version depend on
@@ -109,7 +110,11 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
         // 这些测试把 dotnet 的输出全部重定向后再读 EOF。关掉 Roslyn 共享编译服务器与 MSBuild 节点复用：
         // 它们（包括外层 dotnet run 起的节点）会继承管道，dotnet build / run 退出后仍握着写入端，
         // fixture 会一直等不到输出结束。
+        // CLEAT_LOCAL_FEED：tools.build 的 create-basis 没给 :local-feed 时把 $CLEAT_LOCAL_FEED（缺省 ~/.cleat/local-feed）加成附加源；
+        // 用户那里留着同版本号的旧包（手工验证装过的）时，NuGet 两个源里先应答的赢，会 restore 到对着旧镜像编的包
+        // （StaleModuleException，cleat-183 的全量复跑遇到）。指向本 fixture 的源，测试不看机器上的默认本地源
         _env = new[] { ("NUGET_PACKAGES", Path.Combine(_root, "packages")), ("DOTNET_CLI_HOME", Path.Combine(_root, "cli-home")),
+                       ("CLEAT_LOCAL_FEED", _feed),
                        ("DOTNET_NOLOGO", "1"), ("UseSharedCompilation", "false"), ("MSBUILDDISABLENODEREUSE", "1") };
         Run(HostProcessTests.RepoDir, _env, "dotnet", "run", "tools/build.cs", "--", "pack", "-o", _feed, "--version", Version);
         Assert.That(File.Exists(Path.Combine(_feed, $"Cleat.Runtime.{Version}.nupkg")), Is.True);

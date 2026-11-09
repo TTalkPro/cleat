@@ -163,7 +163,7 @@ public static partial class FormAnalyzer
         if (d is Namespace ns) return CljCallOf("FindNamespaceOf", s_false, Q(ns.Name));
         if (CollKind(d) == null && !(IsList(d) && RT.seq(d) == null)) return Q(Boundary(d));
         var v = ConstValue(d);
-        var m = UserMeta(d);
+        var m = LiteralMeta(d);
         var pos = Position(d, ctx);
         var sub = ctx.NonTail().At(pos);
         Expr node;

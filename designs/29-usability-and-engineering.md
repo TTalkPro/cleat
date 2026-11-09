@@ -1,6 +1,6 @@
 # 29 可用性与工程收口：从热路径微优化转向用户可感知的缺口
 
-> 状态：**提案**（2026-10-26，M19）。来源：M17 / M18 的收口结论（[28 §7](28-hot-path-optimizations.md)、
+> 状态：**完成**（2026-10-26 提案，2026-11-08 由 cleat-169 收口，M19；cleat-162 剩 push 后的 GH 实测）。来源：M17 / M18 的收口结论（[28 §7](28-hot-path-optimizations.md)、
 > [notes M18](../notes/r7rs-performance.md)）与 2026-10-26 在本机（192.168.3.13）上对 Release 构建的实测。
 > 任务 cleat-158 ~ 170。
 
@@ -162,12 +162,11 @@ GitHub Actions（`origin` 是 `github.com:TTalkPro/cleat`）分两层：
 
 | 层 | 触发 | 内容 | 目标时长 |
 |---|---|---|---|
-| PR | push / PR | `dotnet build -c Release`；Core 全量；Host 按 `Category("Host")` + `Packages` | ≤ 15 min |
-| nightly | 定时 + 手动 | `Bootstrap`（自举不动点、种子逐字节）、`Conformance --gate`、CTS 与 test_clojure 基线比较、ilverify | 不限 |
+| PR | push / PR | 两个并行 job：`core-host`（Core / Compiler 全量、`Determinism`、Host 的 `Category("Host")`）与 `packages`（`Category("Packages")`），各自 `dotnet build -c Release` | ≤ 15 min |
+| nightly | 定时 + 手动 | `Determinism`、`Engineering`（发布、NuGet 冷加载、示例工程；原名 `Bootstrap`）、`Conformance --gate`、CTS 与 test_clojure 基线比较、`image-set --twice --ilverify` | 不限 |
 
 - 子模块 `tests/clojure-test-suite` 用 `submodules: recursive` 检出。
-- **种子守卫**放进 PR 层：只要改了 `src/clojure/**`，就必须同时改 `src/boot/seed/*.gz`，否则失败
-  （便宜的检查，不用跑自举就能挡住最常见的疏漏）。
+- ~~**种子守卫**~~（cleat-182 随种子删除）：PR 层改为**确定性守卫**——`DeterminismTests` 从零两步重编镜像，与构建产物逐字节相同、src/boot 是不动点（G5）。
 - 性能不进 CI（共享 runner 噪声远超 151 的地板）；性能仍按 §9 在本机 / 111 上做。
 - 失败产物（conformance 报告、CTS 差异）上传为 artifact。
 

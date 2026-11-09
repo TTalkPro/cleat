@@ -514,6 +514,12 @@ public static class Program
         }
     }
 
+    /// <summary>REPL 的 Tab 补全候选（诊断与测试用：<c>(Cleat.Host.Program/ReplCompletions "cstr/jo")</c>），与行编辑器用的同一实现。</summary>
+    public static string[] ReplCompletions(string prefix) => new ReplServices().Complete(prefix).ToArray();
+
+    /// <summary>REPL 的参数提示（同上，诊断与测试用）。</summary>
+    public static string ReplHint(string name) => new ReplServices().Hint(name);
+
     /// <summary>REPL 行编辑器的补全与提示（cleat-034）：Var（当前命名空间的映射与 ns/name）、命名空间名、关键字；提示取 Var 的 :arglists。</summary>
     private sealed class ReplServices : IReplServices
     {
@@ -535,20 +541,26 @@ public static class Program
             var result = new List<string>();
             if (slash > 0)
             {
-                // ns/name：该命名空间的公有映射
-                var target = Namespace.find(Symbol.intern(prefix.Substring(0, slash)));
-                string name = prefix.Substring(slash + 1);
+                // ns/name 与 alias/name：限定部分先按当前命名空间的别名决议（(require '[clojure.string :as cstr]) 之后的 cstr/），
+                // 再按命名空间全名；候选保留用户写的限定部分。只列该命名空间自己定义的公有 Var（不含 refer 进来的映射与私有 Var）
+                string qualifier = prefix.Substring(0, slash), name = prefix.Substring(slash + 1);
+                var qsym = Symbol.intern(qualifier);
+                var target = ns.LookupAlias(qsym) ?? Namespace.find(qsym);
                 if (target != null)
                     for (ISeq s = RT.seq(target.getMappings()); s != null; s = s.next())
-                        if (((IMapEntry)s.first()).key() is Symbol sym && sym.Name.StartsWith(name, StringComparison.Ordinal))
-                            result.Add(target.Name.Name + "/" + sym.Name);
+                        if (s.first() is IMapEntry e && e.key() is Symbol sym && e.val() is Var v && v.ns == target && v.isPublic
+                            && sym.Name.StartsWith(name, StringComparison.Ordinal))
+                            result.Add(qualifier + "/" + sym.Name);
             }
             else
             {
                 for (ISeq s = RT.seq(ns.getMappings()); s != null; s = s.next())
                     if (((IMapEntry)s.first()).key() is Symbol sym && sym.Name.StartsWith(prefix, StringComparison.Ordinal))
                         result.Add(sym.Name);
-                // 命名空间名（require / alias 用）：读到的映射之后
+                // 当前命名空间的别名（补成 alias/，接着按 Tab 补成员）与命名空间名（require / alias 用）：读到的映射之后
+                for (ISeq s = RT.seq(ns.getAliases()); s != null; s = s.next())
+                    if (((IMapEntry)s.first()).key() is Symbol a && a.Name.StartsWith(prefix, StringComparison.Ordinal))
+                        result.Add(a.Name + "/");
                 for (ISeq s = RT.seq(Namespace.all); s != null; s = s.next())
                     if (s.first() is Namespace m && m.Name.Name.StartsWith(prefix, StringComparison.Ordinal))
                         result.Add(m.Name.Name);
@@ -560,9 +572,15 @@ public static class Program
         {
             var ns = (Namespace)RT.CurrentNSVar.deref();
             var sym = Symbol.intern(name);
-            if (sym.Namespace != null) ns = Namespace.find(Symbol.intern(sym.Namespace)) ?? ns;
+            if (sym.Namespace != null)
+            {
+                var q = Symbol.intern(sym.Namespace);
+                ns = ns.LookupAlias(q) ?? Namespace.find(q);      // 别名（cstr/join）与全名；都找不到时没有提示
+                if (ns == null) return null;
+            }
             if (ns?.GetMapping(Symbol.intern(sym.Name)) is not Var v) return null;
-            var arglists = v.meta()?.valAt(Keyword.intern("arglists")) as IPersistentVector;
+            // defn 写的 :arglists 是列表 '([x] [x y])，手写的也可能是向量：按任何集合读
+            var arglists = v.meta()?.valAt(Keyword.intern("arglists")) as IPersistentCollection;
             if (arglists == null || arglists.count() == 0) return null;
             var parts = new List<string>();
             for (ISeq s = RT.seq(arglists); s != null; s = s.next())

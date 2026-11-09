@@ -457,6 +457,10 @@ public static class Reflector
         return -1;
     }
 
+    /// <summary>by-ref 调用（cleat-183，<see cref="ByRefCalls"/>）的匹配等级：实参值 → 等级；ref 位置的 nil 对值类型也算匹配（调用时传默认值）。</summary>
+    internal static int MatchLevelOf(Type p, object arg, bool refSlot) =>
+        arg == null ? (refSlot ? 1 : MatchLevel(p, s_nullArg)) : MatchLevel(p, arg.GetType());
+
     private static bool Unsupported(ParameterInfo[] ps) =>
         ps.Any(p => p.ParameterType.IsByRef || p.ParameterType.IsPointer || p.ParameterType.IsByRefLike);
 
@@ -695,7 +699,7 @@ public static class Reflector
             throw new MissingMethodException($"No {(key.IsStatic ? "static" : "instance")} member {name} found for type {Util.NameForType(lookupType)}");
         }
         if (methods.All(m => Unsupported(m.GetParameters())))
-            throw new NotSupportedException($"Method {name} on {Util.NameForType(lookupType)} has ref/out or pointer parameters, which the runtime Reflector does not support: "
+            throw new NotSupportedException($"Method {name} on {Util.NameForType(lookupType)} has ref/out or pointer parameters; pass ref/out arguments with (by-ref local): "
                 + string.Join("; ", methods.Select(Describe)));
         throw new InvalidOperationException(
             $"No matching {(key.IsStatic ? "static" : "instance")} method {name} found for type {Util.NameForType(lookupType)} with argument types ({ArgTypeNames(key.ArgTypes)}); candidates: "
@@ -810,7 +814,7 @@ public static class Reflector
             if (t.IsValueType && key.ArgTypes.Length == 0) return Compile(Expression.Convert(Expression.New(t), typeof(object)), inst, args);
             if (ctors.Length == 0) throw new MissingMethodException($"No public constructor for type {Util.NameForType(t)}");
             if (ctors.All(c => Unsupported(c.GetParameters())))
-                throw new NotSupportedException($"Constructors of {Util.NameForType(t)} have ref/out or pointer parameters, which the runtime Reflector does not support");
+                throw new NotSupportedException($"Constructors of {Util.NameForType(t)} have ref/out or pointer parameters; pass ref/out arguments with (by-ref local)");
             throw new InvalidOperationException(
                 $"No matching constructor found for type {Util.NameForType(t)} with argument types ({ArgTypeNames(key.ArgTypes)}); candidates: "
                 + string.Join("; ", ctors.Select(Describe)));

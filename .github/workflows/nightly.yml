@@ -1,5 +1,5 @@
-# nightly 层 CI（cleat-162，designs/29 §4）：Bootstrap（自举不动点 / 种子逐字节）、Conformance、
-# CTS 与 test_clojure 基线、ilverify。时长不限；性能不进 CI（29 §9）。
+# nightly 层 CI（cleat-162，designs/29 §4）：Determinism（镜像确定性）、Engineering（发布、NuGet 冷加载、示例工程；原名 Bootstrap）、
+# Conformance、CTS 与 test_clojure 基线、整套产物的确定性与 ilverify（image-set）。时长不限；性能不进 CI（29 §9）。
 name: nightly
 
 on:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  bootstrap-conformance:
+  nightly:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +29,8 @@ jobs:
       - name: Build (Release)
         run: dotnet build Cleat.slnx -c Release -v quiet -nologo
 
-      - name: Test Host (Category=Determinism|Conformance)
-        run: dotnet test tests/Cleat.Host.Tests -c Release -v quiet -nologo --filter "Category=Determinism|Category=Conformance" --logger trx
+      - name: Test Host (Category=Determinism|Engineering|Conformance)
+        run: dotnet test tests/Cleat.Host.Tests -c Release --no-build -v quiet -nologo --filter "Category=Determinism|Category=Engineering|Category=Conformance" --logger trx
 
       - name: Conformance gate
         run: dotnet run tools/build.cs -- conformance --run --gate --report tests/conformance/cleat-report.edn

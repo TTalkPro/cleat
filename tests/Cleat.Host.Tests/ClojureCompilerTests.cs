@@ -763,4 +763,67 @@ public class ClojureCompilerTests
         Assert.That(run.ExitCode, Is.EqualTo(0), run.ToString());
         Assert.That(run.Out, Does.EndWith("\"hi 10 2\"\n"), run.ToString());
     }
+
+    /// <summary>
+    /// cleat-183：宿主调用的 by-ref 实参。tests/Cleat.Host.Tests/data/by_ref.clj（out / ref、泛型 out、结果的数值表示、写回后的常量传播与类型推断、
+    /// 循环 / loop 变量 / 形参 / 被捕获的局部 / 可变字段 / catch 绑定、异常、歧义）在缺省与 CLEAT_NO_OPT=host（全部走运行时的 ByRefCalls）下输出逐字相同。
+    /// </summary>
+    [Test]
+    public void ByRefArguments()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "by_ref.clj");
+        var on = HostProcessTests.CleatIn(_dir, null, null, script);
+        var off = HostProcessTests.CleatIn(_dir, null, new[] { ("CLEAT_NO_OPT", "host") }, script);
+        Assert.That(on.ExitCode, Is.EqualTo(0), on.ToString());
+        Assert.That(off.ExitCode, Is.EqualTo(0), off.ToString());
+        Assert.That(on.Out, Is.EqualTo(off.Out), "static:\n" + on.Out + "\nreflective:\n" + off.Out);
+        foreach (var line in new[]
+        {
+            ":out 42 :bad 43 :bad", ":repr [true System.Int64 7 true System.Double 2.5 true true]", ":generic true 1 false nil",
+            ":generic-hinted true 5 System.Int64", ":ref [42 42 1 10]", ":ref-object [:old :new]", ":after 6 8 3.0", ":loop [0 7 14 21]",
+            ":loopvar 12 :param 2.25", ":captured [99 99]", ":in-closure [8 8]", ":field 123", ":catch [\"boom\" nil]",
+            ":throws System.ArgumentNullException", ":ambiguous true", ":no-shape System.MissingMethodException",
+        })
+            Assert.That(on.Out, Does.Contain(line + "\n"), on.Out);
+    }
+
+    /// <summary>cleat-183：编译期唯一决议的 by-ref 调用直接 call（ldloca 传元素类型的局部），重载不唯一的走 ClojureOps.ByRefHost。</summary>
+    [Test]
+    public void ByRefStaticCallsUseLdloca()
+    {
+        string script = Path.Combine(_dir, "byref.clj");
+        File.WriteAllText(script, string.Join("\n", new[]
+        {
+            "(defn parse-hinted [^String s] (let [n 0] (if (Int64/TryParse s (by-ref n)) n :bad)))",
+            "(defn xchg [] (let [a 1] (System.Threading.Interlocked/Exchange (by-ref a) 10) a))",
+        }));
+        string file = Path.Combine(_dir, "byref.il.txt");
+        var r = HostProcessTests.CleatIn(_dir, null, null, EvalIlArgs(script, file));
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        string il = File.ReadAllText(file);
+        string parse = IlClass(il, "user$parse_hinted");
+        Assert.That(parse, Does.Contain("call System.Int64::TryParse(System.String, System.Int64&) : System.Boolean"), parse);
+        Assert.That(parse, Does.Contain("ldloca"), parse);
+        Assert.That(parse, Does.Not.Contain("ByRefHost"), parse);
+        Assert.That(IlClass(il, "user$xchg"), Does.Contain("call Cleat.Core.Runtime.ClojureOps::ByRefHost("));
+    }
+
+    /// <summary>cleat-183：by-ref 的错误用法在编译时报清楚的错误。</summary>
+    [Test]
+    public void ByRefMisuse()
+    {
+        foreach (var (src, msg) in new[]
+        {
+            ("(let [n 0] (Int64/TryParse \"1\" (by-ref 5)))", "by-ref argument must be a local binding"),
+            ("(def zz 0) (Int64/TryParse \"1\" (by-ref zz))", "by-ref argument must be a local binding"),
+            ("(let [n 0] (Int64/TryParse \"1\" (by-ref n n)))", "by-ref takes exactly one argument"),
+            ("(deftype T [x] Object (ToString [_] (Int64/TryParse \"1\" (by-ref x)) \"\"))", "by-ref argument must be a local binding"),
+            ("(let [n 0] (Int64/TryParse \"1\" n))", "pass ref/out arguments with (by-ref local)"),
+        })
+        {
+            var r = HostProcessTests.CleatIn(_dir, null, null, "-e", src);
+            Assert.That(r.ExitCode, Is.Not.EqualTo(0), src + "\n" + r);
+            Assert.That(r.Err + r.Out, Does.Contain(msg), src + "\n" + r);
+        }
+    }
 }

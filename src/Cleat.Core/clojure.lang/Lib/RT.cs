@@ -433,7 +433,14 @@ namespace clojure.lang
             }
         }
 
-        // CLEAT-012: removed checkSpecAsserts / instrumentMacros / CHECK_SPECS (clojure.spec is not part of cleat)
+        // CLEAT-012: removed checkSpecAsserts / instrumentMacros / CHECK_SPECS (clojure.spec was not part of cleat).
+        // cleat-166: checkSpecAsserts is back for the clojure.spec.alpha package (packages/spec.alpha): s/assert expands to a read of this
+        // field and s/check-asserts sets it. Same switch as ClojureCLR (environment variable CLOJURE_SPEC_CHECK_ASSERTS, default off).
+        // instrumentMacros: macro :args checking during macroexpansion (the C# analyzer's CheckMacroSpec) once the spec package is loaded;
+        // CLOJURE_SPEC_SKIP_MACROS=true turns it off (ClojureCLR's switch). There is no CHECK_SPECS: spec is never loaded on cleat's behalf.
+        public static bool checkSpecAsserts = ReadTrueFalseDefault(Environment.GetEnvironmentVariable("CLOJURE_SPEC_CHECK_ASSERTS"), false);
+        public static bool instrumentMacros = !ReadTrueFalseDefault(Environment.GetEnvironmentVariable("CLOJURE_SPEC_SKIP_MACROS"), false);
+
 
         public static string SystemRuntimeDirectory = RuntimeEnvironment.GetRuntimeDirectory();
 

@@ -170,6 +170,24 @@ public class HostProcessTests
         Assert.That(r.Err, Does.Contain("No such namespace: str"), r.ToString());
     }
 
+    /// <summary>
+    /// REPL 的 Tab 补全（cleat-034）认别名：(require '[clojure.string :as cstr]) 之后 cstr/ 补出 clojure.string 的公有 Var（保留 cstr/ 前缀），
+    /// 不含 refer 进来的 clojure.core 函数与私有 Var；cst 补出 cstr/；参数提示也认别名。
+    /// </summary>
+    [Test]
+    public void ReplCompletionResolvesAliases()
+    {
+        var r = Cleat(null, "-e", "(require '[clojure.string :as cstr])",
+            "-e", "(vec (Cleat.Host.Program/ReplCompletions \"cstr/jo\"))",
+            "-e", "(let [c (set (Cleat.Host.Program/ReplCompletions \"cstr/\"))] [(contains? c \"cstr/upper-case\") (contains? c \"cstr/map\") (some #(not (.StartsWith ^String % \"cstr/\")) c)])",
+            "-e", "(vec (Cleat.Host.Program/ReplCompletions \"clojure.string/blan\"))",
+            "-e", "(some #{\"cstr/\"} (Cleat.Host.Program/ReplCompletions \"cst\"))",
+            "-e", "[(Cleat.Host.Program/ReplHint \"cstr/join\") (Cleat.Host.Program/ReplHint \"inc\") (Cleat.Host.Program/ReplHint \"nope/x\")]");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        // -e 不打印 nil；:arglists 是列表时提示也要有（cleat-162 顺带修：原来只认向量，defn 的函数从来没有提示）
+        Assert.That(r.Out, Is.EqualTo("[\"cstr/join\"]\n[true false nil]\n[\"clojure.string/blank?\"]\n\"cstr/\"\n[\"[coll] [separator coll]\" \"[x]\" nil]\n"), r.ToString());
+    }
+
     [Test]
     public void ReplQuitAndStartupTime()
     {
@@ -415,7 +433,55 @@ public class HostProcessTests
         Assert.That(s.Err, Does.Not.Contain("boom"));
     }
 
-    [Test, Category("Bootstrap"), NonParallelizable]
+    // Engineering（cleat-162 / 182，原名 Bootstrap）：发布、打包、示例工程这类端到端测试，nightly 层跑
+    /// <summary>
+    /// cleat-186：镜像旁的随附库 Cleat.Clojure.Libs.dll 按它记的镜像 id（CleatBootImageAttribute）决定用不用，不看文件时间：
+    /// 对着本镜像编的、即使文件比镜像旧也用；对着别的镜像编的不用（没有源码可退回时在标准错误说明），而不是用到时报 StaleModuleException。
+    /// </summary>
+    [Test]
+    public void BundledLibsAreUsedOnlyWithTheImageTheyWereCompiledAgainst()
+    {
+        string srcBoot = Path.Combine(RepoDir, "src", "boot");
+        string Copy(string name)
+        {
+            string d = Path.Combine(_dir, name);
+            Directory.CreateDirectory(d);
+            foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.pdb", "cleat.boot.ifc", "cleat.boot.inl" })
+                File.Copy(Path.Combine(srcBoot, f), Path.Combine(d, f));
+            return d;
+        }
+        string clj = Path.Combine(RepoDir, "src", "clojure");
+        // 一个不同的镜像（-g 的镜像：不做直接链接，id 不同）与对着它编的随附库
+        string other = Path.Combine(_dir, "other");
+        Directory.CreateDirectory(other);
+        var b = CleatInWithTimeout(_dir, null, new[] { ("CLEAT_NO_INLINE", "1") }, 600_000, "--boot", Path.Combine(srcBoot, "cleat.boot.dll"), "-I", clj,
+                                   "--compile-boot", Path.Combine(other, "cleat.boot.dll"), "--boot-order", Path.Combine(srcBoot, "boot-order.edn"));
+        Assert.That(b.ExitCode, Is.EqualTo(0), b.ToString());
+        string[] Libs(string boot, string outDll) =>
+            new[] { "--boot", boot, "-I", clj, "--compile-package", outDll, "--package", "clojure", "--root", clj, "clojure.test.tap" };
+        var c = CleatInWithTimeout(_dir, null, null, 600_000, Libs(Path.Combine(other, "cleat.boot.dll"), Path.Combine(other, "Cleat.Clojure.Libs.dll")));
+        Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+
+        // 对着本镜像编的、文件时间比镜像旧：用（require 不需要源码）
+        string good = Copy("good");
+        c = CleatInWithTimeout(_dir, null, null, 600_000, Libs(Path.Combine(good, "cleat.boot.dll"), Path.Combine(good, "Cleat.Clojure.Libs.dll")));
+        Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+        File.SetLastWriteTimeUtc(Path.Combine(good, "Cleat.Clojure.Libs.dll"), File.GetLastWriteTimeUtc(Path.Combine(good, "cleat.boot.dll")).AddHours(-1));
+        var r = CleatIn(_dir, null, null, "--boot", Path.Combine(good, "cleat.boot.dll"), "-e", "(require 'clojure.test.tap)", "-e", ":tap-ok");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain(":tap-ok"), r.ToString());
+        Assert.That(r.Err, Does.Not.Contain("another boot image"), r.ToString());
+
+        // 对着别的镜像编的：不用；这里没有源码可退回，require 失败，标准错误说明原因（不是 StaleModuleException）
+        string bad = Copy("bad");
+        File.Copy(Path.Combine(other, "Cleat.Clojure.Libs.dll"), Path.Combine(bad, "Cleat.Clojure.Libs.dll"));
+        r = CleatIn(_dir, null, null, "--boot", Path.Combine(bad, "cleat.boot.dll"), "-e", "(require 'clojure.test.tap)");
+        Assert.That(r.ExitCode, Is.Not.EqualTo(0), r.ToString());
+        Assert.That(r.Err, Does.Contain("Cleat.Clojure.Libs.dll was compiled against another boot image; not using it"), r.ToString());
+        Assert.That(r.Err + r.Out, Does.Not.Contain("StaleModuleException"), r.ToString());
+    }
+
+    [Test, Category("Engineering"), NonParallelizable]
     public void PublishedDirectoryRunsStandalone()
     {
         // cleat-034 的验收：tools/build.cs publish 的目录在宿主之外可运行（-e、脚本、随发布的 AOT 库）。

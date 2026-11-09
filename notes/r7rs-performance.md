@@ -1079,3 +1079,17 @@ ns/iter 中位：接口直调 **12.9**、具体类型提示 **10.4**（理论上
 内存 / 启动取证和 56 行全表见[任务书](../tasks/cleat-163-sigspec-ablation.md)；
 执行删除另开 [cleat-170](../tasks/cleat-170-sigspec-removal.md)。
 
+## M19 §2：cleat-169 收口复核（2026-11-05 ~ 11-08，本机与 111 各 56 项 × 5 轮）
+
+当前树 vs `be10492`（M19 之前）的跨构建同轮配对（`bench/r7rs/pairbuild.py`）。第一遍查出 158 引入的回退（diviter / divrec +17% ~ 27%）：
+镜像构建关 `inline-calls?` 时连带关掉了 core 内部的直接链接与 KnownCall；修复后（`FormAnalyzer.PhysicalFrames`）重跑：
+
+| | 本机 | 111 |
+|---|---|---|
+| 几何平均 | x0.966 | x0.975 |
+| diviter / divrec | x1.002 / x1.034 | x0.952 / x0.966 |
+| 可声明回退 | triangl x1.065、fibfp x1.106 | triangl x1.089、matrix x1.057 |
+
+triangl 主要是 170 删 sigspec 的代价（用户接受）；matrix（只在 111）与 fibfp（只在本机）两个编译器 / 修复前后生成的 IL 相同，记为环境性。
+分段定位与证据见 [cleat-169](../tasks/cleat-169-m19-closeout.md)。
+

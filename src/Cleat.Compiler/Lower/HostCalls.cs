@@ -333,5 +333,118 @@ internal static partial class CodeGen
         FinishValue(mc, ctx);
     }
 
+    private static readonly System.Reflection.MethodInfo s_convertFrom = Rt.S(typeof(Reflector), nameof(Reflector.ConvertFrom), Rt.Obj, typeof(Type));
+
+    /// <summary>
+    /// (ByRefHost kind T member mask [inst] 实参 …)（cleat-183）的编译期决议：<see cref="ClojureStaticCalls.ResolveByRef"/> 唯一时，
+    /// 实参依次求值进 object 临时变量，by-ref 位置另开元素类型的局部（ref 先按形参转换存入，out 不存）、传 ldloca；调用后把
+    /// [结果, 各 by-ref 局部的新值] 装进 object[]（值类型经 Reflector.ConvertFrom 成 Clojure 表示）。决议不出返回 false（走 ClojureOps.ByRefHost）。
+    /// </summary>
+    private static bool CgByRefHost(ImmutableArray<Expr> e, MethodCtx mc, Ctx ctx)
+    {
+        if (!OptHost || e.Length < 4) return false;
+        string kind = QuotedDatum(e[0]) as string;
+        var t = QuotedDatum(e[1]) as Type;
+        string nm = QuotedDatum(e[2]) as string;
+        if (kind == null || t == null || QuotedDatum(e[3]) is not long mask) return false;
+        bool inst = kind == "instance";
+        var ops = e.RemoveRange(0, 4);
+        int n = ops.Length - (inst ? 1 : 0);
+        var sig = ClojureStaticCalls.ResolveByRef(t, nm, kind, mask, n);
+        if (sig.Length == 0) return false;
+        string decl = (string)sig[0], name = (string)sig[1], ret = (string)sig[3];
+        var pts = ((object[])sig[2]).Cast<string>().ToArray();
+        bool virt = (bool)sig[4], ctor = (string)sig[5] == "ctor";
+        var outs = ((object[])sig[6]).Cast<bool>().ToArray();
+        bool IsRef(int i) => ((mask >> i) & 1) != 0;
+        var temps = ops.Select(x => { int tl = mc.NewLocal(Rt.Obj); Cg(x, mc, Ctx.Value); mc.Emit(OpCodes.Stloc, tl); return tl; }).ToList();
+        void Convert(string pt)
+        {
+            if (pt == "System.Object") return;
+            if (ValueArgHelpers.TryGetValue(pt, out var helper)) mc.Emit(OpCodes.Call, StaticCallsMethod(helper, Rt.Obj));
+            else mc.Emit(OpCodes.Castclass, pt);
+        }
+        var slots = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            if (!IsRef(i)) continue;
+            slots[i] = mc.NewLocal(pts[i]);
+            if (outs[i]) continue;
+            int tl = temps[i + (inst ? 1 : 0)];
+            var skip = new Lbl();
+            // ref 位置的 nil：值类型的槽保持默认值（与反射路径相同）
+            mc.Emit(OpCodes.Ldloc, tl);
+            mc.Emit(OpCodes.Brfalse, skip);
+            mc.Emit(OpCodes.Ldloc, tl);
+            Convert(pts[i]);
+            mc.Emit(OpCodes.Stloc, slots[i]);
+            mc.Mark(skip);
+        }
+        if (inst)
+        {
+            mc.Emit(OpCodes.Ldloc, temps[0]);
+            mc.Emit(OpCodes.Ldstr, nm);
+            mc.Emit(OpCodes.Call, StaticCallsMethod2("Instance"));
+            mc.Emit(OpCodes.Castclass, decl);
+        }
+        for (int i = 0; i < n; i++)
+        {
+            if (IsRef(i)) { mc.Emit(OpCodes.Ldloca, slots[i]); continue; }
+            mc.Emit(OpCodes.Ldloc, temps[i + (inst ? 1 : 0)]);
+            Convert(pts[i]);
+        }
+        var refPts = pts.Select((p, i) => (object)(IsRef(i) ? p + "&" : p)).ToArray();
+        if (ctor)
+        {
+            mc.Emit(OpCodes.Newobj, new MethodRef(decl, ".ctor", refPts, Rt.Void, ctor: true));
+            if (t.IsValueType) mc.Emit(OpCodes.Box, decl);
+        }
+        else
+            mc.Emit(virt ? OpCodes.Callvirt : OpCodes.Call, new MethodRef(decl, name, refPts, ret));
+        int result = mc.NewLocal(Rt.Obj);
+        void ToObject(string tn, bool valueType)
+        {
+            if (valueType) { mc.Emit(OpCodes.Box, tn); mc.Emit(OpCodes.Ldnull); mc.Emit(OpCodes.Call, s_convertFrom); }
+            else if (tn == "System.Object") { mc.Emit(OpCodes.Ldnull); mc.Emit(OpCodes.Call, s_convertFrom); }
+        }
+        if (ctor) { }
+        else if (ret == "System.Void") mc.Emit(OpCodes.Ldnull);
+        else ToObject(ret, IsValueTypeName(ret));
+        mc.Emit(OpCodes.Stloc, result);
+        int count = 1 + Enumerable.Range(0, n).Count(IsRef);
+        mc.Emit(OpCodes.Ldc_I4, count);
+        mc.Emit(OpCodes.Newarr, Rt.Obj);
+        mc.Emit(OpCodes.Dup);
+        mc.Emit(OpCodes.Ldc_I4, 0);
+        mc.Emit(OpCodes.Ldloc, result);
+        mc.Emit(OpCodes.Stelem_Ref);
+        int j = 1;
+        for (int i = 0; i < n; i++)
+        {
+            if (!IsRef(i)) continue;
+            mc.Emit(OpCodes.Dup);
+            mc.Emit(OpCodes.Ldc_I4, j++);
+            mc.Emit(OpCodes.Ldloc, slots[i]);
+            ToObject(pts[i], IsValueTypeName(pts[i]));
+            mc.Emit(OpCodes.Stelem_Ref);
+        }
+        FinishValue(mc, ctx);
+        return true;
+    }
+
+    /// <summary>ResolveByRef 给出的类型名是否值类型（名字能解析时看类型，否则按原始类型名）。</summary>
+    private static bool IsValueTypeName(string tn) =>
+        ValueArgHelpers.ContainsKey(tn) || (Type.GetType(tn) ?? HostSyntaxTypeByName(tn))?.IsValueType == true;
+
+    private static Type HostSyntaxTypeByName(string tn)
+    {
+        foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var x = a.GetType(tn, false);
+            if (x != null) return x;
+        }
+        return null;
+    }
+
     private static System.Reflection.MethodInfo StaticCallsMethod2(string name) => Rt.S(Rt.StaticCallsType, name, Rt.Obj, Rt.Obj);
 }

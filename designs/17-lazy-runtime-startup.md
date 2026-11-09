@@ -130,7 +130,8 @@ Clojure 的包（如 `Cleat.Nrepl`）的 nupkg 依赖 `Cleat.Runtime`（版本�
   `Microsoft.*`）、`Loader.AddPath` 的目录里的 `*.dll`（按元数据读，不载入）。同一个键先登记者赢。`*compile-files*` 为真时不用包程序集。
 - **`compile`**：`(compile 'a.b)` 把这个文件与编译期间从源码加载到的文件编成包程序集 `a.b.dll`（`*compile-path*` 或源码根目录）；
   宿主 `--compile-package out.dll [--package 名] [--root 目录]… ns…` 编一个包（只收 `--root` 下的文件，缺省全部 `-I`）。
-- **随附库**：`tools/build.cs compile-libs` 编出 `src/boot/Cleat.Clojure.Libs.dll`，宿主登记镜像旁的它；比 Clojure 镜像旧时不登记
-  （镜像重建后没有重编，这些命名空间从源码加载）——没有了"对旧镜像编译则回退源码"，这是唯一保留的新旧比较。
+- **随附库**：`tools/build.cs compile-libs` 编出 `src/boot/Cleat.Clojure.Libs.dll`，宿主登记镜像旁的它；它记的镜像 id（`CleatBootImageAttribute`，按元数据读）与正在运行的镜像不同时不登记
+  （镜像重建后没有重编，这些命名空间从源码加载；没有源码时在标准错误说明）。cleat-186 之前比的是文件时间（复制、检出、确定性重编都会改它），
+  没有这个特性的旧程序集仍按文件时间判断。
 - **源码嵌入**（§2.1 的"可选"）没有做：`:file` 元数据仍是构建时的路径。
 - **neorepl 的 jack-in** 经 `PackageIndex.Locate("nrepl/cmdline")` 找到 nREPL 的包程序集目录交给服务进程的 `-I`。

@@ -332,7 +332,8 @@ internal sealed class LineEditor
         string common = CommonPrefix(candidates);
         if (candidates.Count == 1)
         {
-            Replace(start - lineStart, candidates[0] + " ");
+            // 别名补成 "cstr/" 时不加空格：接着按 Tab 补成员
+            Replace(start - lineStart, candidates[0].EndsWith('/') ? candidates[0] : candidates[0] + " ");
             return;
         }
         if (common.Length > prefix.Length)

@@ -257,6 +257,38 @@ public static class PackageIndex
         }
     }
 
+    /// <summary>
+    /// 包程序集按元数据记录的 boot 镜像 id（<see cref="CleatBootImageAttribute"/>，cleat-186）；没有这个特性（186 之前编的）或读不了时 null。
+    /// </summary>
+    public static string ReadBootImageId(string path)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var pe = new PEReader(fs);
+            if (!pe.HasMetadata) return null;
+            var md = pe.GetMetadataReader();
+            if (!md.IsAssembly) return null;
+            foreach (var h in md.GetAssemblyDefinition().GetCustomAttributes())
+            {
+                var ca = md.GetCustomAttribute(h);
+                if (ca.Constructor.Kind != HandleKind.MemberReference) continue;
+                var parent = md.GetMemberReference((MemberReferenceHandle)ca.Constructor).Parent;
+                if (parent.Kind != HandleKind.TypeReference) continue;
+                var tr = md.GetTypeReference((TypeReferenceHandle)parent);
+                if (md.GetString(tr.Name) != "CleatBootImageAttribute" || md.GetString(tr.Namespace) != "Cleat.Core") continue;
+                var blob = md.GetBlobReader(ca.Value);
+                if (blob.ReadUInt16() != 1) continue;
+                return blob.ReadSerializedString();
+            }
+            return null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     /// <summary>按元数据读程序集级 CleatNamespace 特性；不是程序集或读不了时 null。</summary>
     private static List<(string key, string type, string method)> ReadIndex(string path, out string asmName)
     {

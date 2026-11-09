@@ -85,6 +85,13 @@ public static class ClojureOps
     /// <summary>类型作为值（类名符号求值）：桩类型换成真正的类型（deftype* 方法体里引用正在定义的类型）。</summary>
     public static object RealType(object t) => HostSyntax.Real((Type)t);
 
+    /// <summary>by-ref 实参的宿主调用（cleat-183）：返回 [结果, by-ref 位置的新值 …]（<see cref="ByRefCalls.Invoke"/>）。</summary>
+    public static object ByRefHost(object kind, object t, object name, object mask, object[] args) =>
+        ByRefCalls.Invoke((string)kind, t == null ? null : HostSyntax.Real((Type)t), name as string, Convert.ToInt64(mask), args);
+
+    /// <summary>by-ref 结果数组的第 i 个元素（cleat-183）。</summary>
+    public static object ByRefNth(object result, object i) => ((object[])result)[Convert.ToInt32(i)];
+
     public static object NewOf(object t, object[] args) => Reflector.New(HostSyntax.Real((Type)t), args);
     public static object IsInstanceOf(object t, object x) => Reflector.Is(HostSyntax.Real((Type)t), x);
 

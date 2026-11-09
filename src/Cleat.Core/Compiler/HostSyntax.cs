@@ -44,8 +44,11 @@ public static partial class HostSyntax
         if (form is not clojure.lang.Symbol sym || sym.Namespace != null) return null;
         string n = sym.Name;
         if (n.IndexOf('.') > 0 || n[^1] == ']' || n.IndexOfAny(s_triggerTypeChars) >= 0)
-            // 登记表认得桩与本进程生成的类型；ClojureCLR 的泛型语法（BlockingCollection`1[System.Object]）由 Cleat.Core 的解析（cleat-053）
-            return PendingStub(n) ?? CompileTimeTypes.Resolve(n);
+            // 登记表认得桩与本进程生成的类型；ClojureCLR 的泛型语法（BlockingCollection`1[System.Object]）由 Cleat.Core 的解析（cleat-053）。
+            // 解析不到时再看命名空间的导入（cleat-167）：(:import [System.Collections.Generic |LinkedList`1[System.Object]|]) 把封闭泛型类型
+            // 登记在它的短名 LinkedList`1 下，之后写 (|LinkedList`1|.)——ClojureCLR 的 HostExpr.MaybeType 同样先查映射
+            return PendingStub(n) ?? CompileTimeTypes.Resolve(n)
+                ?? (!isLocal && n.IndexOf('.') < 0 && CurrentNs.GetMapping(sym) is Type mapped ? PendingStub(mapped.FullName) ?? mapped : null);
         if (isLocal) return null;
         if (CurrentNs.GetMapping(sym) is Type t) return PendingStub(t.FullName) ?? t;
         return StubForTag(n) ?? ClassForName(n);

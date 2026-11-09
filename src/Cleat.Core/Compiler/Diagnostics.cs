@@ -207,7 +207,37 @@ public static class Diagnostics
                 return $"Syntax error reading source at ({src}:{re.Line}:{re.Column}).{NL}{(re.InnerException ?? re).Message}";
         }
         string loc = e.Data.Contains(LocationKey) ? (string)e.Data[LocationKey] : SourceLabel() + ":1";
+        // spec 的调用检查（instrument）：Clojure 1.12 的 ex-str 写 "Execution error - invalid arguments to f at (…)." 加 spec 的解释（cleat-166）
+        if (SpecFn(e) is object fn && SpecExplain(e) is string explained)
+            return $"Execution error - invalid arguments to {fn} at ({loc}).{NL}{explained}";
         return $"Execution error{CauseType(e)} at ({loc}).{NL}{Message(e)}";
+    }
+
+    // —— spec 的错误文本（cleat-166，clojure.main/ex-str 的 spec 分支）：packages/spec.alpha 加载了、异常的 ex-data 带 ::s/problems 时 ——
+
+    private static readonly Keyword ProblemsKw = Keyword.intern("clojure.spec.alpha", "problems"), SpecFnKw = Keyword.intern("clojure.spec.alpha", "fn"),
+        InKw = Keyword.intern(null, "in");
+
+    private static IPersistentMap SpecData(Exception e) =>
+        e is IExceptionInfo info && info.getData() is IPersistentMap d && d.valAt(ProblemsKw) != null ? d : null;
+
+    private static object SpecFn(Exception e) => SpecData(e)?.valAt(SpecFnKw);
+
+    /// <summary>s/explain-out 的输出（问题里去掉 :in，与 ex-str 相同），末尾换行去掉；spec 没加载或不是 spec 的错误时 null。</summary>
+    private static string SpecExplain(Exception e)
+    {
+        if (SpecData(e) is not IPersistentMap data) return null;
+        var explain = Namespace.find(Symbol.intern("clojure.spec.alpha"))?.FindInternedVar(Symbol.intern("explain-out"));
+        if (explain == null || !explain.isBound) return null;
+        IPersistentVector problems = PersistentVector.EMPTY;
+        for (ISeq q = RT.seq(data.valAt(ProblemsKw)); q != null; q = q.next())
+            problems = problems.cons(q.first() is IPersistentMap m ? m.without(InKw) : q.first());
+        var sw = new StringWriter();
+        Var.pushThreadBindings(RT.map(RT.OutVar, sw));
+        try { explain.invoke(data.assoc(ProblemsKw, problems)); }
+        catch (Exception) { return null; }
+        finally { Var.popThreadBindings(); }
+        return sw.ToString().TrimEnd();
     }
 
     private static string CauseType(Exception e) =>
@@ -221,6 +251,8 @@ public static class Diagnostics
             : $"{DisplayPath(x.SourcePath)}:{x.Line}:{x.Column}";
         string sym = x.Symbol != null ? x.Symbol + " " : "";
         string reason = x.Reason ?? x.Message;
+        // 宏的 spec 检查失败（cleat-166）：原因换成 spec 的解释，与 Clojure 1.12 相同
+        if (x.InnerException != null && SpecExplain(x.InnerException) is string explained) reason = explained;
         if (x.Phase == ExpanderException.PhaseSyntax) return $"Syntax error macroexpanding {sym}at ({loc}).{NL}{reason}";
         if (x.Phase == ExpanderException.PhaseMacroexpand)
             return $"Unexpected error{CauseType(x.InnerException)} macroexpanding {sym}at ({loc}).{NL}{reason}";

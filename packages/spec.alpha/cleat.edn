@@ -1,0 +1,5 @@
+;; clojure.spec.alpha + clojure.core.specs.alpha as a cleat project (designs/18), cleat-166: packed as Cleat.SpecAlpha,
+;;   cleat -T:build install
+;; Generators (s/gen, s/exercise, clojure.spec.test.alpha/check) load clojure.test.check lazily, as upstream does:
+;; add Cleat.TestCheck (packages/test.check) to use them; everything else works without it.
+{:paths ["src"]}

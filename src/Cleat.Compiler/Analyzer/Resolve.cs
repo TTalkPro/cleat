@@ -82,13 +82,17 @@ public static partial class FormAnalyzer
 
     private static readonly Keyword[] s_sourceKeys = { LineKw, ColumnKw, FileKw, SourceSpanKw, EndLineKw, EndColumnKw };
 
-    /// <summary>user-meta：用户元数据，去掉 reader 的源位置；空时 nil。</summary>
+    /// <summary>user-meta：fn* / reify 的用户元数据，去掉 reader 的源位置（JVM 的 FnExpr 同样去掉 :line :column :file）；空时 nil。
+    /// 集合字面量不用它：它们的元数据原样保留（<see cref="LiteralMeta"/>）。</summary>
     private static IPersistentMap UserMeta(object x)
     {
         if (Meta(x) is not IPersistentMap m) return null;
         foreach (var k in s_sourceKeys) m = m.without(k);
         return m.count() > 0 ? m : null;
     }
+
+    /// <summary>集合字面量的元数据（cleat-167）：原样，空时 nil——reader 不给向量 / map / 集合记位置，TransferSource 也不给它们带位置，所以这里没有要剥的键。</summary>
+    private static IPersistentMap LiteralMeta(object x) => Meta(x) is IPersistentMap m && m.count() > 0 ? m : null;
 
     /// <summary>real-source：源文件名，去掉占位符 NO_SOURCE_PATH / NO_SOURCE_FILE（cleat-158）。</summary>
     private static string RealSource(object f)
@@ -216,6 +220,9 @@ public static partial class FormAnalyzer
         IPersistentMap nm = o.meta() ?? (IPersistentMap)PersistentArrayMap.EMPTY;
         foreach (var k in s_transferKeys)
         {
+            // 源位置只带给列表（错误位置只看列表；JVM 的 reader 也只给列表记位置）。向量 / map / 集合字面量的元数据按用户写的原样保留
+            // （cleat-167：原来连它们也带上 :line，于是 AnalyzeDatum 得把位置键都剥掉，用户自己写的 ^{:line 9} 也被一并剥掉）；:tag 照旧带给任何 IObj（JVM 的 preserveTag）
+            if (!ReferenceEquals(k, TagKw) && x is not ISeq) continue;
             var v = Boundary(Get(om, k));
             if (Truthy(v) && !Truthy(nm.valAt(k))) nm = nm.assoc(k, v);
         }
@@ -320,9 +327,38 @@ public static partial class FormAnalyzer
         return ex;
     }
 
+    /// <summary>
+    /// 宏的 spec 检查（cleat-166，Clojure 的 Compiler.checkSpecs）：加载了 clojure.spec.alpha（packages/spec.alpha）之后，宏展开前
+    /// 用 <c>clojure.spec.alpha/macroexpand-check</c> 核对宏的 :args spec（s/fdef 过的宏；core 的 defn / let / ns … 在加载
+    /// clojure.core.specs.alpha 后生效），不合时报 macro-syntax-check 阶段的错误。spec 是可选包：没加载时这里只是一次缓存的查找，
+    /// 也不像 ClojureCLR 那样为此去加载 spec。CLOJURE_SPEC_SKIP_MACROS=true（RT.instrumentMacros 为假）时整个关掉。
+    /// </summary>
+    private static Var s_macroCheck;
+
+    private static Var MacroCheckVar()
+    {
+        if (s_macroCheck != null) return s_macroCheck;
+        var ns = Namespace.find(SpecNs);
+        if (ns?.FindInternedVar(MacroCheckSym) is Var v && v.isBound) s_macroCheck = v;
+        return s_macroCheck;
+    }
+
+    private static readonly Symbol SpecNs = Symbol.intern("clojure.spec.alpha"), MacroCheckSym = Symbol.intern("macroexpand-check");
+
+    private static void CheckMacroSpec(Var v, object form, Pos pos)
+    {
+        if (!RT.instrumentMacros || MacroCheckVar() is not Var check) return;
+        try { check.invoke(v, RT.next(form)); }
+        catch (Exception ex)
+        {
+            throw ExpanderEx(pos, Phase.MacroSyntaxCheck, ex.Message, ex, Str(v.Namespace.Name) + "/" + v.Symbol.Name);
+        }
+    }
+
     /// <summary>call-macro：宏 Var v 展开形式 form；异常按 Clojure 1.12 的 macroexpand1 分阶段。</summary>
     private static object CallMacro(Var v, object form, Pos pos, Ctx ctx)
     {
+        CheckMacroSpec(v, form, pos);
         try
         {
             return v.applyTo(RT.cons(form, RT.cons(LocalsEnv(ctx), RT.next(form))));

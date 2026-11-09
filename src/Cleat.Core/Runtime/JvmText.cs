@@ -26,6 +26,11 @@ public static class JvmText
         bool neg = d < 0;
         double a = Math.Abs(d);
         string r = single ? ((float)a).ToString("R", CultureInfo.InvariantCulture) : a.ToString("R", CultureInfo.InvariantCulture);
+        // cleat-167：.NET 的最短往返格式在 2 的幂处不可靠——下方的间距只有上方的一半，它给出的 16 位文本（2^-25 → 2.980232238769531E-08）
+        // 解析回来是下方相邻的那个 double。读回不等时退到 17 位有效数字（JVM 的 Double.toString 这里同样多给一位：2.9802322387695312E-8）。
+        // test.check 的 edn-roundtrips 属性测试随机撞到了它
+        if (single ? float.Parse(r, CultureInfo.InvariantCulture) != (float)a : double.Parse(r, CultureInfo.InvariantCulture) != a)
+            r = single ? ((float)a).ToString("G9", CultureInfo.InvariantCulture) : a.ToString("G17", CultureInfo.InvariantCulture);
         var (digits, exp) = Digits(r);
         var sb = new StringBuilder();
         if (neg) sb.Append('-');

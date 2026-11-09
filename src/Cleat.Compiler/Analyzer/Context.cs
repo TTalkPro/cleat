@@ -197,9 +197,13 @@ public static partial class FormAnalyzer
     private static long NextCounter() => Interlocked.Increment(ref s_counter);
 
     /// <summary>
-    /// analyzer.clj inline-calls?：调用点内联 / 直接链接 / KnownCall。构建镜像时关闭（种子与两级镜像的 .inl 一致）；CLEAT_NO_INLINE 时缺省关。
+    /// analyzer.clj inline-calls?：调用点内联（.inl）。构建镜像时关闭（不做新的内联决定，两级镜像的 .inl 一致）；CLEAT_NO_INLINE 时缺省关。
+    /// 只管内联：直接链接与 KnownCall 由 <see cref="PhysicalFrames"/> 管（cleat-169：158 起两者共用这个开关，镜像构建因此丢了 core 内部的直接调用）。
     /// </summary>
     public static bool InlineCalls { get; set; } = Environment.GetEnvironmentVariable("CLEAT_NO_INLINE") == null;
+
+    /// <summary>-g / CLEAT_NO_INLINE：保留物理栈帧——不做直接链接与 KnownCall（静态调用可能被 JIT 内联掉帧）。与镜像构建无关（cleat-169）。</summary>
+    public static readonly bool PhysicalFrames = Environment.GetEnvironmentVariable("CLEAT_NO_INLINE") != null;
 
     /// <summary>analyzer.clj reflection-warnings?：镜像构建时关掉（driver/compile-boot）。</summary>
     public static bool ReflectionWarnings { get; set; } = true;

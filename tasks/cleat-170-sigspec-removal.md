@@ -1,6 +1,6 @@
 # cleat-170 运行时 sigspec 体系删除
 
-- 里程碑：M19　依赖：cleat-163　状态：进行中（2026-11-04：实现与门禁全过，111 全表复核跑动中）
+- 里程碑：M19　依赖：cleat-163　状态：完成（2026-11-05：111 全表复核完成；triangl 约 4.6% 的稳定代价经用户裁决接受）
 - 设计依据：[29 §5.1](../designs/29-usability-and-engineering.md)、[24](../designs/24-runtime-signature-specialization.md) ~ [27](../designs/27-jit-style-runtime-specialization.md)
 
 ## 问题
@@ -30,7 +30,7 @@
 - typed 的保留 / 删除边界有明确记账，不把编译期类型化入口静默删掉。
 - 门禁全绿；种子不动点通过；56 × 5 配对表进任务书，无超地板回退。
 
-## 收口（2026-11-04：实现 + 门禁全过；111 全表复核跑动中）
+## 收口（2026-11-04：实现 + 门禁全过；111 全表复核见文末，2026-11-05 收口）
 
 ### 删了什么
 
@@ -130,4 +130,58 @@
 3. 结论：`ntakl` / `sum` / `triangl` 在本机是抽签项；判定必须按 29 §9 与
    [notes/r7rs-performance.md](../notes/r7rs-performance.md) 的纪律**在 111 上复核**，111 结论为准。
 
-（111 全表 56 × 5 跑动中，结果跑完补进本节。）
+（111 全表 56 × 5 的结果见下节。）
+
+## 111 全表复核与收口（2026-11-05）
+
+**数据**：111 的全表在 2026-11-03 20:15 就已跑完，当时没有汇总（随后转入 M20）。注意 111 的 `cleat-181/bench/r7rs/results/cleat170*.jsonl`
+是仓库复制时带过去的**本机**数据（与上面本机表逐格相同），111 自己的数据在 `cleat-170-new/bench/r7rs/results/pair170*.jsonl`；
+三份原始数据复制到本仓库 `bench/r7rs/results/pair170-111.jsonl`（全表）、`pair170-111-key.jsonl`（4 项 × 9 轮）、`pair170-111-now.jsonl`（下文第 3 节）。
+
+### 1. 111 全表（56 项 × 5 轮同轮配对，臂序轮换；on = 本任务的树，off = 改前基线；两臂都是 Clojure 编译器）
+
+560 格，0 error、0 loaded；`m16sum.py` + `R7_FLOOR=floor-Debian-VM01.json`（5% / 同向 5 轮）、`R7_PAIR_MAXLOAD=2.0`。
+配对比值中位的几何平均 **x0.9765**（56 项）。
+
+| 方向 | 项 | 配对比值 | 同向 |
+|---|---|---|---|
+| 改善 | sum | x0.784 | 5/5 |
+| 改善 | mbrot / destruc / bv2string | x0.896 / x0.901 / x0.905 | 5/5 |
+| 改善 | graphs / diviter / fft | x0.916 / x0.923 / x0.928 | 5/5 |
+| **回退** | **triangl** | **x1.058** | 5/5 慢 |
+
+其余 48 项不可判定。本机表的三项"回退"中 ntakl / sum 在 111 上不成立（见上节的 9 轮复测与本表），**triangl 在 111 上成立**。
+
+### 2. triangl 的记账（更正上节的措辞）
+
+上节写"triangl x1.046、0/9，低于 5% 地板 → 不可判定"只引用了 9 轮复测。合起来看：111 全表 5 轮 x1.058（1.044 ~ 1.089）、
+9 轮复测 x1.046（1.038 ~ 1.068），**14 对全部是改后更慢**——是一个稳定的约 5% 的代价，正好压在 5% 地板上。
+
+### 3. 编译器改为 C# 之后的复核（111，9 轮，2026-11-05）
+
+M20 之后产品里的编译器是 C#（sigspec 本来就没有移植，designs/30 §4），"删 sigspec"已无法单独复测。直接比较**今天的产品**
+（`cleat-181` 的 C# 编译器，`CLEAT_BOOT` 指向 C# 编的镜像，SHA256 57039f08… 与当前 src/boot 相同）与**删 sigspec 之前的构建**（`cleat-170-base`，Clojure 编译器）：
+
+| 项 | on / off 配对比值中位 | on 更快 | 范围 |
+|---|---|---|---|
+| triangl | **x1.046** | 0/9 | 1.025 ~ 1.088 |
+| sum | x0.976 | 6/9 | 0.954 ~ 1.230 |
+| ntakl | x0.941 | 8/9 | 0.889 ~ 1.033 |
+| takl | x0.995 | 6/9 | 0.975 ~ 1.041 |
+
+- triangl 的约 4.6% 在今天的产品上依然存在、幅度不变：代价来自删 sigspec，C# 编译器既没修好也没加重。
+- ntakl / takl 无回退（ntakl 约 6% 改善）。
+- **待查疑点**：sum 在本任务（Clojure 编译器）上是 x0.784，今天的产品对删前基线只有 x0.976；两数相除意味着 C# 编译器在 sum 上比删后的 Clojure 编译器慢约 24%，
+  但 cleat-181 的 111 G4 没有把 sum 标出来。原因未查（不影响本任务的结论），留给后续。
+
+### 4. 代码层面的验收（在 M20 之后的树上复核）
+
+- 产品代码（src / tools / packages / 测试）里没有 `rtspec` / `RuntimeSig` / `TypeFeedback` / `sigspec` 入口（唯一的 grep 命中是
+  `clojure/reflect/clr.clj` 的 .NET 特性名 `RTSpecialName`）；designs/README 的开关表与实现一致。
+- cleat-104 的编译期类型化入口在 C# 编译器里保留：`Lower/SpeculateEntries.cs` 的 `OptTyped`（`CLEAT_NO_OPT=typed`）与 `TypedBailout` 守卫。
+- 上节门禁里的种子 / selfhost 两项随 cleat-182 一起失效（种子与自举已删），由 G5 确定性（`DeterminismTests`、`image-set --twice`）取代。
+
+### 5. 裁决
+
+**用户裁决（2026-11-05）：接受 triangl 约 4.6% 的稳定代价，收口 170。** 换来的是删掉 944 行 C# 运行时设施与 746 行 codegen、
+少一个后台线程、`slatex` 峰值 RSS −5.9%，整体几何平均 x0.977。

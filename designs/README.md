@@ -38,7 +38,7 @@ Clojure 镜像由编译器从源码两步编出，没有种子、不需要自举
 | [26-runtime-signature-tables.md](26-runtime-signature-tables.md) | **实现**（2026-10-18，M14）：运行时签名表与高元数特化——5～20 参候选、多签名补生成、每函数与进程生成上限；任务 cleat-135 |
 | [27-jit-style-runtime-specialization.md](27-jit-style-runtime-specialization.md) | **现行方向**（2026-10-19，M15）：JIT 式运行时重新编译——删除 LL / DD 预生成、单一签名 key 与最优路径查表、含原生类型形参的函数整体特化并以 object 兜底、编译期调用路径类型推导；任务 cleat-137 ~ 141 |
 | [28-hot-path-optimizations.md](28-hot-path-optimizations.md) | **进行中**（2026-10-20，M16；§2.1 / §2.2 / §2.4 已实现并远端验证）：M15 归因复核（shapes3 推翻 nth 22x / 分配 12x 论据，LICM / EA 伪影）后的修正优先级——char 常量装箱、String seq / first 直读、跨 ns deftype 决议与访问器内联、keyword intern（P0），nth / 闭包 / 变长（P1），GC profile（P2），回归排查与测量口径（P3）；任务 cleat-142 ~ 150 |
-| [29-usability-and-engineering.md](29-usability-and-engineering.md) | **提案**（2026-10-26，M19）：热路径微优化到噪声地板后转向用户可感知的缺口——源位置与栈帧、启动（剖析 / ReadyToRun / 编译器延迟加载）、CI、sigspec 整体消融与开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估；任务 cleat-158 ~ 170 |
+| [29-usability-and-engineering.md](29-usability-and-engineering.md) | **完成**（2026-10-26 提案，2026-11-08 收口，M19；162 待 GH 实测）：热路径微优化到噪声地板后转向用户可感知的缺口——源位置与栈帧、启动（剖析 / ReadyToRun / 编译器延迟加载）、CI、sigspec 整体消融与开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估；任务 cleat-158 ~ 170 |
 | [30-csharp-compiler.md](30-csharp-compiler.md) | **现行方向**（2026-11-03 起，M20 于 2026-11-05 完成，取代 19 的自寄宿）：编译器改用 C#——小 pass、L0 ~ L3 保持、新增 L4 表示层与 L5 类层、ILGenerator 两阶段直接发射；并行建设 + 门控（G1 L0 差分 ~ G5 确定性）、优化逐项补、删除自举 / 种子 / 文本 CIL、nanopass 转为用户库；任务 cleat-171 ~ 182 |
 
 任务索引见仓库根目录 [TASK.md](../TASK.md)。
@@ -53,7 +53,7 @@ Clojure 镜像由编译器从源码两步编出，没有种子、不需要自举
 cleat-182 删除了 `CLEAT_COMPILER`、`CLEAT_COMPILER_NS`、`CLEAT_CS_ANALYZER` 与 Clojure 编译器的两个转储变量，以及没有读取处的记号 `inline`（原为小函数内联，旧 codegen 删除前已只定义不用；调用点内联用 `CLEAT_NO_INLINE` / `-g` 关）；下表"读取处"一栏的
 analyzer / codegen / front 指 C# 编译器里对应的部分（Analyzer、Lower、Passes/Front），名字沿用原 Clojure 编译器的文件名。
 
-### 环境变量（19 个）
+### 环境变量（21 个）
 
 | 变量 | 默认 | 用途 | 类别 | 引入 / 归属 |
 |---|---|---|---|---|
@@ -72,6 +72,8 @@ analyzer / codegen / front 指 C# 编译器里对应的部分（Analyzer、Lower
 | `CLEAT_LOAD_PATH` / `-I` | 未设 | 源码加载路径 | 语义 | cleat-012 |
 | `CLEAT_BOOT` | 未设 | 覆盖镜像目录的加载位置 | 语义 | cleat-067 |
 | `CLEAT_RUNTIME_ASYNC` | 未设（开） | `=0` 强制异步支持退化为同步实现 | 语义 | cleat-043 |
+| `CLOJURE_SPEC_CHECK_ASSERTS` | 未设（关） | `true` 时 `s/assert` 检查（`RT.checkSpecAsserts`；`s/check-asserts` 运行时改）；只在用了 packages/spec.alpha 时有意义 | 语义 | cleat-166（ClojureCLR 同名） |
+| `CLOJURE_SPEC_SKIP_MACROS` | 未设（检查） | `true` 时关掉宏的 spec 检查（`RT.instrumentMacros`）；检查只在加载了 clojure.spec.alpha 之后才做 | 语义 | cleat-166（ClojureCLR 同名） |
 | `CLEAT_CROSSGEN2` | 未设 | 构建脚本指定 crossgen2 路径 | 工具 | cleat-160 |
 
 ### `CLEAT_NO_OPT` 记号（23 个）

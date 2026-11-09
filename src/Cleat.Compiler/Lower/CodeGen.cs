@@ -196,8 +196,12 @@ internal static partial class CodeGen
         if (e is null || !e.Pos.IsKnown) return null;
         var p = e.Pos;
         string f = RealSource(p.File);
-        if (f != null) mc.Source = f;
+        // 一个方法只挂一个文档（m.Source）：本单元的源文件，没有时取第一个带文件的节点。别的文件来的节点（core.clj 的 :inline 展开等）
+        // 不发序列点——原来每个带文件的节点都改写 mc.Source，最后一个内联节点的文件就成了整个方法的文档，用户文件的行号被记到 core.clj 名下
+        // （cleat-166 发现：变长函数 doInvoke 的栈帧报 core.clj:3）。JVM 同样不给内联展开单独的行。
+        mc.Source ??= f;
         if (mc.Source == null) return null;
+        if (f != null && f != mc.Source) return null;
         if (mc.LastSrc is { } last && last.File == f && last.Line == p.Line) return null;
         mc.LastSrc = (f, p.Line);
         int c = Math.Max(1, p.Column);
@@ -1109,6 +1113,8 @@ internal static partial class CodeGen
                 return;
             case "KnownCall":
                 CgKnownCall(args, mc, ctx);
+                return;
+            case "ByRefHost" when CgByRefHost(args, mc, ctx):
                 return;
             case "EscapePropagate" when args.Length == 1:
                 CgEscapePropagate(args[0], mc, ctx);

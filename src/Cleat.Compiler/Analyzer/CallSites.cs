@@ -305,10 +305,10 @@ public static partial class FormAnalyzer
         }
         if (n is >= 1 and <= 4 && VarPrimSig(vm, n) is { } sig)
             return CljCallOf("PrimInvoke", s_false, new Expr[] { Q(sig), VarReference(v) }.Concat(AnalyzeAll(args, nt.At(pos))));
-        // -g / CLEAT_NO_INLINE：保留物理栈帧，直接链接与 KnownCall 也可能被 JIT 内联掉
-        if (InlineCalls && DirectLinkTarget(v, n) is { } cls)
+        // -g / CLEAT_NO_INLINE：保留物理栈帧，直接链接与 KnownCall 也可能被 JIT 内联掉。不看 InlineCalls：镜像构建关的只是内联（cleat-169）
+        if (!PhysicalFrames && DirectLinkTarget(v, n) is { } cls)
             return new CljStaticCall(cls, (long)n, ImmutableArray.CreateRange(new[] { VarReference(v) }.Concat(AnalyzeAll(args, nt.At(pos)))));
-        if (InlineCalls && KnownCallClass(v, n) is { } kc)
+        if (!PhysicalFrames && KnownCallClass(v, n) is { } kc)
             return CljCallOf("KnownCall", s_false, new Expr[] { Q(kc), VarReference(v) }.Concat(AnalyzeAll(args, nt.At(pos))));
         return InvokeNode(VarReference(v), AnalyzeAll(args, nt.At(pos)));
     }

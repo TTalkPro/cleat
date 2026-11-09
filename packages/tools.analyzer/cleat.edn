@@ -1,0 +1,4 @@
+;; clojure.tools.analyzer + clojure.tools.analyzer.clr as a cleat project (designs/18), cleat-167: packed as Cleat.ToolsAnalyzer,
+;;   cleat -T:build install     (install packages/tools.reader first)
+{:paths ["src"]
+ :deps {Cleat.ToolsReader {:nuget/version "1.5.2"}}}

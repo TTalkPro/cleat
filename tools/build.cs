@@ -25,7 +25,7 @@
 //                         项目引用它与 cleat 的包程序集即可（运行时第一次用到时自己启动）
 //   image-set [目录] [--twice] [--ilverify]
 //                         编一整套到独立目录（默认 src/boot-cs/，不动 src/boot）：镜像 cleat.boot.*、随附库 Cleat.Clojure.Libs.dll、
-//                         tools/（tools.namespace、tools.build）、packages/（nrepl、neorepl、nanopass）。
+//                         tools/（tools.namespace、tools.build）、packages/（nrepl、neorepl、nanopass、test.check、spec.alpha、tools.reader、tools.analyzer、core.async）。
 //                         --twice 再编一套到 <目录>.2 并逐文件比较（G5 确定性）；--ilverify 校验全部程序集（G3）。
 //                         在其上跑测试：CLEAT_BOOT=<目录>/cleat.boot.dll dotnet test …（cleat-177 起；旧名 cs-image 仍可用）  [cleat-182]
 //   bench [-r 次数] [--write] [--only 正则]
@@ -153,8 +153,9 @@ void Publish(string[] a)
     if (!r2r && (partial || mibc != null))
         throw new CommandFailed("publish: --no-r2r 不能与 --partial / --mibc 同用");
     outDir ??= Path.Combine(root, "artifacts", "publish", "cleat-" + rid);
-    CompileLibs([]);                      // AOT 库随发布，先刷新
+    // cleat-186：先 build（GenerateBootImage 可能重编镜像）再编随附库——反过来的话随附库对着旧镜像
     Run("dotnet", ["build", solution, "-c", "Release", "-v", "quiet", "-nologo"]);
+    CompileLibs([]);                      // AOT 库随发布，先刷新
     if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
     Run("dotnet", ["publish", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-r", rid,
                    "--self-contained", "-o", outDir, "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-nodeReuse:false"]);
@@ -516,7 +517,10 @@ List<(string Step, long Ms)> BuildCsImage(string outDir)
         Step(name, ["--boot", boot, "-I", tools, "-I", Src(package), "--compile-package", Path.Combine(tools, assembly + ".dll"),
                     "--package", name, "--root", Src(package), .. Nses(Src(package))]);
     foreach (var (package, assembly, deps) in new[] { ("nrepl", "Cleat.Nrepl", new string[0]), ("neorepl", "Cleat.Neorepl", new[] { "nrepl" }),
-                                                      ("nanopass", "Cleat.Nanopass", new string[0]) })
+                                                      ("nanopass", "Cleat.Nanopass", new string[0]),
+                                                      ("test.check", "Cleat.TestCheck", new string[0]), ("spec.alpha", "Cleat.SpecAlpha", new string[0]),
+                                                      ("tools.reader", "Cleat.ToolsReader", new string[0]), ("tools.analyzer", "Cleat.ToolsAnalyzer", new string[0]),
+                                                      ("core.async", "Cleat.CoreAsync", new string[0]) })
         Step(package, ["--boot", boot, "-I", packages, .. deps.SelectMany(d => new[] { "-I", Src(d) }), "-I", Src(package),
                        "--compile-package", Path.Combine(packages, assembly + ".dll"), "--package", package, "--root", Src(package), .. Nses(Src(package))]);
     return times;

@@ -1,6 +1,8 @@
-# PR 层 CI（cleat-162，designs/29 §4）：build + Core 全量 + Host 的 Host / Packages 分类，
-# 目标 ≤ 15 min。确定性守卫（G5，cleat-182 取代种子守卫）：从零两步编出的镜像与 dotnet build 的逐字节相同、
-# src/boot 是不动点。性能不进 CI（29 §9）。
+# PR 层 CI（cleat-162，designs/29 §4）：目标 ≤ 15 min。两个并行 job（各自构建，墙钟取两者中较长的）：
+#   core-host：Core / Compiler 全量、确定性守卫（G5，cleat-182 取代种子守卫：从零两步编出的镜像与 dotnet build 的逐字节相同、
+#              src/boot 是不动点）、Host 的 Category("Host")；
+#   packages： Host 的 Category("Packages")（packages/ 下各包自带的测试套件，单项最慢的一组）。
+# 发布 / NuGet / 示例工程（Category("Engineering")）与 Conformance 在 nightly。性能不进 CI（29 §9）。
 name: pr
 
 on:
@@ -13,9 +15,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  test:
+    name: ${{ matrix.suite }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: core-host
+            unit: true
+            filter: Category=Determinism|Category=Host
+          - suite: packages
+            unit: false
+            filter: Category=Packages
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,23 +49,23 @@ jobs:
         run: dotnet build Cleat.slnx -c Release -v quiet -nologo
 
       - name: Test Core (full)
-        run: dotnet test tests/Cleat.Core.Tests -c Release -v quiet -nologo --logger trx
+        if: matrix.unit
+        run: dotnet test tests/Cleat.Core.Tests -c Release --no-build -v quiet -nologo --logger trx
 
       - name: Test Compiler (full)
-        run: dotnet test tests/Cleat.Compiler.Tests -c Release -v quiet -nologo --logger trx
+        if: matrix.unit
+        run: dotnet test tests/Cleat.Compiler.Tests -c Release --no-build -v quiet -nologo --logger trx
 
-      - name: Determinism guard (G5, Category=Determinism)
-        run: dotnet test tests/Cleat.Host.Tests -c Release -v quiet -nologo --filter "Category=Determinism" --logger trx
-
-      - name: Test Host (Category=Host|Packages)
-        run: dotnet test tests/Cleat.Host.Tests -c Release -v quiet -nologo --filter "Category=Host|Category=Packages" --logger trx
+      - name: Test Host (${{ matrix.filter }})
+        run: dotnet test tests/Cleat.Host.Tests -c Release --no-build -v quiet -nologo --filter "${{ matrix.filter }}" --logger trx
 
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: test-results-${{ matrix.suite }}
           path: |
             tests/Cleat.Core.Tests/TestResults/
+            tests/Cleat.Compiler.Tests/TestResults/
             tests/Cleat.Host.Tests/TestResults/
           if-no-files-found: ignore

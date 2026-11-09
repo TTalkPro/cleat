@@ -125,9 +125,21 @@ internal static class ConstantEncoder
             case BigDecimal: return new Enc("bigdec", x.ToString());
             case Ratio: return new Enc("ratio", x.ToString());
             case System.Text.RegularExpressions.Regex r: return new Enc("regex", r.ToString());
-            case Type t: return new Enc("type", t.FullName);
+            case Type t: return new Enc("type", TypeName(t));
             default: throw new InvalidOperationException($"encode-constant: cannot encode object {RT.printString(x)}");
         }
+    }
+
+    /// <summary>
+    /// 类型常量的名字（cleat-167）：封闭泛型按 ClojureCLR 的语法、实参递归、**不带程序集名**写（<c>SortedSet`1[my.ns.Entry]</c>）。
+    /// Type.FullName 会把实参的程序集写进去——编包时包里 deftype 的程序集是临时的 eval 单元（eval$s104），从包加载时找不到；
+    /// 非泛型类型本来就只按全名找。Fasl 读回时 TypeResolver 解析这种写法（实参在已加载的程序集里找）。
+    /// </summary>
+    internal static string TypeName(Type t)
+    {
+        if (t.IsArray) return TypeName(t.GetElementType()) + (t.GetArrayRank() == 1 ? "[]" : "[" + new string(',', t.GetArrayRank() - 1) + "]");
+        if (!t.IsGenericType || t.IsGenericTypeDefinition) return t.FullName;
+        return t.GetGenericTypeDefinition().FullName + "[" + string.Join(",", t.GetGenericArguments().Select(TypeName)) + "]";
     }
 
     /// <summary>常量表 → fasl 字节（未压缩）。</summary>

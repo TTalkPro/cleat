@@ -82,3 +82,4 @@ src/boot-cs.2/
 
 # conformance --results 的输出（生成，不入库）
 tests/conformance/cleat-results.edn
+tests/conformance/cleat-report.edn

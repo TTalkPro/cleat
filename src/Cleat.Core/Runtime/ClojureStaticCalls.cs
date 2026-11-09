@@ -186,6 +186,38 @@ public static class ClojureStaticCalls
     }
 
     /// <summary>
+    /// by-ref 实参的宿主调用的编译期决议（cleat-183）：kind 为 "static" / "instance" / "new"，mask 标出 by-ref 实参的位置。
+    /// 形状相符（个数、by-ref 位置，<see cref="ByRefCalls.Candidates"/>）的候选恰好一个、各类型都能按名字引用时返回
+    /// [声明类型名, 成员名, 形参类型名数组（by-ref 位置是元素类型名）, 返回类型名, 是否虚调用, "method" | "ctor", 各形参是否 out]，
+    /// 否则空数组（交给运行时的 <see cref="ByRefCalls.Invoke"/>）。不看实参的静态类型：候选不唯一就不决议。
+    /// </summary>
+    public static object[] ResolveByRef(object t, object member, object kind, object mask, object argc)
+    {
+        if (t is not Type type || !Nameable(type)) return Array.Empty<object>();
+        string k = (string)kind;
+        if (k == "instance" && type.IsValueType || k == "new" && (type.IsAbstract || type.IsInterface || typeof(Delegate).IsAssignableFrom(type)))
+            return Array.Empty<object>();
+        var cands = ByRefCalls.Candidates(type, member as string ?? "", k, Convert.ToInt64(mask), Convert.ToInt32(argc));
+        if (cands.Count != 1) return Array.Empty<object>();
+        var m = cands[0];
+        if (!Nameable(m.DeclaringType) || k == "instance" && m.DeclaringType.IsValueType) return Array.Empty<object>();
+        var ps = m.GetParameters();
+        var elems = ps.Select(p => p.ParameterType.IsByRef ? p.ParameterType.GetElementType() : p.ParameterType).ToArray();
+        if (!elems.All(p => ParamOk(p, false))) return Array.Empty<object>();
+        var ret = m is MethodInfo mi ? mi.ReturnType : type;
+        if (m is MethodInfo && !ReturnOk(ret) && !(ret.IsValueType && Nameable(ret))) return Array.Empty<object>();
+        return new object[]
+        {
+            HostSyntax.TypeName(m.DeclaringType), m is MethodInfo ? m.Name : "",
+            elems.Select(p => (object)HostSyntax.TypeName(p)).ToArray(),
+            HostSyntax.TypeName(ret),
+            m is MethodInfo && !m.IsStatic && m.IsVirtual,
+            m is MethodInfo ? "method" : "ctor",
+            ps.Select(p => (object)ByRefCalls.IsOut(p)).ToArray(),
+        };
+    }
+
+    /// <summary>
     /// 构造器的编译期决议（cleat-101）：<c>(new T a …)</c> 此前一律经 <see cref="ClojureOps.NewOf"/> → <see cref="Reflector.New"/>（每次分配 CallKey 与
     /// 类型数组，约 80 ns）。规则同 <see cref="Resolve"/> 的方法：该实参个数的公共构造器（无 ref / params）只有一个时选它（实参按 Reflector 的规则转换），
     /// 多个时按实参静态类型选唯一相容的。可决议时返回 [类型名, "", 形参类型名数组, 类型名, 是否值类型, "ctor"]，否则空数组。

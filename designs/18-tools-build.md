@@ -70,7 +70,7 @@
 （没有用户级的 deps 文件）。
 
 这些模式都要 tools.build：宿主作为 dotnet tool 发布（`Cleat.Cli`，命令 `cleat`），工具包里随附 `Cleat.ToolsBuild` / `Cleat.ToolsNamespace`
-的包程序集（镜像旁的 `tools/`，比镜像旧时不用）；开发布局（仓库里构建出的 cleat）下用仓库里的源码，不用随附的那份（它是 pack 的构建产物，
+的包程序集（镜像旁的 `tools/`，对着别的镜像编的不用，cleat-186 起按程序集记的镜像 id 判断）；开发布局（仓库里构建出的 cleat）下用仓库里的源码，不用随附的那份（它是 pack 的构建产物，
 会落后于源码）。项目里用 `.config/dotnet-tools.json` 钉住版本，`dotnet tool restore` 之后 `dotnet cleat …`——源与 BaGetter 照 `nuget.config`。
 （cleat-069 时这两个入口是 `cleat-build` / `cleat-run` 两段脚本，按用户意见换成了工具。）
 

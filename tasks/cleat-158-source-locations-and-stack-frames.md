@@ -115,6 +115,12 @@ PDB 不进种子：`src/boot/seed/` 只有 `.lcil` / `.ifc` / `.inl`，`src/boot
 不是源码文本；两棵树各自都是自洽不动点（fresh lcil 的 md5 == 自己的 seed）。机制未查明，怀疑 158 的
 `:pos` / 元数据传播进了 cp0 与内联的判定。
 
+> **cleat-169 查明（2026-11-06）**：形状差是本节的回退，不是元数据传播。本节让直接链接与 KnownCall 也看 `inline-calls?`（为了 `-g` 保留物理帧），
+> 而镜像构建（`compile-boot`）为了 `.inl` 一致本来就把 `inline-calls?` 关掉——于是 core.clj 内部的调用（`nnext` → `next`、`empty?` → `seq` …）
+> 全部退化成对 Var 根值的 `IFn.invoke`，少掉的 `stloc` / `label` 正是 KnownCall 守卫的临时量与分支。用户代码与包不受影响。
+> r7rs 上表现为 diviter x1.24 ~ 1.27、divrec x1.17 ~ 1.18（两台机器 5/5 同向）。修复：`-g` 改用独立的 `FormAnalyzer.PhysicalFrames`，
+> 直接链接与 KnownCall 不再看 `InlineCalls`（[169](cleat-169-m19-closeout.md)）。
+
 因此**跨构建（92d831c vs HEAD）的同轮配对不能回答"序列点与 PDB 的默认成本"**：基线与实验臂先差了 3.4× 的 IL 形状，
 任何差值都归因不清。56 项 × 5 轮改为在 HEAD 内部做 A/B（或直接进三臂复核），随 cleat-169 的 M19 收口跑；
 本节已跑到的 172 / 560 格（0 个污染轮）留在被忽略的 `bench/r7rs/results/pairbuild.jsonl`，

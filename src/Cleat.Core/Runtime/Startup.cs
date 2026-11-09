@@ -104,21 +104,23 @@ public static class Startup
             ClojureBootPath = boot;
             Loader.LoadBootImage(boot);
             ClojureImageMs = sw.ElapsedMilliseconds;
-            // 随附库的包程序集（tools/build.cs compile-libs，cleat-067）在镜像旁；比镜像旧时（镜像重建后没有重编）不用，
-            // 这些命名空间从源码加载
-            string libs = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "Cleat.Clojure.Libs.dll");
-            if (File.Exists(libs) && File.GetLastWriteTimeUtc(libs) >= File.GetLastWriteTimeUtc(boot) && !writing(libs)) PackageIndex.RegisterFile(libs);
+            // 随附库的包程序集（tools/build.cs compile-libs，cleat-067）在镜像旁；对着别的镜像编的（镜像重建后没有重编）不用，
+            // 这些命名空间从源码加载（cleat-186：按程序集里记的镜像 id 判断，不再看文件时间——复制、检出、确定性重编都会改时间）
+            string bootDir = Path.GetDirectoryName(boot) ?? ".";
+            string src = Path.GetFullPath(Path.Combine(bootDir, "..", "clojure"));
+            bool haveSource = File.Exists(Path.Combine(src, "clojure", "core.clj"));
+            string libs = Path.Combine(bootDir, "Cleat.Clojure.Libs.dll");
+            if (File.Exists(libs) && !writing(libs) && BuiltForRunningImage(libs, boot, haveSource)) PackageIndex.RegisterFile(libs);
             // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用；
             // 开发布局（镜像在仓库的 src/boot，旁边有 packages/tools.build/src）下不用：那是 pack 留下的构建产物，会落后于源码
-            string tools = Path.Combine(Path.GetDirectoryName(boot) ?? ".", "tools");
-            bool devLayout = File.Exists(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "..", "packages", "tools.build", "src", "clojure", "tools", "build", "api.clj"));
+            string tools = Path.Combine(bootDir, "tools");
+            bool devLayout = File.Exists(Path.Combine(bootDir, "..", "..", "packages", "tools.build", "src", "clojure", "tools", "build", "api.clj"));
             if (Directory.Exists(tools) && !devLayout)
                 foreach (string f in Directory.GetFiles(tools, "*.dll"))
-                    if (File.GetLastWriteTimeUtc(f) >= File.GetLastWriteTimeUtc(boot)) PackageIndex.RegisterFile(f);
+                    if (BuiltForRunningImage(f, boot, false)) PackageIndex.RegisterFile(f);
             // 开发布局（镜像在 src/boot/）：src/clojure 的源码也在加载路径上（JVM 的 clojure.jar 带着源码；按需加载的
             // clojure.core.reducers 等由此可 require）
-            string src = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(boot) ?? ".", "..", "clojure"));
-            if (File.Exists(Path.Combine(src, "clojure", "core.clj"))) Loader.AddPath(src);
+            if (haveSource) Loader.AddPath(src);
             if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Packages);
         }
         // 编译器（延迟加载 cleat-161）：这里只登记惰性入口，不加载——-e nil 与只调 AOT 函数的 -m / -X / -T 整格
@@ -130,6 +132,21 @@ public static class Startup
         if (StartupTimings.Enabled) StartupTimings.Report(ClojureImageMs, CompilerMs, CompilerKind);
         RuntimeBootstrap.MarkStarted();
         return boot;
+    }
+
+    /// <summary>
+    /// 镜像旁的包程序集（随附库 / tools）是不是对着正在运行的镜像编的（cleat-186）：按程序集记的 <see cref="CleatBootImageAttribute"/>；
+    /// 186 之前编的没有这个特性，退回旧的判断（不比镜像旧）。不相符时不用；quiet 为假（没有源码可退回）时在标准错误说一句。
+    /// </summary>
+    private static bool BuiltForRunningImage(string dll, string boot, bool quiet)
+    {
+        string id = PackageIndex.ReadBootImageId(dll);
+        if (id == null) return File.GetLastWriteTimeUtc(dll) >= File.GetLastWriteTimeUtc(boot);
+        if (BootInterface.CurrentImageId is Guid current && Guid.TryParse(id, out var g) && g == current) return true;
+        if (!quiet)
+            Console.Error.WriteLine($"cleat: {Path.GetFileName(dll)} was compiled against another boot image; not using it "
+                + "(recompile with dotnet run tools/build.cs -- compile-libs, or publish / pack again)");
+        return false;
     }
 
     /// <summary>

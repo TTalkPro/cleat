@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Text.RegularExpressions;
 using Cleat.Compiler.Emit;
 using clojure.lang;
@@ -65,6 +66,20 @@ public class ConstantEncoderTests
         var reordered = ConstantEncoder.EncodeTable(new object[] { V("{\"c\" [3] :a 1 :b 2}"), V("#{\"x\" 1 :y :z}"), RT.var("clojure.core", "map"), typeof(long) });
         Assert.That(reordered, Is.EqualTo(ConstantEncoder.EncodeTable(values)), "independent of hash iteration order");
         Assert.Throws<InvalidOperationException>(() => ConstantEncoder.EncodeTable(new object[] { new object() }));
+    }
+
+    /// <summary>cleat-167：封闭泛型类型常量写成不带程序集名的 ClojureCLR 语法，读回同一个类型（包里 deftype 作实参时 FullName 带的是临时 eval 程序集）。</summary>
+    [Test]
+    public void GenericTypeConstantsOmitAssemblyNames()
+    {
+        Type[] types = { typeof(System.Collections.Generic.SortedSet<string>), typeof(System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<long>>),
+                         typeof(System.Collections.Generic.List<long>[]), typeof(int[,]), typeof(System.Collections.Generic.List<>) };
+        foreach (var t in types)
+            Assert.That(ConstantEncoder.TypeName(t), Does.Not.Contain("Version=").And.Not.Contain("System.Private.CoreLib"), t.ToString());
+        Assert.That(ConstantEncoder.TypeName(typeof(System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<long>>)),
+                    Is.EqualTo("System.Collections.Generic.Dictionary`2[System.String,System.Collections.Generic.List`1[System.Int64]]"));
+        var back = Fasl.ReadTable(ConstantEncoder.EncodeTable(types.Cast<object>().ToList()));
+        Assert.That(back, Is.EqualTo(types));
     }
 
     [Test]

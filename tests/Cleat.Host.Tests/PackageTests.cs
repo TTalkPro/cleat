@@ -24,7 +24,7 @@ public class PackageTests
     }
 
     private static string[] Namespaces(string package) =>
-        Directory.GetFiles(Path.Combine(HostProcessTests.RepoDir, "packages", package, "src"), "*.clj", SearchOption.AllDirectories)
+        Directory.GetFiles(Path.Combine(HostProcessTests.RepoDir, "packages", package, "src"), "*.clj*", SearchOption.AllDirectories)   // .clj 与 .cljc（test.check 多是 .cljc）
             .Select(f => Path.GetRelativePath(Path.Combine(HostProcessTests.RepoDir, "packages", package, "src"), f))
             .Select(r => Path.ChangeExtension(r, null).Replace(Path.DirectorySeparatorChar, '.').Replace('_', '-'))
             .OrderBy(n => n, StringComparer.Ordinal).ToArray();
@@ -94,6 +94,86 @@ public class PackageTests
             r = RunPackageTests("-I", dir, "-I", "packages/nanopass/test", "packages/nanopass/test/run.clj");
             Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
             Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (Exception) { }
+        }
+    }
+
+    /// <summary>
+    /// clojure.spec.alpha / clojure.core.specs.alpha（cleat-166，packages/spec.alpha，取自 ClojureCLR 的 clr.spec.alpha）与 clojure.test.check
+    /// （packages/test.check，取自 clr.test.check）：两个包的上游测试各跑一遍源码、一遍编出的包程序集（加载路径上没有源码）。
+    /// spec 的生成器测试要 test.check；test.check 的测试也用 spec。
+    /// </summary>
+    [Test]
+    public void SpecAlphaAndTestCheck()
+    {
+        var r = RunPackageTests("-I", "packages/spec.alpha/src", "-I", "packages/test.check/src", "-I", "packages/spec.alpha/test",
+                                "packages/spec.alpha/test/run.clj");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+        r = RunPackageTests("-I", "packages/test.check/src", "-I", "packages/spec.alpha/src", "-I", "packages/test.check/test",
+                            "packages/test.check/test/run.clj");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-spec-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var c = RunPackageTests(new[] { "-I", "packages/test.check/src", "--compile-package", Path.Combine(dir, "Cleat.TestCheck.dll"), "--package", "test.check" }
+                                    .Concat(Namespaces("test.check")).ToArray());
+            Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+            c = RunPackageTests(new[] { "-I", dir, "-I", "packages/spec.alpha/src", "--root", "packages/spec.alpha/src",
+                                        "--compile-package", Path.Combine(dir, "Cleat.SpecAlpha.dll"), "--package", "spec.alpha" }
+                                .Concat(Namespaces("spec.alpha")).ToArray());
+            Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+            r = RunPackageTests("-I", dir, "-I", "packages/spec.alpha/test", "packages/spec.alpha/test/run.clj");
+            Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+            Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+            r = RunPackageTests("-I", dir, "-I", "packages/test.check/test", "packages/test.check/test/run.clj");
+            Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+            Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (Exception) { }
+        }
+    }
+
+    /// <summary>
+    /// clojure.core.async（cleat-167，packages/core.async，取自 ClojureCLR 的 clr.core.async）与它的 go 宏要的 tools.analyzer(.clr)、tools.reader：
+    /// 三个包的上游测试各跑源码一遍、编出的包程序集一遍（加载路径上没有源码）。
+    /// </summary>
+    [Test]
+    public void CoreAsyncWithAnalyzerAndReader()
+    {
+        string[] src = { "-I", "packages/tools.reader/src", "-I", "packages/tools.analyzer/src", "-I", "packages/core.async/src" };
+        foreach (var p in new[] { "tools.reader", "tools.analyzer", "core.async" })
+        {
+            var r = RunPackageTests(src.Concat(new[] { "-I", $"packages/{p}/test", $"packages/{p}/test/run.clj" }).ToArray());
+            Assert.That(r.ExitCode, Is.EqualTo(0), p + ": " + r);
+            Assert.That(r.Out, Does.Contain("0 failures, 0 errors."), p);
+        }
+
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-async-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            foreach (var (p, asm) in new[] { ("tools.reader", "Cleat.ToolsReader"), ("tools.analyzer", "Cleat.ToolsAnalyzer"), ("core.async", "Cleat.CoreAsync") })
+            {
+                var c = RunPackageTests(new[] { "-I", dir, "-I", $"packages/{p}/src", "--root", $"packages/{p}/src",
+                                                "--compile-package", Path.Combine(dir, asm + ".dll"), "--package", p }
+                                        .Concat(Namespaces(p)).ToArray());
+                Assert.That(c.ExitCode, Is.EqualTo(0), p + ": " + c);
+            }
+            foreach (var p in new[] { "tools.reader", "tools.analyzer", "core.async" })
+            {
+                var r = RunPackageTests("-I", dir, "-I", $"packages/{p}/test", $"packages/{p}/test/run.clj");
+                Assert.That(r.ExitCode, Is.EqualTo(0), p + " (package assemblies): " + r);
+                Assert.That(r.Out, Does.Contain("0 failures, 0 errors."), p);
+            }
         }
         finally
         {
