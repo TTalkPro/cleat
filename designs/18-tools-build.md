@@ -17,7 +17,7 @@
 
 ```clojure
 {:paths ["src"]
- :deps {Cleat.Nrepl {:nuget/version "1.8.3"}      ; NuGet 包（id 是符号），版本或区间（NuGet 语法）
+ :deps {Cleat.Nrepl {:nuget/version "1.8.4"}      ; NuGet 包（id 是符号），版本或区间（NuGet 语法）
         my/util {:local/root "../util"}}           ; 本地的另一个 cleat 项目：它的 :paths 与 :deps
  :aliases {:test {:extra-paths ["test"]
                   :extra-deps {Some.Lib {:nuget/version "2.0.0"}}}}}

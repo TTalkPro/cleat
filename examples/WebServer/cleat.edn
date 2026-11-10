@@ -4,7 +4,7 @@
  :paths ["src" "target/dotnet"]
 
  ;; NuGet packages, from BaGetter (nuget.config): nREPL, embedded in the host
- :deps {Cleat.Nrepl {:nuget/version "1.8.3"}}
+ :deps {Cleat.Nrepl {:nuget/version "1.8.4"}}
 
  :aliases
  {;; on the REPL server's load path too (see :neorepl/aliases)
@@ -16,7 +16,7 @@
   ;; dotnet cleat -M:test
   :test {:extra-paths ["test"] :main-opts ["-m" "web.test-runner"]}
   ;; dotnet cleat -M:neorepl -- neorepl, from BaGetter as well
-  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.4"}}
+  :neorepl {:extra-deps {Cleat.Neorepl {:nuget/version "0.1.5"}}
             :main-opts ["-m" "neorepl.main"]}}
 
  ;; the aliases neorepl's jack-in gives the nREPL server's basis

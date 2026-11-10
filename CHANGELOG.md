@@ -1,9 +1,35 @@
 # Changelog
 
 用户可见的变化，按里程碑记（任务与里程碑索引 [TASK.md](TASK.md)，每个任务的细节在 `tasks/` 下）。版本号：运行时包 `Cleat.Runtime` / 工具包 `Cleat.Cli`
-（`CoreInfo.Version`）现为 1.1.0；M19 / M20 尚未发版。
+（`CoreInfo.Version`）；各包的版本见 [notes/packages.md](notes/packages.md)。
 
-## 未发布
+## 1.2.0（2026-11-10）
+
+M10 ~ M23（性能、可用性与工程、编译器改为 C#、互操作补全、兼容性收口）。
+
+### 从 1.1.0 升级
+
+- **包程序集要用 1.2.0 重编**：包程序集绑定编它时的 Clojure 镜像（镜像 id），1.1.0（及任何别的版本）编的包在 1.2.0 上加载时抛
+  `StaleModuleException`（"module was compiled against boot image …, but the running image is … (cleat 1.2.0); recompile it …"）。
+  自己的包：`cleat -T:build install` 重新打包；cleat 发布的包换成为 1.2.0 重编的版本：`Cleat.Nrepl` 1.8.4、`Cleat.Neorepl` 0.1.5、
+  `Cleat.ToolsNamespace` 1.5.5、`Cleat.ToolsBuild` 0.10.21（新包见 [notes/packages.md](notes/packages.md)）。
+- **包对运行时的依赖改为精确版本**：tools.build 的 `pack` 现在写 `Cleat.Runtime [1.2.0]`（原来是下限 `1.1.0`，NuGet 会解析到更新的运行时、错误拖到运行期）；
+  混用为不同运行时编的包时 `dotnet restore` 直接报版本冲突。
+- **删除**（M20）：Clojure 写的编译器与 `cleat.compiler.dll`、文本种子、发射器 `cleat-emit` 与它的 S 表达式格式、`CLEAT_COMPILER` / `CLEAT_COMPILER_NS` /
+  `CLEAT_CS_ANALYZER` / `CLEAT_DUMP_LCIL` 等开关、`tools/build.cs` 的 `stage1` / `selfhost` / `clojure-seed` / `compile-compiler`；`cs-image` 改名 `image-set`（旧名仍可用）。
+  `cleat.nanopass` 移到 `packages/nanopass`（普通的用户库）。
+- **行为变化**（对齐 JVM，可能影响依赖旧行为的代码）：反射找不到成员的消息改为 `No matching member m taking n args …`；reify 的类名带外层 fn；
+  空的 `[]` / `#{}` 字面量是共享的 `EMPTY`；直接调 `macroexpand` 时宏的元数错误是 `ArityException`；协议重定义后去掉的方法在调用点就报错；
+  Var 的 `:tag`、静态属性 / 字段、loop 局部参与静态决议（类型不符时在调用处 InvalidCastException，原来走反射）。
+- 要求不变：.NET 10 SDK / 运行时。
+
+
+### M22 发布（cleat-187 ~ 188）
+
+- 包对 `Cleat.Runtime` 写精确版本；StaleModuleException 的消息带运行时版本（见上节）。
+- **包里带 Clojure 源码**（cleat-187）：Cleat.Cli 与 Cleat.Runtime 把 clojure.core 等的源码放在镜像旁的 `clojure-src/`，装好的 cleat 里
+  `(source when)`、nREPL 补全的文件位置可用（原来包里没有源码）。
+- 修正（cleat-187）：test.check 用 tools.build 打包失败（上游一个只给 ClojureScript 的文件命名空间与路径不符）；`:warn-on-boxed` 对 let / loop 局部误报。
 
 ### M23 兼容性收口（cleat-189 ~ 193）
 
@@ -96,7 +122,7 @@ r7rs 56 项对 JVM Clojure 的几何平均倍数（cleat 越小越快）：4.52x
   keyword / str 的 intern 快路径、nth 快路径、GC profile 计数器（`CLEAT_GC_PROFILE`）。
 - **M17 / M18**：本机噪声地板标定与"同轮配对"判定口径（`bench/r7rs/pairbuild.py`、`m16sum.py`）；变长参数、闭包提升、调用点反馈都量化后否决，不落实现。
 
-### 1.1.0 及以前（M0 ~ M9，2026-10-15 前）
+## 1.1.0 及以前（M0 ~ M9，2026-10-15 前）
 
 - **1.1.0（M8 / M9）**：编译器与 nanopass 用 Clojure 重写并自举、文本种子作信任根，Scheme 元层全部删除（[designs/19](designs/19-clojure-self-hosting.md)，
   被 M20 取代）；自举后的编译器对着 clojure-test-suite 与 test_clojure 两套基线验收，偏离表清理（cleat-096 ~ 099）。

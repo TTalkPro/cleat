@@ -247,6 +247,11 @@ public static partial class FormAnalyzer
         var types = d.Args.Select(a => HostArgType(ctx, a)).ToList();
         var m = SelectOverload(HostMethods(d.Type, d.Member, d.Args.Count, true).Where(PlainMethod), types);
         if (m == null || !m.GetParameters().Any(p => p.ParameterType == typeof(object))) return;
+        // let / loop 的局部：JVM 按初值知道它是不是原始的 long / double（random.clj 的 (+ gamma state) 不报），cleat 的分析器只看提示，
+        // 原始类型在后面的类型推断里才定——这里看不准就不报，免得误报（cleat-187：test.check 打包时满屏的 Boxed math warning）
+        var ps = m.GetParameters();
+        for (int i = 0; i < ps.Length && i < d.Args.Count; i++)
+            if (ps[i].ParameterType == typeof(object) && d.Args[i] is Symbol a && a.Namespace == null && ctx.FindLocal(a) is { Kind: LocalKind.Local }) return;
         var pos = Position(form, ctx);
         string sp = SourcePath();
         string file = pos?.File ?? (sp.Length > 0 ? sp : null) ?? "NO_SOURCE_PATH";

@@ -202,6 +202,8 @@ public static class BootInterface
     {
         if (CurrentImageId == null) return;
         if (!Guid.TryParse(imageId, out var g) || g != CurrentImageId.Value)
-            throw new StaleModuleException($"module was compiled against boot image {imageId}, but the running image is {CurrentImageId}; recompile it");
+            // 带上运行时版本（cleat-187）：最常见的情形是别的 cleat 版本编的包程序集（1.1.0 的包在 1.2.0 上），要用这个版本重编 / 换对应版本的包
+            throw new StaleModuleException($"module was compiled against boot image {imageId}, but the running image is {CurrentImageId} (cleat {CoreInfo.Version}); "
+                + "recompile it, or use the package version built for this cleat version");
     }
 }

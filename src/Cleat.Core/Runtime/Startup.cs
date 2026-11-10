@@ -109,6 +109,13 @@ public static class Startup
             string bootDir = Path.GetDirectoryName(boot) ?? ".";
             string src = Path.GetFullPath(Path.Combine(bootDir, "..", "clojure"));
             bool haveSource = File.Exists(Path.Combine(src, "clojure", "core.clj"));
+            // 包布局（Cleat.Cli 工具包、Cleat.Runtime 的输出目录，cleat-187）：源码在镜像旁的 clojure-src/——(source when)、nREPL 补全的 :file
+            // 要按 clojure/core.clj 找到文件（JVM 的 clojure.jar 带着源码）；原来包里没有源码，这些都是 nil
+            if (!haveSource && File.Exists(Path.Combine(bootDir, "clojure-src", "clojure", "core.clj")))
+            {
+                src = Path.GetFullPath(Path.Combine(bootDir, "clojure-src"));
+                haveSource = true;
+            }
             string libs = Path.Combine(bootDir, "Cleat.Clojure.Libs.dll");
             if (File.Exists(libs) && !writing(libs) && BuiltForRunningImage(libs, boot, haveSource)) PackageIndex.RegisterFile(libs);
             // 随附的 tools.build / tools.namespace 包程序集（Cleat.Cli 工具包，cleat-071），同样比镜像旧时不用；
@@ -118,8 +125,8 @@ public static class Startup
             if (Directory.Exists(tools) && !devLayout)
                 foreach (string f in Directory.GetFiles(tools, "*.dll"))
                     if (BuiltForRunningImage(f, boot, false)) PackageIndex.RegisterFile(f);
-            // 开发布局（镜像在 src/boot/）：src/clojure 的源码也在加载路径上（JVM 的 clojure.jar 带着源码；按需加载的
-            // clojure.core.reducers 等由此可 require）
+            // 开发布局（镜像在 src/boot/）与包布局（clojure-src/）：Clojure 源码也在加载路径上（JVM 的 clojure.jar 带着源码；
+            // source / 补全按 :file 找文件，随附库对不上镜像时由此退回源码）
             if (haveSource) Loader.AddPath(src);
             if (StartupTimings.Enabled) StartupTimings.Mark(StartupTimings.Segment.Packages);
         }

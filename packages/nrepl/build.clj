@@ -8,7 +8,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.Nrepl)
-(def default-version "1.8.3")   ; nREPL 1.8.0's port, package revision 3 (cleat-094: rebuilt for the self-hosted runtime 1.1.0)
+(def default-version "1.8.4")   ; nREPL 1.8.0's port, package revision 4 (cleat-187: rebuilt for runtime 1.2.0)
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

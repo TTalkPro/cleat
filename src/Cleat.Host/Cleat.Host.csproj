@@ -31,6 +31,9 @@
     <None Include="$(CleatPackBootDir)cleat.boot.dll;$(CleatPackBootDir)cleat.boot.pdb;$(CleatPackBootDir)cleat.boot.ifc;$(CleatPackBootDir)cleat.boot.inl;$(CleatPackBootDir)Cleat.Clojure.Libs.dll;$(CleatPackBootDir)Cleat.Clojure.Libs.pdb"
           Pack="true" PackagePath="tools/$(TargetFramework)/any/" Visible="false" />
     <None Include="$(CleatPackBootDir)tools\*.dll;$(CleatPackBootDir)tools\*.pdb" Pack="true" PackagePath="tools/$(TargetFramework)/any/tools/" Visible="false" />
+    <!-- Clojure 源码（cleat-187）：镜像旁的 clojure-src/，source / nREPL 补全按 :file 找文件；Startup 把它加上加载路径 -->
+    <None Include="$(MSBuildThisFileDirectory)..\clojure\**\*.clj;$(MSBuildThisFileDirectory)..\clojure\**\*.cljc;$(MSBuildThisFileDirectory)..\clojure\**\*.cljr"
+          Pack="true" PackagePath="tools/$(TargetFramework)/any/clojure-src/" Visible="false" />
   </ItemGroup>
 
   <!-- 行编辑器的词法函数（IsComplete 等）由 Host.Tests 单元测试 -->

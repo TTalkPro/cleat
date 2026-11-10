@@ -30,7 +30,9 @@
       (throw (ex-info (str "pack: :local/root deps can't be NuGet dependencies: " (str/join ", " (map key local))
                            " (publish them as packages and depend on :nuget/version)")
                       {:deps (vec (map key local))})))
-    (into (if (= "cleat.runtime" (str/lower-case id)) [] [["Cleat.Runtime" runtime-version]])
+    ;; Cleat.Runtime 精确版本 [x.y.z]（cleat-187）：包程序集绑定编它时的镜像（镜像 id），别的运行时版本加载时 StaleModuleException；
+    ;; 只写下限时 NuGet 会把它解析到更新的运行时，错误拖到运行期——精确版本让 restore 时就报冲突
+    (into (if (= "cleat.runtime" (str/lower-case id)) [] [["Cleat.Runtime" (str "[" runtime-version "]")]])
           (for [[lib coord] (sort-by (comp str key) deps)
                 :when (and (contains? coord :nuget/version)
                            (not= "cleat.runtime" (str/lower-case (str lib))))]

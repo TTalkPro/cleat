@@ -4,6 +4,6 @@
 ;;   cleat -T:build install
 ;; (bin/neorepl runs both packages from source and does not use this file.)
 {:paths ["src"]
- :deps {Cleat.Nrepl {:nuget/version "1.8.3"}
+ :deps {Cleat.Nrepl {:nuget/version "1.8.4"}
         ;; jack-in computes the server's load path with tools.build's create-basis
-        Cleat.ToolsBuild {:nuget/version "0.10.20"}}}
+        Cleat.ToolsBuild {:nuget/version "0.10.21"}}}

@@ -32,7 +32,7 @@ src/Cleat.Host/bin/Release/net10.0/cleat script.clj a b         # 跑脚本
 
 ```sh
 dotnet run tools/build.cs -- pack -o artifacts/nuget           # 打 Cleat.Runtime（运行时）与 Cleat.Cli（工具）两个 NuGet 包
-dotnet tool install -g Cleat.Cli --add-source artifacts/nuget
+dotnet tool install -g Cleat.Cli --add-source artifacts/nuget  # 当前版本 1.2.0；各包的版本与依赖见 notes/packages.md
 cleat -r
 ```
 

@@ -6,7 +6,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'Cleat.ToolsBuild)
-(def default-version "0.10.20")   ; cleat-094: rebuilt for the self-hosted runtime 1.1.0
+(def default-version "0.10.21")   ; cleat-187: rebuilt for runtime 1.2.0
 (def class-dir "target/classes")
 
 (defn- nupkg [version] (format "target/%s.%s.nupkg" lib version))

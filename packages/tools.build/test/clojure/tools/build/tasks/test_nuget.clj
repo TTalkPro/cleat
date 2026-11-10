@@ -64,7 +64,7 @@
       (is (str/includes? spec "<authors>a, b</authors>"))
       (is (str/includes? spec "<license type=\"expression\">EPL-1.0</license>"))
       (is (str/includes? spec "<tags>clojure cleat</tags>"))
-      (is (str/includes? spec (str "<dependency id=\"Cleat.Runtime\" version=\"" stub-runtime "\"")))
+      (is (str/includes? spec (str "<dependency id=\"Cleat.Runtime\" version=\"[" stub-runtime "]\"")))   ; 精确版本（cleat-187）
       (is (str/includes? (nupkg-text nupkg "[Content_Types].xml") "Extension=\"dll\""))
       (is (= ["P1" "1.0.0"] (install/nupkg-identity nupkg))))))
 

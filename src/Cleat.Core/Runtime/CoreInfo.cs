@@ -4,7 +4,7 @@ namespace Cleat.Core.Runtime;
 public static class CoreInfo
 {
     /// <summary>cleat 自己的版本（*cleat-version*、Cleat.Runtime 包的缺省版本）。</summary>
-    public const string Version = "1.1.0";
+    public const string Version = "1.2.0";
 
     /// <summary>cleat 实现的 Clojure 语言版本（*clojure-version*）：core.clj 跟的是 ClojureCLR master，已含 1.13 的新增。</summary>
     public const string ClojureVersion = "1.13.0";
