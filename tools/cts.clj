@@ -44,27 +44,17 @@
 ;; clojure.test-clojure.*，于是在临时目录里建 clojure/test_clojure → tests/test_clojure 的符号链接作加载根；
 ;; clojure.test-helper 是 tests/test_clojure/test_helper.clj。不跑的文件（外部库、JVM 专用、cleat-002 结论）见 skip。
 (def ^:private test-clojure-skip
-  (let [gen "needs clojure.test.generative / clojure.data.generators (external libs, cleat-002)"
-        check "needs clojure.test.check (external lib)"
-        support "needs ClojureCLR's compiled test-support assemblies (Clojure.Tests.Support.dll / Clojure.Tests.dll)"
+  (let [support "needs ClojureCLR's compiled test-support assemblies (Clojure.Tests.Support.dll / Clojure.Tests.dll)"
         helper "helper namespace loaded by another test file"]
-    {'clojure.test-clojure.generators gen
-     'clojure.test-clojure.data-structures gen
-     'clojure.test-clojure.edn gen
-     'clojure.test-clojure.numbers gen
-     'clojure.test-clojure.reader gen
-     'clojure.test-clojure.reducers gen
-     'clojure.test-clojure.clr.added gen
-     'clojure.test-clojure.sequences check
-     'clojure.test-clojure.data-structures-interop check
-     'clojure.test-clojure.parse check
-     'clojure.test-clojure.transducers check
-     'clojure.test-clojure.attributes support
+    {'clojure.test-clojure.attributes support
      'clojure.test-clojure.clr.interop support
      'clojure.test-clojure.try-catch support
-     'clojure.test-clojure.clr.process "clojure.clr.process is not in cleat's src/clojure"
+     'clojure.test-clojure.param-tags support       ; clojure.test.SwissArmy（cleat-189 之后 Compiler 已有）
      'clojure.test-clojure.repl.deps "clojure.repl.deps needs clojure.clr.basis (tools.deps)"
-     'clojure.test-clojure.clojure-xml "clojure.xml is not in cleat's src/clojure"
+     'clojure.test-clojure.clojure-xml "no active tests: the ns form is commented out upstream (ClojureCLR has no clojure.xml) (cleat-191)"
+     'clojure.test-clojure.compilation "names ClojureCLR's DLR type Microsoft.Scripting.ArgumentTypeException (test-fnexpr-type-hint), so the file does not load; test_clojure is kept verbatim (cleat-191)"
+     'clojure.test-clojure.clearing "no active tests (all commented out upstream: the CLR does no locals clearing); only imports the JVM class java.lang.reflect.Field (cleat-192)"
+     'clojure.test-clojure.compilation2 "needs ClojureCLR's AOT output naming (assembly-load-from \"<ns>.clj.dll\") and clojure.test.generative (cleat-192)"
      'clojure.test-clojure.run-single-test "driver script, not a test namespace"
      'clojure.test-clojure.test-helper "loaded as clojure.test-helper"
      'clojure.test-clojure.ns-libs-load-later helper
@@ -94,7 +84,8 @@
     (System.IO.Directory/CreateSymbolicLink (System.IO.Path/Combine cdir "test_clojure") dir)
     (System.IO.File/CreateSymbolicLink (System.IO.Path/Combine cdir "test_helper.clj") (System.IO.Path/Combine dir "test_helper.clj"))
     {:baseline (path "tests" "test-clojure-baseline.edn")
-     :load-path [tmp]
+     ;; 测试用的库（cleat-191）：test.generative / data.generators（要 tools.namespace）、test.check（要 spec.alpha）从 packages/ 的源码加载
+     :load-path (into [tmp] (map #(path "packages" % "src") ["test.generative" "data.generators" "tools.namespace" "test.check" "spec.alpha"]))
      :skip test-clojure-skip
      :preload test-clojure-preload
      :namespaces (->> (files-under dir)
@@ -123,6 +114,32 @@
         m (-> m (str/replace (str root "/") "") (str/replace (str tmp-root "/") ""))]
     (str (.Name (class e)) ": " (subs m 0 (min 160 (count m))))))
 
+;; test.generative 的 defspec（cleat-191）不是 clojure.test 的测试，test-ns 不跑它们：命名空间里带 :clojure.test.generative/arg-fns 的 Var
+;; 各按固定种子（data.generators/*rnd* = Random(42)）跑 generative-iterations 次，每个 spec 记一个测试、一个断言（全部通过为 pass，
+;; 否则 fail 并在输出里写出失败的输入）。上游的 runner 按时间跑、种子随机，这里要可重复的计数。
+(def ^:private generative-iterations 100)
+
+(defn- run-generative-specs [ns-sym out]
+  (let [specs (filter #(:clojure.test.generative/arg-fns (meta %)) (vals (ns-interns ns-sym)))]
+    (if (empty? specs)
+      {}
+      (let [rnd-var (requiring-resolve 'clojure.data.generators/*rnd*)]
+        (reduce
+         (fn [acc v]
+           (let [arg-fns (:clojure.test.generative/arg-fns (meta v))
+                 failure (with-bindings {rnd-var (System.Random. 42)}
+                           (loop [i 0]
+                             (when (< i generative-iterations)
+                               (let [input (mapv #(%) arg-fns)
+                                     f (try (apply @v input) nil (catch Exception e {:input input :exception e}))]
+                                 (or f (recur (inc i)))))))]
+             (when failure
+               (binding [*out* out]
+                 (println "FAIL in generative spec" (symbol v) "input" (pr-str (:input failure)) "->" (short-msg (:exception failure)))))
+             (merge-with + acc {:test 1 :pass (if failure 0 1) :fail (if failure 1 0)})))
+         {:test 0 :pass 0 :fail 0 :error 0}
+         specs)))))
+
 (defn- run-one [ns-sym ms preload]
   (let [out (System.IO.StringWriter.)
         r (run-thread
@@ -130,7 +147,8 @@
               (binding [*out* out *err* out t/*test-out* out]
                 (doseq [p preload] (require p))
                 (require ns-sym)
-                (select-keys (t/test-ns ns-sym) [:test :pass :fail :error])))
+                (merge-with + (select-keys (t/test-ns ns-sym) [:test :pass :fail :error])
+                            (run-generative-specs ns-sym out))))
             ms)]
     (cond
       (= r :timeout) {:timeout true}
@@ -156,10 +174,19 @@
                           (binding [*out* *err*] (println (format "%-55s %s" n (pr-str r))))
                           [n r])))
         tot (totals results)
+        ;; 处置表（cleat-193，tests/failure-dispositions.edn）：有失败的命名空间都要有条目，全过的不该再有（--only 时只核对跑了的）
+        disp (get (clojure.edn/read-string (slurp (path "tests" "failure-dispositions.edn"))) (keyword which))
+        failing (set (keep (fn [[n v]] (when (or (:load-error v) (:timeout v) (pos? (:fail v 0)) (pos? (:error v 0))) n)) results))
+        undisposed (sort (remove #(contains? disp %) failing))
+        stale (sort (filter #(and (contains? results %) (not (failing %))) (keys disp)))
         broken (count (filter (fn [[_ v]] (or (:load-error v) (:timeout v))) results))]
     (println (format "%s: %d namespaces (%d skipped, %d not loaded / timed out) in %d s; tests %d, assertions pass %d, fail %d, error %d"
                      which (count results) (count skip) broken (quot (.ElapsedMilliseconds sw) 1000)
                      (:test tot) (:pass tot) (:fail tot) (:error tot)))
+    (if (or (seq undisposed) (seq stale))
+      (do (when (seq undisposed) (println "dispositions: failing namespaces with no entry in tests/failure-dispositions.edn:" (vec undisposed)))
+          (when (seq stale) (println "dispositions: entries for namespaces that now pass (remove them):" (vec stale))))
+      (println "dispositions: OK"))
     (if (or (some #{"--write"} args) only)
       (when-not only
         (spit (:baseline suite)
@@ -178,6 +205,7 @@
                         :let [b (get base k) r (get results k)]
                         :when (not= b r)]
                     [k b r])]
+        (when (or (seq undisposed) (seq stale)) (System.Environment/Exit 1))
         (if (empty? diffs)
           (println "baseline: OK")
           (do (println "baseline: DIFFERS (update deliberately with --write)")

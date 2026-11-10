@@ -1,0 +1,7 @@
+;; clojure.test.generative as a cleat project (designs/18), cleat-191: packed as Cleat.TestGenerative.
+;; It depends on data.generators and tools.namespace through NuGet: build and install those first
+;; (packages/data.generators, packages/tools.namespace), then
+;;   cleat -T:build install
+{:paths ["src"]
+ :deps {Cleat.DataGenerators {:nuget/version "1.1.0"}
+        Cleat.ToolsNamespace {:nuget/version "1.5.4"}}}

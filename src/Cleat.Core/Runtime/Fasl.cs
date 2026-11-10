@@ -150,8 +150,9 @@ public static class Fasl
                         var items = Items();
                         return Register<object>(def, items.Length == 0 ? PersistentList.EMPTY : PersistentList.create(items));
                     }
-                case CljVec: return Register<object>(def, LazilyPersistentVector.createOwning(Items()));
-                case Set: return Register<object>(def, PersistentHashSet.create(Items()));
+                // 空的向量 / 集合是共享的 EMPTY（JVM 的 EmptyExpr：(identical? [] []) 为真，(compare #{} #{}) 靠同一性得 0；cleat-191）
+                case CljVec: { var xs = Items(); return Register<object>(def, xs.Length == 0 ? PersistentVector.EMPTY : LazilyPersistentVector.createOwning(xs)); }
+                case Set: { var xs = Items(); return Register<object>(def, xs.Length == 0 ? PersistentHashSet.EMPTY : PersistentHashSet.create(xs)); }
                 case SortedSet: return Register<object>(def, PersistentTreeSet.create(RT.seq(Items())));
                 case Queue:
                     {

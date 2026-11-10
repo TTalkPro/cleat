@@ -1,0 +1,37 @@
+;; 两个 clojure.test 套件里每个有失败 / 错误的命名空间的处置（cleat-193）。tools/cts.clj 核对：有失败而没有条目、或条目对应的命名空间已经全过，
+;; 都算门禁失败——"原因未知"的失败进不了基线。计数在 tests/cts-baseline.edn / tests/test-clojure-baseline.edn。
+;;
+;; 类别：
+;;   :follows-jvm          cleat 照 JVM Clojure 1.12，套件的期望是 ClojureCLR 的行为（clojure-test-suite 的 #?(:cljr …) 分支、test_clojure 的 ClojureCLR 改写）
+;;   :integer-box-model    整数装箱为 Int64、浮点为 Double（偏离表 integer-box-model 一行，designs/03 §4）
+;;   :nan-constant-identity 字面量 ##NaN 的常量共享同一个装箱对象，集合相等的同一性捷径（JVM 也有）使含 ##NaN 的字面量集合相等
+;;   :spec-not-autoloaded  宏的 spec 检查只在加载 clojure.core.specs.alpha 之后做，不自动加载（cleat-166，cleat-193 维持：spec 是独立的包；designs/03 §4.2）
+;;   :platform-test        测试自身只在 Windows 上成立（启动 powershell.exe、反斜杠路径）
+;;   :clojureclr-only      期望的是 ClojureCLR 实现的细节（JVM 的同一测试没有这条断言）
+{:cts
+ {clojure.core-test.bigdec            {:categories #{:follows-jvm} :reason "(bigdec true) / (bigdec false)：:cljr 期望 1.0M / 0.0M，JVM 抛异常（2 个错误）"}
+  clojure.core-test.byte              {:categories #{:integer-box-model} :reason "(byte 0) 的类不是 System.Byte"}
+  clojure.core-test.short             {:categories #{:integer-box-model} :reason "(short 0) 的类不是 System.Int16"}
+  clojure.core-test.int               {:categories #{:integer-box-model} :reason "(int 0) 的类不是 System.Int32"}
+  clojure.core-test.float             {:categories #{:integer-box-model} :reason "(float x) 的类不是 System.Single（4 个）"}
+  clojure.core-test.double-qmark      {:categories #{:integer-box-model} :reason "(double? (float x)) 为真：float 装箱为 Double（3 个）"}
+  clojure.core-test.num               {:categories #{:integer-box-model} :reason "(type (num (byte 1)))：:cljr 期望 UInt64"}
+  clojure.core-test.eq                {:categories #{:nan-constant-identity} :reason "[\\a ##NaN] / #{1.0 2.0 ##NaN} 两个字面量相等（2 个）"}
+  clojure.core-test.not-eq            {:categories #{:nan-constant-identity} :reason "同 eq（2 个）"}
+  clojure.core-test.repeat            {:categories #{:follows-jvm} :reason "(repeat true :a)：:cljr 把布尔当次数，JVM 抛异常（2 个错误）"}
+  clojure.core-test.str               {:categories #{:follows-jvm} :reason "(str 1.0) 是 \"1.0\"、(str true) 是 \"true\"（:cljr 期望 \"1\" / \"True\"，12 个）"}
+  clojure.string-test.ends-with-qmark {:categories #{:follows-jvm} :reason "(str/ends-with? nil \"\")：:cljr 期望 true，JVM 抛异常"}
+  clojure.string-test.starts-with-qmark {:categories #{:follows-jvm} :reason "(str/starts-with? nil \"\")：同上"}
+  clojure.string-test.split-lines     {:categories #{:follows-jvm} :reason "(str/split-lines \"\")：:cljr 期望 []，JVM 是 [\"\"]"}}
+ :test-clojure
+ {clojure.test-clojure.clr.process    {:categories #{:platform-test} :reason "test-process-deref 启动 powershell.exe（3 个错误）"}
+  clojure.test-clojure.def            {:categories #{:spec-not-autoloaded} :reason "defn 的 \"did not conform to spec\"（6 个）"}
+  clojure.test-clojure.fn             {:categories #{:spec-not-autoloaded} :reason "fn 的 \"did not conform to spec\"（8 个）"}
+  clojure.test-clojure.special        {:categories #{:spec-not-autoloaded} :reason "let / 解构的 \"did not conform to spec\"（18 个）；先 require clojure.core.specs.alpha 则 39 个断言全过"}
+  clojure.test-clojure.math           {:categories #{:follows-jvm} :reason "clojure.math/round 返回 long（JVM 的 Math/round：NaN → 0、±Inf 截到 Long 边界），ClojureCLR 返回 double（6 个）"}
+  clojure.test-clojure.numbers        {:categories #{:follows-jvm} :reason "(+ \"ab\" \"cd\") 抛 InvalidCastException（JVM 的 ClassCastException），ClojureCLR 期望 FormatException（1 个错误）"}
+  clojure.test-clojure.pprint         {:categories #{:clojureclr-only :follows-jvm}
+                                       :reason "test-print-meta 的 :column 期望 17（ClojureCLR reader 的列号多 1；JVM 的同一测试没有这条，cleat 是开括号的列 16）；print-table 的 5.47E18 宽度按 ClojureCLR 的 5.47E+18（2 个）"}
+  clojure.test-clojure.protocols      {:categories #{:follows-jvm} :reason "原始类型提示的 defrecord 字段给字符串：抛 InvalidCastException（JVM 的 ClassCastException），ClojureCLR 期望 FormatException / TargetInvocationException（4 个错误）"}
+  clojure.test-clojure.reader         {:categories #{:integer-box-model} :reason ":line / :column 元数据期望 Int32（9 个）"}
+  clojure.test-clojure.sequences      {:categories #{:platform-test} :reason "test-iteration 打开 \"clojure\\\\edn.clj\"（反斜杠路径，1 个错误）"}}}

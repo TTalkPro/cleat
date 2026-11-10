@@ -696,13 +696,14 @@ public static class Reflector
         {
             if (key.GenericArgs != null && lookupType.GetMember(name, Flags(key.IsStatic)).Length > 0)
                 throw new InvalidOperationException($"No {(key.IsStatic ? "static" : "instance")} method {name} on {Util.NameForType(lookupType)} takes {key.GenericArgs.Length} generic argument(s)");
-            throw new MissingMethodException($"No {(key.IsStatic ? "static" : "instance")} member {name} found for type {Util.NameForType(lookupType)}");
+            // 消息开头与 ClojureCLR 相同（"No matching member m taking n args"，test_clojure errors 测试按它匹配，cleat-189）
+            throw new MissingMethodException($"No matching member {name} taking {key.ArgTypes.Length} args found for type {Util.NameForType(lookupType)}: no {(key.IsStatic ? "static" : "instance")} member by that name");
         }
         if (methods.All(m => Unsupported(m.GetParameters())))
             throw new NotSupportedException($"Method {name} on {Util.NameForType(lookupType)} has ref/out or pointer parameters; pass ref/out arguments with (by-ref local): "
                 + string.Join("; ", methods.Select(Describe)));
         throw new InvalidOperationException(
-            $"No matching {(key.IsStatic ? "static" : "instance")} method {name} found for type {Util.NameForType(lookupType)} with argument types ({ArgTypeNames(key.ArgTypes)}); candidates: "
+            $"No matching member {name} taking {key.ArgTypes.Length} args found for type {Util.NameForType(lookupType)}: {(key.IsStatic ? "static" : "instance")} method with argument types ({ArgTypeNames(key.ArgTypes)}); candidates: "
             + string.Join("; ", methods.Select(Describe)));
     }
 

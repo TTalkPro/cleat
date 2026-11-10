@@ -20,7 +20,7 @@ internal static class ConstantEncoder
 
     private const byte Nil = 0x00, True = 0x01, False = 0x02, Fix = 0x10, Long = 0x18, Double = 0x19, BigIntTag = 0x1A, BigDec = 0x1B, RatioTag = 0x1C,
         Char = 0x28, Str = 0x29, Sym = 0x2A, Kw = 0x2B, VarTag = 0x2C, Table = 0x32, List = 0x38, Vec = 0x39, Map = 0x3A, Set = 0x3B,
-        SortedMap = 0x3C, SortedSet = 0x3D, Meta = 0x50, Regex = 0x51, TypeTag = 0x54;
+        SortedMap = 0x3C, SortedSet = 0x3D, Meta = 0x50, Regex = 0x51, Inst = 0x52, Uuid = 0x53, TypeTag = 0x54;
 
     /// <summary>中立编码：标签名与项（string / long / int / Enc）。</summary>
     private sealed class Enc
@@ -126,6 +126,9 @@ internal static class ConstantEncoder
             case Ratio: return new Enc("ratio", x.ToString());
             case System.Text.RegularExpressions.Regex r: return new Enc("regex", r.ToString());
             case Type t: return new Enc("type", TypeName(t));
+            // #inst / #uuid 常量（cleat-191：M20 的 C# 编码器漏了，含它们的代码编不成包程序集；Fasl 一直能读）
+            case DateTime dt: return new Enc("inst", dt.ToString("o", System.Globalization.CultureInfo.InvariantCulture));
+            case Guid g: return new Enc("uuid", g.ToString());
             default: throw new InvalidOperationException($"encode-constant: cannot encode object {RT.printString(x)}");
         }
     }
@@ -208,6 +211,8 @@ internal static class ConstantEncoder
             case "meta": w.Write(Meta); Write(w, (Enc)e.Items[0]); Write(w, (Enc)e.Items[1]); return;
             case "regex": w.Write(Regex); String(w, (string)e.Items[0]); return;
             case "type": w.Write(TypeTag); String(w, (string)e.Items[0]); return;
+            case "inst": w.Write(Inst); String(w, (string)e.Items[0]); return;
+            case "uuid": w.Write(Uuid); String(w, (string)e.Items[0]); return;
             default: throw new InvalidOperationException("encode-constant: unknown encoding " + e.Head);
         }
     }

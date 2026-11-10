@@ -254,6 +254,26 @@ public static partial class FormAnalyzer
 
     private static readonly Symbol ClojureCoreSym = Symbol.intern(null, "clojure.core");
 
+    private static readonly Keyword ProtocolKw = Keyword.intern(null, "protocol"), OnKw = Keyword.intern(null, "on"),
+        MethodMapKw = Keyword.intern(null, "method-map");
+
+    /// <summary>
+    /// 协议方法的调用点：协议重定义后去掉了这个方法（方法表里没有它）时报错，同 JVM 的 InvokeExpr（cleat-193，test_clojure protocols）：
+    /// 原因是 ArgumentException "No method of interface: … found for function: … of protocol: … (The protocol method may have been defined before and removed.)"。
+    /// 原来要到运行期才报 "No implementation of method"。
+    /// </summary>
+    private static void CheckProtocolMethod(object form, Var v, Ctx ctx, int n)
+    {
+        if (n == 0 || Get(v.meta(), ProtocolKw) is not Var pvar || !pvar.isBound || pvar.deref() is not IPersistentMap p) return;
+        if (Get(p, MethodMapKw) is not IPersistentMap mmap || mmap.valAt(Keyword.intern(v.Symbol)) != null) return;
+        var on = Get(p, OnKw);
+        Type t = on as Type ?? (on is Symbol os ? MaybeType(ctx, os) : null);
+        if (t == null) return;   // JVM 同样只在接口类型存在时检查
+        string msg = "No method of interface: " + t.FullName + " found for function: " + v.Symbol + " of protocol: " + pvar.Symbol
+            + " (The protocol method may have been defined before and removed.)";
+        throw ExpanderEx(Position(form, ctx), Phase.CompileSyntaxCheck, msg, new ArgumentException(msg), null);
+    }
+
     /// <summary>var-call（syntax.sls var-call，namespaces.sls default-var-call）：Var 调用点的全部决定。</summary>
     private static Expr VarCall(object form, Var v, Ctx ctx)
     {
@@ -264,6 +284,7 @@ public static partial class FormAnalyzer
         var arities = Get(vm, InlineAritiesKw);
         var nt = ctx.NonTail();
         var pos = Position(form, ctx);
+        CheckProtocolMethod(form, v, ctx, n);
         if (Truthy(inline) && inline is IFn ifn && (!Truthy(arities) || Truthy(((IFn)arities).invoke((long)n))))
         {
             if (!ReferenceEquals(v.Namespace, CurrentNs) && !v.isPublic) throw Err(form, ctx, "var: " + v + " is not public");

@@ -1,0 +1,3 @@
+;; clojure.data.generators as a cleat project (designs/18), cleat-191: packed as Cleat.DataGenerators,
+;;   cleat -T:build install
+{:paths ["src"]}

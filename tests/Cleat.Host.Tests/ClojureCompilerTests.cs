@@ -787,6 +787,117 @@ public class ClojureCompilerTests
             Assert.That(on.Out, Does.Contain(line + "\n"), on.Out);
     }
 
+    /// <summary>
+    /// cleat-189：<c>clojure.lang.Compiler</c> 门面（CompilerException、munge、eval / load / macroexpand1、动态 Var）与随之修的几处：
+    /// macroexpand 的宏元数错误原样抛 ArityException、quote 多参的 :form、"No matching member m taking n args"、case 的结果类型与性能警告。
+    /// </summary>
+    [Test]
+    public void CompilerFacade()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "compiler_facade.clj");
+        var r = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        foreach (var line in new[]
+        {
+            ":catch [true :compile-syntax-check true]", ":quote (quote 1 2 3)", ":munge \"a_b_QMARK_\" \"a-b?\" true",
+            ":eval 6 42 (if a (do b)) true", ":vars true true", ":arity 1 \"ArityException\"",
+            ":nomatch \"No matching member Parse taking 0 args\"", ":case-type \"\" \"\"", ":case-perf true \"\"", ":local-tag \"\"",
+        })
+            Assert.That(r.Out, Does.Contain(line + "\n"), r.Out);
+    }
+
+    /// <summary>
+    /// cleat-192：静态属性 / 字段与 Var 的 :tag 参与类型推断（loop 局部按初值定类型）、带类型实参的泛型短名、数组类符号（resolve、definterface、
+    /// 类型名不落到编译期桩）、Clojure 1.12 的限定方法值与 param-tags。tests/Cleat.Host.Tests/data/interop_polish.clj。
+    /// </summary>
+    [Test]
+    public void InteropPolish()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "interop_polish.clj");
+        var r = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        foreach (var line in new[]
+        {
+            ":static-types 0 0 0 0 0 \"012\"", ":fn-var-tag true", ":generic-short 1", ":arrays true true :tnf true true",
+            ":method-values (\"A\" \"B\") (1 2) (1.5) (\"q\") [[] [1]] ([1 3] [2 4]) (\"A\") #uuid \"00000000-0000-0001-0000-000000000002\" 9223372036854775807",
+            ":param-tags-call 1.5 0", ":bad [true true true]",
+        })
+            Assert.That(r.Out, Does.Contain(line + "\n"), r.Out);
+    }
+
+    /// <summary>cleat-190：clojure.clr.api.Clojure（var / read）在宿主里的 Clojure 代码中可用（C# 侧见 NuGetColdLoadTests）。</summary>
+    [Test]
+    public void ClrApiClojure()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "clr_api.clj");
+        var r = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        foreach (var line in new[]
+        {
+            "3 \"a:b\" true {:a [1 2 #{x}], :b \"s\"} #inst \"2020-01-01T00:00:00.000-00:00\" clojure.lang.Var",
+            ":roundtrip true", ":errors :arg :arg",
+        })
+            Assert.That(r.Out, Does.Contain(line + "\n"), r.Out);
+    }
+
+    /// <summary>
+    /// cleat-191：包程序集的常量表编得了 #inst / #uuid（M20 的 C# 编码器漏了，data.generators 编不成包）；空的向量 / 集合常量（含嵌套）是共享的 EMPTY。
+    /// </summary>
+    [Test]
+    public void PackageConstantsInstUuidAndEmptyCollections()
+    {
+        string src = Path.Combine(_dir, "src", "ip");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "core.clj"), string.Join("\n", new[]
+        {
+            "(ns ip.core)",
+            "(def t #inst \"2007-10-16T00:00:00.000-00:00\")",
+            "(def u #uuid \"00000000-0000-0001-0000-000000000002\")",
+            "(defn both [] [t u (class t) (class u)])",
+            "(defn empties [] [[] #{} [[] #{}]])",
+        }));
+        string outDir = Path.Combine(_dir, "pkg");
+        Directory.CreateDirectory(outDir);
+        var c = HostProcessTests.CleatIn(_dir, null, null, "-I", Path.Combine(_dir, "src"), "--compile-package", Path.Combine(outDir, "Ip.dll"), "--package", "ip", "ip.core");
+        Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+        var r = HostProcessTests.CleatIn(_dir, null, null, "-I", outDir, "-e", "(require 'ip.core)", "-e", "(prn (ip.core/both))",
+            "-e", "(let [[a b [c d]] (ip.core/empties)] (prn (map #(identical? % %2) [a b c d] [[] #{} [] #{}]) (= (sorted-set-by compare #{}) #{#{}})))");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("[#inst \"2007-10-16T00:00:00.000-00:00\" #uuid \"00000000-0000-0001-0000-000000000002\" System.DateTime System.Guid]\n"), r.Out);
+        Assert.That(r.Out, Does.Contain("(true true true true) true\n"), r.Out);
+    }
+
+    /// <summary>cleat-191：clojure.clr.process（ClojureCLR 1.12，随附库）：实参逐个经 ArgumentList、:dir 生效、exec 缺省收 stdout。</summary>
+    [Test]
+    public void ClrProcess()
+    {
+        if (OperatingSystem.IsWindows()) Assert.Ignore("uses sh / pwd");
+        var r = HostProcessTests.CleatIn(_dir, null, null, "-e", "(require '[clojure.clr.process :as p])",
+            "-e", "(prn (p/exec \"echo\" \"a b\" \"c\") (p/exec {:dir \"/\"} \"pwd\") (p/exec {:redirect-out true} \"sh\" \"-c\" \"echo x >&2\")" +
+                  " @(p/exit-ref (p/start \"sh\" \"-c\" \"exit 3\")))");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("\"a b c\\n\" \"/\\n\" \"\" 3\n"), r.Out);
+    }
+
+    /// <summary>
+    /// cleat-193 分诊里修的：(bigdec nil) 抛 NullReferenceException；reify 的类名带外层 fn（JVM 的 trimGenID）；协议重定义后去掉的方法在调用点报
+    /// ArgumentException；Malformed method expression 的原因是 ArgumentException；*unchecked-math* :warn-on-boxed 的装箱数学警告。
+    /// </summary>
+    [Test]
+    public void Triage193()
+    {
+        string script = Path.Combine(HostProcessTests.RepoDir, "tests", "Cleat.Host.Tests", "data", "triage_193.clj");
+        var r = HostProcessTests.CleatIn(_dir, null, null, script);
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        foreach (var line in new[]
+        {
+            ":bigdec-nil :npe", ":removed-protocol-method [\"ArgumentException\" true]", ":malformed-method \"ArgumentException\"",
+            ":boxed-math ((true false false true) (false false false false))",
+        })
+            Assert.That(r.Out, Does.Contain(line + "\n"), r.Out);
+        Assert.That(r.Out, Does.Match(@":reify-name ""user\$make_reify\$reify__\d+"" ""core\$promise\$reify__\d+""\n"), r.Out);
+    }
+
     /// <summary>cleat-183：编译期唯一决议的 by-ref 调用直接 call（ldloca 传元素类型的局部），重载不唯一的走 ClojureOps.ByRefHost。</summary>
     [Test]
     public void ByRefStaticCallsUseLdloca()

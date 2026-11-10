@@ -49,4 +49,5 @@
   {:ns clojure.core.server     :path "clojure/core/server.clj"       :boot false}
   {:ns clojure.test.junit      :path "clojure/test/junit.clj"        :boot false}
   {:ns clojure.test.tap        :path "clojure/test/tap.clj"          :boot false}
+  {:ns clojure.clr.process     :path "clojure/clr/process.clj"       :boot false}   ; cleat-191：ClojureCLR 1.12 的进程 API，按需 require（同 JVM 的 clojure.java.process）
   {:ns clojure.repl.deps       :path "clojure/repl/deps.cljc"        :boot false}]}

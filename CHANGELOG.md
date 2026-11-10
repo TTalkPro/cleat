@@ -5,6 +5,38 @@
 
 ## 未发布
 
+### M23 兼容性收口（cleat-189 ~ 193）
+
+- **`clojure.lang.Compiler` 门面**（cleat-189）：`Compiler+CompilerException`（cleat 的编译错误就是它，`catch` 接得住）、`munge` / `demunge` / `CHAR_MAP`、
+  `eval` / `load` / `loadFile` / `macroexpand1`、`SOURCE_PATH` / `SOURCE` 等 Var；分析器内部不提供（[designs/03 §4.2](designs/03-language-core.md)）。
+  test_clojure 的 control、errors、evaluation、ns-libs、special 跑起来（断言 3877 → 4223 通过）。
+- 直接调 `macroexpand` / `macroexpand-1` 时宏的元数错误原样抛 `ArityException`；`(quote 1 2 3)` 的原因带 `{:form …}`。
+- 反射调用找不到成员的消息改为 `No matching member m taking n args found for type T: …`（与 ClojureCLR 开头相同）。
+- `case` 各分支类型相同时有静态类型（少一次反射）；`*warn-on-reflection*` 下 int 测试的 `case` 被测值不是原始类型时报性能警告（同 JVM）；
+  `let` 绑定到另一个局部时沿用它的类型提示。
+- **`clojure.clr.api.Clojure`**（cleat-190）：与 ClojureCLR 相同的 C# 嵌入入口 `Clojure.var(ns, name)` / `Clojure.var("ns/name")` / `Clojure.read(s)`，
+  不必初始化（惰性启动）；宿主里的 Clojure 代码也能 import。`CleatRuntime` 照旧。
+- **新包 data.generators、test.generative**（cleat-191，取自 ClojureCLR 的 clr.data.generators 1.1.0、clr.test.generative 1.1.2）；
+  **`clojure.clr.process`**（ClojureCLR 1.12 的进程 API，随附库）——修了上游的三处：实参逐个经 `ArgumentList`（原来拼成一串，带空格的实参被拆开）、
+  `:dir` 生效、`exec` 缺省收集 stdout。
+- 修正（cleat-191）：含 `#inst` / `#uuid` 字面量的代码编不成包程序集（M20 的 C# 常量编码器漏了这两种）；空的向量 / 集合字面量是共享的 `EMPTY`
+  （同 JVM：`(identical? [] [])` 为真，`(= (sorted-set-by compare #{}) #{#{}})` 不再因比较集合抛异常而为假）；
+  宿主方法重载在 long / ulong 之间按 C# 规则取有符号的（`(inc UInt32/MaxValue)` 不再反射）。
+- **失败处置表**（cleat-193）：clojure-test-suite 与 test_clojure 的每个有失败的命名空间在 `tests/failure-dispositions.edn` 里写明类别与原因
+  （照 JVM 而套件期望 ClojureCLR、整数装箱模型、宏 spec 不自动加载、只在 Windows 上成立的测试……），`tools/cts.clj` 核对，缺条目或条目过期都算门禁失败。
+- 修正（cleat-193）：`(bigdec nil)` 抛 NullReferenceException（原来返回一个坏掉的 BigDecimal）；协议重定义后去掉的方法在调用点报
+  ArgumentException（同 JVM，原来到运行期才报"No implementation"）；`(T/.m)` 缺目标的错误原因是 ArgumentException；reify 的类名带外层 fn
+  （`clojure.core$promise$reify__…`，同 JVM）；`*unchecked-math* :warn-on-boxed` 打印装箱数学警告（同 JVM 的规则与例外表）。
+- **Clojure 1.12 的限定方法值与 param-tags**（cleat-192）：`(map String/.ToUpper xs)`、`(map Math/Abs xs)`、`String/new`、`^[double] Math/Abs`、
+  `^[String] Guid/Parse` 作为值是 fn；调用位置的 `^[float] Math/Abs` 也按 param-tags 选重载（原始类型的实参按形参强制转换）。
+  原来这些写法被当成 0 参调用或忽略提示。找不到的方法 / 构造器在编译期报错。
+- 少反射（cleat-192）：静态属性 / 字段（`(.Ticks DateTime/UtcNow)`）、带 `:tag` 的 Var（`(def ^AutoResetEvent h …)` 之后 `(.WaitOne h)`）、
+  loop 局部（按初值，同 JVM）都参与类型推断；core.async 的 timeout 线程不再反射，core.async + tools.reader 的反射警告 54 → 18。
+- 带类型实参的泛型短名（cleat-192）：`(:import [System.Collections.Generic |Dictionary`2[System.Object,System.Object]|])` 之后
+  `|Dictionary`2[System.String,System.Int64]|` 可用。
+- 数组类符号（cleat-192）：`(resolve 'String/2)` 返回数组类型（元素类型找不到抛 TypeNotFoundException）；`definterface` 里可以用本命名空间接口的数组
+  `^Foo/1`；`RT/classForName "user.Foo[]"` 不再拿到编译期桩的数组。
+
 ### M21 互操作补全（cleat-183 ~ 184）
 
 - **`by-ref` 实参**（cleat-183）：`(Int64/TryParse s (by-ref n))`、`(.TryGetValue d k (by-ref v))` 等 CLR ref / out 形参的写法，局部在调用后是新值；

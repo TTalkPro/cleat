@@ -58,7 +58,9 @@
 (defn- the-array-class [sym]
   (let [cn (symbol (namespace sym))
         dim (- (int (first (name sym))) (int \0))
-        ^Type elt (or (prim->class cn) (the-class cn))]
+        ;; CLEAT-192: 元素类型先查当前命名空间的映射（JVM 的 HostExpr/maybeArrayClass 用 maybeClass，认导入与本命名空间定义的类型，
+        ;; 如 definterface 的 ^Foo/1），再按 the-class
+        ^Type elt (or (prim->class cn) (let [r (ns-resolve *ns* cn)] (when (class? r) r)) (the-class cn))]
     (loop [^Type t elt, i dim]
       (if (pos? i) (recur (.MakeArrayType t) (dec i)) t))))
 

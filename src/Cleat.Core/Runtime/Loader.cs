@@ -149,6 +149,18 @@ public static class Loader
             }
         }
 
+        // 数组 T[] / T[,]：按元素类型找再造数组（cleat-192）。否则 RT.classForName 落到 AppDomain 的程序集里逐个找，
+        // 先碰到的可能是 gen-interface 的编译期桩（user.Foo[] 成了桩的数组，接口方法签名引用桩程序集，加载时找不到文件）
+        if (fullName.Length > 2 && fullName[^1] == ']')
+        {
+            int lb = fullName.LastIndexOf('[');
+            string inner = fullName.Substring(lb + 1, fullName.Length - lb - 2);
+            if (lb > 0 && inner.All(c => c == ',') && FindType(fullName.Substring(0, lb)) is { } elt)
+            {
+                return inner.Length == 0 ? elt.MakeArrayType() : elt.MakeArrayType(inner.Length + 1);
+            }
+        }
+
         return null;
     }
 

@@ -20,6 +20,8 @@ AOT 产物现在是每个命名空间一个 `.clj.dll`（ClojureCLR 的命名：
 
 - C# / F# 项目 `dotnet add package Cleat.Nrepl`（以及 cleat 运行时包），不调用任何初始化 API，直接使用 gen-class 生成的类型；
   也能经 `CleatRuntime.Var("ns", "f")` 调普通 Clojure 函数（相当于 `clojure.java.api.Clojure`）。
+  cleat-190 起另有与 ClojureCLR 相同的 `clojure.clr.api.Clojure`（`var` / `read`，在 Cleat.Core 里）：同样经 `RuntimeBootstrap.EnsureStarted` 惰性启动，
+  返回 Var 本身（IFn），调用在调用方线程上（不像 CleatRuntime 排到工作线程；源码加载仍经登记的加载线程）。
 - cleat 宿主与 Clojure 代码 `require` 已引用（NuGet 解析到）的包程序集里的命名空间。
 
 ## 2. 包程序集

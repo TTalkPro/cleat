@@ -52,6 +52,26 @@ cleat -I src... --compile-package out/Name.dll [--root dir]... ns...    编包�
 
 `cleat.edn` 的写法与 `deps.edn` 相同，依赖写 `{:nuget/version "…"}`，由 `dotnet restore` 解析（[designs/18](designs/18-tools-build.md)）。
 
+## 从 C# / F# 调用
+
+引用运行时包 `Cleat.Runtime`（或依赖它的 Clojure 包）之后有两种入口，都不必先初始化（第一次用到时以缺省选项启动运行时，[designs/17](designs/17-lazy-runtime-startup.md)）：
+
+```csharp
+// ClojureCLR 的写法（cleat-190，同 JVM 的 clojure.java.api.Clojure）：Var 是 IFn
+using clojure.clr.api;
+IFn require = Clojure.var("clojure.core", "require");
+require.invoke(Clojure.read("my.app"));
+Clojure.var("my.app", "handle").invoke(request);
+
+// cleat 的 CleatRuntime：可指定镜像 / 加载路径（Init），Eval 源码文本，调用串行到 512 MB 栈的工作线程
+using Cleat.Core.Hosting;
+CleatRuntime.Init(new CleatOptions { LoadPaths = { "src" } });
+CleatRuntime.Var("my.app", "handle").invoke(request);
+CleatRuntime.Eval("(+ 1 2)");
+```
+
+gen-class、defrecord 等生成的类型可直接 `new`、调方法（包程序集的类型初始化器负责启动运行时）。
+
 ## 仓库布局
 
 | 目录 | 内容 |
@@ -63,7 +83,7 @@ cleat -I src... --compile-package out/Name.dll [--root dir]... ns...    编包�
 | `src/Cleat.Runtime.Package/` | NuGet 包 `Cleat.Runtime` 的打包项目（无代码）：Core、Hosting、Compiler 程序集加镜像与随附库，给 C# / F# 项目引用 |
 | `src/clojure/clojure/` | `clojure.core` 与随附命名空间（string、set、walk、edn、pprint、test、repl、main、zip、data、instant、clr.io …），改写自 Clojure / ClojureCLR（EPL） |
 | `src/boot/` | `boot-order.edn`（镜像的加载顺序）；构建生成的 `cleat.boot.dll` 与随附库不入库（[docs/boot.md](docs/boot.md)） |
-| `packages/` | 移植的库：`tools.build`、`tools.namespace`、`nrepl`、`neorepl`、`nanopass`（nanopass 框架的 Clojure 移植，[用户文档](packages/nanopass/README.md)，MIT）、`spec.alpha`（含 core.specs，[说明](packages/spec.alpha/README.md)）、`test.check`、`core.async`（[说明](packages/core.async/README.md)，依赖 `tools.analyzer`、`tools.reader`），各自是 cleat 项目，打成 NuGet 包 |
+| `packages/` | 移植的库：`tools.build`、`tools.namespace`、`nrepl`、`neorepl`、`nanopass`（nanopass 框架的 Clojure 移植，[用户文档](packages/nanopass/README.md)，MIT）、`spec.alpha`（含 core.specs，[说明](packages/spec.alpha/README.md)）、`test.check`、`data.generators`、`test.generative`（[说明](packages/test.generative/README.md)）、`core.async`（[说明](packages/core.async/README.md)，依赖 `tools.analyzer`、`tools.reader`），各自是 cleat 项目，打成 NuGet 包 |
 | `tests/` | `Cleat.Core.Tests`、`Cleat.Compiler.Tests`、`Cleat.Host.Tests`（NUnit）；`conformance/`（jolt 语料与偏离表）、`clojure-test-suite/`（子模块）、`test_clojure/`、两份基线 `cts-baseline.edn` / `test-clojure-baseline.edn` |
 | `tools/` | `build.cs`（维护命令，见下）、`cts.clj`（两套测试的基线运行器）、`conformance.clj`（语料运行与门禁） |
 | `designs/`、`tasks/`、`TASK.md` | 设计文档（[索引](designs/README.md)）、任务文件、任务与里程碑索引 |
@@ -90,13 +110,13 @@ dotnet run tools/build.cs -- image-set --twice --ilverify
 
 ## 测试与基线
 
-| 套件 | 规模（2026-11-05） | 怎么跑 |
+| 套件 | 规模（2026-11-10） | 怎么跑 |
 |---|---|---|
-| Cleat.Core.Tests / Cleat.Compiler.Tests / Cleat.Host.Tests | 116 / 50 / 289 | `dotnet test Cleat.slnx -c Release` |
+| Cleat.Core.Tests / Cleat.Compiler.Tests / Cleat.Host.Tests | 116 / 50 / 300 | `dotnet test Cleat.slnx -c Release` |
 | jolt 语料（`:common` 行） | 失败行全部登记在 [cleat-divergences.edn](tests/conformance/cleat-divergences.edn)（521 行，各带类别与原因） | `dotnet run tools/build.cs -- conformance --run --gate` |
-| clojure-test-suite | 247 个命名空间，断言 6868 通过 / 29 失败 / 6 错误 | `cleat tools/cts.clj cts` |
-| test_clojure（ClojureCLR） | 54 个命名空间（31 个跳过），384 个测试，断言 3877 通过 / 25 失败 / 4 错误 | `cleat tools/cts.clj test-clojure` |
-| packages/ 下各包的上游测试 | nrepl、neorepl、tools.build、tools.namespace、nanopass、spec.alpha（174 断言）、test.check、tools.reader（889）、tools.analyzer（370）、core.async（342），源码与包程序集各一遍 | `dotnet test tests/Cleat.Host.Tests -c Release --filter Category=Packages` |
+| clojure-test-suite | 247 个命名空间，断言 6868 通过 / 28 失败 / 6 错误；每个失败的处置在 [failure-dispositions.edn](tests/failure-dispositions.edn) | `cleat tools/cts.clj cts` |
+| test_clojure（ClojureCLR） | 62 个命名空间（23 个跳过，全部能加载），709 个测试，断言 18195 通过 / 49 失败 / 9 错误（2026-11-10）；处置同上 | `cleat tools/cts.clj test-clojure` |
+| packages/ 下各包的上游测试 | nrepl、neorepl、tools.build、tools.namespace、nanopass、spec.alpha（174 断言）、test.check、data.generators、test.generative（22 个 defspec）、tools.reader（889）、tools.analyzer（370）、core.async（351），源码与包程序集各一遍 | `dotnet test tests/Cleat.Host.Tests -c Release --filter Category=Packages` |
 
 后两套逐命名空间与基线比较，差异即失败；有意改变时用 `--write` 重写基线，失败的分类写在对应任务文件里（[cleat-097](tasks/cleat-097-refresh-baselines.md)）。
 
@@ -136,7 +156,9 @@ JVM 异常类名有一张别名表（`ClassCastException` → `InvalidCastExcept
 ## 已知限制
 
 - **Java 类库不模拟**（上一节）：移植 JVM 的库要把 Java 成员名、`java.*` 类换成 CLR 的写法；不做兼容垫片（[cleat-168](tasks/cleat-168-jvm-compat-evaluation.md) 取消）。
-  ClojureCLR 的库通常能直接用，少数要改：直接调 ClojureCLR 编译器内部（`clojure.lang.Compiler`、`Compiler$LocalBinding`）的。
+  ClojureCLR 的库通常能直接用，少数要改：直接调 ClojureCLR 编译器内部的。`clojure.lang.Compiler` 只是门面（`Compiler+CompilerException`、
+  `munge` / `demunge`、`eval` / `load`、`SOURCE_PATH` 等，[cleat-189](tasks/cleat-189-compiler-facade.md)）：分析器内部（`analyze`、`Compiler$LocalBinding` …）
+  与 `LOADER` / `METHOD` 一类编译器状态没有，替代写法见 [designs/03 §4.2](designs/03-language-core.md)。
   `(by-ref x)` 实参（CLR 的 ref / out 形参）支持（[cleat-183](tasks/cleat-183-by-ref-arguments.md)）：x 须是局部（let / loop / fn 形参、catch 绑定、deftype 的可变字段）。
 - **整数装箱为 Int64、浮点为 Double**（上一节）：`(instance? Byte x)` 之类对装箱值不成立。
 - **栈跟踪少帧**：.NET 的栈跟踪不含被 JIT 内联的帧，小函数的帧可能不出现；`-g`（或 `CLEAT_NO_INLINE`）保留物理栈帧，调试时用。

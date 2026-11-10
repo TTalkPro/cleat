@@ -1,6 +1,6 @@
 ;; 生成：cleat tools/cts.clj cts --write（cleat-032）。每个命名空间的 clojure.test 计数；门禁要求与此完全相同。
 ;; :load-error = 加载或运行时抛出（消息截断）；:timeout = 超时。
-{:date "2026-10-16" :totals {:test 247, :pass 6868, :fail 29, :error 6} :not-run 0
+{:date "2026-11-10" :totals {:test 247, :pass 6868, :fail 28, :error 6} :not-run 0
  :skipped {}
  :namespaces
  {
@@ -15,7 +15,7 @@
   clojure.core-test.assoc-bang {:test 1, :pass 38, :fail 0, :error 0}
   clojure.core-test.associative-qmark {:test 1, :pass 17, :fail 0, :error 0}
   clojure.core-test.atom {:test 1, :pass 74, :fail 0, :error 0}
-  clojure.core-test.bigdec {:test 1, :pass 48, :fail 1, :error 2}
+  clojure.core-test.bigdec {:test 1, :pass 48, :fail 0, :error 2}
   clojure.core-test.bigint {:test 1, :pass 18, :fail 0, :error 0}
   clojure.core-test.binding {:test 1, :pass 20, :fail 0, :error 0}
   clojure.core-test.bit-and {:test 1, :pass 11, :fail 0, :error 0}

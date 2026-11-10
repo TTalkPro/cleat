@@ -104,7 +104,10 @@ public static partial class FormAnalyzer
     {
         int n = RT.count(form);
         if (n == 2) return Q(Boundary(RT.second(form)));
-        throw Err(form, ctx, "Wrong number of args (" + (n - 1) + ") passed to quote");
+        // JVM 的 ConstantExpr.Parser：原因是带 {:form 形式} 的 ExceptionInfo（cleat-189，special 测试读 (ex-data (.InnerException e))）
+        string msg = "Wrong number of args (" + (n - 1) + ") passed to quote";
+        throw ExpanderEx(Position(form, ctx), Phase.CompileSyntaxCheck, msg,
+            new ExceptionInfo(msg, RT.map(Keyword.intern(null, "form"), form)), "quote");
     }
 
     /// <summary>lookup-var：(var sym) 的 Var 或 null。</summary>
@@ -179,6 +182,8 @@ public static partial class FormAnalyzer
     {
         Type t = null;
         if (TagOf(d) is { } tg) t = TagType(tg);
+        // 局部的初值是另一个局部：沿用它的类型（JVM 的 LocalBindingExpr 的 javaClass，cleat-189）
+        else if (d is Symbol ds && ds.Namespace == null && ctx.FindLocal(ds)?.Tag is { } lt) t = TagType(lt);
         else if (IsList(d) && RT.seq(d) != null)
         {
             var h = RT.first(d);
@@ -196,6 +201,21 @@ public static partial class FormAnalyzer
         }
         if (t != null && !t.IsValueType && !t.ContainsGenericParameters) return Symbol.intern(t.FullName);
         return null;
+    }
+
+    /// <summary>let 初值的静态类型（含值类型）：提示、字面量的类、局部的初值类型、宿主形式的类型；不知道 null（见 <see cref="Local.InitType"/>）。</summary>
+    private static Type InitStaticType(Ctx ctx, object d)
+    {
+        try
+        {
+            if (TagOf(d) is { } tg) return TagType(tg);
+            if (d is Symbol s) return s.Namespace == null && ctx.FindLocal(s) is { } l ? l.InitType ?? TagType(l.Tag) : null;
+            return d == null ? null : HostArgType(ctx, d);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static Local MakeLocal(Symbol csym, LocalKind kind, Symbol name) => new Local(csym, name, TagOf(csym), false, kind);
@@ -228,8 +248,11 @@ public static partial class FormAnalyzer
         foreach (var (s, init) in pairs)
         {
             var nm = FreshName(s.ToString());
-            var it = !loop && TagOf(s) == null ? InitTag(c.WithLocals(locals), init) : null;
-            locals.Add(it != null ? new Local(s, nm, it, false, LocalKind.Local) : MakeLocal(s, LocalKind.Local, nm));
+            var ic = c.WithLocals(locals);
+            // loop 的局部同样按初值定类型（JVM 的 LocalBinding 不分 let / loop，cleat-192）：存储仍是 Object，recur 换了类型时在使用处转换失败，同 JVM
+            var it = TagOf(s) == null ? InitTag(ic, init) : null;
+            var initType = loop || !WarnReflectionOn() ? null : InitStaticType(ic, init);   // 只有警告用它：关着时不算
+            locals.Add(new Local(s, nm, it ?? TagOf(s), false, LocalKind.Local, initType));
             names.Add(nm);
         }
         List<Expr> AnalyzeInits()
@@ -562,6 +585,16 @@ public static partial class FormAnalyzer
         }
         var data = V(ParseLong(shift), ParseLong(mask), kind,
                      Vec(entries.Select(en => (object)V(ParseLong(en.H), en.Test, en.Skip))));
+        // JVM 的 CaseExpr.emitExprForInts：int 测试而被测表达式不是原始类型时，*warn-on-reflection* 下报性能警告。
+        // 看被测局部的初值类型（Local.InitType）：已知不是原始类型（如 (Object.) 的结果）才报，类型未知的不报（不误报）
+        if (kind == 0L && WarnReflectionOn() && ctx.FindLocal(xs).InitType is { IsPrimitive: false })
+        {
+            var pos = Position(form, ctx);
+            string sp = SourcePath();
+            string file = pos?.File ?? (sp.Length > 0 ? sp : null) ?? "NO_SOURCE_PATH";
+            RT.errPrintWriter().WriteLine("Performance warning, " + file + ":" + (pos != null ? Str(pos.Line) : "0") + ":" + (pos != null ? Str(pos.Column) : "0")
+                + " - case has int tests, but tested expression is not primitive.");
+        }
         var xn = Analyze(x, c.NonTail());
         var dn = Analyze(dflt, c);
         var thens = entries.Select(en => Analyze(en.Then, c)).ToList();

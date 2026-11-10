@@ -48,7 +48,8 @@ public static partial class HostSyntax
             // 解析不到时再看命名空间的导入（cleat-167）：(:import [System.Collections.Generic |LinkedList`1[System.Object]|]) 把封闭泛型类型
             // 登记在它的短名 LinkedList`1 下，之后写 (|LinkedList`1|.)——ClojureCLR 的 HostExpr.MaybeType 同样先查映射
             return PendingStub(n) ?? CompileTimeTypes.Resolve(n)
-                ?? (!isLocal && n.IndexOf('.') < 0 && CurrentNs.GetMapping(sym) is Type mapped ? PendingStub(mapped.FullName) ?? mapped : null);
+                ?? (!isLocal && n.IndexOf('.') < 0 && CurrentNs.GetMapping(sym) is Type mapped ? PendingStub(mapped.FullName) ?? mapped : null)
+                ?? (!isLocal ? ImportedGeneric(n) : null);
         if (isLocal) return null;
         if (CurrentNs.GetMapping(sym) is Type t) return PendingStub(t.FullName) ?? t;
         return StubForTag(n) ?? ClassForName(n);
@@ -81,6 +82,8 @@ public static partial class HostSyntax
     /// <summary>类型提示 → Type；解析不了返回 null（提示只是提示）。</summary>
     public static Type TagType(object tagObj)
     {
+        // Type 本身直接用：转成全名再解析，实参是求值程序集里的类型时（SortedSet`1[[user.Ent, eval$s1, …]]）解析不回来（cleat-192）
+        if (tagObj is Type tt) return (tt.FullName != null ? PendingStub(tt.FullName) : null) ?? tt;
         clojure.lang.Symbol tag = tagObj switch
         {
             clojure.lang.Symbol s => s,
@@ -94,7 +97,24 @@ public static partial class HostSyntax
         if (at != null) return at;
         if (tag.Namespace != null) return null;
         if (CurrentNs?.GetMapping(tag) is Type mapped) return PendingStub(mapped.FullName) ?? mapped;
-        return StubForTag(tag.Name) ?? ClassForName(tag.Name);
+        // 泛型语法的提示（实参是本进程定义的类型时 RT.classForName 解析不了）同 MaybeType 走 CompileTimeTypes（cleat-192）
+        return StubForTag(tag.Name) ?? ClassForName(tag.Name)
+            ?? (tag.Name[^1] == ']' ? CompileTimeTypes.Resolve(tag.Name) ?? ImportedGeneric(tag.Name) : null);
+    }
+
+    /// <summary>
+    /// 带类型实参的泛型短名（cleat-192）：<c>Dictionary`2[System.Object,System.Object]</c>——短名 <c>Dictionary`2</c> 经命名空间的导入
+    /// （导入的是泛型定义或任一封闭类型都行）找到泛型定义，再按全名加原样的实参解析（实参照 ClojureCLR 写全名）。不是这种写法或解析不了返回 null。
+    /// </summary>
+    private static Type ImportedGeneric(string n)
+    {
+        int lb = n.IndexOf('[');
+        if (lb <= 0 || n[^1] != ']' || CurrentNs is not { } ns) return null;
+        string head = n.Substring(0, lb);
+        if (head.IndexOf('.') >= 0 || head.IndexOf('`') < 0) return null;
+        if (ns.GetMapping(clojure.lang.Symbol.intern(null, head)) is not Type m || !m.IsGenericType) return null;
+        var def = m.IsGenericTypeDefinition ? m : m.GetGenericTypeDefinition();
+        return CompileTimeTypes.Resolve(def.FullName + n.Substring(lb));
     }
 
     /// <summary>Lcore 里的类型名：全名；动态程序集里的类型加程序集名。</summary>

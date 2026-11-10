@@ -1,0 +1,10 @@
+;; cleat-190：clojure.clr.api.Clojure 在宿主里的 Clojure 代码中也能用。ClojureCompilerTests.ClrApiClojure 核对输出。
+(import 'clojure.clr.api.Clojure)
+(prn ((Clojure/var "clojure.core" "+") 1 2)
+     ((Clojure/var "clojure.core/str") "a" :b)
+     (= #'clojure.core/map (Clojure/var 'clojure.core 'map))
+     (Clojure/read "{:a [1 2 #{x}] :b \"s\"}")
+     (Clojure/read "#inst \"2020-01-01T00:00:00Z\"")
+     (class (Clojure/var "brand.new.ns" "v")))
+(prn :roundtrip (every? #(= % (Clojure/read (pr-str %))) [nil 1 -2.5 "s" \c :k 'sym [1 [2]] {:a #{1}} '(1 2) 10N 1.5M]))
+(prn :errors (try (Clojure/var "unqualified") (catch ArgumentException e :arg)) (try (Clojure/var 42 "x") (catch ArgumentException e :arg)))

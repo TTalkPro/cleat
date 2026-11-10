@@ -31,15 +31,21 @@ internal sealed class Local
     public readonly bool Mutable;
     public readonly LocalKind Kind;
 
-    public Local(Symbol sym, Symbol name, Symbol tag, bool mutable, LocalKind kind)
+    /// <summary>
+    /// let 绑定的初值的静态类型（值类型也记，含原始类型）；不知道为 null。只给诊断用（case 的 int 测试性能警告看被测局部的初值是否原始类型，
+    /// 与 JVM 的 LocalBinding.getPrimitiveType 相同：case 宏给局部标了 ^Object，标注看不出来，cleat-189）。
+    /// </summary>
+    public readonly Type InitType;
+
+    public Local(Symbol sym, Symbol name, Symbol tag, bool mutable, LocalKind kind, Type initType = null)
     {
-        Sym = sym; Name = name; Tag = tag; Mutable = mutable; Kind = kind;
+        Sym = sym; Name = name; Tag = tag; Mutable = mutable; Kind = kind; InitType = initType;
     }
 
     /// <summary>analyzer.clj marker?</summary>
     public bool IsMarker => Kind is LocalKind.Async or LocalKind.NoAwait;
 
-    public Local WithName(Symbol name) => new Local(Sym, name, Tag, Mutable, Kind);
+    public Local WithName(Symbol name) => new Local(Sym, name, Tag, Mutable, Kind, InitType);
 }
 
 /// <summary>局部表（新的在前），不可变的单链表；null 是空表（analyzer.clj ctx 的 :locals 序列）。</summary>

@@ -143,6 +143,49 @@ public class PackageTests
     }
 
     /// <summary>
+    /// clojure.data.generators 与 clojure.test.generative（cleat-191，packages/data.generators、packages/test.generative，取自 ClojureCLR 的
+    /// clr.data.generators / clr.test.generative）：上游测试各跑源码一遍、编出的包程序集一遍（加载路径上没有源码）。test.generative 的测试是
+    /// defspec，经上游 runner 的 run-suite 跑（test/run.clj，2 线程各 1 秒）；它要 tools.namespace（packages/tools.namespace）。
+    /// </summary>
+    [Test]
+    public void DataGeneratorsAndTestGenerative()
+    {
+        var r = RunPackageTests("-I", "packages/data.generators/src", "-I", "packages/data.generators/test", "packages/data.generators/test/run.clj");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+        r = RunPackageTests("-I", "packages/test.generative/src", "-I", "packages/data.generators/src", "-I", "packages/tools.namespace/src",
+                            "-I", "packages/test.generative/test", "packages/test.generative/test/run.clj", "1000");
+        Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+        Assert.That(r.Out, Does.Contain(" 0 failures."));
+
+        string dir = Path.Combine(Path.GetTempPath(), "cleat-gen-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var c = RunPackageTests(new[] { "-I", "packages/data.generators/src", "--compile-package", Path.Combine(dir, "Cleat.DataGenerators.dll"), "--package", "data.generators" }
+                                    .Concat(Namespaces("data.generators")).ToArray());
+            Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+            c = RunPackageTests(new[] { "-I", "packages/tools.namespace/src", "--compile-package", Path.Combine(dir, "Cleat.ToolsNamespace.dll"), "--package", "tools.namespace" }
+                                .Concat(Namespaces("tools.namespace")).ToArray());
+            Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+            c = RunPackageTests(new[] { "-I", dir, "-I", "packages/test.generative/src", "--root", "packages/test.generative/src",
+                                        "--compile-package", Path.Combine(dir, "Cleat.TestGenerative.dll"), "--package", "test.generative" }
+                                .Concat(Namespaces("test.generative")).ToArray());
+            Assert.That(c.ExitCode, Is.EqualTo(0), c.ToString());
+            r = RunPackageTests("-I", dir, "-I", "packages/data.generators/test", "packages/data.generators/test/run.clj");
+            Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+            Assert.That(r.Out, Does.Contain("0 failures, 0 errors."));
+            r = RunPackageTests("-I", dir, "-I", "packages/test.generative/test", "packages/test.generative/test/run.clj", "1000");
+            Assert.That(r.ExitCode, Is.EqualTo(0), r.ToString());
+            Assert.That(r.Out, Does.Contain(" 0 failures."));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (Exception) { }
+        }
+    }
+
+    /// <summary>
     /// clojure.core.async（cleat-167，packages/core.async，取自 ClojureCLR 的 clr.core.async）与它的 go 宏要的 tools.analyzer(.clr)、tools.reader：
     /// 三个包的上游测试各跑源码一遍、编出的包程序集一遍（加载路径上没有源码）。
     /// </summary>

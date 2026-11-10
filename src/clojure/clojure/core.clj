@@ -3725,6 +3725,8 @@
        (instance? clojure.lang.BigInt x) (.ToBigDecimal ^clojure.lang.BigInt x)           ;;; .ToBigDecimal
        (instance? BigInteger x) (BigDecimal/Create ^BigInteger x)                         ;;; (BigDecimal. ^BigInteger x)
        (number? x) (BigDecimal/Create (double x))                                         ;;; (BigDecimal/valueOf (long x))
+       ;; CLEAT-193: nil → NullReferenceException（JVM 的 (BigDecimal. nil) 抛 NPE；反射调用对 null 选到接受 null 的重载，返回坏掉的 BigDecimal）
+       (nil? x) (throw (NullReferenceException. "Cannot coerce nil to BigDecimal"))
        :else  (BigDecimal/Create x)))                                                     ;;; (BigDecimal. x)))         -- will get a reflection warning -- we just have to wing it here.
 	   
 (def ^:dynamic ^{:private true} print-initialized false)
@@ -4437,7 +4439,12 @@ Note that read can execute code (controlled by *read-eval*),
   (if (namespace sym)
     (let [nsym (symbol (namespace sym))
           ns (or (.LookupAlias n nsym) (clojure.lang.Namespace/find nsym))]
-      (when ns (.FindInternedVar ns (symbol (name sym)))))
+      (cond
+        ns (.FindInternedVar ns (symbol (name sym)))
+        ;; CLEAT-192: 数组类符号 String/2、long/1（JVM 的 maybeResolveIn → HostExpr/maybeArrayClass：元素类型找不到抛 TypeNotFoundException）
+        (clojure.lang.Util/IsPosDigit (name sym))
+        (or (Cleat.Core.Compiler.HostSyntax/MaybeArrayType sym)
+            (throw (clojure.lang.TypeNotFoundException. (namespace sym))))))
     (let [^String s (name sym)]
       (cond
         (or (and (> (.IndexOf s ".") 0) (not (.EndsWith s "."))) (.EndsWith s "]"))

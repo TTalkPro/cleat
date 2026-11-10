@@ -30,7 +30,7 @@ public static partial class CsDriver
     internal static Func<object, object, object> TransferSource = Analyzer.FormAnalyzer.TransferSource;
 
     /// <summary>macroexpand-1 钩子的实现。</summary>
-    internal static Func<object, object> Macroexpand1 = Analyzer.FormAnalyzer.Macroexpand1;
+    internal static Func<object, object> Macroexpand1 = f => Analyzer.FormAnalyzer.Macroexpand1(f, rawArity: true);
 
     /// <summary>eval 钩子（REPL、-e、clojure.core/eval）。</summary>
     public static object EvalHook(object form)

@@ -193,6 +193,13 @@
 | [cleat-184](tasks/cleat-184-proxy-in-go-blocks.md) | core.async：go 块里的 proxy（tools.analyzer.clr 认 cleat 的 proxy-class*，含闭包捕获）；恢复 analyze-proxy 测试 | M21 | cleat-169、cleat-167 | 完成（2026-11-09：tools.analyzer.clr 把 cleat 的 proxy-class* / gen-class* 解析成不透明节点、await* 报清楚的错误；proxy 的方法体本是普通 fn，捕获的 go 局部跨停顿点照常保存；顺带修 convertible? 对泛型形参的 NullReferenceException（go 里 Array/Sort）；core.async 新增 6 个 cleat 专有测试、tools.analyzer 恢复 analyze-proxy，源码与包程序集两遍通过） |
 | [cleat-185](tasks/cleat-185-core-async-timers-hang.md) | core.async：timers-test 在 async_test 之后偶发挂起（约 3 / 16），查明并修 | M21 | 无 | 完成（2026-11-09：timeout-worker 的等待在最早的项恰好过期时为负，WaitOne 截成整毫秒后 (-2, -1] ms 成了无限等待（挂起）、更小的抛出使进程退出——上游同样的 bug；改为锁内读最早项、等待取 max 0；压力对照旧版 3 / 13 挂起、修复后 0 / 13，上游测试连跑 30 / 30；新增有期限的回归测试（旧版失败而非挂起）） |
 | [cleat-186](tasks/cleat-186-libs-rebuild-order.md) | dotnet build 不重编 src/boot 的随附库 Libs（新镜像配旧库）；publish 先编库后 build 的顺序 | M21 | 无 | 完成（2026-11-09：包程序集记编译时的镜像 id（CleatBootImageAttribute），宿主按它决定用不用镜像旁的随附库 / tools，不再看文件时间（不符时退回源码，没有源码时在标准错误说明）；不在 dotnet build 里重编（理由见任务书）；publish 改为先 build 再编随附库；新增测试） |
+| [cleat-187](tasks/cleat-187-release-1-2-versions.md) | 1.2.0：版本号、包清单与依赖审查、升级说明、全部包从本地源冷装 | M22 | cleat-162 | 未开始 |
+| [cleat-188](tasks/cleat-188-release-1-2-artifacts.md) | 1.2.0：发布产物与发布清单（推送与 tag 由用户执行） | M22 | cleat-187 | 未开始 |
+| [cleat-189](tasks/cleat-189-compiler-facade.md) | `clojure.lang.Compiler` 门面（CompilerException、munge / demunge、eval / load、动态 Var）；test_clojure 7 个命名空间加载 | M23 | 无 | 完成（2026-11-10：Compiler 门面在 Cleat.Core，ExpanderException 成为 Compiler+CompilerException 的子类；control、errors、evaluation、ns-libs、special 跑起来；修 macroexpand 的元数错误、quote 的 :form、"No matching member … taking n args"、case 的类型与性能警告） |
+| [cleat-190](tasks/cleat-190-clr-api-clojure.md) | `clojure.clr.api.Clojure`（C# 嵌入 API，与 ClojureCLR 一致） | M23 | 无 | 完成（2026-11-10：clojure.clr.api.Clojure（var / read，惰性启动）在 Cleat.Core；NuGet 冷加载加只用它的 C# 项目；api 命名空间剩 test.generative，交 191） |
+| [cleat-191](tasks/cleat-191-test-libs-and-missing-nses.md) | data.generators / test.generative 包、clojure.xml、clojure.clr.process；test_clojure 跳过的 13 个命名空间改为运行 | M23 | 无 | 完成（2026-11-10：data.generators、test.generative 两个包；clojure.clr.process 进随附库（修上游实参拼接、:dir、exec 缺省收 stdout）；clojure.xml 不加（上游没有）；顺带修 #inst / #uuid 常量编不成包、空集合字面量不是 EMPTY、long / ulong 重载；test_clojure 运行 49 → 62 个、断言 4282 → 18190） |
+| [cleat-192](tasks/cleat-192-interop-polish.md) | 互操作打磨：静态属性返回类型、带类型实参的泛型短名导入、MakeArrayType 空引用、Guid/Parse 方法值等 | M23 | 无 | 完成（2026-11-10：静态属性 / 字段、Var 的 :tag、loop 局部参与类型推断（core.async timers 反射 9 → 0）；带类型实参的泛型短名；数组类符号的 resolve / definterface / classForName；Clojure 1.12 的限定方法值与 param-tags；compilation2、clearing 记跳过） |
+| [cleat-193](tasks/cleat-193-conformance-triage.md) | 余下失败逐项分诊（CTS 29 / 6、test_clojure 25 / 4 与新跑起来的）、基线与偏离表、M23 收口与 r7rs 复核 | M23 | cleat-189 ~ 192 | 完成（2026-11-10：tests/failure-dispositions.edn 给每个有失败的命名空间写明类别与原因、cts.clj 核对；修 bigdec nil、协议方法被去掉时的调用点错误、CLJ-2914 的原因、reify 类名、:warn-on-boxed；维持宏 spec 不自动加载；r7rs 56 × 5 两台同轮配对无可声明回退（111 x0.984、13 x0.974；111 的 nucleic x1.076 经 IL 对比是布局效应，13 上 x0.981）） |
 
 ## 里程碑
 
@@ -224,9 +231,16 @@
 | M19 可用性与工程收口（2026-10-26 起，2026-11-08 收口；162 待 GH 实测） | cleat-158 ~ cleat-170 | 暂停性能主线：源位置与栈帧、启动（剖析 / R2R / 编译器延迟加载）、CI、sigspec 消融与删除、开关清理、codegen 拆分、spec.alpha / core.async、jvm-compat 评估（[29](designs/29-usability-and-engineering.md)） |
 | M20 C# 编译器（2026-11-03 起） | cleat-171 ~ cleat-182 | 编译器改用 C# 实现：小 pass、L0 ~ L5 逐层下降、ILGenerator 直接发射；并行建设 + 门控切换，先跑通再逐项补优化；删除自举、种子与 Lcil，nanopass 保留为用户库（[30](designs/30-csharp-compiler.md)） |
 | M21 互操作补全（2026-11-05 立项，2026-11-09 完成） | cleat-183 ~ cleat-186 | cleat-166 / 167 移植库时记下的缺口：by-ref 实参、go 块里的 proxy；183 复跑查出的 core.async timers 偶发挂起与随附库重编 |
+| M22 发布 1.2.0（2026-11-09 立项） | cleat-187 ~ cleat-188 | M19 ~ M21 的变化发版：CI 在 GitHub 上跑绿（162）、版本与包依赖审查、升级说明、发布产物与清单 |
+| M23 兼容性收口（2026-11-09 立项，2026-11-10 完成） | cleat-189 ~ cleat-193 | test_clojure 加载不了的 12 个与可补的 13 个跳过的命名空间跑起来：Compiler 门面、clojure.clr.api.Clojure、测试用库与缺失命名空间、互操作打磨，余下失败逐项分诊 |
 | 后续（LLVM，搁置） | cleat-004、cleat-037 ~ cleat-041 | 原生可执行文件、原生语料通过率。**决定（2026-10-10）：先完成 CIL 能力，LLVM 后端整体搁置**，设计保留在 [06](designs/06-llvm-backend.md) |
 
 ## 关键路径
+
+**M22（2026-11-09 立项）**：162 在 GitHub 上跑绿（用户 push）→ 187 → 188；推送与 tag 由用户执行。
+
+**M23（2026-11-09 立项）**：189、190、191、192 互不依赖可并列（建议 189 先做：一项解开 7 个命名空间），最后 193 分诊与收口。
+衡量：test_clojure 加载不了 12 → 0、跳过 31 → 只剩确实做不到的（helper 命名空间、ClojureCLR 的测试支撑程序集），失败都有处置。
 
 **M16（2026-10-20 起，2026-10-22 完成）**：142 / 143 / 146 完成（远端同窗口开 / 关 A/B：wc -39%、browse -4%、read1 -2.5%，lattice 的 strseq 分支位置回退已修正，见 [notes M16](notes/r7rs-performance.md)）→ 149（先还债、稳口径）/ 144 / 148 并列 → 145（依赖 144，2026-10-21 落地，实测只是中性因此**默认关**、开关 opt-in）→ 147 → 150 收口完成（56 项三臂全量 + 开关贡献分解：对 JVM x1.594、开关贡献 x0.981，array1 / lattice 回退已归因记账，[28 §7](designs/28-hot-path-optimizations.md)）。
 

@@ -76,9 +76,19 @@ public static partial class FormAnalyzer
         bool i1 = ImplicitConversion(p1, a), i2 = ImplicitConversion(p2, a);
         if (i1 && !i2) return true;
         if (i2 && !i1) return false;
-        if (i1 && i2) return ImplicitConversion(p2, p1) && !ImplicitConversion(p1, p2);
+        if (i1 && i2)
+        {
+            bool c21 = ImplicitConversion(p2, p1), c12 = ImplicitConversion(p1, p2);
+            if (c21 != c12) return c21;
+            // 互不可转换时有符号整型优于无符号整型（C# 规范"更好的转换目标"，cleat-191：UInt32 实参在 Numbers.inc(long) / inc(ulong) 之间原来选不出）
+            return !c21 && IsSignedIntegral(p1) && IsUnsignedIntegral(p2);
+        }
         return false;
     }
+
+    private static bool IsSignedIntegral(Type t) => t == typeof(sbyte) || t == typeof(short) || t == typeof(int) || t == typeof(long);
+
+    private static bool IsUnsignedIntegral(Type t) => t == typeof(byte) || t == typeof(ushort) || t == typeof(uint) || t == typeof(ulong);
 
     private static List<Type> ParamTypes(MethodBase m) => m.GetParameters().Select(p => p.ParameterType).ToList();
 
@@ -172,6 +182,7 @@ public static partial class FormAnalyzer
                 return SymIs(RT.first(dot), "new") ? MaybeType(ctx, RT.second(dot)) : HostCallReturnType(ctx, dot);
             }
             var (o, _, _) = ResolveIn(CurrentNs, sop);
+            if (o is Var cv && cv.IsMacro && cv.Symbol.Name == "case" && cv.Namespace.Name.Name == "clojure.core") return CaseResultType(ctx, a);
             if (o is Var v && !v.IsMacro)
             {
                 var vm = v.meta();
@@ -192,7 +203,56 @@ public static partial class FormAnalyzer
         }
     }
 
+    /// <summary>
+    /// (case e 测试 结果 … [默认]) 的类型：各结果（与默认）的静态类型都相同时就是它（JVM 的 CaseExpr 按分支类型给出 javaClass，cleat-189；
+    /// control 测试的 (BigDecimal/Create (case 1 1 1)) 因此不反射）。没有默认时缺省分支抛异常，不参与。
+    /// </summary>
+    private static Type CaseResultType(Ctx ctx, object a)
+    {
+        var clauses = Items(RT.next(RT.next(a)));
+        if (clauses.Count == 0) return null;
+        var results = new List<object>();
+        for (int i = 1; i < clauses.Count; i += 2) results.Add(clauses[i]);
+        if (clauses.Count % 2 == 1) results.Add(clauses[^1]);
+        Type t = null;
+        foreach (var r in results)
+        {
+            var rt = HostArgType(ctx, r);
+            if (rt == null || (t != null && rt != t)) return null;
+            t = rt;
+        }
+        return t;
+    }
+
     private static string ArgTypesString(IEnumerable<Type> types) => string.Join(", ", types.Select(t => t != null ? t.FullName : "unknown"));
+
+    private static readonly Keyword WarnOnBoxedKw = Keyword.intern(null, "warn-on-boxed");
+
+    // JVM 的 Numbers 里标了 @WarnBoxedMath(false) 的方法：形参是 Object 也不警告
+    private static readonly HashSet<string> s_noBoxedMathWarning = new()
+    {
+        "boolean_array", "booleans", "byte_array", "bytes", "char_array", "chars", "double_array", "doubles", "float_array", "floats", "hasheq",
+        "hasheqFrom", "int_array", "ints", "long_array", "longs", "rationalize", "reduceBigInt", "short_array", "shorts", "toBigDecimal", "toBigInt",
+        "toBigInteger", "toRatio",
+    };
+
+    /// <summary>
+    /// *unchecked-math* 为 :warn-on-boxed 时的装箱数学警告（cleat-193，JVM 的 Compiler.isBoxedMath）：静态决议到 clojure.lang.Numbers 的方法、
+    /// 有 Object 形参（装箱的数学）时打印 "Boxed math warning, 文件:行:列 - call: 方法."。决议不了（反射）的不报（那是反射警告的事）。
+    /// </summary>
+    private static void CheckBoxedMath(object form, Ctx ctx, DotInfo d)
+    {
+        if (d.Static == null || d.Type != typeof(Numbers) || !WarnOnBoxedKw.Equals(RT.UncheckedMathVar.deref())) return;
+        if (s_noBoxedMathWarning.Contains(d.Member)) return;
+        var types = d.Args.Select(a => HostArgType(ctx, a)).ToList();
+        var m = SelectOverload(HostMethods(d.Type, d.Member, d.Args.Count, true).Where(PlainMethod), types);
+        if (m == null || !m.GetParameters().Any(p => p.ParameterType == typeof(object))) return;
+        var pos = Position(form, ctx);
+        string sp = SourcePath();
+        string file = pos?.File ?? (sp.Length > 0 ? sp : null) ?? "NO_SOURCE_PATH";
+        RT.errPrintWriter().WriteLine("Boxed math warning, " + file + ":" + (pos != null ? Str(pos.Line) : "0") + ":" + (pos != null ? Str(pos.Column) : "0")
+            + " - call: " + m.ReturnType.Name + " clojure.lang.Numbers." + m.Name + "(" + string.Join(",", m.GetParameters().Select(p => p.ParameterType.Name)) + ").");
+    }
 
     /// <summary>check-host-call：(. target member args…) 的反射警告。</summary>
     private static void CheckHostCall(object form, Ctx ctx, DotInfo d)
@@ -304,7 +364,57 @@ public static partial class FormAnalyzer
     {
         object tag = TagOf(d);
         if (tag == null && d is Symbol s && s.Namespace == null) tag = ctx.FindLocal(s)?.Tag;
+        if (tag == null && d is Symbol ss && (ss.Namespace != null || ctx.FindLocal(ss) == null))
+        {
+            if (ss.Namespace != null && StaticFieldOrPropertyType(ctx, ss) is { } st) return st;
+            tag = VarValueTag(ss);
+        }
         return TagType(tag);
+    }
+
+    /// <summary>
+    /// 符号指一个全局 Var 时 Var 的 :tag（JVM 的 VarExpr 按它给 javaClass，cleat-192：<c>(def ^AutoResetEvent h …)</c> 之后 <c>(.WaitOne h)</c> 不反射）。
+    /// fn 的 Var（有 :arglists）的 :tag 是返回类型、不是值的类型，不用；原始类型提示（Var 里是装箱值）不用；宏不用。
+    /// </summary>
+    private static object VarValueTag(Symbol s)
+    {
+        try
+        {
+            if (s.Namespace == null && SpecialHead(s) != null) return null;
+            var (o, _, _) = ResolveIn(CurrentNs, s);
+            if (o is not Var v || v.IsMacro) return null;
+            var vm = v.meta();
+            if (Truthy(Get(vm, ArglistsKw))) return null;
+            var tag = Get(vm, TagKw);
+            return tag == null || PrimKind(tag) != null ? null : tag;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// T/m 指静态字段或属性时它的类型（cleat-192：<c>(.Ticks DateTime/UtcNow)</c> 原来目标类型未知、走反射）；不是或解析不了 null。
+    /// 字面量常量（const 字段）同样按字段类型。
+    /// </summary>
+    private static Type StaticFieldOrPropertyType(Ctx ctx, Symbol s)
+    {
+        try
+        {
+            if (StaticMemberOf(ctx, s) is not var (t, member) || HostSyntax.IsStub(t)) return null;
+            string m = MungeStr(member);
+            foreach (var x in TypeAndInterfaces(t))
+            {
+                if (x.GetField(m, BindingFlags.Public | BindingFlags.Static) is { } f) return f.FieldType;
+                if (x.GetProperty(m, BindingFlags.Public | BindingFlags.Static) is { } p && p.GetIndexParameters().Length == 0) return p.PropertyType;
+            }
+            return null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     /// <summary>parse-dot：(. target member args…) 的各部分。</summary>
@@ -345,7 +455,7 @@ public static partial class FormAnalyzer
             if (d.Static != null) return ByRefHostCall(form, ctx, "static", t, d.Member, null, d.Args);
             return ByRefHostCall(form, ctx, "instance", t, d.Member, Analyze(d.Target, nt), d.Args);
         }
-        if (d.TypeArgs == null) CheckHostCall(form, ctx, d);
+        if (d.TypeArgs == null) { CheckHostCall(form, ctx, d); CheckBoxedMath(form, ctx, d); }
         if (d.Static != null && d.Args.Count == 0 && !d.Method)
             return d.Prop ? CljCallOf("GetStaticField", s_false, Q(t), Q(d.Member)) : CljCallOf("CallStatic", s_fixed3, Q(t), Q(d.Member), Q(gen));
         if (d.Static != null)

@@ -39,27 +39,11 @@ public sealed class LocalBinding
     public override string ToString() => Unique.ToString();
 }
 
-/// <summary>分析错误（语法、未解析的符号、宏抛出的异常），带源位置；与 Clojure 的 CompilerException 对应。</summary>
-public sealed class ExpanderException : Exception, IExceptionInfo
+/// <summary>分析错误（语法、未解析的符号、宏抛出的异常），带源位置；是 <see cref="clojure.lang.Compiler.CompilerException"/>（cleat-189）。</summary>
+public sealed class ExpanderException : clojure.lang.Compiler.CompilerException
 {
-    public string SourcePath { get; }
-    public int Line { get; }
-    public int Column { get; }
-    public Keyword Phase { get; }
-
-    // the :clojure.error/phase values are plain keywords, as Compiler.PHASE_* on the JVM (clojure.main/ex-triage
-    // dispatches on :compile-syntax-check …); cleat-069 found them namespaced, which made ex-str throw "No matching clause"
-    public static readonly Keyword PhaseSyntax = Keyword.intern(null, "macro-syntax-check"),
-      PhaseMacroexpand = Keyword.intern(null, "macroexpansion"), PhaseCompile = Keyword.intern(null, "compile-syntax-check");
-
-    /// <summary>原因文本（不含位置前缀）：Clojure 的 ex-str 把它放在第二行（cleat-055）。</summary>
-    public string Reason { get; }
-
-    /// <summary>
-    /// 出错形式的运算符（Clojure 的 CompilerException.symbol）：特殊形式名（"compiling recur at"）或宏的符号（"macroexpanding m at"）；
-    /// 普通调用与符号为 null（"compiling at"）。
-    /// </summary>
-    public string Symbol { get; }
+    public static readonly Keyword PhaseSyntax = PHASE_MACRO_SYNTAX_CHECK, PhaseMacroexpand = PHASE_MACROEXPANSION,
+      PhaseCompile = PHASE_COMPILE_SYNTAX_CHECK;
 
     public ExpanderException(string sourcePath, int line, int column, Keyword phase, string message, Exception cause = null)
         : this(sourcePath, line, column, phase, message, cause, null)
@@ -67,19 +51,7 @@ public sealed class ExpanderException : Exception, IExceptionInfo
     }
 
     public ExpanderException(string sourcePath, int line, int column, Keyword phase, string message, Exception cause, string symbol)
-        : base(Format(sourcePath, line, column, message), cause)
+        : base(sourcePath, line, column, phase, message, cause, symbol)
     {
-        SourcePath = sourcePath; Line = line; Column = column; Phase = phase; Reason = message; Symbol = symbol;
-    }
-
-    private static string Format(string path, int line, int column, string message) =>
-      $"Syntax error ({path ?? "NO_SOURCE_PATH"}:{line}:{column}) {message}";
-
-    public IPersistentMap getData()
-    {
-        var m = RT.map(
-          Keyword.intern("clojure.error", "source"), SourcePath, Keyword.intern("clojure.error", "line"), (long)Line,
-          Keyword.intern("clojure.error", "column"), (long)Column, Keyword.intern("clojure.error", "phase"), Phase);
-        return Symbol == null ? m : m.assoc(Keyword.intern("clojure.error", "symbol"), clojure.lang.Symbol.intern(Symbol));
     }
 }

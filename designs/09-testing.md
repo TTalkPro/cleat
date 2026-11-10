@@ -40,6 +40,11 @@ M6 建立并记入本文：语料通过数 / 偏离数；clojure-test-suite 逐�
 | 2026-10-10 | cleat-032 | clojure-test-suite（`tools/cts.clj cts`，247 个命名空间，`tests/cts-baseline.edn`） | 247 个全部加载运行；247 个 deftest，断言通过 6865、失败 32、错误 6 |
 | 2026-10-10 | cleat-032 | test_clojure（`tools/cts.clj test-clojure`，`tests/test-clojure-baseline.edn`） | 85 个命名空间：跳过 32（外部库 test.generative / test.check、ClojureCLR 的测试支持程序集、辅助命名空间）；运行 53 个，其中 15 个加载失败（`clojure.lang.Compiler`、反射警告、gen-class 等）；339 个 deftest，断言通过 3443、失败 34、错误 144（pprint 124） |
 | 2026-10-10 | cleat-053 | Clojure 镜像 `cleat.boot.dll`（`GenerateBootImage`） | 构建约 18 ~ 20 秒；dll 1.8 MB，Lcil 14 MB，2308 个类型，2189 个顶层形式；不动点 B == C |
+| 2026-11-10 | cleat-189 | test_clojure（`clojure.lang.Compiler` 门面之后） | 85 个命名空间：跳过 33（compilation 需 test.generative、param-tags 需测试支持程序集，移入跳过）；运行 52 个，其中 5 个加载不了；439 个 deftest，断言通过 4223、失败 43、错误 4（special 的 18 个失败是宏 spec 检查未自动加载，designs/03 §4.2） |
+| 2026-11-10 | cleat-192 | test_clojure（互操作打磨之后） | 85 个命名空间：跳过 35（clearing 上游无有效测试、compilation2 要 ClojureCLR 的 AOT 文件名，移入跳过）；运行 50 个，其中 1 个加载不了（api，cleat-190）；445 个 deftest，断言通过 4282、失败 43、错误 4（array-symbols 44、method-thunks 15 全过） |
+| 2026-11-10 | cleat-190 | test_clojure（`clojure.clr.api.Clojure` 之后） | 85 个命名空间：跳过 36（api 剩 test.generative 的 defspec，移入跳过，交 cleat-191）；运行 49 个，**全部能加载**；445 个 deftest，断言通过 4282、失败 43、错误 4 |
+| 2026-11-10 | cleat-191 | test_clojure（测试用库进加载路径之后） | 85 个命名空间：跳过 23（只剩辅助命名空间、ClojureCLR 测试支撑程序集、上游无有效测试、ClojureCLR 专有的类型与 AOT 文件名）；运行 62 个，全部能加载；709 个 deftest（含 test.generative 的 defspec，按固定种子各 100 次），断言通过 18190、失败 54、错误 9 |
+| 2026-11-10 | cleat-193 | clojure-test-suite / test_clojure（分诊之后） | CTS 247 个命名空间：断言 6868 通过、失败 28、错误 6；test_clojure 62 个：18195 / 49 / 9。每个有失败的命名空间在 `tests/failure-dispositions.edn` 有类别与原因（`tools/cts.clj` 核对：缺条目或条目对应的命名空间已全过都算门禁失败） |
 
 ## 4. 运行方式
 

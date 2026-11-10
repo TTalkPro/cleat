@@ -77,7 +77,7 @@ public static class Diagnostics
     {
         try
         {
-            if (e is ExpanderException || e.Data.Contains(LocationKey)) return false;
+            if (e is clojure.lang.Compiler.CompilerException || e.Data.Contains(LocationKey)) return false;
             // cleat-158：运行期栈上第一个带行号的用户 Clojure 源帧（序列点 + PDB）优先，指向最内层抛出点；
             // 拿不到（宿主内部抛出、无 PDB）退回顶层形式自己的 :pos
             e.Data[LocationKey] = FirstUserLocation(e) ?? FormLocation(form);
@@ -200,7 +200,7 @@ public static class Diagnostics
         while (e is TargetInvocationException && e.InnerException != null) e = e.InnerException;
         switch (e)
         {
-            case ExpanderException x:
+            case clojure.lang.Compiler.CompilerException x:
                 return FormatSyntaxError(x);
             case LispReader.ReaderException re:
                 string src = re.Data.Contains(SourceKey) ? (string)re.Data[SourceKey] : SourceLabel();
@@ -243,7 +243,7 @@ public static class Diagnostics
     private static string CauseType(Exception e) =>
       e == null || e.GetType() == typeof(Exception) ? "" : " (" + e.GetType().Name + ")";
 
-    private static string FormatSyntaxError(ExpanderException x)
+    private static string FormatSyntaxError(clojure.lang.Compiler.CompilerException x)
     {
         // 宏展开出的形式没有位置（0:0）：报最内层顶层形式的位置（Clojure 的编译器同样报外层形式的 LINE / COLUMN）
         string loc = x.Line == 0 && t_lastLine > 0 && DisplayPath(x.SourcePath) == t_lastSource && t_lastSource != "REPL"

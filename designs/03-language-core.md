@@ -79,6 +79,8 @@ e ::= (const d)                                   ; 字面量 / quote；d 为任
 | `re-matches` / 未参与匹配的组 | 整个输入匹配；组为 nil | 照 JVM（原来 `^p$` 包裹、组为 ""，cleat-032） |
 | `#?` 读条件 | JVM 取 `:clj` | 取 `:cljr`（与 ClojureCLR 相同） |
 | Clojure fn 对象 | 每次求值新建 | 同 JVM（没有自由变量的 fn 不再是单例，cleat-032） |
+| 限定方法 `T/m`、`T/.m`、`T/new` 与 `^[…]` param-tags（Clojure 1.12） | JVM：QualifiedMethodExpr | 支持（cleat-192）：分析器改写成普通形式——值位置是 `fn*`（带 param-tags 时一个元数，原始类型实参经 `RT.xCast` 强制转换、引用类型带提示静态决议；不带时按重载的元数各一个子句，运行期反射）；静态字段 / 属性照旧读字段；调用位置的 param-tags 同样转换实参 |
+| Var 的 `:tag`、静态属性 / 字段、loop 局部的类型 | JVM：VarExpr / StaticFieldExpr / LocalBinding 的 javaClass | 同 JVM（cleat-192）：参与宿主调用的静态决议；fn 的 Var（有 `:arglists`）的 `:tag` 是返回类型，不当作值的类型；原始类型提示的 Var 不用 |
 | Java API（`.getMessage`、`Long/MAX_VALUE`、`java.io.File` …） | JVM 类库 | 不模拟；写 CLR 的名字（`.Message`、`Int64/MaxValue`、clojure.clr.io）。语料里这些行记为 `:host/jvm-api`（tests/conformance/cleat-divergences.edn） |
 
 ### 4.1 JVM 异常类名（cleat-032，`Cleat.Core.Runtime.JvmNames`）
@@ -103,6 +105,37 @@ e ::= (const d)                                   ; 字面量 / quote；d 为任
 | `java.util.IllegalFormatException` 及其子类（`IllegalFormatConversionException`、`MissingFormatArgumentException` …） | `clojure.lang.IllegalFormatException` 及同名子类（Printf.cs；基类为 cleat-032 新增，派生自 `ArgumentException`） | format |
 
 不映射：`Error`、`AssertionError`（`assert` 抛 `System.Exception`，与 ClojureCLR 相同）、`IllegalAccessError` 等 java.lang.Error 一支。
+
+### 4.2 `clojure.lang.Compiler` 门面（cleat-189，`src/Cleat.Core/Runtime/Compiler.cs`）
+
+cleat 的编译器是 C#（`Cleat.Compiler`，按需加载，[designs/30](30-csharp-compiler.md)），没有 JVM / ClojureCLR 的 `Compiler` 类。
+Cleat.Core 里的静态类 `clojure.lang.Compiler` 只提供库与测试常用的公开成员，转到 cleat 的对应物：
+
+| 成员 | cleat |
+|---|---|
+| `Compiler+CompilerException`（JVM `Compiler$CompilerException`） | cleat 的分析错误 `ExpanderException` 是它的子类：`(catch Compiler+CompilerException e …)` 接得住语法错误、未解析的符号 / 类名、宏展开错误。消息 `Syntax error (文件:行:列) 原因`；`ex-data` 有 `:clojure.error/source line column phase`（与 `symbol`）；宏抛出的原异常在 `.InnerException`；`PHASE_*` 关键字同 JVM |
+| `munge`、`demunge`、`CHAR_MAP` | `clojure.lang.Munge` |
+| `eval`、`load`（1 ~ 4 参，ClojureCLR 的第 4 参 relativePath 不用）、`loadFile`、`macroexpand1`、`macroexpand` | 运行时钩子 `RuntimeHooks.Eval` / `Macroexpand1`、`Loader.LoadSource` / `LoadFile`（编译器按需加载） |
+| `specials` | 特殊形式表（值为 nil 的映射，只用来查键） |
+| `SOURCE`、`SOURCE_PATH`（ClojureCLR 名 `SourceVar`、`SourcePathVar`）、`COMPILE_FILES`、`COMPILE_PATH`、`COMPILER_OPTIONS` | `*source-path*`、`*file*`、`*compile-files*`、`*compile-path*`、`*compiler-options*` 这几个 Var 本身 |
+
+不提供（移植时的替代写法）：
+
+- 分析器内部：`Compiler/analyze`、`analyzeSeq`、`Compiler$LocalBinding`、`$ObjExpr`、`$FnExpr`、`$HostExpr/maybeSpecialTag` 等。
+  要分析形式用 tools.analyzer.clr（packages/tools.analyzer）；宏的 `&env` 里的局部是 `Cleat.Core.Expand.LocalBinding`（字段 `Name`、`Tag`）；
+  `maybeResolveIn` 用 `clojure.core` 里同规则的 `ns-resolve` / `resolve`。
+- 编译器状态 Var：`LOADER`（没有类加载器，绑定它的代码删掉即可）、`METHOD`、`LOCAL_ENV`、`LOOP_LOCALS`、`NEXT_LOCAL_NUM`、`LINE`、`COLUMN`、`LINE_BEFORE` 等。
+- 执行期异常不包装：JVM 的 `Compiler.load` 把顶层形式执行时的异常包成 `CompilerException`（phase `:execution`），cleat 原样传出（位置记在 `Exception.Data`，报告时用），
+  `catch` 原异常类型的代码不受影响。
+- 宏的 spec 检查只在已加载 `clojure.core.specs.alpha` 时做（cleat-166 的决定，cleat-193 复核后维持：spec 是独立的包 packages/spec.alpha，不在运行时里，
+  JVM 那样首次宏展开时自动加载做不到；加载后编译约慢 24%）：test_clojure special / def / fn 的 32 个"did not conform to spec"断言因此失败，
+  先 `(require 'clojure.core.specs.alpha)` 则这些断言通过。
+
+随门面修的几处行为（与 JVM 对齐）：直接调 `macroexpand` / `macroexpand-1` 时宏的元数错误原样抛 `ArityException`（宏自己的元数去掉 `&form` / `&env`；
+编译途中仍是编译错误）；`(quote 1 2 3)` 的原因是带 `{:form …}` 的 `ExceptionInfo`；反射调用找不到成员的消息开头是 `No matching member m taking n args`；
+`case` 的各分支类型相同时它就是 `case` 的类型（`(BigDecimal/Create (case 1 1 1))` 不反射）；int 测试而被测值已知不是原始类型时
+`*warn-on-reflection*` 下报 `Performance warning … case has int tests, but tested expression is not primitive.`（类型未知的不报）；
+`let` 的初值是另一个局部时沿用它的类型提示。
 
 ## 5. core 库的组织（00 D15）
 

@@ -114,7 +114,7 @@ public static partial class FormAnalyzer
         }
         if (d is IPersistentVector pv)
         {
-            if (pv.count() == 0) return d;
+            if (pv.count() == 0) return Meta(d) == null ? PersistentVector.EMPTY : d;   // JVM 的 emitValue：空集合常量是 EMPTY（cleat-191）
             var vs = new List<object>();
             for (int i = 0; i < pv.count(); i++) vs.Add(ConstValue(pv.nth(i)));
             if (vs.Exists(x => ReferenceEquals(x, s_noConst))) return s_noConst;
@@ -122,7 +122,7 @@ public static partial class FormAnalyzer
         }
         if (d is IPersistentSet ps)
         {
-            if (ps.count() == 0) return d;
+            if (ps.count() == 0) return Meta(d) == null && d is not PersistentTreeSet ? PersistentHashSet.EMPTY : d;
             var vs = new List<object>();
             for (var s = ps.seq(); s != null; s = s.next()) vs.Add(ConstValue(Boundary(s.first())));
             if (vs.Exists(x => ReferenceEquals(x, s_noConst))) return s_noConst;
@@ -163,6 +163,9 @@ public static partial class FormAnalyzer
         if (d is Namespace ns) return CljCallOf("FindNamespaceOf", s_false, Q(ns.Name));
         if (CollKind(d) == null && !(IsList(d) && RT.seq(d) == null)) return Q(Boundary(d));
         var v = ConstValue(d);
+        // 空的向量 / 集合字面量是共享的 EMPTY（JVM 的 EmptyExpr，cleat-191）；持久化的常量表按同样的规则解码（Fasl）
+        if (v is IPersistentVector ev && ev.count() == 0) v = PersistentVector.EMPTY;
+        else if (v is IPersistentSet es && es.count() == 0 && v is not PersistentTreeSet) v = PersistentHashSet.EMPTY;
         var m = LiteralMeta(d);
         var pos = Position(d, ctx);
         var sub = ctx.NonTail().At(pos);
@@ -219,7 +222,11 @@ public static partial class FormAnalyzer
         if (priv) throw Err(sym, ctx, msg);
         if (sym.Namespace != null && HostSyntax.MaybeArrayType(sym) is { } at) return TypeReference(at);
         if (sym.Namespace != null && StaticMemberOf(ctx, sym) is { } sm)
+        {
+            // Clojure 1.12 的方法值（cleat-192）：方法 / 构造器作为值是 fn；静态字段 / 属性照旧读
+            if (!HostSyntax.IsStub(sm.Type) && MethodValueForm(ctx, sym, sm.Type, sm.Member) is { } fnForm) return Analyze(fnForm, ctx);
             return CljCallOf("CallStatic", s_fixed3, Q(sm.Type), Q(MungeStr(sm.Member)), Q(null));
+        }
         throw Err(sym, ctx, msg);
     }
 

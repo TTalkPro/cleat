@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using Cleat.Core.Compiler;
@@ -267,11 +268,17 @@ public static partial class FormAnalyzer
         if (sop.Namespace != null && StaticMemberOf(ctx, sop) is { } sm)
         {
             var tsym = Symbol.intern(sop.Namespace);
+            items = new[] { op }.Concat(QmCallArgs(sop, Drop(items, 1).ToList())).ToList();   // param-tags（cleat-192）
             object r;
             if (nm == "new") r = ListStar(new object[] { NewSym, tsym }, Drop(items, 1));
             else if (nm.Length > 1 && nm[0] == '.')
             {
-                if (items.Count < 2) throw Err(where, ctx, "Malformed method expression, expecting (" + sop + " target ...)");   // 措辞同 ClojureCLR
+                if (items.Count < 2)
+                {
+                    // 措辞同 ClojureCLR；原因是 ArgumentException（JVM 的 IllegalArgumentException，test_clojure CLJ-2914 按原因的类型认，cleat-193）
+                    string msg = "Malformed method expression, expecting (" + sop + " target ...)";
+                    throw ExpanderEx(Position(where, ctx), Phase.CompileSyntaxCheck, msg, new ArgumentException(msg), null);
+                }
                 object tgt = items[1];
                 if (tgt is IObj) tgt = WithMeta(tgt, RT.assoc(Meta(tgt), TagKw, Symbol.intern(sm.Type.FullName)));
                 r = ListStar(new object[] { DotSym, tgt, Symbol.intern(nm.Substring(1)) }, Drop(items, 2));
@@ -356,7 +363,9 @@ public static partial class FormAnalyzer
     }
 
     /// <summary>call-macro：宏 Var v 展开形式 form；异常按 Clojure 1.12 的 macroexpand1 分阶段。</summary>
-    private static object CallMacro(Var v, object form, Pos pos, Ctx ctx)
+    /// <para><paramref name="rawArity"/>：直接调 macroexpand-1 / macroexpand（Compiler.macroexpand1）时为真，元数错误按 JVM 原样抛出
+    /// <see cref="ArityException"/>（宏自己的元数去掉 &amp;form / &amp;env 两个隐含参数，cleat-189）；分析途中仍包成编译错误。</para>
+    private static object CallMacro(Var v, object form, Pos pos, Ctx ctx, bool rawArity = false)
     {
         CheckMacroSpec(v, form, pos);
         try
@@ -371,6 +380,11 @@ public static partial class FormAnalyzer
         {
             var ex = MacroArityFix(v, ex0);
             bool arity = !ReferenceEquals(ex, ex0);
+            if (rawArity && ex is ArityException)
+            {
+                if (arity) throw ex;
+                throw;
+            }
             object op = RT.first(form);
             string sym = !arity && op is Symbol ? Str(op) : null;
             Phase phase = arity ? Phase.CompileSyntaxCheck
@@ -393,14 +407,17 @@ public static partial class FormAnalyzer
     /// macroexpand-1（namespaces.sls macroexpand-1-in-ns）：宏调用（含以宏 Var 对象开头的形式）与宿主语法糖展开一层；
     /// 特殊形式与其余形式原样返回。
     /// </summary>
-    public static object Macroexpand1(object form)
+    public static object Macroexpand1(object form) => Macroexpand1(form, false);
+
+    /// <summary><paramref name="rawArity"/> 见 <see cref="CallMacro"/>：macroexpand-1 钩子（用户直接调用）为真，编译驱动为假。</summary>
+    public static object Macroexpand1(object form, bool rawArity)
     {
         var ctx = Ctx.Root;
-        if (MacroVarHead(form, ctx) is { } mv) return CallMacro(mv, form, SourceOf(form), ctx);
+        if (MacroVarHead(form, ctx) is { } mv) return CallMacro(mv, form, SourceOf(form), ctx, rawArity);
         if (IsList(form) && RT.seq(form) != null && RT.first(form) is Symbol op && SpecialHead(op) == null)
         {
             var (o, _, _) = ResolveIn(CurrentNs, op);
-            if (o is Var v && v.IsMacro) return CallMacro(v, form, SourceOf(form), ctx);
+            if (o is Var v && v.IsMacro) return CallMacro(v, form, SourceOf(form), ctx, rawArity);
             if (o != null) return form;
             if ((op.Namespace != null && StaticMemberOf(ctx, op) != null) || IsHostSugar(op)) return RewriteToDot(ctx, form, form) ?? form;
             return form;

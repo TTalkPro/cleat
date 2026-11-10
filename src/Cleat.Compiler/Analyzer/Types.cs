@@ -155,17 +155,29 @@ public static partial class FormAnalyzer
 
     private static readonly Symbol IObjSym = Symbol.intern("clojure.lang.IObj");
 
-    /// <summary>sp-reify*：类名 ns$reify__N，接口加上 IObj；有元数据时 WithMetaOf。</summary>
+    /// <summary>
+    /// sp-reify*：类名 外层fn类名$reify__N（外层类名去掉末尾的 __N，同 JVM 的 trimGenID；不在 fn 里时 ns$reify__N，cleat-193：
+    /// promise 的对象打印为 clojure.core$promise$reify__…），接口加上 IObj；有元数据时 WithMetaOf。
+    /// </summary>
     private static Expr SpReify(object form, Ctx ctx)
     {
         var ifaces = RT.second(form);
         var methods = RT.next(RT.next(form));   // 惰性：类名先于方法体里的 gensym 取 id
         var iss = RT.conj((IPersistentCollection)ifaces, IObjSym);
-        string className = MungeStr(CurrentNs.Name.ToString()) + "$reify__" + RT.nextID();
+        string className = (ctx.FnName != null ? TrimGenId(ctx.FnName) : MungeStr(CurrentNs.Name.ToString())) + "$reify__" + RT.nextID();
         Expr node = BuildType(form, ctx, className, className, new List<object>(), iss, methods, true);
         var m = UserMeta(form);
         if (m != null) node = CljCallOf("WithMetaOf", s_false, node, Analyze(m, ctx.NonTail().At(null)));
         return node;
+    }
+
+    /// <summary>JVM 的 trimGenID：去掉末尾的 __数字（只在后缀全是数字时去，munge 出的 __GT_ 之类不动）。</summary>
+    private static string TrimGenId(string name)
+    {
+        int i = name.LastIndexOf("__", StringComparison.Ordinal);
+        if (i <= 0 || i + 2 >= name.Length) return name;
+        for (int k = i + 2; k < name.Length; k++) if (!char.IsAsciiDigit(name[k])) return name;
+        return name.Substring(0, i);
     }
 
     /// <summary>v->l：数组的元素，其余为空。</summary>

@@ -11,7 +11,7 @@ namespace Cleat.Host.Tests;
 /// <summary>
 /// cleat-067 的验收（designs/17 §6）与 cleat-066、cleat-069 的端到端验收（都要运行时包，fixture 只打一次）：tools/build.cs pack 打出运行时包 Cleat.Runtime，一个 Clojure 包（gen-class、defrecord、函数）
 /// 用 tools.build（cleat-066）编成包程序集再打成 nupkg，两者放进本地目录源（与 BaGetter 同一机制）；一个 C# 与一个 F# 控制台项目只引用那个 Clojure 包，
-/// **不调用任何初始化 API**：gen-class 的构造函数、实例方法、静态方法、Main，defrecord 的实例，CleatRuntime.Var 都能用，
+/// **不调用任何初始化 API**：gen-class 的构造函数、实例方法、静态方法、Main，defrecord 的实例，CleatRuntime.Var、clojure.clr.api.Clojure（cleat-190）都能用，
 /// 并发的首次使用只启动一次运行时（命名空间只加载一次）。
 /// 分类 Engineering（cleat-162 / 182，原名 Bootstrap——种子与自举删除后这个名字已名不副实）：nightly 层跑；fixture 会改写 obj/project.assets.json。
 /// </summary>
@@ -61,6 +61,19 @@ Console.WriteLine(c.Result);
 Console.WriteLine(demo.Greeter.shout(""hey""));
 demo.Greeter.Main(new[] { ""x"", ""y"" });
 Console.WriteLine(CleatRuntime.Eval(""@demo.greeter/loads""));
+";
+
+    // cleat-190：只用 ClojureCLR 的嵌入 API clojure.clr.api.Clojure（不引用 Cleat.Core.Hosting、不调初始化）
+    private const string ApiProgram = @"using System;
+using clojure.clr.api;
+using clojure.lang;
+
+IFn require = Clojure.var(""clojure.core"", ""require"");
+require.invoke(Clojure.read(""demo.greeter""));
+Console.WriteLine(Clojure.var(""demo.greeter"", ""add"").invoke(40L, 2L));
+Console.WriteLine(Clojure.var(""clojure.core/pr-str"").invoke(Clojure.read(""{:a [1 2] :b #{\""s\""}}"")));
+IFn plus = Clojure.var(""clojure.core"", ""+"");
+Console.WriteLine(plus.invoke(1L, 2L));
 ";
 
     private const string FSharpProgram = @"open Cleat.Core.Hosting
@@ -170,6 +183,11 @@ printfn ""%O"" (CleatRuntime.Eval(""@demo.greeter/loads""))
             "main [x y]",
             "1",
         }), r);
+
+        // 只用 clojure.clr.api.Clojure 的 C# 项目（cleat-190）
+        string api = App("api", "csproj", "Program.cs", ApiProgram);
+        r = Run(api, _env, "dotnet", "run", "-nologo", "-v", "quiet");
+        Assert.That(Lines(r), Is.EqualTo(new[] { "42", "{:a [1 2], :b #{\"s\"}}", "3" }), r);
 
         // F# 项目
         string fs = App("fs", "fsproj", "Program.fs", FSharpProgram);

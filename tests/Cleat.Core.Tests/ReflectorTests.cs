@@ -125,7 +125,7 @@ public class ReflectorTests
     public void Errors_NoMatch_MissingMember_RefOut()
     {
         var ex = Assert.Throws<InvalidOperationException>(() => Call(typeof(string), "Substring", "x", "a"));
-        Assert.That(ex.Message, Does.StartWith("No matching instance method Substring").And.Contain("String"));
+        Assert.That(ex.Message, Does.StartWith("No matching member Substring taking").And.Contain("String"));
         Assert.Throws<MissingMethodException>(() => Call(typeof(string), "NoSuchMethod", "x"));
         Assert.Throws<MissingMemberException>(() => Reflector.GetField(typeof(string), "NoSuchField", "x"));
         var ns = Assert.Throws<NotSupportedException>(() => Call(typeof(ReflectorFixture), "TryIt", null, 1L));
