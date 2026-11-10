@@ -48,6 +48,11 @@ StaleModuleException 的消息加上运行时版本与"换为这个版本编的�
 - **cleat-193 的 `:warn-on-boxed` 误报**：test.check 打包时满屏 "Boxed math warning"——cleat 的分析器看不到 let / loop 局部的原始类型（JVM 按初值看得到）；
   这类局部作实参时不报（无提示的 fn 形参、调用结果照报，test_clojure 的两个用例仍过）。
 
-## 门禁
+## 门禁（2026-11-10，13）
 
-（见下）
+- Core 116 / Compiler 50 / Host 300 全过（Host 20 分 24 秒，含 NuGet 冷加载：运行时包按 CoreInfo.Version 精确依赖）
+- image-set --twice --ilverify：全部通过
+- conformance --gate：521 / 521，OK
+- CTS / test_clojure：dispositions OK，基线 OK
+
+剩下：162 在 GitHub Actions 上的结果（仓库私有，本机没有 gh，需用户确认）。
