@@ -156,11 +156,28 @@ void Publish(string[] a)
     // cleat-186：先 build（GenerateBootImage 可能重编镜像）再编随附库——反过来的话随附库对着旧镜像
     Run("dotnet", ["build", solution, "-c", "Release", "-v", "quiet", "-nologo"]);
     CompileLibs([]);                      // AOT 库随发布，先刷新
+    CompileToolLibs();                    // 随附的 tools.build / tools.namespace 同样对着这个镜像重编（cleat-188，同 pack）
     if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
     Run("dotnet", ["publish", Path.Combine(srcDir, "Cleat.Host", "Cleat.Host.csproj"), "-c", "Release", "-r", rid,
                    "--self-contained", "-o", outDir, "-v", "quiet", "-nologo", "-p:BuildBootImage=false", "-nodeReuse:false"]);
     foreach (var f in new[] { "cleat.boot.dll", "cleat.boot.pdb", "cleat.boot.ifc", "cleat.boot.inl", "boot-order.edn", "Cleat.Clojure.Libs.dll", "Cleat.Clojure.Libs.pdb" })
         if (File.Exists(Path.Combine(bootDir, f))) File.Copy(Path.Combine(bootDir, f), Path.Combine(outDir, f));
+    // cleat-188：与 Cleat.Cli 工具包相同的布局——随附的 tools.build / tools.namespace（-T:build）与 Clojure 源码（clojure-src/，
+    // source 与 nREPL 补全按 :file 找文件，cleat-187）
+    string toolsDir = Path.Combine(bootDir, "tools");
+    if (Directory.Exists(toolsDir))
+    {
+        Directory.CreateDirectory(Path.Combine(outDir, "tools"));
+        foreach (var f in Directory.GetFiles(toolsDir, "*.dll").Concat(Directory.GetFiles(toolsDir, "*.pdb")))
+            File.Copy(f, Path.Combine(outDir, "tools", Path.GetFileName(f)));
+    }
+    string cljSrc = Path.Combine(srcDir, "clojure");
+    foreach (var f in Directory.GetFiles(cljSrc, "*.clj*", SearchOption.AllDirectories))
+    {
+        string target = Path.Combine(outDir, "clojure-src", Path.GetRelativePath(cljSrc, f));
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.Copy(f, target);
+    }
     // 保留随包镜像与库包的 PDB；宿主自己的 C# PDB 对运行用户脚本没有用处。
     foreach (var f in Directory.GetFiles(outDir, "*.pdb")
                    .Where(f => !Path.GetFileName(f).StartsWith("cleat.", StringComparison.OrdinalIgnoreCase)

@@ -29,6 +29,7 @@ M10 ~ M23（性能、可用性与工程、编译器改为 C#、互操作补全�
 - 包对 `Cleat.Runtime` 写精确版本；StaleModuleException 的消息带运行时版本（见上节）。
 - **包里带 Clojure 源码**（cleat-187）：Cleat.Cli 与 Cleat.Runtime 把 clojure.core 等的源码放在镜像旁的 `clojure-src/`，装好的 cleat 里
   `(source when)`、nREPL 补全的文件位置可用（原来包里没有源码）。
+- 自包含发布（`tools/build.cs publish`，cleat-188）与工具包同布局：带随附的 tools.build / tools.namespace（`-T:build`）与 Clojure 源码。
 - 修正（cleat-187）：test.check 用 tools.build 打包失败（上游一个只给 ClojureScript 的文件命名空间与路径不符）；`:warn-on-boxed` 对 let / loop 局部误报。
 
 ### M23 兼容性收口（cleat-189 ~ 193）
